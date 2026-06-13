@@ -1,22 +1,28 @@
-# Margen monorepo CI.
-# GitHub only runs workflows from the repo-root .github/workflows/, so this
-# single file covers both apps: the FastAPI backend (apps/api) and the Vite
-# React frontend (apps/web). Each job is scoped to its app via working-directory.
+# Margen API CI (FastAPI backend, apps/api).
+# Workflow-level path filter: GitHub Actions `paths:` is per-workflow, not per-job,
+# so this file only runs when apps/api or this workflow itself changes.
 
-name: CI
+name: API
 
 on:
   push:
     branches: [ main ]
+    paths:
+      - 'apps/api/**'
+      - '.github/workflows/api.yml'
   pull_request:
     branches: [ '**' ]
+    paths:
+      - 'apps/api/**'
+      - '.github/workflows/api.yml'
 
 permissions:
   contents: read
 
 jobs:
-  # Backend: install, lint/type-check, ADR registry check, coverage gate, image build.
-  backend:
+  # Install, lint/type-check, ADR registry check, coverage gate, image build.
+  build:
+    name: Build & coverage
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -41,8 +47,9 @@ jobs:
         run: docker build apps/api --file apps/api/Dockerfile --tag margen-api:${{ github.sha }}
         working-directory: ${{ github.workspace }}
 
-  # Backend integration tier: real PostgreSQL (pgvector) + migrations + integration tests.
-  backend-integration:
+  # Integration tier: real PostgreSQL (pgvector) + migrations + integration tests.
+  integration:
+    name: Integration
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -77,26 +84,3 @@ jobs:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
       - name: Run the PostgreSQL integration tier
         run: make integration
-
-  # Frontend: install, lint, type-check + build, unit tests.
-  frontend:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/web
-    steps:
-      - uses: actions/checkout@v5
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/web/package-lock.json
-      - name: Install dependencies
-        run: npm ci
-      - name: Lint
-        run: npm run lint
-      - name: Build
-        run: npm run build
-      - name: Test
-        run: npm test

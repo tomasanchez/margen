@@ -17,19 +17,27 @@ GitHub Actions only runs workflows from the repository-root `.github/workflows/`
 
 ## Decision
 
-Add one root workflow `.github/workflows/ci.yml` with three jobs: (1) **backend** — runs in `apps/api` via `setup-uv`, executing `make dev/lint/adr-check/cover` (100% coverage gate) and a docker build of `apps/api`; (2) **backend-integration** — spins up a pgvector/pg17 Postgres service, applies Alembic migrations, and runs `make integration` (the PostgreSQL integration tier); (3) **frontend** — runs in `apps/web` via `setup-node 22` with npm cache, executing `npm ci`, `npm run lint`, `npm run build`, and `npm test` (Vitest). Triggers: push to `main` and pull_request to any branch. The redundant nested `apps/api/.github/workflows/build.yml` was removed, its logic preserved at root.
+Use **two root-level path-filtered workflows**, one per app, both living in the repo-root `.github/workflows/`:
+
+- **`api.yml`** (`name: API`) — triggers on push to `main` and pull_request to any branch, **filtered to `paths: ['apps/api/**', '.github/workflows/api.yml']`**. Two jobs running in `apps/api`: `build` (setup-uv → `make dev/lint/adr-check/cover` 100% coverage gate → docker build of `apps/api`) and `integration` (pgvector/pg17 Postgres service → Alembic migrations → `make integration`).
+- **`web.yml`** (`name: Web`) — triggers on push to `main` and pull_request to any branch, **filtered to `paths: ['apps/web/**', '.github/workflows/web.yml']`**. One job `build` running in `apps/web`: setup-node 22 + npm cache → `npm ci`/`lint`/`build`/`test` (Vitest).
+
+The redundant nested `apps/api/.github/workflows/build.yml` was removed, its logic preserved at root.
+
+> **Revised 2026-06-13:** This decision originally specified a single `ci.yml` with no path filters (both apps validated on every push/PR). It was revised before merge to two path-filtered workflows so the API pipeline runs only on `apps/api` changes and the Web pipeline only on `apps/web` changes, and to rename them "API" / "Web". GitHub Actions `paths:` filters are workflow-level (not per-job), so per-app filtering requires separate workflow files.
 
 ## Alternatives Considered
 
 - **Keep the backend workflow nested under apps/api**: GitHub does not discover workflows outside the repo-root `.github/workflows/`, so it would never run — not chosen.
-- **Separate workflow files per app**: More files to maintain; a single `ci.yml` with scoped jobs is simpler for a two-app foundation and keeps triggers consistent — not chosen.
-- **Path-filtered jobs (only run the changed app)**: Premature optimization for a small foundation repo; running both jobs always is simpler and safe. Can be added later — not chosen.
+- **Single `ci.yml` with all jobs, no path filters**: Simpler file count, but runs the Web pipeline on API-only changes and vice versa, wasting CI minutes — superseded by the per-app split.
+- **One workflow with a `dorny/paths-filter` change-detection job gating conditional jobs**: Achieves per-app filtering in a single file, but adds a third-party action and conditional complexity; two small workflow files are clearer — not chosen.
 
 ## Consequences
 
-Every push/PR validates both apps from a single workflow. Backend enforces the 100% coverage gate plus a real-Postgres integration tier; frontend enforces lint, type-check/build, and unit tests. CI lives at the monorepo root, decoupled from the backend template's internal CI. Both jobs run unconditionally, so CI cost scales with PR volume until path filters are introduced. See ADR-002 for the monorepo layout this workflow targets, and ADR-008 for the testing scope each job enforces.
+Each app's pipeline runs only when its own files (or its workflow file) change, so API and Web CI are independent and cheaper. API enforces the 100% coverage gate plus a real-Postgres integration tier; Web enforces lint, type-check/build, and unit tests. CI lives at the monorepo root, decoupled from the backend template's internal CI. **Caveat:** if these workflows are later made *required* status checks for merging, a path-filtered workflow that is *skipped* reports no status and can block a PR — branch protection must treat skipped checks as passing (or a passthrough job must be added). See ADR-002 for the monorepo layout this targets, and ADR-008 for the testing scope each enforces.
 
 ## Status History
 
 - 2026-06-13: proposed
 - 2026-06-13: accepted
+- 2026-06-13: revised — split single `ci.yml` into path-filtered `api.yml` + `web.yml`, renamed API/Web
