@@ -11,7 +11,6 @@ const apiBaseUrl: string | undefined = import.meta.env.VITE_API_BASE_URL
 if (!apiBaseUrl) {
   // Fail loudly in development so a missing env var is obvious rather than
   // silently producing broken requests to an empty origin.
-  // eslint-disable-next-line no-console
   console.warn(
     '[margen] VITE_API_BASE_URL is not set. Copy .env.example to .env and set it.',
   )

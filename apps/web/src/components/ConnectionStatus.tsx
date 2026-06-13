@@ -3,8 +3,10 @@ import CircularProgress from '@mui/material/CircularProgress'
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
 import { useReadiness } from '../api/useReadiness'
-
-type ConnectionState = 'connecting' | 'connected' | 'error'
+import {
+  deriveConnectionState,
+  type ConnectionState,
+} from './connectionState'
 
 interface StatePresentation {
   label: string
@@ -33,21 +35,6 @@ const PRESENTATION: Record<ConnectionState, StatePresentation> = {
     icon: <ErrorOutlinedIcon fontSize="small" />,
     srDescription: 'Backend unreachable',
   },
-}
-
-/**
- * Derive the discrete connection state from the readiness query flags.
- *
- * Exported so tests can exercise the mapping directly, and to keep the
- * component a thin presentation layer over {@link useReadiness}.
- */
-export function deriveConnectionState(query: {
-  isSuccess: boolean
-  isError: boolean
-}): ConnectionState {
-  if (query.isSuccess) return 'connected'
-  if (query.isError) return 'error'
-  return 'connecting'
 }
 
 /**

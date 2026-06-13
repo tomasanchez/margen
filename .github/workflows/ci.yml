@@ -1,9 +1,9 @@
-# This workflow installs dependencies, lints, type-checks, and tests the project
-# with a single version of Python provisioned by uv from .python-version.
-# For more information see:
-# https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+# Margen monorepo CI.
+# GitHub only runs workflows from the repo-root .github/workflows/, so this
+# single file covers both apps: the FastAPI backend (apps/api) and the Vite
+# React frontend (apps/web). Each job is scoped to its app via working-directory.
 
-name: Build
+name: CI
 
 on:
   push:
@@ -15,10 +15,12 @@ permissions:
   contents: read
 
 jobs:
-  build:
-
+  # Backend: install, lint/type-check, ADR registry check, coverage gate, image build.
+  backend:
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: apps/api
     steps:
       - uses: actions/checkout@v5
       - name: Install uv
@@ -33,13 +35,18 @@ jobs:
         run: make adr-check
       - name: Test with coverage gate
         run: make cover
+      # docker build needs an explicit context path; working-directory does not
+      # apply to the build context, so we point at apps/api from the repo root.
       - name: Build image
-        run: docker build . --file Dockerfile --tag margen-api:${{ github.sha }}
+        run: docker build apps/api --file apps/api/Dockerfile --tag margen-api:${{ github.sha }}
+        working-directory: ${{ github.workspace }}
 
-  integration:
-
+  # Backend integration tier: real PostgreSQL (pgvector) + migrations + integration tests.
+  backend-integration:
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: apps/api
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -54,10 +61,8 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
-
     env:
       TEST_DATABASE_URL: postgresql+asyncpg://margen-api:margen-api@localhost:5432/margen-api
-
     steps:
       - uses: actions/checkout@v5
       - name: Install uv
@@ -72,3 +77,26 @@ jobs:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
       - name: Run the PostgreSQL integration tier
         run: make integration
+
+  # Frontend: install, lint, type-check + build, unit tests.
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test
