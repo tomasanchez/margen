@@ -31,7 +31,7 @@ afterEach(() => {
 
 /** Wait for the latency-simulated list to resolve (a known seed row appears). */
 async function waitForRows() {
-  return screen.findAllByText('Supermercado Coto')
+  return screen.findAllByText('Coto supermarket')
 }
 
 /** Read the "<n> shown" count out of the header summary line. */
@@ -57,14 +57,14 @@ describe('TransactionsPage filtering', () => {
     // desktop bar and the mobile bar (shared filter state), so type into the
     // first — both stay in lockstep via useTransactionFilters.
     const search = screen.getAllByRole('searchbox')[0]
-    await user.type(search, 'Alquiler')
+    await user.type(search, 'Apartment')
 
-    // Only the three "Alquiler depto" rent rows survive (Jun/May/Apr).
+    // Only the three "Apartment rent" rent rows survive (Jun/May/Apr).
     await waitFor(() => expect(shownCount()).toBe(3))
 
     // The matching row is present and a non-matching seed row is gone.
-    expect(screen.getAllByText('Alquiler depto').length).toBeGreaterThan(0)
-    expect(screen.queryByText('Supermercado Coto')).not.toBeInTheDocument()
+    expect(screen.getAllByText('Apartment rent').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Coto supermarket')).not.toBeInTheDocument()
   })
 
   test('a type filter narrows rows and recomputes the totals', async () => {
@@ -82,7 +82,7 @@ describe('TransactionsPage filtering', () => {
     await waitFor(() => expect(shownCount()).toBe(4))
 
     // An expense-only row drops out; an invoice row stays.
-    expect(screen.queryByText('Supermercado Coto')).not.toBeInTheDocument()
+    expect(screen.queryByText('Coto supermarket')).not.toBeInTheDocument()
     expect(
       screen.getAllByText('Invoice · Beta Studio').length,
     ).toBeGreaterThan(0)
@@ -104,7 +104,7 @@ describe('TransactionsPage filtering', () => {
     expect(
       await screen.findByText('No transactions match these filters.'),
     ).toBeInTheDocument()
-    expect(screen.queryByText('Supermercado Coto')).not.toBeInTheDocument()
+    expect(screen.queryByText('Coto supermarket')).not.toBeInTheDocument()
     // The "clear your filters" affordance is offered when filters are active.
     expect(
       screen.getByRole('button', { name: /clearing your filters/ }),

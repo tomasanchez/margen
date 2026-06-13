@@ -7,6 +7,7 @@ import { AppShell } from './components/AppShell'
 import { AddTransactionProvider } from './features/transactions/AddTransactionProvider'
 import { HomePage } from './features/home/HomePage'
 import { TransactionsPage } from './features/transactions/TransactionsPage'
+import { MonotributoPage } from './features/monotributo/MonotributoPage'
 
 /**
  * Code-based routing for Margen (ADR-014).
@@ -37,7 +38,17 @@ const transactionsRoute = createRoute({
   component: TransactionsPage,
 })
 
-const routeTree = rootRoute.addChildren([homeRoute, transactionsRoute])
+const monotributoRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/monotributo',
+  component: MonotributoPage,
+})
+
+const routeTree = rootRoute.addChildren([
+  homeRoute,
+  transactionsRoute,
+  monotributoRoute,
+])
 
 export const router = createRouter({
   routeTree,

@@ -12,7 +12,7 @@ import Skeleton from '@mui/material/Skeleton'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import type { Insight, InsightKind } from '../../mock/types'
-import { SectionCard } from './SectionCard'
+import { SectionCard } from '../../components/SectionCard'
 
 /** Dot token per insight kind — a redundant cue beside the text label. */
 const KIND_DOT: Record<InsightKind, string> = {

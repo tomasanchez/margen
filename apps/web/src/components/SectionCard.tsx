@@ -1,7 +1,9 @@
 /**
- * <SectionCard> — the bordered surface every Home section sits on (Issue #12).
+ * <SectionCard> — the bordered surface every feature section sits on
+ * (Issue #12, promoted to a shared component for cross-feature reuse: Home and
+ * Monotributo both compose it, ADR-023).
  *
- * Mirrors the concept's section panels (1px border, rounded, paper-2 fill) using
+ * Mirrors the concept's section panels (1px border, rounded, paper fill) using
  * MUI Paper + theme tokens rather than inline hex, with an optional header row:
  * a title (rendered as a real heading for the section landmark) + subtitle on
  * the left and an optional `action` slot (e.g. a mono total or a "View all"

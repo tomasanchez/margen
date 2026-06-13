@@ -16,7 +16,7 @@ import { visuallyHidden } from '@mui/utils'
 import { monoFontFamily } from '../../theme'
 import { formatCurrency } from '../../lib/format'
 import type { TrendPoint } from '../../mock/types'
-import { SectionCard } from './SectionCard'
+import { SectionCard } from '../../components/SectionCard'
 
 /** Compact ARS label for the header total, e.g. 2_850_000 -> "ARS 2,85M". */
 function compactArs(value: number): string {

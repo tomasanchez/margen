@@ -25,7 +25,7 @@ import { StatusPill } from '../../components/StatusPill'
 import { monoFontFamily } from '../../theme'
 import { formatCurrency, formatPercent } from '../../lib/format'
 import type { MonotributoState } from '../../mock/types'
-import { SectionCard } from './SectionCard'
+import { SectionCard } from '../../components/SectionCard'
 
 export interface MonotributoCardProps {
   monotributo: MonotributoState | undefined
