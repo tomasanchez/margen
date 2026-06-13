@@ -12,6 +12,7 @@
 import Box from '@mui/material/Box'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
+import { visuallyHidden } from '@mui/utils'
 import { monoFontFamily } from '../../theme'
 import { formatCurrency } from '../../lib/format'
 import type { TrendPoint } from '../../mock/types'
@@ -71,17 +72,7 @@ export function SpendingTrend({ trend, loading = false }: SpendingTrendProps) {
       }
     >
       {/* Accessible equivalent of the visual bars. */}
-      <Box
-        component="p"
-        sx={{
-          position: 'absolute',
-          width: 1,
-          height: 1,
-          overflow: 'hidden',
-          clip: 'rect(0 0 0 0)',
-          whiteSpace: 'nowrap',
-        }}
-      >
+      <Box component="p" sx={visuallyHidden}>
         Monthly expenses, last six months. {accessibleSummary}.
       </Box>
 

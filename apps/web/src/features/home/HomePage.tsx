@@ -21,6 +21,7 @@
 import { useMemo } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
+import { visuallyHidden } from '@mui/utils'
 import {
   useCategoryBreakdown,
   useInsights,
@@ -43,16 +44,6 @@ import { RecentActivity } from './RecentActivity'
 
 const CURRENT_MONTH_LABEL = 'June 2026'
 const PREVIOUS_MONTH_LABEL = 'May'
-
-/** Visually hidden helper (keeps the page <h1> available to AT, not the design). */
-const VISUALLY_HIDDEN = {
-  position: 'absolute',
-  width: 1,
-  height: 1,
-  overflow: 'hidden',
-  clip: 'rect(0 0 0 0)',
-  whiteSpace: 'nowrap',
-} as const
 
 /** Percentage change from `previous` to `current`; 0 when previous is 0. */
 function pctChange(current: number, previous: number): number {
@@ -119,7 +110,7 @@ export function HomePage() {
 
   return (
     <Box>
-      <Typography component="h1" sx={VISUALLY_HIDDEN}>
+      <Typography component="h1" sx={visuallyHidden}>
         Your command center
       </Typography>
 
