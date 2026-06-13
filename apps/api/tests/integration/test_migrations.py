@@ -1,0 +1,59 @@
+"""Integration tests for Alembic migrations against PostgreSQL."""
+
+import asyncio
+
+import pytest
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import inspect
+from sqlalchemy.ext.asyncio import create_async_engine
+
+pytestmark = pytest.mark.integration
+
+
+async def _table_names(url: str) -> list[str]:
+    """Return the table names visible on the database at ``url``."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        names = await connection.run_sync(lambda sync_conn: inspect(sync_conn).get_table_names())
+    await engine.dispose()
+    return names
+
+
+async def _drop_everything(url: str) -> None:
+    """Drop all tables so the migration test leaves a clean database."""
+    from sqlalchemy import text
+
+    engine = create_async_engine(url)
+    async with engine.begin() as connection:
+        await connection.execute(text("DROP SCHEMA public CASCADE"))
+        await connection.execute(text("CREATE SCHEMA public"))
+    await engine.dispose()
+
+
+class TestMigrations:
+    """Test cases for relational schema migrations."""
+
+    def test_upgrades_a_blank_database_to_head(self, integration_database_url: str):
+        """
+        GIVEN a blank PostgreSQL database
+        WHEN Alembic upgrades the database to head
+        THEN Alembic records its revision table even with no migrations yet
+
+        This test is synchronous so that Alembic's async ``env.py`` can manage
+        its own event loop via ``asyncio.run`` without colliding with a running
+        loop (mirroring how ``alembic upgrade head`` runs on the command line).
+        """
+        # GIVEN
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+
+        # WHEN
+        command.upgrade(config, "head")
+
+        # THEN
+        try:
+            tables = asyncio.run(_table_names(integration_database_url))
+            assert "alembic_version" in tables
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))

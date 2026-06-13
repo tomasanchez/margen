@@ -1,0 +1,50 @@
+services:
+  app:
+    # Build the image from the Dockerfile in the current directory.
+    build: .
+    # Name the container for easier identification.
+    container_name: margen-api-app
+    # Map port 8000 on the host to port 8000 inside the container so the app is
+    # reachable at http://localhost:8000.
+    ports:
+      - "8000:8000"
+    # Mount the local 'src' folder into the container so code changes are
+    # reflected for Uvicorn's live-reload.
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Enable Uvicorn auto-reload for local development.
+      - UVICORN_RELOAD=true
+      # Connect to the bundled PostgreSQL service over the async driver.
+      - DATABASE_URL=postgresql+asyncpg://margen-api:margen-api@db:5432/margen-api
+      # Create the schema at startup so the demo works on first run.
+      # Production deployments must use Alembic migrations (make migrate)
+      # instead of auto-creating the schema.
+      - DATABASE_AUTO_CREATE_SCHEMA=true
+      # Allow the Vite dev frontend to call the API in development (ADR-006).
+      - FASTAPI_BACKEND_CORS_ORIGINS=["http://localhost:5173"]
+
+  db:
+    # pgvector-capable PostgreSQL so projects can adopt vector search without
+    # changing infrastructure. The example domain ships no vector column yet.
+    image: pgvector/pgvector:pg17
+    container_name: margen-api-db
+    environment:
+      - POSTGRES_USER=margen-api
+      - POSTGRES_PASSWORD=margen-api
+      - POSTGRES_DB=margen-api
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U margen-api -d margen-api"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  db-data:

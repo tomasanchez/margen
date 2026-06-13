@@ -1,0 +1,75 @@
+"""Test suite for Pydantic application messages."""
+
+from typing import Any, cast
+
+import pytest
+from pydantic import Field, ValidationError
+
+from margen_api.domain.messages import Command, Event
+
+
+class _SampleCommand(Command):
+    """A sample command used to exercise shared message behavior."""
+
+    display_name: str = Field(min_length=1)
+    retry_count: int = 0
+
+
+class _SampleEvent(Event):
+    """A sample event used to exercise shared message behavior."""
+
+    display_name: str
+
+
+class TestMessages:
+    """Test cases for immutable command and event schemas."""
+
+    def test_serializes_commands_and_events(self):
+        """
+        GIVEN a Pydantic command and event
+        WHEN the messages are serialized
+        THEN adapters receive stable camel-case dictionary representations
+        """
+        # GIVEN
+        command = _SampleCommand(display_name="Ada Lovelace", retry_count=2)
+        event = _SampleEvent(display_name="Ada Lovelace")
+
+        # WHEN / THEN
+        assert command.model_dump(mode="json") == {"displayName": "Ada Lovelace", "retryCount": 2}
+        assert event.model_dump(mode="json") == {"displayName": "Ada Lovelace"}
+
+    def test_parses_camel_case_commands(self):
+        """
+        GIVEN a camel-case JSON payload from an external adapter
+        WHEN the command schema validates it
+        THEN application code receives the typed command
+        """
+        # WHEN
+        command = _SampleCommand.model_validate({"displayName": "Ada Lovelace", "retryCount": 3})
+
+        # THEN
+        assert command.display_name == "Ada Lovelace"
+        assert command.retry_count == 3
+
+    def test_rejects_invalid_commands(self):
+        """
+        GIVEN invalid command data from an external adapter
+        WHEN the command schema validates it
+        THEN Pydantic rejects the command before dispatch
+        """
+        # WHEN / THEN
+        with pytest.raises(ValidationError):
+            _SampleCommand(display_name="")
+
+    def test_rejects_message_mutation(self):
+        """
+        GIVEN a frozen Pydantic command
+        WHEN application code attempts to mutate it
+        THEN Pydantic rejects the mutation
+        """
+        # GIVEN
+        command = _SampleCommand(display_name="Ada Lovelace")
+
+        # WHEN / THEN
+        with pytest.raises(ValidationError):
+            cast(Any, command).display_name = "Other"

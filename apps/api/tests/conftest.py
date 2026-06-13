@@ -1,0 +1,46 @@
+"""
+Pytest Fixtures.
+"""
+
+from collections.abc import AsyncIterator
+
+import httpx
+import pytest
+
+from margen_api.asgi import get_application
+from margen_api.bootstrap import ApplicationContainer, bootstrap
+from margen_api.settings.database_settings import DatabaseSettings
+
+
+@pytest.fixture(name="container")
+async def fixture_container() -> AsyncIterator[ApplicationContainer]:
+    """Build an isolated in-memory async container with a created schema.
+
+    The offline test tier always runs on in-memory async SQLite regardless of
+    the project's chosen runtime database, so collection never touches a real
+    ``DATABASE_URL`` or writes a file to the repository.
+
+    Yields:
+        ApplicationContainer: A started container; its engine is disposed on
+        teardown.
+    """
+    container = bootstrap(DatabaseSettings(URL="sqlite+aiosqlite://", AUTO_CREATE_SCHEMA=True))
+    await container.startup()
+    yield container
+    await container.shutdown()
+
+
+@pytest.fixture(name="test_client")
+async def fixture_test_client(container: ApplicationContainer) -> AsyncIterator[httpx.AsyncClient]:
+    """Create an async test client backed by the in-memory container.
+
+    ``ASGITransport`` does not run the FastAPI lifespan, so the ``container``
+    fixture starts and disposes the application resources instead.
+
+    Yields:
+        httpx.AsyncClient: An async client for the app.
+    """
+    app = get_application(container)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client

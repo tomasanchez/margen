@@ -1,0 +1,74 @@
+# This workflow installs dependencies, lints, type-checks, and tests the project
+# with a single version of Python provisioned by uv from .python-version.
+# For more information see:
+# https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ '**' ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: make dev
+      - name: Lint and type-check
+        run: make lint
+      - name: ADR registry check
+        run: make adr-check
+      - name: Test with coverage gate
+        run: make cover
+      - name: Build image
+        run: docker build . --file Dockerfile --tag margen-api:${{ github.sha }}
+
+  integration:
+
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: margen-api
+          POSTGRES_PASSWORD: margen-api
+          POSTGRES_DB: margen-api
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U margen-api -d margen-api"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://margen-api:margen-api@localhost:5432/margen-api
+
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: make dev
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+      - name: Run the PostgreSQL integration tier
+        run: make integration

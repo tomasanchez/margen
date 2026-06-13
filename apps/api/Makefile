@@ -1,0 +1,75 @@
+
+.DEFAULT_GOAL = help
+.NOTPARALLEL: ; # Targets execute serially
+.ONESHELL: ; # Recipes execute in the same shell
+
+.PHONY: clean
+clean: ## Removes all build and test artifacts
+	rm -f .coverage
+	rm -f *.db
+	rm -rf .pytest_cache
+	rm -rf .ruff_cache
+	rm -rf dist
+	rm -rf reports
+	find . -type d -name __pycache__ -exec rm -rf {} +
+
+.PHONY: dist-clean
+dist-clean: clean ## Removes all build and test artifacts and virtual environment
+	rm -rf .venv
+
+.PHONY: install
+install: ## Install runtime dependencies
+	uv sync --no-dev
+
+.PHONY: dev
+dev: ## Install runtime and dev dependencies
+	uv sync --dev
+
+.PHONY: test
+test: ## Executes the offline test tiers (unit + e2e)
+	uv run pytest -m "not integration"
+
+.PHONY: integration
+integration: ## Executes the PostgreSQL integration tier (requires TEST_DATABASE_URL / Docker)
+	uv run pytest -m integration
+
+.PHONY: adr-check
+adr-check: ## Validates the architecture decision registry
+	uv run python scripts/prune_decisions.py check
+
+.PHONY: adr-context
+adr-context: ## Prints active architecture guidance for agents
+	uv run python scripts/prune_decisions.py context
+
+.PHONY: migrate
+migrate: ## Applies relational database migrations
+	uv run alembic upgrade head
+
+.PHONY: cover
+cover: ## Executes the offline tiers (unit + e2e) with the coverage gate
+	uv run pytest -m "not integration" --cov src/margen_api --cov-fail-under=100 --junitxml reports/xunit.xml \
+	--cov-report xml:reports/coverage.xml --cov-report term-missing
+
+.PHONY: format
+format: ## Formats the code using Ruff
+	uv run ruff format ./src ./tests ./scripts ./migrations
+
+.PHONY: pre-commit
+pre-commit: ## Runs pre-commit hooks on all files
+	uv run pre-commit run --all-files
+
+.PHONY: lint
+lint: ## Applies static analysis and type checks
+	uv run ruff check ./src ./tests ./scripts ./migrations
+	uv run ruff format --check ./src ./tests ./scripts ./migrations
+	uv run pyrefly check
+
+.PHONY: fix
+fix:  ## Fix lint errors
+	uv run ruff check --fix ./src ./tests ./scripts ./migrations
+
+.PHONY: help
+help: ## Show make target documentation
+	@awk -F ':|##' '/^[^\t].+?:.*?##/ {\
+	printf "\033[36m%-30s\033[0m %s\n", $$1, $$NF \
+	}' $(MAKEFILE_LIST)
