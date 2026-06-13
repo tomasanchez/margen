@@ -1,0 +1,15 @@
+# GitGuardian / ggshield configuration.
+# https://docs.gitguardian.com/ggshield-docs/configuration
+version: 2
+
+secret:
+  ignored-matches:
+    # The "margen-api" Postgres password is an ephemeral, non-production
+    # credential: it only protects a disposable CI service container and a
+    # local docker-compose database bound to localhost. It is the cosmic-fastapi
+    # template convention (user = password = db = the project slug). Real
+    # deployments override DATABASE_URL via environment variables (see ADR-007),
+    # so there is no real service behind this value and nothing to rotate.
+    # Tracked as GitGuardian incident 33965783 (resolved as a false positive).
+    - name: "Ephemeral local/CI Postgres password (margen-api) — not a production secret"
+      match: margen-api
