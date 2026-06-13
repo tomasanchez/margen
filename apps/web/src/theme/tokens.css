@@ -1,0 +1,74 @@
+/**
+ * Margen design tokens — the single source of truth for color (ADR-013, ADR-021).
+ *
+ * These CSS custom properties are the authoritative palette. The MUI theme reads
+ * them (palette.*.main = 'var(--mg-*)') AND Tailwind's @theme block maps its
+ * color utilities to the same variables, so brand/semantic colors are defined
+ * exactly once and never drift between the two styling systems.
+ *
+ * Dark is the default (declared on :root). Light mode is applied by setting
+ * data-color-mode="light" on <html>, which overrides the surface/text tokens.
+ * Brand and semantic hues also shift slightly for adequate contrast on light.
+ */
+
+:root {
+  /* Brand — gold accent */
+  --mg-gold: #c7a253;
+  --mg-gold-hover: #cf9a35;
+  --mg-on-gold: #141310;
+
+  /* Semantic — Safe / Watch / Risk */
+  --mg-safe: #6dae8d;
+  --mg-watch: #d8a23f;
+  --mg-risk: #c8694f;
+
+  /* Surfaces */
+  --mg-bg: #1a191c;
+  --mg-paper: #181610;
+  --mg-paper-2: #1a1813;
+  --mg-raised: #1b1812;
+  --mg-border: #211f19;
+  --mg-border-2: #2c2922;
+
+  /* Text */
+  --mg-text: #f1eee6;
+  --mg-text-mid: #cfcabf;
+  --mg-text-2: #a39e93;
+  --mg-text-3: #6e6a60;
+
+  /* Money — neutral expense amount */
+  --mg-amount: #d8d3c8;
+
+  color-scheme: dark;
+}
+
+:root[data-color-mode='light'] {
+  /* Brand — gold reads darker for contrast on light surfaces */
+  --mg-gold: #8c7026;
+  --mg-gold-hover: #74601f;
+  --mg-on-gold: #ffffff;
+
+  /* Semantic */
+  --mg-safe: #4e8a6b;
+  --mg-watch: #a9791d;
+  --mg-risk: #b9543c;
+
+  /* Surfaces */
+  --mg-bg: #f3f0e9;
+  --mg-paper: #ffffff;
+  --mg-paper-2: #ffffff;
+  --mg-raised: #ffffff;
+  --mg-border: #e6e0d4;
+  --mg-border-2: #e3d9c2;
+
+  /* Text */
+  --mg-text: #23211c;
+  --mg-text-mid: #4a463e;
+  --mg-text-2: #6c675d;
+  --mg-text-3: #9b958a;
+
+  /* Money — neutral expense amount */
+  --mg-amount: #3a372f;
+
+  color-scheme: light;
+}
