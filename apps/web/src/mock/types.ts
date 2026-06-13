@@ -127,6 +127,82 @@ export interface MonotributoState {
   status: StatusLevel
 }
 
+/**
+ * One row of the official AFIP/ARCA Monotributo scale (ADR-020, ADR-023).
+ *
+ * Reference data hardcoded from the 2026 scale; amounts are numeric (ARS) and
+ * formatted by the consumer via lib/format. There is no live fetch — the page
+ * links to the authoritative ARCA table for the source of truth.
+ */
+export interface MonotributoScaleRow {
+  /** Category letter, e.g. "C". */
+  letter: string
+  /** Annual gross-income ceiling (ARS) for the category. */
+  annualCeiling: number
+  /** Monthly cuota for "servicios" activity (ARS). */
+  cuotaServicios: number
+  /** Monthly cuota for "bienes" activity (ARS). */
+  cuotaBienes: number
+}
+
+/**
+ * One fiscal-period invoice behind the Monotributo annual total (ADR-023).
+ *
+ * Oldest-first; `cumulative` is the running total counted toward the annual
+ * limit up to and including this invoice. This list is separate from the shared
+ * recent-transactions store so Home/Transactions data is undisturbed.
+ */
+export interface MonotributoInvoice {
+  id: number
+  /** Short display date as seeded, e.g. "Jan 22". */
+  dispDate: string
+  /** Client / payer name. */
+  client: string
+  /** Short note (e.g. "Setup + retainer" or the USD/MEP detail). */
+  note: string
+  /** ARS-equivalent amount counted toward the annual limit. */
+  amountNum: number
+  /** Running cumulative ARS total through this invoice (computed in the seed). */
+  cumulative: number
+  /** Whether this was a foreign-currency (USD) invoice (drives the FX badge). */
+  fx: boolean
+}
+
+/**
+ * Linear pace projection inputs for the Monotributo page (ADR-023).
+ *
+ * A simple monthly-average × 12 estimate, explicitly illustrative — not a real
+ * recategorization engine (that is issue #8's backend scope).
+ */
+export interface MonotributoProjection {
+  /** ARS invoiced in the evaluated period (Jan–Jun 2026). */
+  invoicedToDate: number
+  /** Approximate monthly average (ARS). */
+  monthlyAverage: number
+  /** Projected trailing-12-month total (ARS) at the current pace. */
+  projectedAnnual: number
+  /** Short label for the projected annual total, e.g. "≈ ARS 24,3M". */
+  projectedAnnualLabel: string
+  /** Category the projection lands in, e.g. "D". */
+  landsInCategory: string
+  /** Compact ceiling label for the landing category, e.g. "26,2M". */
+  landsInCeilingLabel: string
+  /** Current monthly cuota (ARS) before any recategorization. */
+  currentCuota: number
+  /** Projected monthly cuota (ARS) after recategorization. */
+  projectedCuota: number
+  /** Approx. month the ceiling is reached at this pace, e.g. "October". */
+  ceilingMonth: string
+  /** Approx. months of margin left at this pace. */
+  marginMonths: number
+  /** Window of the next recategorization, e.g. "Jul – Aug 2026". */
+  nextRecategorization: string
+  /** Period the recategorization evaluates, e.g. "Jan–Jun". */
+  evaluates: string
+  /** Authoritative ARCA (ex-AFIP) scale URL. */
+  arcaUrl: string
+}
+
 /** One bar in the 6-month spending trend. `current` flags the active month. */
 export interface TrendPoint {
   /** Short month label, e.g. "Jun". */

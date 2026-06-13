@@ -147,6 +147,21 @@ export function formatFxSubline(
   return `USD ${formatUSD(usd)} · MEP ${formatARS(rate)}`
 }
 
+/** es-AR 1-decimal formatter for the compact millions label (10277988 -> "10,3"). */
+const millionsCompact = new Intl.NumberFormat('es-AR', {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+})
+
+/**
+ * Compact "millions" label used in the category ladder / tope chips, e.g.
+ * 21113697 -> "21,1M", 108357084 -> "108,4M". es-AR decimal comma; no currency
+ * prefix (callers add "ARS" / "tope" context).
+ */
+export function formatMillionsCompact(n: number | null | undefined): string {
+  return `${millionsCompact.format(safe(n) / 1_000_000)}M`
+}
+
 /**
  * Display helper for the seeded short date. The mock stores dates as already
  * human-friendly strings (e.g. "Jun 12"); this pass-through trims and provides a

@@ -12,6 +12,7 @@ import HomeIcon from '@mui/icons-material/Home'
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import ReceiptLongOutlinedIcon from '@mui/icons-material/ReceiptLongOutlined'
+import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined'
 import { AccountMenu } from './AccountMenu'
 import { MonthSwitcher } from './MonthSwitcher'
@@ -35,7 +36,7 @@ const MOBILE_SCROLL_CLEARANCE =
 /** A navigable destination wired to a router route. */
 interface NavRoute {
   kind: 'route'
-  to: '/' | '/transactions'
+  to: '/' | '/transactions' | '/monotributo'
   /** Sidebar label. */
   label: string
   /** Shorter label for the mobile bottom nav (concept uses "Activity"). */
@@ -46,15 +47,7 @@ interface NavRoute {
   activeIcon: ReactNode
 }
 
-/** A placeholder destination that is visibly present but inert (ADR-017). */
-interface NavPlaceholder {
-  kind: 'placeholder'
-  label: string
-  shortLabel: string
-  icon: ReactNode
-}
-
-type NavItem = NavRoute | NavPlaceholder
+type NavItem = NavRoute
 
 const NAV_ITEMS: NavItem[] = [
   {
@@ -74,10 +67,12 @@ const NAV_ITEMS: NavItem[] = [
     activeIcon: <ReceiptLongIcon fontSize="small" />,
   },
   {
-    kind: 'placeholder',
+    kind: 'route',
+    to: '/monotributo',
     label: 'Monotributo',
     shortLabel: 'Mono',
     icon: <AccountBalanceOutlinedIcon fontSize="small" />,
+    activeIcon: <AccountBalanceIcon fontSize="small" />,
   },
 ]
 
@@ -172,26 +167,6 @@ function Sidebar({ onAddTransaction }: { onAddTransaction: () => void }) {
           textDecoration: 'none',
         }
 
-        if (item.kind === 'placeholder') {
-          return (
-            <Box
-              key={item.label}
-              aria-disabled
-              title={`${item.label} — coming soon`}
-              sx={{
-                ...common,
-                color: 'text.disabled',
-                cursor: 'default',
-                opacity: 0.65,
-                '& .MuiSvgIcon-root': { flex: 'none' },
-              }}
-            >
-              {item.icon}
-              {item.label}
-            </Box>
-          )
-        }
-
         const active = pathname === item.to
         return (
           <Box
@@ -245,7 +220,7 @@ const PILL_ITEM_SX = {
  * and `aria-current="page"` when active. The active item is conveyed beyond hue
  * (ADR-019): a gold-tinted rounded highlight behind the icon PLUS the gold icon
  * color PLUS the route's filled icon variant; inactive items stay muted/outlined
- * with no background. The Monotributo item is present but inert/dimmed.
+ * with no background.
  */
 function FloatingNavPill() {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
@@ -275,25 +250,6 @@ function FloatingNavPill() {
       }}
     >
       {NAV_ITEMS.map((item) => {
-        if (item.kind === 'placeholder') {
-          return (
-            <Box
-              key={item.label}
-              role="img"
-              aria-label={`${item.label} (coming soon)`}
-              title={`${item.label} — coming soon`}
-              sx={{
-                ...PILL_ITEM_SX,
-                color: 'text.disabled',
-                opacity: 0.5,
-                cursor: 'default',
-              }}
-            >
-              {item.icon}
-            </Box>
-          )
-        }
-
         const active = pathname === item.to
         return (
           <Box

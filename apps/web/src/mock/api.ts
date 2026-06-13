@@ -15,12 +15,18 @@ import {
   SEED_CATEGORY_BREAKDOWN,
   SEED_INSIGHTS,
   SEED_MONOTRIBUTO,
+  SEED_MONOTRIBUTO_INVOICES,
+  SEED_MONOTRIBUTO_PROJECTION,
+  SEED_MONOTRIBUTO_SCALE,
   SEED_TRANSACTIONS,
   SEED_TREND,
 } from './seed'
 import type {
   CategorySpend,
   Insight,
+  MonotributoInvoice,
+  MonotributoProjection,
+  MonotributoScaleRow,
   MonotributoState,
   NewTransactionInput,
   Transaction,
@@ -130,6 +136,21 @@ export function getMonotributo(): Promise<MonotributoState> {
   return withLatency({ ...SEED_MONOTRIBUTO })
 }
 
+/** Official AFIP/ARCA 2026 category scale A–K (read-only reference data). */
+export function getMonotributoScale(): Promise<MonotributoScaleRow[]> {
+  return withLatency(SEED_MONOTRIBUTO_SCALE.map((r) => ({ ...r })))
+}
+
+/** Fiscal-period invoices behind the annual total (read-only seed snapshot). */
+export function getMonotributoInvoices(): Promise<MonotributoInvoice[]> {
+  return withLatency(SEED_MONOTRIBUTO_INVOICES.map((i) => ({ ...i })))
+}
+
+/** Linear pace projection figures (read-only seed snapshot). */
+export function getMonotributoProjection(): Promise<MonotributoProjection> {
+  return withLatency({ ...SEED_MONOTRIBUTO_PROJECTION })
+}
+
 /** 6-month spending trend (read-only seed snapshot). */
 export function getTrend(): Promise<TrendPoint[]> {
   return withLatency(SEED_TREND.map((p) => ({ ...p })))
@@ -152,6 +173,9 @@ export const mockApi = {
   updateTransaction,
   deleteTransaction,
   getMonotributo,
+  getMonotributoScale,
+  getMonotributoInvoices,
+  getMonotributoProjection,
   getTrend,
   getCategoryBreakdown,
   getInsights,
