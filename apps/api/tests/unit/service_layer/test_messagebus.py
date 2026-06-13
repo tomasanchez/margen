@@ -1,0 +1,160 @@
+"""Test suite for internal message dispatch."""
+
+from collections.abc import Iterator
+from unittest.mock import patch
+
+import pytest
+
+from margen_api.domain.messages import Command, Event, Message
+from margen_api.service_layer.messagebus import MessageBus, UnhandledCommand
+from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
+
+
+class _SampleCommand(Command):
+    """A sample command used to drive the message bus under test."""
+
+    label: str
+
+
+class _SampleEvent(Event):
+    """A sample event raised while handling the sample command."""
+
+    label: str
+
+
+class _StubUnitOfWork(AbstractUnitOfWork):
+    """A unit of work that surfaces a fixed set of collected events."""
+
+    def __init__(self, events: list[Event] | None = None):
+        """Initialize the stub with the events to drain after a command."""
+        self._events = events or []
+        self.committed = False
+        self.rolled_back = False
+
+    async def commit(self) -> None:
+        """Record a commit."""
+        self.committed = True
+
+    async def rollback(self) -> None:
+        """Record a rollback."""
+        self.rolled_back = True
+
+    def collect_new_events(self) -> Iterator[Event]:
+        """Yield the events queued for this transaction."""
+        yield from self._events
+
+
+class TestMessageBus:
+    """Test cases for internal command and event dispatch."""
+
+    async def test_dispatches_events_raised_by_command_handlers(self):
+        """
+        GIVEN a message bus whose command handler raises a domain event
+        WHEN the command is dispatched
+        THEN the resulting domain event reaches its registered handler
+        """
+        # GIVEN
+        event = _SampleEvent(label="raised")
+        published: list[_SampleEvent] = []
+
+        async def handle_command(command: _SampleCommand, uow: AbstractUnitOfWork) -> str:
+            return command.label
+
+        async def publish(captured: _SampleEvent) -> None:
+            published.append(captured)
+
+        bus = MessageBus(
+            uow_factory=lambda: _StubUnitOfWork([event]),
+            command_handlers={_SampleCommand: handle_command},
+            event_handlers={_SampleEvent: [publish]},
+        )
+
+        # WHEN
+        result = await bus.handle(_SampleCommand(label="ok"))
+
+        # THEN
+        assert result == "ok"
+        assert published == [event]
+
+    async def test_logs_event_handler_failures_and_continues(self):
+        """
+        GIVEN an event handler that raises an exception
+        WHEN a domain event is dispatched
+        THEN the failure is logged without failing the command
+        """
+
+        # GIVEN
+        async def handle_command(command: _SampleCommand, uow: AbstractUnitOfWork) -> str:
+            return command.label
+
+        async def fail_to_publish(event: _SampleEvent) -> None:
+            raise RuntimeError(event.label)
+
+        bus = MessageBus(
+            uow_factory=lambda: _StubUnitOfWork([_SampleEvent(label="boom")]),
+            command_handlers={_SampleCommand: handle_command},
+            event_handlers={_SampleEvent: [fail_to_publish]},
+        )
+
+        # WHEN
+        with patch("margen_api.service_layer.messagebus.log.exception") as log_exception:
+            result = await bus.handle(_SampleCommand(label="ok"))
+
+        # THEN
+        assert result == "ok"
+        log_exception.assert_called_once()
+
+    async def test_rejects_messages_without_command_or_event_semantics(self):
+        """
+        GIVEN a base message without command or event semantics
+        WHEN the message bus receives it
+        THEN the unsupported message is rejected
+        """
+        # GIVEN
+        bus = MessageBus(uow_factory=_StubUnitOfWork, command_handlers={}, event_handlers={})
+
+        # WHEN / THEN
+        with pytest.raises(TypeError, match="Unsupported message type"):
+            await bus.handle(Message())
+
+    async def test_rejects_commands_without_a_registered_handler(self):
+        """
+        GIVEN a message bus with no handler for a command type
+        WHEN that command is dispatched
+        THEN the bus raises an explicit unhandled-command error
+        """
+        # GIVEN
+        bus = MessageBus(uow_factory=_StubUnitOfWork, command_handlers={}, event_handlers={})
+
+        # WHEN / THEN
+        with pytest.raises(UnhandledCommand, match="_SampleCommand"):
+            await bus.handle(_SampleCommand(label="ok"))
+
+
+class TestUnitOfWorkEventCollection:
+    """Test event collection on the abstract unit of work."""
+
+    def test_yields_nothing_for_a_transaction_without_aggregates(self):
+        """
+        GIVEN a unit of work that tracked no aggregates
+        WHEN events are collected
+        THEN the collection yields nothing instead of raising
+        """
+
+        # GIVEN
+        class _EmptyUnitOfWork(AbstractUnitOfWork):
+            """A unit of work that tracks no aggregates."""
+
+            async def commit(self) -> None:
+                """Do nothing."""
+
+            async def rollback(self) -> None:
+                """Do nothing."""
+
+        uow = _EmptyUnitOfWork()
+
+        # WHEN
+        events = list(uow.collect_new_events())
+
+        # THEN
+        assert events == []

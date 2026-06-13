@@ -1,0 +1,86 @@
+# Margen API CI (FastAPI backend, apps/api).
+# Workflow-level path filter: GitHub Actions `paths:` is per-workflow, not per-job,
+# so this file only runs when apps/api or this workflow itself changes.
+
+name: API
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'apps/api/**'
+      - '.github/workflows/api.yml'
+  pull_request:
+    branches: [ '**' ]
+    paths:
+      - 'apps/api/**'
+      - '.github/workflows/api.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  # Install, lint/type-check, ADR registry check, coverage gate, image build.
+  build:
+    name: Build & coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: make dev
+      - name: Lint and type-check
+        run: make lint
+      - name: ADR registry check
+        run: make adr-check
+      - name: Test with coverage gate
+        run: make cover
+      # docker build needs an explicit context path; working-directory does not
+      # apply to the build context, so we point at apps/api from the repo root.
+      - name: Build image
+        run: docker build apps/api --file apps/api/Dockerfile --tag margen-api:${{ github.sha }}
+        working-directory: ${{ github.workspace }}
+
+  # Integration tier: real PostgreSQL (pgvector) + migrations + integration tests.
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: margen-api
+          POSTGRES_PASSWORD: margen-api
+          POSTGRES_DB: margen-api
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U margen-api -d margen-api"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://margen-api:margen-api@localhost:5432/margen-api
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: make dev
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+      - name: Run the PostgreSQL integration tier
+        run: make integration

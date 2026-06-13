@@ -1,0 +1,97 @@
+"""
+Test Cases for Monitor Entrypoint.
+"""
+
+from unittest.mock import patch
+
+import httpx
+import pytest
+from fastapi import status
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from margen_api.asgi import get_application
+from margen_api.bootstrap import ApplicationContainer
+from margen_api.entrypoint.schemas import LivenessProbed, ReadinessProbed, ResponseModel
+
+
+class TestMonitorEntryPoint:
+    async def test_api_root_redirects_to_docs(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a FastAPI application configured with the Monitor Entrypoint
+        WHEN the root path is requested "GET /"
+        THEN it should redirect to the docs "GET /docs"
+        """
+
+        # when
+        response = await test_client.get("/")
+
+        # then
+        assert response.status_code == status.HTTP_301_MOVED_PERMANENTLY
+        assert response.headers["location"] == "/docs"
+
+    async def test_liveness_probe(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a FastAPI application configured with the Monitor Entrypoint
+        WHEN the liveness probe is requested "GET /liveness"
+        THEN it should return 200, and a valid LivenessProbed JSON
+        """
+
+        # when
+        response = await test_client.get("/liveness")
+
+        # then
+        assert response.status_code == status.HTTP_200_OK
+        try:
+            ResponseModel[LivenessProbed].model_validate_json(response.content)
+        except ValueError:
+            pytest.fail("Response body is not a valid LivenessProbed JSON")
+
+    async def test_readiness_probe_when_database_is_reachable(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a FastAPI application whose database is reachable
+        WHEN the readiness probe is requested "GET /readiness"
+        THEN it should return 200, and a ReadinessProbed JSON with status "Ready"
+        """
+
+        # when
+        response = await test_client.get("/readiness")
+
+        # then
+        assert response.status_code == status.HTTP_200_OK
+        try:
+            probe = ResponseModel[ReadinessProbed].model_validate_json(response.content)
+        except ValueError:
+            pytest.fail("Response body is not a valid ReadinessProbed JSON")
+        assert isinstance(probe.data, ReadinessProbed)
+        assert probe.data.status == "Ready"
+
+    async def test_readiness_probe_when_database_is_unreachable(self, container: ApplicationContainer):
+        """
+        GIVEN a FastAPI application whose database engine is unreachable
+        WHEN the readiness probe is requested "GET /readiness"
+        THEN it should return 503, and a ReadinessProbed JSON with status "Error"
+        """
+
+        # given
+        app = get_application(container)
+
+        # Force every connection attempt to fail so the probe exercises its
+        # error branch even with an in-memory StaticPool.
+        def _raise_on_connect(self: AsyncEngine) -> None:
+            raise SQLAlchemyError
+
+        transport = httpx.ASGITransport(app=app)
+        with patch.object(AsyncEngine, "connect", _raise_on_connect):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                # when
+                response = await client.get("/readiness")
+
+        # then
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        try:
+            probe = ResponseModel[ReadinessProbed].model_validate_json(response.content)
+        except ValueError:
+            pytest.fail("Response body is not a valid ReadinessProbed JSON")
+        assert isinstance(probe.data, ReadinessProbed)
+        assert probe.data.status == "Error"

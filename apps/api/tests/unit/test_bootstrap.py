@@ -1,0 +1,37 @@
+"""Test suite for application composition."""
+
+from margen_api.bootstrap import bootstrap
+from margen_api.settings.database_settings import DatabaseSettings
+
+
+class TestBootstrap:
+    """Test cases for application dependency composition."""
+
+    async def test_skips_schema_creation_by_default(self):
+        """
+        GIVEN a container configured without automatic schema creation
+        WHEN the application starts and stops
+        THEN lifecycle hooks complete without creating tables
+        """
+        # GIVEN
+        container = bootstrap(DatabaseSettings(URL="sqlite+aiosqlite://", AUTO_CREATE_SCHEMA=False))
+
+        # WHEN
+        await container.startup()
+        await container.shutdown()
+
+        # THEN
+        assert container.auto_create_schema is False
+
+    async def test_uses_a_regular_pool_for_a_file_backed_database(self):
+        """
+        GIVEN a file-backed (non in-memory) database URL
+        WHEN the container is composed
+        THEN the static-pool branch is skipped and a normal engine is built
+        """
+        # GIVEN / WHEN
+        container = bootstrap(DatabaseSettings(URL="sqlite+aiosqlite:///./build/example.db", AUTO_CREATE_SCHEMA=False))
+
+        # THEN
+        assert "memory" not in str(container.engine.url)
+        await container.shutdown()
