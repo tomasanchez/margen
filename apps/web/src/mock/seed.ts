@@ -50,10 +50,10 @@ export const BANKS: readonly Bank[] = [
  * Sorting/grouping is the consumer's responsibility; this is source order.
  */
 export const SEED_TRANSACTIONS: readonly Transaction[] = [
-  { id: 1, dispDate: 'Jun 12', month: 'June', name: 'Invoice · Cliente Atlas', category: 'Income', bank: 'Transfer', currency: 'USD', type: 'income', kind: 'invoice', amountNum: 622500, usd: 500, rate: 1245 },
-  { id: 2, dispDate: 'Jun 11', month: 'June', name: 'Supermercado Coto', category: 'Food', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 38400 },
+  { id: 1, dispDate: 'Jun 12', month: 'June', name: 'Invoice · Atlas Co.', category: 'Income', bank: 'Transfer', currency: 'USD', type: 'income', kind: 'invoice', amountNum: 622500, usd: 500, rate: 1245 },
+  { id: 2, dispDate: 'Jun 11', month: 'June', name: 'Coto supermarket', category: 'Food', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 38400 },
   { id: 3, dispDate: 'Jun 10', month: 'June', name: 'Netflix · Spotify', category: 'Subscriptions', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 14200, recurring: true },
-  { id: 4, dispDate: 'Jun 09', month: 'June', name: 'Alquiler depto', category: 'Rent', bank: 'Transfer', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 720000, recurring: true },
+  { id: 4, dispDate: 'Jun 09', month: 'June', name: 'Apartment rent', category: 'Rent', bank: 'Transfer', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 720000, recurring: true },
   { id: 5, dispDate: 'Jun 08', month: 'June', name: 'Uber', category: 'Transport', bank: 'Brubank', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 6800 },
   { id: 6, dispDate: 'Jun 07', month: 'June', name: 'Refund · MercadoLibre', category: 'Income', bank: 'Mercado Pago', currency: 'ARS', type: 'income', kind: 'income', amountNum: 18500 },
   { id: 7, dispDate: 'Jun 06', month: 'June', name: 'Farmacity', category: 'Health', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 22300 },
@@ -61,14 +61,14 @@ export const SEED_TRANSACTIONS: readonly Transaction[] = [
   { id: 9, dispDate: 'Jun 03', month: 'June', name: 'AWS', category: 'Subscriptions', bank: 'Galicia · Visa', currency: 'USD', type: 'expense', kind: 'expense', amountNum: 39616, usd: 32, rate: 1238, recurring: true },
   { id: 10, dispDate: 'May 28', month: 'May', name: 'Invoice · Beta Studio', category: 'Income', bank: 'Transfer', currency: 'ARS', type: 'income', kind: 'invoice', amountNum: 1480000 },
   { id: 11, dispDate: 'May 24', month: 'May', name: 'Carrefour', category: 'Food', bank: 'Santander · Mastercard', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 41200 },
-  { id: 12, dispDate: 'May 20', month: 'May', name: 'Edenor (luz)', category: 'Services', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 33500, recurring: true },
-  { id: 13, dispDate: 'May 15', month: 'May', name: 'YPF Nafta', category: 'Transport', bank: 'Santander · Mastercard', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 28000 },
-  { id: 14, dispDate: 'May 12', month: 'May', name: 'Invoice · Cliente Atlas', category: 'Income', bank: 'Transfer', currency: 'USD', type: 'income', kind: 'invoice', amountNum: 605000, usd: 500, rate: 1210 },
-  { id: 15, dispDate: 'May 09', month: 'May', name: 'Alquiler depto', category: 'Rent', bank: 'Transfer', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 700000, recurring: true },
+  { id: 12, dispDate: 'May 20', month: 'May', name: 'Edenor (electricity)', category: 'Services', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 33500, recurring: true },
+  { id: 13, dispDate: 'May 15', month: 'May', name: 'YPF fuel', category: 'Transport', bank: 'Santander · Mastercard', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 28000 },
+  { id: 14, dispDate: 'May 12', month: 'May', name: 'Invoice · Atlas Co.', category: 'Income', bank: 'Transfer', currency: 'USD', type: 'income', kind: 'invoice', amountNum: 605000, usd: 500, rate: 1210 },
+  { id: 15, dispDate: 'May 09', month: 'May', name: 'Apartment rent', category: 'Rent', bank: 'Transfer', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 700000, recurring: true },
   { id: 16, dispDate: 'May 05', month: 'May', name: 'Spotify · Netflix', category: 'Subscriptions', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 13900, recurring: true },
   { id: 17, dispDate: 'Apr 27', month: 'April', name: 'Invoice · Gamma SA', category: 'Income', bank: 'Transfer', currency: 'ARS', type: 'income', kind: 'invoice', amountNum: 980000 },
   { id: 18, dispDate: 'Apr 18', month: 'April', name: 'Coto', category: 'Food', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 37800 },
-  { id: 19, dispDate: 'Apr 10', month: 'April', name: 'Alquiler depto', category: 'Rent', bank: 'Transfer', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 700000, recurring: true },
+  { id: 19, dispDate: 'Apr 10', month: 'April', name: 'Apartment rent', category: 'Rent', bank: 'Transfer', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 700000, recurring: true },
 ] as const
 
 /**
@@ -89,7 +89,7 @@ export const SEED_MONOTRIBUTO: MonotributoState = {
 
 /**
  * The official AFIP/ARCA Monotributo 2026 scale, categories A–K (ADR-020,
- * ADR-023). Annual gross-income ceiling + monthly cuotas (servicios / bienes),
+ * ADR-023). Annual gross-income ceiling + monthly fees (services / goods),
  * all in ARS. Hardcoded reference data; the page links to ARCA for the source
  * of truth and this must be refreshed when AFIP revises the scale.
  */
@@ -121,12 +121,12 @@ export const ARCA_SCALE_URL =
 export const SEED_MONOTRIBUTO_INVOICES: readonly MonotributoInvoice[] = (() => {
   const raw: ReadonlyArray<Omit<MonotributoInvoice, 'id' | 'cumulative'>> = [
     { dispDate: 'Jan 22', client: 'Beta Studio', note: 'Setup + retainer', amountNum: 4_106_196, fx: false },
-    { dispDate: 'Feb 18', client: 'Delta Corp', note: 'Consultoría Q1', amountNum: 3_150_000, fx: false },
-    { dispDate: 'Mar 20', client: 'Cliente Atlas', note: 'USD 1.500 · MEP 1.180', amountNum: 1_770_000, fx: true },
-    { dispDate: 'Apr 27', client: 'Gamma SA', note: 'Proyecto web', amountNum: 980_000, fx: false },
-    { dispDate: 'May 12', client: 'Cliente Atlas', note: 'USD 500 · MEP 1.210', amountNum: 605_000, fx: true },
-    { dispDate: 'May 28', client: 'Beta Studio', note: 'Retainer · mayo', amountNum: 1_480_000, fx: false },
-    { dispDate: 'Jun 12', client: 'Cliente Atlas', note: 'USD 500 · MEP 1.245', amountNum: 622_500, fx: true },
+    { dispDate: 'Feb 18', client: 'Delta Corp', note: 'Consulting Q1', amountNum: 3_150_000, fx: false },
+    { dispDate: 'Mar 20', client: 'Atlas Co.', note: 'USD 1.500 · MEP 1.180', amountNum: 1_770_000, fx: true },
+    { dispDate: 'Apr 27', client: 'Gamma SA', note: 'Web project', amountNum: 980_000, fx: false },
+    { dispDate: 'May 12', client: 'Atlas Co.', note: 'USD 500 · MEP 1.210', amountNum: 605_000, fx: true },
+    { dispDate: 'May 28', client: 'Beta Studio', note: 'Retainer · May', amountNum: 1_480_000, fx: false },
+    { dispDate: 'Jun 12', client: 'Atlas Co.', note: 'USD 500 · MEP 1.245', amountNum: 622_500, fx: true },
   ]
   let running = 0
   return raw.map((r, index) => {

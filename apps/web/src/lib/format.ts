@@ -154,9 +154,9 @@ const millionsCompact = new Intl.NumberFormat('es-AR', {
 })
 
 /**
- * Compact "millions" label used in the category ladder / tope chips, e.g.
+ * Compact "millions" label used in the category ladder / cap chips, e.g.
  * 21113697 -> "21,1M", 108357084 -> "108,4M". es-AR decimal comma; no currency
- * prefix (callers add "ARS" / "tope" context).
+ * prefix (callers add "ARS" / "cap" context).
  */
 export function formatMillionsCompact(n: number | null | undefined): string {
   return `${millionsCompact.format(safe(n) / 1_000_000)}M`

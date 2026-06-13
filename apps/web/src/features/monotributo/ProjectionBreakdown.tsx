@@ -3,7 +3,7 @@
  *
  * A short definition-style list of the linear pace inputs (invoiced to date,
  * monthly average, projected 12-mo total, lands-in category) followed by an
- * amber note explaining the cuota impact of recategorizing. The projection is
+ * amber note explaining the fee impact of recategorizing. The projection is
  * illustrative only — labeled as a pace estimate, not a guarantee.
  */
 
@@ -77,7 +77,7 @@ export function ProjectionBreakdown({ projection }: ProjectionBreakdownProps) {
           <Box component="span" sx={{ fontFamily: 'inherit' }}>
             Category {projection.landsInCategory}{' '}
             <Box component="span" sx={{ color: 'var(--mg-text-3)' }}>
-              · tope {projection.landsInCeilingLabel}
+              · cap {projection.landsInCeilingLabel}
             </Box>
           </Box>
         </Row>
@@ -109,7 +109,7 @@ export function ProjectionBreakdown({ projection }: ProjectionBreakdownProps) {
           sx={{ fontSize: 12.5, lineHeight: 1.5, textWrap: 'pretty' }}
           color="var(--mg-text-mid)"
         >
-          Moving to Category {projection.landsInCategory} raises your monthly cuota{' '}
+          Moving to Category {projection.landsInCategory} raises your monthly fee{' '}
           <Box
             component="span"
             sx={{ fontFamily: monoFontFamily, color: 'var(--mg-text)' }}

@@ -101,7 +101,7 @@ export function MonotributoPage() {
               <Box component="span" sx={{ color: 'var(--mg-text-mid)', fontWeight: 500 }}>
                 {monotributo.category}
               </Box>{' '}
-              · servicios · monthly cuota{' '}
+              · services · monthly fee{' '}
               {projection ? (
                 <Box
                   component="span"

@@ -109,7 +109,7 @@ test('lists the seeded invoices in the drilldown with a Transactions link', asyn
   expect(scoped.getAllByText('Beta Studio').length).toBeGreaterThan(0)
   expect(scoped.getAllByText('Delta Corp').length).toBeGreaterThan(0)
   expect(scoped.getAllByText('Gamma SA').length).toBeGreaterThan(0)
-  expect(scoped.getAllByText('Cliente Atlas').length).toBeGreaterThan(0)
+  expect(scoped.getAllByText('Atlas Co.').length).toBeGreaterThan(0)
 
   // Footer total + a real drill-in link to /transactions.
   expect(scoped.getByText('7 invoices · 2026')).toBeInTheDocument()

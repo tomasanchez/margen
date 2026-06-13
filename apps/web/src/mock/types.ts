@@ -139,9 +139,9 @@ export interface MonotributoScaleRow {
   letter: string
   /** Annual gross-income ceiling (ARS) for the category. */
   annualCeiling: number
-  /** Monthly cuota for "servicios" activity (ARS). */
+  /** Monthly fee for "services" activity (ARS). */
   cuotaServicios: number
-  /** Monthly cuota for "bienes" activity (ARS). */
+  /** Monthly fee for "goods" activity (ARS). */
   cuotaBienes: number
 }
 
@@ -187,9 +187,9 @@ export interface MonotributoProjection {
   landsInCategory: string
   /** Compact ceiling label for the landing category, e.g. "26,2M". */
   landsInCeilingLabel: string
-  /** Current monthly cuota (ARS) before any recategorization. */
+  /** Current monthly fee (ARS) before any recategorization. */
   currentCuota: number
-  /** Projected monthly cuota (ARS) after recategorization. */
+  /** Projected monthly fee (ARS) after recategorization. */
   projectedCuota: number
   /** Approx. month the ceiling is reached at this pace, e.g. "October". */
   ceilingMonth: string

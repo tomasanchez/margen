@@ -157,11 +157,11 @@ describe('filter-state helpers', () => {
 describe('buildEditPrefill', () => {
   test('maps an expense row to a prefill shaped like NewTransactionInput', () => {
     const expense = SEED_TRANSACTIONS.find(
-      (t): t is Transaction => t.name === 'Supermercado Coto',
+      (t): t is Transaction => t.name === 'Coto supermarket',
     )!
     const prefill = buildEditPrefill(expense)
     expect(prefill).toMatchObject({
-      name: 'Supermercado Coto',
+      name: 'Coto supermarket',
       type: 'expense',
       category: 'Food',
       bank: 'Galicia · Visa',

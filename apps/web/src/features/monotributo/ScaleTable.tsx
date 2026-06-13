@@ -2,11 +2,11 @@
  * Full official scale table — "Monotributo 2026 — full scale" (ADR-019, ADR-023).
  *
  * The complete A–K AFIP/ARCA scale: category, annual gross-income ceiling, and
- * the servicios / bienes cuotas. The current and projected rows are marked with
+ * the services / goods fees. The current and projected rows are marked with
  * a text tag ("Current" / "Projected") AND a leading dot glyph (filled vs. open)
  * — distinguished beyond color alone. An external ARCA link (the source of
  * truth) opens in a new tab with rel="noopener noreferrer". Desktop is a 5-column
- * grid; mobile is a compact category/ceiling/cuota list.
+ * grid; mobile is a compact category/ceiling/fee list.
  */
 
 import Box from '@mui/material/Box'
@@ -66,7 +66,7 @@ function ArcaLink({
           sx={{ width: 7, height: 7, borderRadius: '2px', bgcolor: 'var(--mg-gold)' }}
         />
       ) : null}
-      {isButton ? 'ARCA · tabla oficial' : 'Ver categorías en arca.gob.ar'}
+      {isButton ? 'ARCA · official table' : 'View categories on arca.gob.ar'}
       <Box component="span" aria-hidden sx={{ color: 'text.disabled' }}>
         ↗
       </Box>
@@ -90,7 +90,7 @@ export function ScaleTable({
   return (
     <SectionCard
       title="Monotributo 2026 — full scale"
-      subtitle="Escala oficial vigente desde el 1 de febrero de 2026 · próxima revisión jul / ago 2026"
+      subtitle="Official scale, in effect since February 1, 2026 · next review Jul / Aug 2026"
       action={<ArcaLink href={arcaUrl} variant="button" />}
     >
       {/* Desktop table header. */}
@@ -112,9 +112,9 @@ export function ScaleTable({
         }}
       >
         <Box>Cat.</Box>
-        <Box>Ingresos brutos anuales</Box>
-        <Box sx={{ textAlign: 'right' }}>Cuota · servicios</Box>
-        <Box sx={{ textAlign: 'right' }}>Cuota · bienes</Box>
+        <Box>Annual gross income</Box>
+        <Box sx={{ textAlign: 'right' }}>Fee · services</Box>
+        <Box sx={{ textAlign: 'right' }}>Fee · goods</Box>
         <Box />
       </Box>
 
@@ -152,9 +152,9 @@ export function ScaleTable({
             Cat.
           </Box>
           <Box component="span" sx={{ flex: 1 }}>
-            Ingresos
+            Income
           </Box>
-          <Box component="span">Cuota serv.</Box>
+          <Box component="span">Fee · serv.</Box>
           <Box sx={{ width: 42, flex: 'none' }} />
         </Box>
 
@@ -364,10 +364,10 @@ export function ScaleTable({
           sx={{ fontSize: 11.5, lineHeight: 1.5, maxWidth: 560, textWrap: 'pretty' }}
           color="text.disabled"
         >
-          La cuota incluye componente impositivo, aporte al SIPA y obra social.
-          Valores redondeados; montos con centavos en el sitio de ARCA. Desde 2026
-          la escala llega hasta la categoría K tanto para servicios como para
-          bienes.
+          The fee includes the tax component, the SIPA (pension) contribution,
+          and the health-insurance contribution. Values are rounded; exact
+          amounts (with cents) are on the ARCA site. Since 2026 the scale runs up
+          to category K for both services and goods.
         </Typography>
         <ArcaLink href={arcaUrl} variant="text" />
       </Box>
