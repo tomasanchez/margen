@@ -15,7 +15,7 @@ import Typography from '@mui/material/Typography'
 import { monoFontFamily } from '../../theme'
 import { formatCurrency } from '../../lib/format'
 import type { CategorySpend } from '../../mock/types'
-import { SectionCard } from './SectionCard'
+import { SectionCard } from '../../components/SectionCard'
 
 export interface CategoryBreakdownProps {
   categories: CategorySpend[] | undefined

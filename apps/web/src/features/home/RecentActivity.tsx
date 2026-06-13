@@ -19,7 +19,7 @@ import { Amount } from '../../components/Amount'
 import { monoFontFamily } from '../../theme'
 import { formatDispDate } from '../../lib/format'
 import type { Transaction } from '../../mock/types'
-import { SectionCard } from './SectionCard'
+import { SectionCard } from '../../components/SectionCard'
 
 /** Small bordered badge (recurring / FX), token-colored. */
 function RowBadge({
