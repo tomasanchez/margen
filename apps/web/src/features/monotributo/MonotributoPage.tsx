@@ -126,6 +126,8 @@ export function MonotributoPage() {
               border: '1px solid var(--mg-border-2)',
               bgcolor: 'var(--mg-raised)',
               flex: 'none',
+              // Full width on mobile (stacked header); content-width on desktop.
+              width: { xs: '100%', md: 'auto' },
             }}
           >
             <Typography

@@ -130,6 +130,34 @@ export function ScaleTable({
           overflow: 'hidden',
         }}
       >
+        {/* Mobile column header (the desktop grid has its own header above). */}
+        <Box
+          component="li"
+          aria-hidden
+          sx={{
+            display: { xs: 'flex', md: 'none' },
+            alignItems: 'center',
+            gap: 1.25,
+            py: 1,
+            px: 1.5,
+            borderBottom: '1px solid var(--mg-border)',
+            fontSize: 9.5,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            fontWeight: 600,
+            color: 'var(--mg-text-3)',
+          }}
+        >
+          <Box component="span" sx={{ width: 22, flex: 'none' }}>
+            Cat.
+          </Box>
+          <Box component="span" sx={{ flex: 1 }}>
+            Ingresos
+          </Box>
+          <Box component="span">Cuota serv.</Box>
+          <Box sx={{ width: 42, flex: 'none' }} />
+        </Box>
+
         {scale.map((row) => {
           const isCurrent = row.letter === current
           const isProjected = row.letter === projected
