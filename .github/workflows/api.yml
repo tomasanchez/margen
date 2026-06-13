@@ -35,6 +35,14 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: make dev
+      # Fail the build on any known advisory in the locked dependency tree so a
+      # vulnerable package can't reach main (backend parity with the Web npm-audit
+      # gate). pip-audit has no severity threshold; suppress an accepted advisory
+      # with `--ignore-vuln <ID>` if one ever lacks a fix.
+      - name: Audit dependencies (pip-audit)
+        run: |
+          uv export --format requirements-txt --no-emit-project --no-hashes -o requirements-audit.txt
+          uvx pip-audit -r requirements-audit.txt
       - name: Lint and type-check
         run: make lint
       - name: ADR registry check

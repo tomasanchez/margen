@@ -26,7 +26,7 @@ Build apps/web with Vite + React 19 + TypeScript, Material UI (calm finance them
 
 ## Consequences
 
-Establishes the real stack early so product features don't re-scaffold. Adds MUI and TanStack Query dependencies now. No routing layer yet. TanStack Router can be added in a subsequent issue when navigation is scoped. See ADR-006 for how TanStack Query is used to fetch the readiness endpoint.
+Establishes the real stack early so product features don't re-scaffold. Adds MUI and TanStack Query dependencies now. No routing layer yet. TanStack Router can be added in a subsequent issue when navigation is scoped. See ADR-006 for how TanStack Query is used to fetch the readiness endpoint. The "Router deferred" stance was reversed by ADR-014 when issue #12 brought navigation into scope. The placeholder slate-blue theme is evolved (not contradicted) by ADR-013.
 
 ## Status History
 

@@ -24,6 +24,10 @@ Use **two root-level path-filtered workflows**, one per app, both living in the 
 
 The redundant nested `apps/api/.github/workflows/build.yml` was removed, its logic preserved at root.
 
+Both workflows run a blocking dependency-audit step so a vulnerable package can't reach `main`:
+- **Web** runs `npm audit --audit-level=high` after `npm ci` (enforcing ADR-022). Moderate/low advisories are intentionally not gated to avoid noise from transitive dev dependencies; tighten to `--audit-level=moderate` for a stricter bar.
+- **API** runs `pip-audit` against the exported locked dependency tree (`uv export --format requirements-txt --no-emit-project --no-hashes` piped into `uvx pip-audit -r`). `pip-audit` has no severity threshold, so it fails on **any** known advisory; suppress an accepted advisory that lacks a fix with `--ignore-vuln <ID>`.
+
 > **Revised 2026-06-13:** This decision originally specified a single `ci.yml` with no path filters (both apps validated on every push/PR). It was revised before merge to two path-filtered workflows so the API pipeline runs only on `apps/api` changes and the Web pipeline only on `apps/web` changes, and to rename them "API" / "Web". GitHub Actions `paths:` filters are workflow-level (not per-job), so per-app filtering requires separate workflow files.
 
 ## Alternatives Considered

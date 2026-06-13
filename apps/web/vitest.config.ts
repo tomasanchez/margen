@@ -16,5 +16,15 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: false,
+    server: {
+      deps: {
+        // MUI's Tooltip/transition code imports react-transition-group via a
+        // subpath that Vitest's default ESM resolver rejects as a directory
+        // import. Inlining lets Vite transform it so the suite resolves cleanly.
+        // Still required under Vitest 4 (verified: dropping it reintroduces the
+        // react-transition-group directory-import failure).
+        inline: [/@mui\/material/, /react-transition-group/],
+      },
+    },
   },
 })

@@ -1,5 +1,63 @@
+/**
+ * Global stylesheet — Margen tokens + Tailwind v4 + MUI coexistence (ADR-021).
+ *
+ * Order matters: tokens first (defines the --mg-* CSS variables), then Tailwind.
+ * The @theme block maps Tailwind's color utilities onto the SAME shared tokens,
+ * so `bg-gold` / `text-safe` resolve to the exact values MUI's theme reads.
+ * Cascade-layer ordering (mui before utilities) is emitted from main.tsx via
+ * <StyledEngineProvider enableCssLayer> + a GlobalStyles @layer rule, letting
+ * Tailwind utilities override MUI when intentional.
+ */
+
+@import './theme/tokens.css';
+@import 'tailwindcss';
+
+@theme {
+  /* Brand */
+  --color-gold: var(--mg-gold);
+  --color-gold-hover: var(--mg-gold-hover);
+  --color-on-gold: var(--mg-on-gold);
+
+  /* Semantic — Safe / Watch / Risk */
+  --color-safe: var(--mg-safe);
+  --color-watch: var(--mg-watch);
+  --color-risk: var(--mg-risk);
+
+  /* Surfaces */
+  --color-bg: var(--mg-bg);
+  --color-paper: var(--mg-paper);
+  --color-paper-2: var(--mg-paper-2);
+  --color-raised: var(--mg-raised);
+  --color-border: var(--mg-border);
+  --color-border-2: var(--mg-border-2);
+
+  /* Text */
+  --color-text: var(--mg-text);
+  --color-text-mid: var(--mg-text-mid);
+  --color-text-2: var(--mg-text-2);
+  --color-text-3: var(--mg-text-3);
+
+  /* Money */
+  --color-amount: var(--mg-amount);
+
+  /* Brand font families, shared with the MUI theme. */
+  --font-sans: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+}
+
+/*
+ * The app shell owns the viewport exactly (height: 100dvh + overflow: hidden on
+ * its root). Pin html/body/#root to full height with no margin and prevent any
+ * page-level scroll so nothing outside the shell can introduce a window
+ * scrollbar; all scrolling is confined to the shell's inner main container.
+ */
 html,
 body,
 #root {
   height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
 }
