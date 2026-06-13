@@ -94,10 +94,13 @@ test('navigating to Transactions swaps the routed content and active marker', as
   ).toBeInTheDocument()
 })
 
-test('the month switcher exposes accessible step controls', async () => {
+test('the month switcher exposes accessible controls in both presentations', async () => {
   renderShell()
   await screen.findByRole('heading', { name: 'Your command center' })
 
+  // Desktop stepper: prev/next buttons + the live month label. Both the desktop
+  // stepper and the mobile compact picker render in the DOM (display-guarded by
+  // breakpoint), so both presentations are assertable in jsdom.
   expect(
     screen.getByRole('button', { name: 'Previous month' }),
   ).toBeInTheDocument()
@@ -105,6 +108,11 @@ test('the month switcher exposes accessible step controls', async () => {
     screen.getByRole('button', { name: 'Next month' }),
   ).toBeInTheDocument()
   expect(screen.getByLabelText('Selected month: June 2026')).toBeInTheDocument()
+
+  // Mobile compact picker: a floating calendar button labelled with the month.
+  expect(
+    screen.getByRole('button', { name: 'Select month, June 2026' }),
+  ).toBeInTheDocument()
 })
 
 test('the Add-transaction seam opens via the FAB / CTA trigger', async () => {

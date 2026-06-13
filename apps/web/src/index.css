@@ -45,8 +45,19 @@
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
 }
 
+/*
+ * The app shell owns the viewport exactly (height: 100dvh + overflow: hidden on
+ * its root). Pin html/body/#root to full height with no margin and prevent any
+ * page-level scroll so nothing outside the shell can introduce a window
+ * scrollbar; all scrolling is confined to the shell's inner main container.
+ */
 html,
 body,
 #root {
   height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
 }
