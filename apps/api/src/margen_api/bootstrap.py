@@ -11,19 +11,34 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from margen_api.adapters.models.base import Base
+from margen_api.adapters.queries import SqlAlchemyTransactionReader
 from margen_api.adapters.unit_of_work import SqlAlchemyUnitOfWork
 from margen_api.service_layer.messagebus import MessageBus
+from margen_api.service_layer.reader import AbstractTransactionReader
+from margen_api.service_layer.registry import COMMAND_HANDLERS, EVENT_HANDLERS
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
 from margen_api.settings.database_settings import DatabaseSettings
 
 
 @dataclass
 class ApplicationContainer:
-    """Hold process-level application dependencies."""
+    """Hold process-level application dependencies.
+
+    Attributes:
+        engine: The shared async SQLAlchemy engine.
+        session_factory: Factory producing the engine's async sessions.
+        uow_factory: Factory producing a unit of work for write paths.
+        reader_factory: Factory producing a transaction reader for query paths
+            (ADR-028). Each call opens a fresh read-only session so the router
+            can resolve a reader per request without going through the UoW.
+        bus: The message bus that dispatches commands to handlers.
+        auto_create_schema: Whether startup creates tables (demos/tests only).
+    """
 
     engine: AsyncEngine
     session_factory: async_sessionmaker[AsyncSession]
     uow_factory: Callable[[], AbstractUnitOfWork]
+    reader_factory: Callable[[], AbstractTransactionReader]
     bus: MessageBus
     auto_create_schema: bool
 
@@ -60,11 +75,26 @@ def bootstrap(
     engine = create_async_engine(settings.URL, **engine_options)
     session_factory = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
     uow_factory = partial(SqlAlchemyUnitOfWork, session_factory)
-    bus = MessageBus(uow_factory=uow_factory, command_handlers={}, event_handlers={})
+
+    def reader_factory() -> SqlAlchemyTransactionReader:
+        """Build a reader over a fresh read-only session.
+
+        The caller owns the returned reader's ``session`` and is responsible for
+        closing it (the router does so via its FastAPI dependency). Query paths
+        bypass the unit of work by design (ADR-028).
+        """
+        return SqlAlchemyTransactionReader(session_factory())
+
+    bus = MessageBus(
+        uow_factory=uow_factory,
+        command_handlers=dict(COMMAND_HANDLERS),
+        event_handlers={event: list(handlers) for event, handlers in EVENT_HANDLERS.items()},
+    )
     return ApplicationContainer(
         engine=engine,
         session_factory=session_factory,
         uow_factory=uow_factory,
+        reader_factory=reader_factory,
         bus=bus,
         auto_create_schema=settings.AUTO_CREATE_SCHEMA,
     )

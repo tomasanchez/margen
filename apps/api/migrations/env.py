@@ -7,6 +7,7 @@ from alembic import context
 from sqlalchemy import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from margen_api.adapters import models  # noqa: F401  (registers tables on Base.metadata)
 from margen_api.adapters.models.base import Base
 from margen_api.settings.database_settings import DatabaseSettings
 

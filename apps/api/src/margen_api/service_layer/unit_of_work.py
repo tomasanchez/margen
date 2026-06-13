@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from types import TracebackType
 
 from margen_api.domain.messages import Event
+from margen_api.service_layer.repository import AbstractTransactionRepository
 
 
 class IntegrityConflict(RuntimeError):
@@ -14,7 +15,17 @@ class IntegrityConflict(RuntimeError):
 
 
 class AbstractUnitOfWork(ABC):
-    """Provide atomic persistence and event collection."""
+    """Provide atomic persistence and event collection.
+
+    The unit of work exposes the write-side repositories the application needs.
+    Query paths use the reader port (ADR-028) and do not go through the UoW.
+
+    Attributes:
+        transactions: Repository for the ``Transaction`` aggregate, available
+            inside the ``async with`` boundary.
+    """
+
+    transactions: AbstractTransactionRepository
 
     async def __aenter__(self) -> AbstractUnitOfWork:
         """Enter the transaction boundary."""

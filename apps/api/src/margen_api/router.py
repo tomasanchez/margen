@@ -8,7 +8,7 @@ Resources:
 
 from fastapi import APIRouter
 
-from margen_api.entrypoint import monitor
+from margen_api.entrypoint import monitor, transactions
 
 api_v1_prefix: str = "/api/v1"
 
@@ -17,3 +17,6 @@ api_router_v1: APIRouter = APIRouter(prefix=api_v1_prefix)
 
 # Base routers
 root_router.include_router(monitor.router)
+
+# Versioned API routers
+api_router_v1.include_router(transactions.router)
