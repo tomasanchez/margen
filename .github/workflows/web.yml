@@ -37,6 +37,11 @@ jobs:
           cache-dependency-path: apps/web/package-lock.json
       - name: Install dependencies
         run: npm ci
+      # Fail the build on high/critical dependency advisories so a vulnerable
+      # package can't reach main. Moderate/low are not gated to avoid noise from
+      # transitive dev deps; tighten to --audit-level=moderate if desired.
+      - name: Audit dependencies (high+)
+        run: npm audit --audit-level=high
       - name: Lint
         run: npm run lint
       - name: Build
