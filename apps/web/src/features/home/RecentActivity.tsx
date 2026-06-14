@@ -2,7 +2,7 @@
  * Recent activity — the latest few transactions previewed on Home (Issue #12).
  *
  * Each row shows the (mono) date, the name with optional recurring / FX badges,
- * the category, and the <Amount> (with an FX subline for USD rows). Money and
+ * the category · bank, and the <Amount> (with an FX subline for USD rows). Money and
  * dates go through the shared <Amount> / format helpers — no inline number
  * styling. A "View all →" router link opens the full Transactions screen.
  *
@@ -108,7 +108,7 @@ function ActivityRow({ transaction: t }: { transaction: Transaction }) {
             color: 'text.disabled',
           }}
         >
-          {t.category}
+          {t.category} · {t.bank}
         </Typography>
       </Box>
       <Box sx={{ flex: 'none', textAlign: 'right' }}>
