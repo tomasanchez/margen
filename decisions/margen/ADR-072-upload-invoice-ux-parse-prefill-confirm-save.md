@@ -42,3 +42,13 @@ Relates to: ADR-016/056 (money display and display currency), ADR-033/037 (front
 ## Status History
 
 - 2026-06-14: accepted
+
+> **Update (2026-06-14): upload entry point moved onto the invoice form.** Per user feedback, the
+> separate "Upload invoice (PDF)" desktop sidebar button + mobile FAB were removed. The upload now
+> lives ON the invoice input — an "Upload ARCA invoice PDF to autofill" control shown in the Add/Edit
+> form's income/invoice path. Picking a PDF parses it and AUTOFILLS the open form's fields (the parse
+> is non-committal — extraction only); the user reviews and Save remains the decision point, attaching
+> the PDF on save. The duplicate warning and attachment badge are unchanged; a parse failure shows a
+> calm inline message and the form stays usable for manual entry (no separate fallback navigation —
+> the user is already in the form). The confirm-before-save intent of this ADR is preserved; only the
+> entry point changed.

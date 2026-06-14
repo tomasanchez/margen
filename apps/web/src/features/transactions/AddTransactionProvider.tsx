@@ -9,11 +9,12 @@ import { AddEditTransaction } from './AddEditTransaction'
 /**
  * Holds the Add/Edit flow open-state seam (ADR-017).
  *
- * Tracks `isOpen` + `prefill` for the shell's CTA/FAB and Home/Transactions
- * triggers, and renders the shared Add/Edit form ({@link AddEditTransaction}) as
- * a sibling of `children`: a centered Dialog on desktop, a bottom Drawer on
- * mobile, gated on `isOpen`, prefilled from `prefill`, closing via `closeAdd`.
- * No shell code changes — the seam (addContext) is unchanged.
+ * Tracks `isOpen` + `prefill` for the shell's CTA / mobile FAB and the
+ * Home/Transactions add shortcuts. The ARCA invoice import now lives ON the
+ * invoice input inside the Add/Edit form itself (ADR-072): the upload parses,
+ * autofills the form fields, and the user reviews + decides whether to save, so
+ * the provider no longer owns the parse flow. The shared form
+ * ({@link AddEditTransaction}) renders as a sibling of `children`.
  */
 export function AddTransactionProvider({ children }: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false)
@@ -30,7 +31,12 @@ export function AddTransactionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<AddTransactionContextValue>(
-    () => ({ isOpen, prefill, openAdd, closeAdd }),
+    () => ({
+      isOpen,
+      prefill,
+      openAdd,
+      closeAdd,
+    }),
     [isOpen, prefill, openAdd, closeAdd],
   )
 

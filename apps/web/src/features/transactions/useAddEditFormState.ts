@@ -36,6 +36,10 @@ import type {
   NewTransactionInput,
   TxType,
 } from '../../mock/types'
+import type {
+  InvoiceDocumentPayload,
+  InvoiceParse,
+} from '../../api/invoicesClient'
 import type { AddPrefill } from './addContext'
 
 /** Categories shown as expense chips (everything pickable except `Income`). */
@@ -228,6 +232,21 @@ export interface AddEditFormState {
   /** Save is allowed: a positive amount, a present rate for USD, etc. */
   readonly canSave: boolean
 
+  /**
+   * True when the most recently applied ARCA parse flagged the invoice as already
+   * imported (ADR-071/072). Drives the calm, non-blocking duplicate warning in
+   * the form; saving stays allowed. Reset on each new upload.
+   */
+  readonly duplicate: boolean
+
+  /**
+   * Autofill the form from a parsed ARCA invoice (ADR-072). Sets amount, date,
+   * currency + the FX block (when USD), name, and category, stashes the base64
+   * `document` so `buildInput` attaches it on save, and records the `duplicate`
+   * advisory. The user then reviews/edits and decides whether to save.
+   */
+  applyParsedInvoice: (parsed: InvoiceParse) => void
+
   /** Assemble the mutation input from the current state. */
   buildInput: () => NewTransactionInput
 }
@@ -333,6 +352,18 @@ export function useAddEditFormState(
   )
   const [bank, setBank] = useState<Bank>(prefill?.bank ?? DEFAULT_BANK)
   const [notes, setNotes] = useState<string>('')
+
+  // In-form ARCA invoice upload (ADR-072). The parse autofills the fields above
+  // via `applyParsedInvoice`; the base64 `document` is stashed here so saving
+  // attaches the PDF, and `duplicate` drives the calm non-blocking warning. A
+  // parse also supplies the invoice name, kept here so `buildInput` uses it.
+  const [importedDocument, setImportedDocument] = useState<
+    InvoiceDocumentPayload | null
+  >(prefill?.document ?? null)
+  const [duplicate, setDuplicate] = useState<boolean>(false)
+  const [importedName, setImportedName] = useState<string | null>(
+    prefill?.name ?? null,
+  )
 
   // Date picker: ISO YYYY-MM-DD. New transactions default to today; edits
   // prefill from the row's occurredOn (ADR-041). `max` is today (no future).
@@ -442,6 +473,43 @@ export function useAddEditFormState(
     void fetchSuggestion(false)
   }, [fetchSuggestion, fxSource])
 
+  // Autofill the form from a parsed ARCA invoice (ADR-072). Imported invoices
+  // are always income; we set the type/kind + amount/date/currency/name/category
+  // from the parse, seed the FX block when USD (marking the rate user-owned so
+  // the auto-suggest effect never clobbers the declared rate), stash the base64
+  // document for confirm-time attach, and record the duplicate advisory.
+  const applyParsedInvoice = useCallback((parsed: InvoiceParse) => {
+    setType('income')
+    setCountsTowardMonotributo(parsed.countsTowardMonotributo ?? true)
+    setDuplicate(parsed.duplicate)
+    setImportedDocument(parsed.document)
+    if (parsed.name) setImportedName(parsed.name)
+    if (parsed.amount !== undefined) setAmountText(String(parsed.amount))
+    if (parsed.occurredOn) setOccurredOn(parsed.occurredOn)
+
+    const nextCurrency = parsed.currency ?? 'ARS'
+    setCurrency(nextCurrency)
+    if (nextCurrency === 'USD') {
+      // Seed the declared FX from the parse and mark it user-owned so the
+      // USD-suggestion effect leaves it intact (ADR-044/072).
+      if (parsed.fxRate !== undefined) {
+        setRateTextRaw(String(parsed.fxRate))
+        setRateEdited(true)
+        // Narrow the declared rate type to a concrete FX source; anything other
+        // than MEP/official (e.g. `configured_default`) is treated as manual.
+        const source: FxSource =
+          parsed.fxRateType === 'MEP' || parsed.fxRateType === 'official'
+            ? parsed.fxRateType
+            : 'manual'
+        setFxSourceRaw(source)
+      }
+      // The original USD figure is the amount field for a USD entry.
+      if (parsed.usdAmount !== undefined) {
+        setAmountText(String(parsed.usdAmount))
+      }
+    }
+  }, [])
+
   const usdRateMissing = currency === 'USD' && !Number.isFinite(rate)
 
   // The persisted source maps 1:1 from the explicit selection (ADR-044 update).
@@ -471,7 +539,7 @@ export function useAddEditFormState(
           : 'income'
 
     const base: NewTransactionInput = {
-      name: prefill?.name ?? deriveName(type, kind, category),
+      name: importedName ?? prefill?.name ?? deriveName(type, kind, category),
       type,
       kind,
       currency,
@@ -487,6 +555,12 @@ export function useAddEditFormState(
       ...(notes.trim() ? { notes: notes.trim() } : {}),
       ...(prefill?.recurring !== undefined
         ? { recurring: prefill.recurring }
+        : {}),
+      // Carry the imported invoice PDF through to create so confirming the form
+      // persists + links the attachment (ADR-072). Add-only: an edit never
+      // re-attaches. The document comes from the in-form upload (or a prefill).
+      ...(mode === 'add' && importedDocument
+        ? { document: importedDocument }
         : {}),
     }
 
@@ -542,6 +616,8 @@ export function useAddEditFormState(
     amountArs,
     usdRateMissing,
     canSave,
+    duplicate,
+    applyParsedInvoice,
     buildInput,
   }
 }

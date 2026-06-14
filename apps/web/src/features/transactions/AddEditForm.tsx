@@ -14,7 +14,8 @@
  * restoration are handled by the surrounding Dialog/Drawer.
  */
 
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
+import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
@@ -32,6 +33,7 @@ import Typography from '@mui/material/Typography'
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded'
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded'
+import UploadFileIcon from '@mui/icons-material/UploadFile'
 import { BANKS } from '../../mock/seed'
 import type {
   Bank,
@@ -41,12 +43,20 @@ import type {
 } from '../../mock/types'
 import { formatARS, fxSourceLabel } from '../../lib/format'
 import { monoFontFamily } from '../../theme'
+import {
+  InvoicesApiError,
+  parseInvoice,
+} from '../../api/invoicesClient'
 import type { AddPrefill } from './addContext'
 import {
   EXPENSE_CATEGORIES,
   useAddEditFormState,
 } from './useAddEditFormState'
 import type { FxSource } from './useAddEditFormState'
+
+/** Calm copy shown under the upload control when a PDF can't be read (ADR-072/037). */
+const GENERIC_PARSE_ERROR =
+  "Couldn't read this as an ARCA invoice — enter the details manually."
 
 /** Uppercase eyebrow heading shared by the form sections (token-driven). */
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -114,6 +124,45 @@ export function AddEditForm({
 }: AddEditFormProps) {
   const form = useAddEditFormState(prefill)
   const [moreOpen, setMoreOpen] = useState(false)
+
+  // In-form ARCA invoice upload (ADR-072): a calm parsing flag + an inline,
+  // non-blocking failure message. On success the parse autofills the fields; the
+  // user reviews and decides whether to save. On failure they keep going
+  // manually. The hidden picker is reset after each pick so re-picking the same
+  // file fires `change` again.
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isParsing, setIsParsing] = useState(false)
+  const [parseError, setParseError] = useState<string | null>(null)
+
+  const handlePickFile = () => {
+    if (isParsing) return
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    // Clear any prior calm error on a new pick.
+    setParseError(null)
+    setIsParsing(true)
+    void parseInvoice(file)
+      .then((parsed) => {
+        if (parsed.status === 'unparseable') {
+          // A valid-but-unreadable PDF: calm inline message, stay in the form.
+          setParseError(GENERIC_PARSE_ERROR)
+          return
+        }
+        form.applyParsedInvoice(parsed)
+      })
+      .catch((error: unknown) => {
+        // 415 / 413 / 422 (or any failure) → calm inline message; keep editing.
+        setParseError(
+          error instanceof InvoicesApiError ? error.message : GENERIC_PARSE_ERROR,
+        )
+      })
+      .finally(() => setIsParsing(false))
+  }
 
   const amountInputId = useId()
   const rateInputId = useId()
@@ -222,6 +271,23 @@ export function AddEditForm({
         </IconButton>
       </Box>
 
+      {/* Calm, non-blocking duplicate warning for an imported invoice (ADR-072).
+          The user can still review and save; the create path is not blocked. */}
+      {form.duplicate ? (
+        <Alert
+          severity="warning"
+          variant="outlined"
+          sx={{
+            mb: 2.5,
+            borderColor: 'var(--mg-border-2)',
+            '& .MuiAlert-message': { fontSize: 13 },
+          }}
+        >
+          Looks like you already imported this invoice. You can still save it if
+          this is intentional.
+        </Alert>
+      ) : null}
+
       {/* Expense / Invoice·income segmented tabs. */}
       <ToggleButtonGroup
         value={form.type}
@@ -254,6 +320,71 @@ export function AddEditForm({
         <ToggleButton value="expense">Expense</ToggleButton>
         <ToggleButton value="income">Invoice / income</ToggleButton>
       </ToggleButtonGroup>
+
+      {/* Upload-to-autofill, on the invoice/income input only (ADR-072). Picking
+          an ARCA PDF parses it and autofills the fields below; the user reviews
+          and decides whether to save (the parse is non-committal). A failed parse
+          shows a calm inline message and the form stays usable. Expenses aren't
+          invoices, so the control is hidden there. */}
+      {!isExpense ? (
+        <Box sx={{ mb: 2.5 }}>
+          <Button
+            type="button"
+            variant="outlined"
+            color="secondary"
+            fullWidth
+            onClick={handlePickFile}
+            disabled={isParsing}
+            startIcon={
+              isParsing ? (
+                <CircularProgress size={15} thickness={5} color="inherit" />
+              ) : (
+                <UploadFileIcon fontSize="small" />
+              )
+            }
+            sx={{
+              py: 1.1,
+              fontWeight: 600,
+              color: 'text.secondary',
+              borderColor: 'var(--mg-border-2)',
+              borderStyle: 'dashed',
+              textTransform: 'none',
+            }}
+          >
+            {isParsing
+              ? 'Reading your invoice…'
+              : 'Upload ARCA invoice PDF to autofill'}
+          </Button>
+
+          {/* Hidden PDF picker for the upload control. The parse boundary
+              re-validates the type; we accept PDFs to hint the OS dialog. */}
+          <Box
+            component="input"
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf"
+            onChange={handleFileChange}
+            aria-hidden
+            tabIndex={-1}
+            sx={{ display: 'none' }}
+          />
+
+          {/* Calm, inline, non-blocking parse-failure message (ADR-072/037). */}
+          {parseError ? (
+            <Alert
+              severity="warning"
+              variant="outlined"
+              sx={{
+                mt: 1.25,
+                borderColor: 'var(--mg-border-2)',
+                '& .MuiAlert-message': { fontSize: 13 },
+              }}
+            >
+              {parseError}
+            </Alert>
+          ) : null}
+        </Box>
+      ) : null}
 
       {/* Amount. */}
       <SectionLabel>Amount</SectionLabel>
