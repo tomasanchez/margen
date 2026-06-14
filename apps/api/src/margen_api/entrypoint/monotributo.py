@@ -18,15 +18,12 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, status
 
 from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
-from margen_api.domain.models.monotributo_scale import UnknownCategoryError
 from margen_api.entrypoint.dependencies import Bus, MonotributoReader
 from margen_api.entrypoint.monotributo_schemas import (
     MonotributoCaptureResponse,
-    MonotributoConfigResponse,
-    MonotributoConfigUpdateRequest,
     MonotributoSnapshotResponse,
 )
 from margen_api.entrypoint.schemas import ResponseModel
@@ -85,36 +82,3 @@ async def capture_monotributo(bus: Bus) -> ResponseModel[MonotributoCaptureRespo
     """
     await bus.handle(CaptureMonotributoSnapshot(as_of=_today()))
     return ResponseModel(data=MonotributoCaptureResponse())
-
-
-@router.patch(
-    "/config",
-    name="Update Monotributo config",
-    status_code=status.HTTP_200_OK,
-    response_model=ResponseModel[MonotributoConfigResponse],
-)
-async def update_monotributo_config(
-    body: MonotributoConfigUpdateRequest,
-    bus: Bus,
-) -> ResponseModel[MonotributoConfigResponse]:
-    """Set the configured Monotributo category and return the saved config (ADR-048).
-
-    Dispatches ``UpdateMonotributoConfig`` through the bus, which validates the
-    A-K category against the AFIP scale, normalizes it, and UPSERTs the single
-    ``monotributo_config`` row on the unit of work. The persisted values are
-    echoed back. An unknown category letter maps to ``422`` (ADR-030); the next
-    GET re-snapshots with the new category (ADR-052).
-    """
-    try:
-        current_category, activity_type = await bus.handle(body.to_command())
-    except UnknownCategoryError as error:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(error),
-        ) from error
-    return ResponseModel(
-        data=MonotributoConfigResponse.from_persisted(
-            current_category=current_category,
-            activity_type=activity_type,
-        )
-    )

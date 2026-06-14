@@ -15,13 +15,17 @@ from uuid import UUID
 from sqlalchemy import Numeric, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from margen_api.adapters.models.monotributo_config import MonotributoConfigRecord
+from margen_api.adapters.models.app_settings import AppSettingsRecord
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
 from margen_api.adapters.models.transaction import TransactionRecord
+from margen_api.adapters.settings_repository import (
+    DEFAULT_DISPLAY_CURRENCY,
+    DEFAULT_FX_RATE_TYPE,
+    DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
+    DEFAULT_MONOTRIBUTO_CATEGORY,
+)
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
 from margen_api.service_layer.monotributo import (
-    DEFAULT_ACTIVITY_TYPE,
-    DEFAULT_CATEGORY,
     build_snapshot,
     build_standing,
     prior_window,
@@ -35,6 +39,8 @@ from margen_api.service_layer.monotributo_read_models import (
 from margen_api.service_layer.monotributo_reader import AbstractMonotributoReader
 from margen_api.service_layer.read_models import TransactionReadModel
 from margen_api.service_layer.reader import AbstractTransactionReader
+from margen_api.service_layer.settings_read_models import AppSettings
+from margen_api.service_layer.settings_reader import AbstractSettingsReader
 from margen_api.service_layer.summaries import (
     UNCATEGORIZED,
     build_monthly_summary,
@@ -203,7 +209,7 @@ _COUNTS_TOWARD_LIMIT = (
 class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
     """Serve the Monotributo page from server-side aggregation (ADR-046, ADR-052).
 
-    Runs read-only queries over ``transactions``, ``monotributo_config`` and
+    Runs read-only queries over ``transactions``, ``app_settings`` and
     ``monotributo_snapshot`` and projects them into a :class:`MonotributoSnapshot`.
     The standing math (status band, projection, margin) lives in the pure
     :mod:`margen_api.service_layer.monotributo`; this adapter only does I/O and
@@ -262,15 +268,20 @@ class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
         )
 
     async def _configured_category(self) -> tuple[str, str]:
-        """Return the persisted ``(category, activity_type)`` or the defaults."""
+        """Return the ``(category, activity_type)`` from ``app_settings`` (ADR-054).
+
+        The Monotributo category now lives in the single-row ``app_settings`` table
+        (ADR-054, superseding the retired ``monotributo_config``); falls back to the
+        documented settings defaults when no row exists yet.
+        """
         statement = select(
-            MonotributoConfigRecord.current_category,
-            MonotributoConfigRecord.activity_type,
+            AppSettingsRecord.monotributo_current_category,
+            AppSettingsRecord.monotributo_activity_type,
         ).limit(1)
         row = (await self.session.execute(statement)).first()
         if row is None:
-            return DEFAULT_CATEGORY, DEFAULT_ACTIVITY_TYPE
-        return str(row.current_category), str(row.activity_type)
+            return DEFAULT_MONOTRIBUTO_CATEGORY, DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE
+        return str(row.monotributo_current_category), str(row.monotributo_activity_type)
 
     async def _used_in_window(self, window_start: date, window_end: date) -> Decimal:
         """SUM the included income over the inclusive ``[start, end]`` window."""
@@ -330,4 +341,41 @@ class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
             projection_note="Saved snapshot from this period.",
             period_start=record.period_start,
             period_end=record.period_end,
+        )
+
+
+class SqlAlchemySettingsReader(AbstractSettingsReader):
+    """Serve the application settings from the single ``app_settings`` row (ADR-054).
+
+    Runs a read-only query over ``app_settings`` and projects the single row into
+    an :class:`AppSettings` read model. When no row exists yet it returns the
+    documented defaults (ARS / MEP / category ``C`` / services) so the query side
+    never returns ``None``. It never mutates state -- settings writes are a
+    separate command on the unit of work (ADR-054).
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Initialize the reader.
+
+        Args:
+            session: The async session used for read-only queries.
+        """
+        self.session = session
+
+    async def get_settings(self) -> AppSettings:
+        """Return the current settings, or the documented defaults when absent."""
+        statement = select(AppSettingsRecord).limit(1)
+        record = (await self.session.execute(statement)).scalar_one_or_none()
+        if record is None:
+            return AppSettings(
+                preferred_display_currency=DEFAULT_DISPLAY_CURRENCY,
+                fx_default_rate_type=DEFAULT_FX_RATE_TYPE,
+                monotributo_current_category=DEFAULT_MONOTRIBUTO_CATEGORY,
+                monotributo_activity_type=DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
+            )
+        return AppSettings(
+            preferred_display_currency=record.preferred_display_currency,
+            fx_default_rate_type=record.fx_default_rate_type,
+            monotributo_current_category=record.monotributo_current_category,
+            monotributo_activity_type=record.monotributo_activity_type,
         )

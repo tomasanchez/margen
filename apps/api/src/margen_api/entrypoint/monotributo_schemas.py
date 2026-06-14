@@ -16,7 +16,6 @@ from uuid import UUID
 
 from pydantic import Field
 
-from margen_api.domain.commands.monotributo import UpdateMonotributoConfig
 from margen_api.entrypoint.schemas import CamelCaseModel
 from margen_api.service_layer.monotributo_read_models import (
     MonotributoInvoice,
@@ -135,41 +134,3 @@ class MonotributoCaptureResponse(CamelCaseModel):
     """Acknowledgement for a Monotributo snapshot capture (ADR-052)."""
 
     status: str = Field(default="captured", description="Capture acknowledgement status.")
-
-
-class MonotributoConfigUpdateRequest(CamelCaseModel):
-    """PATCH body to set the configured Monotributo category (ADR-048).
-
-    ``currentCategory`` is required; ``activityType`` is optional and, when
-    omitted, leaves the persisted activity unchanged. The category letter is
-    validated against the AFIP scale in the handler (an unknown letter yields a
-    ``422``).
-    """
-
-    current_category: str = Field(
-        min_length=1,
-        description="Category letter A-K to set as the current Monotributo category.",
-    )
-    activity_type: str | None = Field(
-        default=None,
-        description="Activity type ('services' or 'bienes'); omit to leave unchanged.",
-    )
-
-    def to_command(self) -> UpdateMonotributoConfig:
-        """Translate the request into the boundary-agnostic command."""
-        return UpdateMonotributoConfig(
-            current_category=self.current_category,
-            activity_type=self.activity_type,
-        )
-
-
-class MonotributoConfigResponse(CamelCaseModel):
-    """The persisted single-row Monotributo config after a write (ADR-048)."""
-
-    current_category: str = Field(description="The configured category letter A-K now in effect.")
-    activity_type: str = Field(description="The configured activity type ('services' or 'bienes').")
-
-    @classmethod
-    def from_persisted(cls, *, current_category: str, activity_type: str) -> MonotributoConfigResponse:
-        """Build the response from the persisted config pair."""
-        return cls(current_category=current_category, activity_type=activity_type)

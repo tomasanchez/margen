@@ -14,14 +14,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from margen_api.domain.commands.monotributo import (
-    CaptureMonotributoSnapshot,
-    UpdateMonotributoConfig,
-)
-from margen_api.domain.models.monotributo_scale import (
-    KNOWN_CATEGORIES,
-    UnknownCategoryError,
-)
+from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
 from margen_api.service_layer.monotributo import (
     DEFAULT_ACTIVITY_TYPE,
     DEFAULT_CATEGORY,
@@ -67,44 +60,6 @@ async def capture_monotributo_snapshot(
             )
             await repo.upsert(standing)
         await uow.commit()
-
-
-async def update_monotributo_config(
-    command: UpdateMonotributoConfig,
-    uow: AbstractUnitOfWork,
-) -> tuple[str, str]:
-    """Set the configured Monotributo category on the single config row (ADR-048).
-
-    Validates the requested category against the AFIP scale's A-K letter set
-    (derived from :data:`MONOTRIBUTO_SCALE`, never a duplicated list), normalizes
-    it to uppercase, then UPSERTs the single ``monotributo_config`` row through the
-    unit of work and commits. The persisted pair is returned so the boundary can
-    echo the saved values without a second read (a subsequent GET re-snapshots
-    with the new category, ADR-052).
-
-    Args:
-        command: The validated update request carrying the new category and an
-            optional activity type.
-        uow: The unit of work providing the config repository.
-
-    Returns:
-        The persisted ``(current_category, activity_type)`` pair after the write.
-
-    Raises:
-        UnknownCategoryError: When the category is not a known A-K letter; the
-            entrypoint maps this to ``422`` (ADR-030).
-    """
-    category = command.current_category.strip().upper()
-    if category not in KNOWN_CATEGORIES:
-        raise UnknownCategoryError(command.current_category)
-    activity_type = command.activity_type.strip() if command.activity_type is not None else None
-    async with uow:
-        repo = uow.monotributo_config
-        await repo.set_config(current_category=category, activity_type=activity_type)
-        persisted = await repo.get_config()
-        await uow.commit()
-    # The row exists after set_config, so this is the just-written pair.
-    return persisted if persisted is not None else (category, activity_type or DEFAULT_ACTIVITY_TYPE)
 
 
 async def _resolve_config(repo: AbstractMonotributoSnapshotRepository) -> tuple[str, str]:

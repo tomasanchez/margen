@@ -12,6 +12,7 @@ from fastapi import Depends, Request
 
 from margen_api.adapters.queries import (
     SqlAlchemyMonotributoReader,
+    SqlAlchemySettingsReader,
     SqlAlchemySummaryReader,
     SqlAlchemyTransactionReader,
 )
@@ -19,6 +20,7 @@ from margen_api.bootstrap import ApplicationContainer
 from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.monotributo_reader import AbstractMonotributoReader
 from margen_api.service_layer.reader import AbstractTransactionReader
+from margen_api.service_layer.settings_reader import AbstractSettingsReader
 from margen_api.service_layer.summary_reader import AbstractSummaryReader
 
 
@@ -85,3 +87,20 @@ async def get_monotributo_reader(container: Container) -> AsyncIterator[Abstract
 
 
 MonotributoReader = Annotated[AbstractMonotributoReader, Depends(get_monotributo_reader)]
+
+
+async def get_settings_reader(container: Container) -> AsyncIterator[AbstractSettingsReader]:
+    """Yield a settings reader over a request-scoped read-only session (ADR-054).
+
+    Query paths bypass the unit of work by design (ADR-028); the session opened
+    here is closed when the request finishes. Settings writes go through the
+    message bus / unit of work instead, keeping this reader read-only.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemySettingsReader(session)
+    finally:
+        await session.close()
+
+
+SettingsReader = Annotated[AbstractSettingsReader, Depends(get_settings_reader)]

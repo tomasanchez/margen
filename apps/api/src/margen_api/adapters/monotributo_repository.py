@@ -4,8 +4,9 @@ The capture handler persists trailing-12-month standings exclusively through thi
 adapter, on the unit of work — the read endpoint stays read-only. The UPSERT is
 keyed by ``period_end`` month so concurrent reads in the same period converge to a
 single row. The adapter also exposes the focused read helpers the handler needs to
-derive what to persist (config + per-window included income), so the write path
-never reaches into the query-side reader. All I/O is awaited (AGENTS.md).
+derive what to persist (the configured category from ``app_settings`` + per-window
+included income), so the write path never reaches into the query-side reader. All
+I/O is awaited (AGENTS.md).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from decimal import Decimal
 from sqlalchemy import Numeric, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from margen_api.adapters.models.monotributo_config import MonotributoConfigRecord
+from margen_api.adapters.models.app_settings import AppSettingsRecord
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.domain.models.value_objects import Kind
@@ -47,15 +48,20 @@ class SqlAlchemyMonotributoSnapshotRepository(AbstractMonotributoSnapshotReposit
         self.session = session
 
     async def configured_category(self) -> tuple[str, str] | None:
-        """Return the persisted ``(category, activity_type)``, or ``None``."""
+        """Return the configured ``(category, activity_type)`` from ``app_settings``.
+
+        The Monotributo category now lives in the single-row ``app_settings`` table
+        (ADR-054, superseding the retired ``monotributo_config``); returns ``None``
+        when no settings row exists yet so the caller supplies a sensible default.
+        """
         statement = select(
-            MonotributoConfigRecord.current_category,
-            MonotributoConfigRecord.activity_type,
+            AppSettingsRecord.monotributo_current_category,
+            AppSettingsRecord.monotributo_activity_type,
         ).limit(1)
         row = (await self.session.execute(statement)).first()
         if row is None:
             return None
-        return str(row.current_category), str(row.activity_type)
+        return str(row.monotributo_current_category), str(row.monotributo_activity_type)
 
     async def used_in_window(self, window_start: date, window_end: date) -> Decimal:
         """SUM the included income over the inclusive ``[start, end]`` window."""
