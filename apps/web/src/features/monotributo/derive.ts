@@ -56,6 +56,28 @@ function longMonth(iso: string): string {
   return names[month - 1] ?? iso
 }
 
+/** Short "Mon YYYY" label for an ISO date, e.g. "2025-06-01" → "Jun 2025". */
+function shortMonthYear(iso: string): string {
+  const month = Number.parseInt(iso.slice(5, 7), 10)
+  const year = iso.slice(0, 4)
+  const names = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ]
+  const name = names[month - 1]
+  return name ? `${name} ${year}` : iso
+}
+
 /** The scale row for a category letter, if present. */
 function rowFor(
   scale: MonotributoScaleRow[],
@@ -128,11 +150,15 @@ export function deriveProjection(
 
   const projectedAnnualLabel = `≈ ${formatCurrency(projectedAnnual, 'ARS')}`
 
+  const periodLabel = `${shortMonthYear(standing.periodStart)} – ${shortMonthYear(standing.periodEnd)}`
+
   return {
     invoicedToDate: standing.used,
+    periodLabel,
     monthlyAverage,
     projectedAnnual,
     projectedAnnualLabel,
+    currentCategory: standing.category,
     landsInCategory: standing.projectedCategory,
     landsInCeilingLabel: formatMillionsCompact(landsInCeiling),
     currentCuota,

@@ -196,6 +196,9 @@ test('opens on the selected month and lists that month activity', async () => {
   await within(recent).findByText('June invoice Atlas')
   expect(within(recent).getByText('June Coto groceries')).toBeInTheDocument()
   expect(within(recent).queryByText('May invoice Beta')).not.toBeInTheDocument()
+  // The row subline shows `category · bank` so same-category rows (e.g. two
+  // "Fee" expenses on different banks) are distinguishable on Home.
+  expect(within(recent).getAllByText('Other · Transfer').length).toBeGreaterThan(0)
 })
 
 test('stepping to the previous month re-scopes metrics and activity', async () => {
