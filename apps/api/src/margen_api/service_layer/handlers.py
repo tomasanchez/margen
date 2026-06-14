@@ -12,6 +12,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from margen_api.domain.commands.statement import (
+    ImportStatement,
+    StatementDocumentPayload,
+    StatementImportResult,
+)
 from margen_api.domain.commands.transaction import (
     CreateTransaction,
     DeleteTransaction,
@@ -20,6 +25,7 @@ from margen_api.domain.commands.transaction import (
 )
 from margen_api.domain.models.exceptions import TransactionNotFoundError
 from margen_api.domain.models.transaction import Transaction, build_transaction
+from margen_api.domain.models.value_objects import Kind
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
 
 # Mutable fields a patch may carry; ``None`` in the command means "leave
@@ -124,6 +130,90 @@ async def _save_invoice_document(
         importe=document.importe,
         moneda=document.moneda,
         ctz=document.ctz,
+    )
+
+
+async def import_statement(command: ImportStatement, uow: AbstractUnitOfWork) -> StatementImportResult:
+    """Import a confirmed credit-card statement as EXPENSE transactions (ADR-078).
+
+    Within a single unit of work (ADR-078): saves the statement ``document`` once
+    through the ``StatementStore`` port (which flushes and returns the new id),
+    then builds one EXPENSE transaction per confirmed line — each linked to the
+    document via ``statement_document_id`` — through the domain factory so
+    invariants run (ADR-031), and commits atomically. The handler injects each
+    transaction's UUID identity and ``created_at``/``updated_at`` timestamps so the
+    domain stays clock- and UUID-free (ADR-026). Every imported line is an EXPENSE
+    that never counts toward Monotributo (ADR-079).
+
+    Args:
+        command: The validated import request carrying the document and lines.
+        uow: The unit of work providing the statement store and the transaction
+            repository.
+
+    Returns:
+        The :class:`StatementImportResult` with the shared statement document id and
+        the created transaction ids, in line order.
+    """
+    now = datetime.now(UTC)
+    async with uow:
+        document_id = await _save_statement_document(uow, command.document)
+        created: list[UUID] = []
+        for line in command.lines:
+            transaction = build_transaction(
+                transaction_id=uuid4(),
+                created_at=now,
+                updated_at=now,
+                occurred_on=line.occurred_on,
+                name=line.name,
+                kind=Kind.EXPENSE,
+                amount=line.amount,
+                currency=line.currency,
+                usd_amount=line.usd_amount,
+                fx_rate=line.fx_rate,
+                fx_rate_type=line.fx_rate_type,
+                fx_rate_as_of=line.fx_rate_as_of,
+                category=line.category,
+                payment_method=line.payment_method,
+                notes=line.notes,
+                statement_document_id=document_id,
+            )
+            uow.transactions.add(transaction)
+            created.append(transaction.id)
+        await uow.commit()
+    return StatementImportResult(statement_document_id=document_id, transaction_ids=created)
+
+
+async def _save_statement_document(
+    uow: AbstractUnitOfWork,
+    document: StatementDocumentPayload,
+) -> UUID:
+    """Stage the statement PDF as the shared parent row and return its id (ADR-077).
+
+    Persists through the ``StatementStore`` port on the unit of work; the store
+    flushes so the generated id is available to link every imported transaction in
+    the same unit of work (ADR-078). The document is a parent record, not part of a
+    transaction aggregate, so its bytes stay out of the domain model.
+
+    Args:
+        uow: The unit of work whose statement store stages the row.
+        document: The validated document payload carrying the PDF and metadata.
+
+    Returns:
+        The new statement document identity.
+    """
+    return await uow.statements.save(
+        pdf_bytes=document.pdf_bytes,
+        content_type=document.content_type,
+        byte_size=document.byte_size,
+        extracted_text=document.extracted_text,
+        bank_name=document.bank_name,
+        network=document.network,
+        card_last4=document.card_last4,
+        issuer_cuit=document.issuer_cuit,
+        statement_number=document.statement_number,
+        period_close=document.period_close,
+        period_due=document.period_due,
+        total_amount=document.total_amount,
     )
 
 

@@ -14,6 +14,7 @@ from margen_api.entrypoint import (
     monitor,
     monotributo,
     settings,
+    statements,
     summaries,
     transactions,
 )
@@ -29,6 +30,7 @@ root_router.include_router(monitor.router)
 # Versioned API routers
 api_router_v1.include_router(transactions.router)
 api_router_v1.include_router(invoices.router)
+api_router_v1.include_router(statements.router)
 api_router_v1.include_router(summaries.router)
 api_router_v1.include_router(insights.router)
 api_router_v1.include_router(monotributo.router)

@@ -42,6 +42,7 @@ def to_domain(record: TransactionRecord) -> Transaction:
         notes=record.notes,
         recurring=record.recurring,
         counts_toward_monotributo=record.counts_toward_monotributo,
+        statement_document_id=record.statement_document_id,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
@@ -91,5 +92,6 @@ def update_record(record: TransactionRecord, transaction: Transaction) -> None:
     record.notes = transaction.notes
     record.recurring = transaction.recurring
     record.counts_toward_monotributo = transaction.counts_toward_monotributo
+    record.statement_document_id = transaction.statement_document_id
     record.created_at = transaction.created_at
     record.updated_at = transaction.updated_at
