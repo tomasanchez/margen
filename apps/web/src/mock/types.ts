@@ -57,7 +57,15 @@ export type MonthName =
  * the original USD amount and the MEP rate used to convert it to `amountNum`.
  */
 export interface Transaction {
-  id: number
+  /** Stable UUID identity issued by the backend (ADR-034). */
+  id: string
+  /**
+   * ISO calendar date the transaction occurred on (`YYYY-MM-DD`), carried from
+   * the backend contract (ADR-024/ADR-030). Unlike the `month` label this
+   * encodes the year too, so Home can filter precisely by year+month across
+   * years (ADR-040). The Add/Edit form still works off `dispDate`/`month`.
+   */
+  occurredOn: string
   /** Short display date as seeded, e.g. "Jun 12". */
   dispDate: string
   month: MonthName
@@ -78,6 +86,13 @@ export interface Transaction {
 
 /** Input accepted by the add-transaction mutation (id + month derived by the API). */
 export interface NewTransactionInput {
+  /**
+   * ISO calendar date (`YYYY-MM-DD`) the transaction occurred on, set by the
+   * form's date picker (ADR-041). This is the source of truth sent to the
+   * backend as `occurredOn` (no future dates; backdating allowed). `dispDate`
+   * remains a derived display label.
+   */
+  occurredOn: string
   dispDate: string
   name: string
   category: Category
@@ -89,9 +104,16 @@ export interface NewTransactionInput {
   usd?: number
   rate?: number
   recurring?: boolean
+  /** Optional free-text note, distinct from `name` (backend contract, ADR-033). */
+  notes?: string
   /**
-   * Optional month override; when omitted the mock API defaults to the current
-   * prototype month (June).
+   * Whether this income/invoice row counts toward the Monotributo annual total.
+   * Income-only; the backend forces `false` for expenses (ADR-031).
+   */
+  countsTowardMonotributo?: boolean
+  /**
+   * Optional month override; when omitted the API derives the month from the
+   * supplied date. Carried so an Edit can preserve the original month.
    */
   month?: MonthName
 }

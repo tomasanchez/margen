@@ -22,3 +22,18 @@ export const config = {
 } as const
 
 export type AppConfig = typeof config
+
+/**
+ * Build a fully-qualified API URL for a versioned path.
+ *
+ * Joins `config.apiBaseUrl` with the `/api/v1` prefix and the supplied path,
+ * tolerating a trailing slash on the base. This is the single place the API
+ * version prefix is assembled, so endpoints never hardcode it (ADR-007/ADR-033).
+ *
+ * @example apiUrl('/transactions') // http://localhost:8000/api/v1/transactions
+ */
+export function apiUrl(path: string): string {
+  const base = config.apiBaseUrl.replace(/\/$/, '')
+  const suffix = path.startsWith('/') ? path : `/${path}`
+  return `${base}/api/v1${suffix}`
+}

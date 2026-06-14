@@ -10,10 +10,11 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
-from margen_api.adapters.queries import SqlAlchemyTransactionReader
+from margen_api.adapters.queries import SqlAlchemySummaryReader, SqlAlchemyTransactionReader
 from margen_api.bootstrap import ApplicationContainer
 from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.reader import AbstractTransactionReader
+from margen_api.service_layer.summary_reader import AbstractSummaryReader
 
 
 def get_container(request: Request) -> ApplicationContainer:
@@ -46,3 +47,19 @@ async def get_transaction_reader(container: Container) -> AsyncIterator[Abstract
 
 
 TransactionReader = Annotated[AbstractTransactionReader, Depends(get_transaction_reader)]
+
+
+async def get_summary_reader(container: Container) -> AsyncIterator[AbstractSummaryReader]:
+    """Yield a summary reader over a request-scoped read-only session.
+
+    Query paths bypass the unit of work by design (ADR-028); the session opened
+    here is closed when the request finishes.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemySummaryReader(session)
+    finally:
+        await session.close()
+
+
+SummaryReader = Annotated[AbstractSummaryReader, Depends(get_summary_reader)]

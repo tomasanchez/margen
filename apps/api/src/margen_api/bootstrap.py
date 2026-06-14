@@ -11,11 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from margen_api.adapters.models.base import Base
-from margen_api.adapters.queries import SqlAlchemyTransactionReader
+from margen_api.adapters.queries import SqlAlchemySummaryReader, SqlAlchemyTransactionReader
 from margen_api.adapters.unit_of_work import SqlAlchemyUnitOfWork
 from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.reader import AbstractTransactionReader
 from margen_api.service_layer.registry import COMMAND_HANDLERS, EVENT_HANDLERS
+from margen_api.service_layer.summary_reader import AbstractSummaryReader
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
 from margen_api.settings.database_settings import DatabaseSettings
 
@@ -31,6 +32,9 @@ class ApplicationContainer:
         reader_factory: Factory producing a transaction reader for query paths
             (ADR-028). Each call opens a fresh read-only session so the router
             can resolve a reader per request without going through the UoW.
+        summary_reader_factory: Factory producing a monthly-summary reader for
+            the query-only summaries path (ADR-042), with the same per-call
+            read-only session ownership as ``reader_factory``.
         bus: The message bus that dispatches commands to handlers.
         auto_create_schema: Whether startup creates tables (demos/tests only).
     """
@@ -39,6 +43,7 @@ class ApplicationContainer:
     session_factory: async_sessionmaker[AsyncSession]
     uow_factory: Callable[[], AbstractUnitOfWork]
     reader_factory: Callable[[], AbstractTransactionReader]
+    summary_reader_factory: Callable[[], AbstractSummaryReader]
     bus: MessageBus
     auto_create_schema: bool
 
@@ -85,6 +90,15 @@ def bootstrap(
         """
         return SqlAlchemyTransactionReader(session_factory())
 
+    def summary_reader_factory() -> SqlAlchemySummaryReader:
+        """Build a summary reader over a fresh read-only session (ADR-042).
+
+        The caller owns the returned reader's ``session`` and closes it (the
+        router does so via its FastAPI dependency). Query paths bypass the unit
+        of work by design (ADR-028).
+        """
+        return SqlAlchemySummaryReader(session_factory())
+
     bus = MessageBus(
         uow_factory=uow_factory,
         command_handlers=dict(COMMAND_HANDLERS),
@@ -95,6 +109,7 @@ def bootstrap(
         session_factory=session_factory,
         uow_factory=uow_factory,
         reader_factory=reader_factory,
+        summary_reader_factory=summary_reader_factory,
         bus=bus,
         auto_create_schema=settings.AUTO_CREATE_SCHEMA,
     )

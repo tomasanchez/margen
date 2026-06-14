@@ -22,6 +22,14 @@ export interface CategoryBreakdownProps {
   loading?: boolean
 }
 
+/**
+ * Reserved body height for the card so it keeps its populated footprint in every
+ * state (loading skeleton, empty, populated) and never collapses or jumps as the
+ * user navigates between months with and without data. Sized to the typical
+ * 6–7 category rows: ~34px per row (label line + bar) plus ~15px row spacing.
+ */
+const BODY_MIN_HEIGHT = 280
+
 function CategoryRow({ row, maxPct }: { row: CategorySpend; maxPct: number }) {
   const widthPct = maxPct > 0 ? Math.min((row.pct / maxPct) * 100, 100) : 0
   const rose = Boolean(row.up)
@@ -120,7 +128,11 @@ export function CategoryBreakdown({
 }: CategoryBreakdownProps) {
   if (loading || !categories) {
     return (
-      <SectionCard title="Where it went" subtitle="June · share of spending">
+      <SectionCard
+        title="Where it went"
+        subtitle="June · share of spending"
+        minHeight={BODY_MIN_HEIGHT}
+      >
         <Stack spacing={1.875}>
           {Array.from({ length: 6 }).map((_, i) => (
             <Box key={i}>
@@ -139,10 +151,24 @@ export function CategoryBreakdown({
 
   if (categories.length === 0) {
     return (
-      <SectionCard title="Where it went" subtitle="June · share of spending">
-        <Typography sx={{ fontSize: 13.5, py: 1 }} color="text.disabled">
-          No spending recorded for this month yet.
-        </Typography>
+      <SectionCard
+        title="Where it went"
+        subtitle="June · share of spending"
+        minHeight={BODY_MIN_HEIGHT}
+      >
+        <Box
+          sx={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            textAlign: 'center',
+          }}
+        >
+          <Typography sx={{ fontSize: 13.5 }} color="text.disabled">
+            No spending recorded for this month yet.
+          </Typography>
+        </Box>
       </SectionCard>
     )
   }
@@ -150,7 +176,11 @@ export function CategoryBreakdown({
   const maxPct = categories.reduce((max, c) => Math.max(max, c.pct), 0)
 
   return (
-    <SectionCard title="Where it went" subtitle="June · share of spending">
+    <SectionCard
+      title="Where it went"
+      subtitle="June · share of spending"
+      minHeight={BODY_MIN_HEIGHT}
+    >
       <Stack spacing={1.875}>
         {categories.map((row) => (
           <CategoryRow key={row.category} row={row} maxPct={maxPct} />

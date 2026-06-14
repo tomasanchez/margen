@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { SEED_TRANSACTIONS } from '../../mock/seed'
+import { TRANSACTIONS_FIXTURE as SEED_TRANSACTIONS } from './__fixtures__/transactions'
 import {
   DEFAULT_FILTERS,
   activeFilterCount,

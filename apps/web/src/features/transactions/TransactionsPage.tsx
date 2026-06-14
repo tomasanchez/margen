@@ -18,6 +18,8 @@
 import { useMemo, useState } from 'react'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
+import Alert from '@mui/material/Alert'
+import Snackbar from '@mui/material/Snackbar'
 import Skeleton from '@mui/material/Skeleton'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
@@ -30,6 +32,7 @@ import TuneIcon from '@mui/icons-material/Tune'
 import { monoFontFamily } from '../../theme'
 import { formatSignedAmount } from '../../lib/format'
 import type { Transaction } from '../../mock/types'
+import { ErrorState } from '../../components/ErrorState'
 import { useAddTransaction } from './addContext'
 import {
   TransactionRow,
@@ -266,14 +269,15 @@ export function TransactionsPage() {
   )
 
   const isLoading = transactionsQuery.isPending
-  const isEmpty = !isLoading && result.groups.length === 0
+  const isError = transactionsQuery.isError
+  const isEmpty = !isLoading && !isError && result.groups.length === 0
   const filtersActive = hasActiveFilters(filters)
   const mobileFilterCount = activeFilterCount(filters)
 
   const handleEdit = (t: Transaction) => openAdd(buildEditPrefill(t))
   const handleDelete = (t: Transaction) => deleteMutation.mutate(t.id)
   const deletingId =
-    deleteMutation.isPending && typeof deleteMutation.variables === 'number'
+    deleteMutation.isPending && typeof deleteMutation.variables === 'string'
       ? deleteMutation.variables
       : null
 
@@ -287,7 +291,16 @@ export function TransactionsPage() {
         <Typography variant="h4" component="h1" color="text.primary">
           Every movement, in one place
         </Typography>
-        {!isLoading ? (
+        {isError ? (
+          <Typography
+            variant="body2"
+            component="p"
+            color="text.secondary"
+            sx={{ mt: 0.5 }}
+          >
+            We couldn't load your transactions.
+          </Typography>
+        ) : !isLoading ? (
           <SummaryLine
             count={result.filteredCount}
             inflow={result.inflow}
@@ -299,6 +312,13 @@ export function TransactionsPage() {
         )}
       </Box>
 
+      {isError ? (
+        <ErrorState
+          description="We couldn't reach the server to load your transactions. Check your connection and try again."
+          onRetry={() => void transactionsQuery.refetch()}
+        />
+      ) : (
+        <>
       {/* Desktop search + full filter bar. */}
       <Box sx={{ mb: 2.5 }}>
         <FilterBar
@@ -449,6 +469,29 @@ export function TransactionsPage() {
         allTransactions={allTransactions}
         resultCount={result.filteredCount}
       />
+        </>
+      )}
+
+      {/* Calm, recoverable delete-failure notice (ADR-036/037): the row stays in
+          place; dismissing or retrying the delete is the user's choice. */}
+      <Snackbar
+        open={deleteMutation.isError}
+        autoHideDuration={null}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        onClose={(_, reason) => {
+          if (reason === 'clickaway') return
+          deleteMutation.reset()
+        }}
+      >
+        <Alert
+          severity="error"
+          variant="filled"
+          onClose={() => deleteMutation.reset()}
+          sx={{ width: '100%' }}
+        >
+          We couldn't delete that transaction. Please try again.
+        </Alert>
+      </Snackbar>
     </Box>
   )
 }

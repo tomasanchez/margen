@@ -11,6 +11,7 @@ import {
 } from '@tanstack/react-router'
 import { ColorModeProvider } from './theme/colorMode'
 import { AppShell } from './components/AppShell'
+import { currentViewingMonth, formatViewingMonth } from './components/months'
 import { AddTransactionProvider } from './features/transactions/AddTransactionProvider'
 import { HomePage } from './features/home/HomePage'
 import { TransactionsPage } from './features/transactions/TransactionsPage'
@@ -94,9 +95,13 @@ test('navigating to Transactions swaps the routed content and active marker', as
   ).toBeInTheDocument()
 })
 
-test('the month switcher exposes accessible controls in both presentations', async () => {
+test('the month navigator exposes accessible controls in both presentations', async () => {
   renderShell()
   await screen.findByRole('heading', { name: 'Your command center' })
+
+  // The navigator defaults to the current real calendar month (ADR-040), so the
+  // expected label is derived rather than hard-coded — stable on any run date.
+  const monthLabel = formatViewingMonth(currentViewingMonth())
 
   // Desktop stepper: prev/next buttons + the live month label. Both the desktop
   // stepper and the mobile compact picker render in the DOM (display-guarded by
@@ -107,11 +112,13 @@ test('the month switcher exposes accessible controls in both presentations', asy
   expect(
     screen.getByRole('button', { name: 'Next month' }),
   ).toBeInTheDocument()
-  expect(screen.getByLabelText('Selected month: June 2026')).toBeInTheDocument()
+  expect(
+    screen.getByLabelText(`Selected month: ${monthLabel}`),
+  ).toBeInTheDocument()
 
   // Mobile compact picker: a floating calendar button labelled with the month.
   expect(
-    screen.getByRole('button', { name: 'Select month, June 2026' }),
+    screen.getByRole('button', { name: `Select month, ${monthLabel}` }),
   ).toBeInTheDocument()
 })
 

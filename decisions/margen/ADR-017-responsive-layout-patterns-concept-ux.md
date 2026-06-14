@@ -45,3 +45,4 @@ After reviewing the running prototype, the shell was refined (still honoring the
 - 2026-06-13: proposed
 - 2026-06-13: accepted
 - 2026-06-13: updated — iOS-style shell refinements (fixed-viewport scroll, centered content, account menu, floating mobile nav, transparent mobile top bar)
+- 2026-06-13: note — the month switcher is no longer cosmetic; it is now a functional month navigator (see ADR-040)

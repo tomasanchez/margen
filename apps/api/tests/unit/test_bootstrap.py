@@ -1,6 +1,6 @@
 """Test suite for application composition."""
 
-from margen_api.adapters.queries import SqlAlchemyTransactionReader
+from margen_api.adapters.queries import SqlAlchemySummaryReader, SqlAlchemyTransactionReader
 from margen_api.bootstrap import bootstrap
 from margen_api.settings.database_settings import DatabaseSettings
 
@@ -51,5 +51,22 @@ class TestBootstrap:
 
         # THEN
         assert isinstance(reader, SqlAlchemyTransactionReader)
+        await reader.session.close()
+        await container.shutdown()
+
+    async def test_summary_reader_factory_builds_a_reader_over_a_fresh_session(self):
+        """
+        GIVEN a composed container
+        WHEN its summary reader factory is invoked
+        THEN it returns a SqlAlchemySummaryReader over a session
+        """
+        # GIVEN
+        container = bootstrap(DatabaseSettings(URL="sqlite+aiosqlite://", AUTO_CREATE_SCHEMA=False))
+
+        # WHEN
+        reader = container.summary_reader_factory()
+
+        # THEN
+        assert isinstance(reader, SqlAlchemySummaryReader)
         await reader.session.close()
         await container.shutdown()

@@ -1,9 +1,15 @@
-import { useState, type ReactNode } from 'react'
-import { Link, Outlet, useRouterState } from '@tanstack/react-router'
+import { useCallback, useState, type ReactNode } from 'react'
+import {
+  Link,
+  Outlet,
+  useNavigate,
+  useRouterState,
+} from '@tanstack/react-router'
 import AppBar from '@mui/material/AppBar'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Fab from '@mui/material/Fab'
+import Snackbar from '@mui/material/Snackbar'
 import Toolbar from '@mui/material/Toolbar'
 import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
@@ -16,7 +22,8 @@ import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined'
 import { AccountMenu } from './AccountMenu'
 import { MonthSwitcher } from './MonthSwitcher'
-import { MONTHS } from './months'
+import { MonthProvider } from './MonthProvider'
+import { useViewingMonth } from './monthContext'
 import { monoFontFamily } from '../theme'
 import { useAddTransaction } from '../features/transactions/addContext'
 
@@ -317,7 +324,12 @@ function AddFab({ onAddTransaction }: { onAddTransaction: () => void }) {
 }
 
 /**
- * Responsive Margen app shell (ADR-014, ADR-017, ADR-019).
+ * Responsive Margen app shell body (ADR-014, ADR-017, ADR-019, ADR-040).
+ *
+ * Rendered inside {@link MonthProvider} so both the top-bar MonthSwitcher
+ * (writer) and the routed Outlet / Home (reader) share one selected month. Both
+ * switcher presentations are controlled from the single context value, keeping
+ * the desktop stepper and the mobile picker in sync.
  *
  * Desktop (md+): top bar (brand + centered MonthSwitcher + the avatar account
  * menu, which now also owns the theme toggle), a 212px left sidebar with the gold
@@ -346,14 +358,22 @@ function AddFab({ onAddTransaction }: { onAddTransaction: () => void }) {
  * sidebar CTA and the mobile FAB both call `openAdd()` from the Add-transaction
  * seam (addContext); the actual form is a later task.
  */
-export function AppShell() {
+function AppShellBody() {
   const { openAdd } = useAddTransaction()
   const onAddTransaction = () => openAdd()
 
-  // Shared selected-month state so the desktop stepper and the mobile compact
-  // picker stay in sync (cosmetic for now; screens consume it later). Both
-  // MonthSwitcher presentations are controlled from here.
-  const [month, setMonth] = useState<string>(MONTHS[0])
+  const { viewingMonth, setViewingMonth } = useViewingMonth()
+
+  const navigate = useNavigate()
+  const [olderHintOpen, setOlderHintOpen] = useState(false)
+
+  // Going older than the 6-months-ago floor lands the user in Transactions,
+  // where older dates are searchable (ADR-041). A brief, calm Snackbar explains
+  // the jump; it auto-dismisses but is non-blocking and dismissible.
+  const handleNavigateOlder = useCallback(() => {
+    setOlderHintOpen(true)
+    void navigate({ to: '/transactions' })
+  }, [navigate])
 
   return (
     <Box
@@ -394,7 +414,12 @@ export function AppShell() {
 
           {/* Desktop (md+): centered inline month stepper. */}
           <Box sx={{ display: { xs: 'none', md: 'flex' }, justifyContent: 'center' }}>
-            <MonthSwitcher variant="stepper" value={month} onChange={setMonth} />
+            <MonthSwitcher
+              variant="stepper"
+              value={viewingMonth}
+              onChange={setViewingMonth}
+              onNavigateOlder={handleNavigateOlder}
+            />
           </Box>
 
           {/* Right cluster. Desktop: just the avatar. Mobile (xs–sm): a floating
@@ -410,7 +435,12 @@ export function AppShell() {
             }}
           >
             <Box sx={{ display: { xs: 'flex', md: 'none' } }}>
-              <MonthSwitcher variant="compact" value={month} onChange={setMonth} />
+              <MonthSwitcher
+                variant="compact"
+                value={viewingMonth}
+                onChange={setViewingMonth}
+                onNavigateOlder={handleNavigateOlder}
+              />
             </Box>
             <AccountMenu />
           </Box>
@@ -462,7 +492,33 @@ export function AppShell() {
       {/* Mobile-only floating overlays (out of flow; ADR-017, ADR-019). */}
       <FloatingNavPill />
       <AddFab onAddTransaction={onAddTransaction} />
+
+      {/* Calm hint shown when the navigator hits its 6-month floor and we route
+          to Transactions for older dates (ADR-041). Non-blocking, dismissible. */}
+      <Snackbar
+        open={olderHintOpen}
+        onClose={() => setOlderHintOpen(false)}
+        autoHideDuration={5000}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        message="Older than 6 months — search in Transactions"
+      />
     </Box>
+  )
+}
+
+/**
+ * Responsive Margen app shell (ADR-014, ADR-017, ADR-019, ADR-040).
+ *
+ * Wraps the shell body in {@link MonthProvider} so the top-bar month navigator
+ * and the routed Home dashboard share a single "viewing month" (defaulting to
+ * the current real calendar month). See {@link AppShellBody} for the layout and
+ * navigation details.
+ */
+export function AppShell() {
+  return (
+    <MonthProvider>
+      <AppShellBody />
+    </MonthProvider>
   )
 }
 
