@@ -67,3 +67,32 @@ test('an ARS row shows no FX badge or subline', () => {
   expect(screen.queryByText('FX')).not.toBeInTheDocument()
   expect(screen.queryByText(/· (MEP|manual)/)).not.toBeInTheDocument()
 })
+
+// Invoice attachment badge (ADR-072): a kind === 'invoice' row surfaces a "PDF"
+// link to the stored document; non-invoice rows do not.
+test('an invoice row renders the PDF attachment badge linking to the document URL', () => {
+  renderRow({ ...baseUsd, kind: 'invoice' })
+
+  const badge = screen.getByRole('link', {
+    name: 'Open invoice PDF for Invoice · Atlas Co.',
+  })
+  // Links to GET /invoices/{id}/document and opens in a new tab safely.
+  expect(badge).toHaveAttribute(
+    'href',
+    expect.stringContaining('/api/v1/invoices/usd-1/document'),
+  )
+  expect(badge).toHaveAttribute('target', '_blank')
+  expect(badge).toHaveAttribute('rel', expect.stringContaining('noopener'))
+  // Carries a text label, not color alone (ADR-019).
+  expect(badge).toHaveTextContent('PDF')
+})
+
+test('a non-invoice row renders no attachment badge', () => {
+  renderRow({
+    ...baseUsd,
+    type: 'expense',
+    kind: 'expense',
+    category: 'Food',
+  })
+  expect(screen.queryByRole('link', { name: /Open invoice PDF/i })).toBeNull()
+})
