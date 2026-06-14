@@ -103,6 +103,25 @@ class TestExtractAfipQrData:
         assert data.cod_aut == "70123456789012"
         assert data.nro_doc_rec == "27111111114"
 
+    def test_accepts_the_arca_rebranded_host(self):
+        """
+        GIVEN a QR on the current ARCA domain (arca.gob.ar, ex-AFIP)
+        WHEN the QR data is extracted
+        THEN it is decoded just like the legacy afip.gob.ar host
+        """
+        # GIVEN — real comprobantes now carry arca.gob.ar, not afip.gob.ar.
+        raw = json.dumps(_SAMPLE_QR_JSON).encode("utf-8")
+        encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+        arca_url = f"https://www.arca.gob.ar/fe/qr/?p={encoded}"
+
+        # WHEN
+        data = extract_afip_qr_data([arca_url])
+
+        # THEN
+        assert data is not None
+        assert data.cuit == "20304050607"
+        assert data.importe == Decimal("150000.50")
+
     def test_finds_afip_url_embedded_in_a_larger_payload(self):
         """
         GIVEN a payload that contains the AFIP URL preceded by other text

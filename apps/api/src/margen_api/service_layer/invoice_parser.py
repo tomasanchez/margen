@@ -48,7 +48,12 @@ from margen_api.service_layer.invoice_parser_read_models import (
 )
 
 # AFIP QR URL host/path used to recognize the fiscal QR among any decoded payloads.
-_AFIP_QR_URL_PREFIX = "https://www.afip.gob.ar/fe/qr/"
+# The fiscal QR URL prefixes. ARCA (ex-AFIP) rebranded the domain, so current
+# comprobantes carry arca.gob.ar while older ones carry afip.gob.ar; accept both.
+_AFIP_QR_URL_PREFIXES = (
+    "https://www.arca.gob.ar/fe/qr/",
+    "https://www.afip.gob.ar/fe/qr/",
+)
 
 # ARCA QR `moneda` codes that mean Argentine pesos; anything else is treated as a
 # foreign currency mapped to USD (ADR-068 only models ARS vs USD).
@@ -110,10 +115,12 @@ def decode_qr_payloads(pdf_bytes: bytes) -> list[str]:
     payloads: list[str] = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
         for page in document:
-            # Render at 2x GRAYSCALE: pyzbar's no-NumPy/PIL path accepts a
-            # (pixels, width, height) tuple of 8-bpp luminance bytes, which a
-            # csGRAY pixmap's `samples` (one byte per pixel) provides directly.
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), colorspace=fitz.csGRAY)
+            # Render at 4x GRAYSCALE: the fiscal QR is small on an A4 page, so a
+            # lower zoom leaves zbar too few pixels to resolve the modules (2x
+            # decodes nothing on real comprobantes; 4x is reliable). pyzbar's
+            # no-NumPy/PIL path accepts a (pixels, width, height) tuple of 8-bpp
+            # luminance bytes, which a csGRAY pixmap's `samples` provides directly.
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(4, 4), colorspace=fitz.csGRAY)
             image = (pixmap.samples, pixmap.width, pixmap.height)
             for symbol in pyzbar.decode(image):
                 payloads.append(symbol.data.decode("utf-8", errors="replace"))
@@ -157,9 +164,10 @@ def _find_afip_qr_url(payloads: list[str]) -> str | None:
         The AFIP QR URL when present in any payload, otherwise ``None``.
     """
     for payload in payloads:
-        index = payload.find(_AFIP_QR_URL_PREFIX)
-        if index != -1:
-            return payload[index:].strip()
+        for prefix in _AFIP_QR_URL_PREFIXES:
+            index = payload.find(prefix)
+            if index != -1:
+                return payload[index:].strip()
     return None
 
 
