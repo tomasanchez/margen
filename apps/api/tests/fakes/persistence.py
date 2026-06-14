@@ -16,6 +16,7 @@ from uuid import UUID
 
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.value_objects import Kind, TxType
+from margen_api.service_layer.document_store import AbstractDocumentStore, InvoiceDocument
 from margen_api.service_layer.insights_read_models import MonthlyInsights
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
 from margen_api.service_layer.monotributo_read_models import (
@@ -166,6 +167,80 @@ class FakeSettingsRepository(AbstractSettingsRepository):
         )
 
 
+class FakeDocumentStore(AbstractDocumentStore):
+    """In-memory invoice document store keyed by ``transaction_id`` (ADR-071).
+
+    Mirrors the SQLAlchemy adapter closely enough to keep the suite constructing
+    the unit of work: ``save`` writes one row, ``get`` projects it into the
+    download read model, and ``exists_by_natural_key`` backs the advisory dedupe
+    check (warn, not block). Thorough behavior is covered by the integration tier
+    (ADR-074).
+    """
+
+    def __init__(self, committed: dict[UUID, InvoiceDocument]) -> None:
+        """Initialize the store over the unit of work's committed dict."""
+        self._committed = committed
+
+    async def save(
+        self,
+        *,
+        transaction_id: UUID,
+        pdf_bytes: bytes,
+        content_type: str,
+        byte_size: int,
+        extracted_text: str | None,
+        qr_json: dict | None,
+        emisor_cuit: str | None,
+        pto_vta: str | None,
+        tipo_cmp: str | None,
+        nro_cmp: str | None,
+        cae: str | None,
+        fecha: date | None,
+        importe: Decimal | None,
+        moneda: str | None,
+        ctz: Decimal | None,
+    ) -> None:
+        """Store one document row keyed by ``transaction_id``."""
+        self._committed[transaction_id] = InvoiceDocument(
+            transaction_id=transaction_id,
+            pdf_bytes=pdf_bytes,
+            content_type=content_type,
+            byte_size=byte_size,
+            extracted_text=extracted_text,
+            qr_json=qr_json,
+            emisor_cuit=emisor_cuit,
+            pto_vta=pto_vta,
+            tipo_cmp=tipo_cmp,
+            nro_cmp=nro_cmp,
+            cae=cae,
+            fecha=fecha,
+            importe=importe,
+            moneda=moneda,
+            ctz=ctz,
+        )
+
+    async def get(self, transaction_id: UUID) -> InvoiceDocument | None:
+        """Return the stored document for a transaction, or ``None`` when absent."""
+        return self._committed.get(transaction_id)
+
+    async def exists_by_natural_key(
+        self,
+        *,
+        emisor_cuit: str | None,
+        pto_vta: str | None,
+        tipo_cmp: str | None,
+        nro_cmp: str | None,
+    ) -> bool:
+        """Return whether a stored document matches the invoice natural key."""
+        return any(
+            document.emisor_cuit == emisor_cuit
+            and document.pto_vta == pto_vta
+            and document.tipo_cmp == tipo_cmp
+            and document.nro_cmp == nro_cmp
+            for document in self._committed.values()
+        )
+
+
 class FakeUnitOfWork(AbstractUnitOfWork):
     """In-memory unit of work exposing the write-side repositories.
 
@@ -185,9 +260,11 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.snapshots: dict[date, MonotributoStanding] = {}
         self.config: dict[str, str] = {}
         self.used_by_window: dict[tuple[date, date], Decimal] = {}
+        self.documents_store: dict[UUID, InvoiceDocument] = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
         self.settings = FakeSettingsRepository(self.config)
+        self.documents = FakeDocumentStore(self.documents_store)
         self.committed = False
 
     async def __aenter__(self) -> FakeUnitOfWork:
@@ -197,6 +274,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
         self.settings = FakeSettingsRepository(self.config)
+        self.documents = FakeDocumentStore(self.documents_store)
         return self
 
     async def __aexit__(

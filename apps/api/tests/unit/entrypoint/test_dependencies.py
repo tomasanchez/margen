@@ -8,6 +8,7 @@ import pytest
 from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 
+from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.queries import (
     SqlAlchemyInsightsReader,
     SqlAlchemyMonotributoReader,
@@ -18,6 +19,7 @@ from margen_api.adapters.queries import (
 from margen_api.entrypoint.dependencies import (
     get_bus,
     get_container,
+    get_document_store,
     get_insights_reader,
     get_monotributo_reader,
     get_settings,
@@ -161,6 +163,33 @@ class TestRequireCaptureToken:
 
         # THEN
         assert result is None
+
+
+class TestGetDocumentStore:
+    """The document-store resolver opens and closes a request-scoped session."""
+
+    async def test_yields_store_and_closes_session(self):
+        """
+        GIVEN a container whose session factory builds a session
+        WHEN the document-store dependency is iterated to completion
+        THEN it yields a SqlAlchemyDocumentStore and closes the session
+        """
+        # GIVEN
+        session = AsyncMock()
+        container = SimpleNamespace(session_factory=MagicMock(return_value=session))
+
+        # WHEN
+        iterator = get_document_store(container)  # type: ignore[arg-type]
+        store = await iterator.__anext__()
+
+        # THEN
+        assert isinstance(store, SqlAlchemyDocumentStore)
+        assert store.session is session
+
+        # WHEN exhausted, the finally block closes the session.
+        with contextlib.suppress(StopAsyncIteration):
+            await iterator.__anext__()
+        session.close.assert_awaited_once()
 
 
 class TestGetTransactionReader:
