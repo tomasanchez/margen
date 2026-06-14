@@ -153,6 +153,23 @@ describe('deriveProjection', () => {
     expect(projection.invoicedToDate).toBe(12_713_696)
     // The projected annual estimate is labeled as an approximation.
     expect(projection.projectedAnnualLabel).toMatch(/^≈ ARS/)
+    // The current category passes through so the note can compare against the
+    // landing category (and avoid a nonsensical "move to the same category").
+    expect(projection.currentCategory).toBe('C')
+    // The period label is derived from the standing dates, not hardcoded.
+    expect(projection.periodLabel).toBe('Jun 2025 – Jun 2026')
+  })
+
+  test('lands in the current category when the pace stays put (e.g. lowest band)', () => {
+    // A standing already in its projected category — there is no move; the
+    // current and landing categories match so the note reassures instead.
+    const steady: MonotributoStanding = { ...current, projectedCategory: 'C' }
+    const projection = deriveProjection(steady, SCALE)
+
+    expect(projection.currentCategory).toBe('C')
+    expect(projection.landsInCategory).toBe('C')
+    // No fee delta when the category is unchanged.
+    expect(projection.projectedCuota).toBe(projection.currentCuota)
   })
 
   test('falls back to the standing limit when the projected row is missing', () => {

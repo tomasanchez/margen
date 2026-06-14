@@ -256,14 +256,18 @@ export interface MonotributoInvoice {
  * recategorization engine (that is issue #8's backend scope).
  */
 export interface MonotributoProjection {
-  /** ARS invoiced in the evaluated period (Jan–Jun 2026). */
+  /** ARS invoiced in the evaluated trailing-12-month period. */
   invoicedToDate: number
+  /** Label for the evaluated period, derived from the standing dates, e.g. "Jun 2025 – Jun 2026". */
+  periodLabel: string
   /** Approximate monthly average (ARS). */
   monthlyAverage: number
   /** Projected trailing-12-month total (ARS) at the current pace. */
   projectedAnnual: number
   /** Short label for the projected annual total, e.g. "≈ ARS 24,3M". */
   projectedAnnualLabel: string
+  /** The current AFIP category letter, e.g. "A". */
+  currentCategory: string
   /** Category the projection lands in, e.g. "D". */
   landsInCategory: string
   /** Compact ceiling label for the landing category, e.g. "26,2M". */

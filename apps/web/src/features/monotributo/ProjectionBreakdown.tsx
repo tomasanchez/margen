@@ -2,9 +2,13 @@
  * Projection breakdown — "The projection, broken down" (ADR-023).
  *
  * A short definition-style list of the linear pace inputs (invoiced to date,
- * monthly average, projected 12-mo total, lands-in category) followed by an
- * amber note explaining the fee impact of recategorizing. The projection is
- * illustrative only — labeled as a pace estimate, not a guarantee.
+ * monthly average, projected 12-mo total, lands-in category) followed by a
+ * note on the fee impact. When the pace projects a move to another category the
+ * note shows the fee delta and which category easing the pace would keep; when
+ * the projection stays in the current category (e.g. already in the lowest band
+ * A) it reassures with no fee delta and never invents a lower band. Period and
+ * category labels are derived from the standing — nothing is hardcoded. The
+ * projection is illustrative only — labeled as a pace estimate, not a guarantee.
  */
 
 import Box from '@mui/material/Box'
@@ -61,10 +65,18 @@ export interface ProjectionBreakdownProps {
 }
 
 export function ProjectionBreakdown({ projection }: ProjectionBreakdownProps) {
+  // Whether the pace projects a move OUT of the current category, and in which
+  // direction the monthly fee would go. When the projection lands in the same
+  // category (e.g. already in the lowest band A), there is no move and no fee
+  // delta — the note reassures instead of warning, and never invents a "lower"
+  // category to slow down toward.
+  const movesCategory = projection.landsInCategory !== projection.currentCategory
+  const feeRises = projection.projectedCuota > projection.currentCuota
+
   return (
     <SectionCard title="The projection, broken down">
       <Box>
-        <Row label="Invoiced Jan – Jun 2026">
+        <Row label={`Invoiced ${projection.periodLabel}`}>
           {formatCurrency(projection.invoicedToDate, 'ARS')}
         </Row>
         <Row label="Monthly average">
@@ -109,15 +121,33 @@ export function ProjectionBreakdown({ projection }: ProjectionBreakdownProps) {
           sx={{ fontSize: 12.5, lineHeight: 1.5, textWrap: 'pretty' }}
           color="var(--mg-text-mid)"
         >
-          Moving to Category {projection.landsInCategory} raises your monthly fee{' '}
-          <Box
-            component="span"
-            sx={{ fontFamily: monoFontFamily, color: 'var(--mg-text)' }}
-          >
-            {formatCurrency(projection.currentCuota, 'ARS')} →{' '}
-            {formatCurrency(projection.projectedCuota, 'ARS')}
-          </Box>
-          . Slowing invoicing before the June close keeps you in Category C.
+          {movesCategory ? (
+            <>
+              Moving to Category {projection.landsInCategory}{' '}
+              {feeRises ? 'raises' : 'lowers'} your monthly fee{' '}
+              <Box
+                component="span"
+                sx={{ fontFamily: monoFontFamily, color: 'var(--mg-text)' }}
+              >
+                {formatCurrency(projection.currentCuota, 'ARS')} →{' '}
+                {formatCurrency(projection.projectedCuota, 'ARS')}
+              </Box>
+              . Easing your pace keeps you in Category{' '}
+              {projection.currentCategory}.
+            </>
+          ) : (
+            <>
+              At this pace you stay in Category {projection.currentCategory} —
+              monthly fee{' '}
+              <Box
+                component="span"
+                sx={{ fontFamily: monoFontFamily, color: 'var(--mg-text)' }}
+              >
+                {formatCurrency(projection.currentCuota, 'ARS')}
+              </Box>
+              .
+            </>
+          )}
         </Typography>
       </Box>
     </SectionCard>
