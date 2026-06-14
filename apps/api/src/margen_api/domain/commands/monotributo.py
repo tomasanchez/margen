@@ -29,23 +29,3 @@ class CaptureMonotributoSnapshot(Command):
     """
 
     as_of: date
-
-
-class UpdateMonotributoConfig(Command):
-    """Request to set the configured Monotributo category (ADR-048).
-
-    The PATCH config endpoint dispatches this to change the single-row
-    ``monotributo_config`` (ADR-048): which A-K category is in effect and,
-    optionally, the activity type. The handler validates the letter against the
-    AFIP scale (ADR-046), normalizes it, and UPSERTs the single row on the unit
-    of work. A subsequent GET re-snapshots with the new category (ADR-052).
-
-    Attributes:
-        current_category: The category letter A-K to set (validated and
-            uppercased by the handler).
-        activity_type: The activity type to set ("services"/"bienes"); ``None``
-            leaves the persisted value unchanged.
-    """
-
-    current_category: str
-    activity_type: str | None = None

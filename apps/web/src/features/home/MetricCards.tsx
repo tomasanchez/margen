@@ -16,6 +16,7 @@ import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import { monoFontFamily } from '../../theme'
 import { formatCurrency, formatDelta } from '../../lib/format'
+import { useDisplayCurrency } from '../settings/displayCurrencyContext'
 import type { MonotributoState } from '../../mock/types'
 import type { MonthMetrics } from './homeMetrics'
 
@@ -114,6 +115,11 @@ export function MetricCards({
   previousMonthLabel,
   loading = false,
 }: MetricCardsProps) {
+  // Income / Expenses / Est. savings are ARS-stored figures the user may prefer
+  // to see in USD (ADR-056); the helper converts via the single live rate (or
+  // falls back to ARS). The Monotributo margin stays ARS (a regulatory figure).
+  const { formatMoney, effectiveCurrency } = useDisplayCurrency()
+
   const gridSx = {
     display: 'grid',
     gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' },
@@ -136,7 +142,12 @@ export function MetricCards({
     )
   }
 
-  const savingsUsdLine = `≈ ${formatCurrency(metrics.savingsUsd, 'USD')} at MEP`
+  // When the cards already render in USD, the "≈ USD at MEP" subline is
+  // redundant; show a calm context line instead. In ARS, keep the equivalent.
+  const savingsCaption =
+    effectiveCurrency === 'USD'
+      ? 'income − expenses'
+      : `≈ ${formatCurrency(metrics.savingsUsd, 'USD')} at MEP`
   const marginCaption = monotributo
     ? `before Category ${monotributo.projectedCategory}`
     : 'set up your Monotributo category'
@@ -145,20 +156,20 @@ export function MetricCards({
     <Box sx={gridSx}>
       <MetricCard
         label="Income"
-        figure={formatCurrency(metrics.income, 'ARS')}
+        figure={formatMoney(metrics.income)}
         caption={`${formatDelta(incomeDeltaPct)} vs. ${previousMonthLabel}`}
         captionTone={incomeDeltaPct >= 0 ? 'safe' : 'watch'}
       />
       <MetricCard
         label="Expenses"
-        figure={formatCurrency(metrics.expenses, 'ARS')}
+        figure={formatMoney(metrics.expenses)}
         caption={`${formatDelta(expenseDeltaPct)} vs. ${previousMonthLabel}`}
         captionTone={expenseDeltaPct > 0 ? 'watch' : 'safe'}
       />
       <MetricCard
         label="Est. savings"
-        figure={formatCurrency(metrics.savings, 'ARS')}
-        caption={savingsUsdLine}
+        figure={formatMoney(metrics.savings)}
+        caption={savingsCaption}
         captionTone="neutral"
       />
       <MetricCard

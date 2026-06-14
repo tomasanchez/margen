@@ -14,17 +14,25 @@ import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import { visuallyHidden } from '@mui/utils'
 import { monoFontFamily } from '../../theme'
-import { formatCurrency } from '../../lib/format'
+import { useDisplayCurrency } from '../settings/displayCurrencyContext'
 import type { TrendPoint } from '../../mock/types'
 import { SectionCard } from '../../components/SectionCard'
 
-/** Compact ARS label for the header total, e.g. 2_850_000 -> "ARS 2,85M". */
-function compactArs(value: number): string {
-  if (value >= 1_000_000) {
+/**
+ * Compact label for the header total. ARS millions read as "ARS 2,85M"; small
+ * ARS values and any USD-converted value fall through to {@link formatMoney},
+ * which renders the user's preferred display currency (ADR-056).
+ */
+function compactTotal(
+  value: number,
+  isUsd: boolean,
+  formatMoney: (ars: number | null | undefined) => string,
+): string {
+  if (!isUsd && value >= 1_000_000) {
     const millions = (value / 1_000_000).toFixed(2).replace('.', ',')
     return `ARS ${millions}M`
   }
-  return formatCurrency(value, 'ARS')
+  return formatMoney(value)
 }
 
 export interface SpendingTrendProps {
@@ -42,6 +50,9 @@ const BAR_AREA_HEIGHT = 150
 const BODY_MIN_HEIGHT = BAR_AREA_HEIGHT + 28
 
 export function SpendingTrend({ trend, loading = false }: SpendingTrendProps) {
+  const { formatMoney, effectiveCurrency } = useDisplayCurrency()
+  const isUsd = effectiveCurrency === 'USD'
+
   if (loading || !trend) {
     return (
       <SectionCard
@@ -57,7 +68,7 @@ export function SpendingTrend({ trend, loading = false }: SpendingTrendProps) {
   const peak = trend.reduce((max, p) => Math.max(max, p.value), 0)
   const current = trend.find((p) => p.current)
   const accessibleSummary = trend
-    .map((p) => `${p.month}: ${formatCurrency(p.value, 'ARS')}`)
+    .map((p) => `${p.month}: ${formatMoney(p.value)}`)
     .join(', ')
 
   return (
@@ -75,7 +86,7 @@ export function SpendingTrend({ trend, loading = false }: SpendingTrendProps) {
               color: 'primary.main',
             }}
           >
-            {compactArs(current.value)}
+            {compactTotal(current.value, isUsd, formatMoney)}
           </Typography>
         ) : null
       }

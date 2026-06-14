@@ -1,73 +1,42 @@
-# React + TypeScript + Vite
+# Margen — web
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The Margen frontend: React 19 + Vite + TypeScript, Material UI + Tailwind CSS v4 (shared design
+tokens), TanStack Query (server state) and TanStack Router (type-safe routing). It talks to the
+FastAPI backend in [`../api`](../api); the API base URL comes only from `VITE_API_BASE_URL`.
 
-Currently, two official plugins are available:
+See the [repo README](../../README.md) for the full stack and the quick start. From the repo
+root, `make web` runs the dev server and `make install` installs deps.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Package manager
 
-## React Compiler
+This app uses **pnpm** (pinned via Corepack — `pnpm@10.12.4`, see `packageManager` in
+`package.json`). Enable it once with `corepack enable`, then use `pnpm`, not `npm`.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Scripts
 
-## Expanding the ESLint configuration
+| Command | What it does |
+|---------|--------------|
+| `pnpm install` | Install dependencies (strict, content-addressed) |
+| `pnpm dev` | Start the Vite dev server (http://localhost:5173) |
+| `pnpm build` | Type-check (`tsc -b`) and build for production |
+| `pnpm preview` | Preview the production build locally |
+| `pnpm test` | Run the Vitest suite (Testing Library) |
+| `pnpm run lint` | Lint with ESLint |
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Environment
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+Copy `.env.example` to `.env` (git-ignored). The only variable is `VITE_API_BASE_URL`
+(defaults to the local backend, `http://localhost:8000`) — the single source of the API URL,
+never hardcoded.
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## Structure
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```text
+src/
+  api/         # typed HTTP clients (unwrap {data}, parse Decimal strings) + TanStack Query hooks
+  components/  # shared UI (app shell, account menu, status pill, error/empty states)
+  features/    # home, transactions, monotributo, settings
+  lib/         # formatting helpers (es-AR money, dates)
+  theme/       # MUI theme + color mode (shares tokens with Tailwind)
+  router.tsx   # TanStack Router route tree
 ```

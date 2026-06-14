@@ -8,6 +8,7 @@ import { AddTransactionProvider } from './features/transactions/AddTransactionPr
 import { HomePage } from './features/home/HomePage'
 import { TransactionsPage } from './features/transactions/TransactionsPage'
 import { MonotributoPage } from './features/monotributo/MonotributoPage'
+import { SettingsPage } from './features/settings/SettingsPage'
 
 /**
  * Code-based routing for Margen (ADR-014).
@@ -44,10 +45,17 @@ const monotributoRoute = createRoute({
   component: MonotributoPage,
 })
 
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  component: SettingsPage,
+})
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   transactionsRoute,
   monotributoRoute,
+  settingsRoute,
 ])
 
 export const router = createRouter({

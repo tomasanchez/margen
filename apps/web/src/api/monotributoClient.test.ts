@@ -7,8 +7,11 @@
  * is parsed to numbers, the field renames are resolved (`limit` → `annualLimit`,
  * `percentUsed` → `ratio` = pct ÷ 100, the invoice `occurredOn`/`name`/`category`/
  * `isForeignCurrency` → `dispDate`/`client`/`note`/`fx`), `previous` is null when
- * the API returns null, the category PATCH hits the right URL/body, and a non-2xx
- * response throws a status-carrying {@link MonotributoApiError}.
+ * the API returns null, and a non-2xx response throws a status-carrying
+ * {@link MonotributoApiError}.
+ *
+ * The category WRITE path moved to `PATCH /settings` (ADR-054/057); its tests
+ * live with the settings client, not here — this client is read-only now.
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -18,7 +21,6 @@ import {
   adaptSnapshot,
   adaptStanding,
   fetchMonotributo,
-  updateMonotributoCategory,
   type MonotributoSnapshotDto,
   type MonotributoStandingDto,
 } from './monotributoClient'
@@ -191,66 +193,5 @@ describe('fetchMonotributo HTTP layer', () => {
       new Response('unavailable', { status: 503 }),
     )
     await expect(fetchMonotributo()).rejects.toMatchObject({ status: 503 })
-  })
-})
-
-describe('updateMonotributoCategory HTTP layer', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn())
-  })
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  test('PATCHes /monotributo/config with the chosen category and returns the config', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ data: { currentCategory: 'D', activityType: 'services' } }),
-        { status: 200 },
-      ),
-    )
-
-    const result = await updateMonotributoCategory('D')
-
-    const [url, init] = vi.mocked(fetch).mock.calls[0]
-    expect(String(url)).toContain('/api/v1/monotributo/config')
-    expect(init?.method).toBe('PATCH')
-    const sent = JSON.parse(init?.body as string)
-    expect(sent.currentCategory).toBe('D')
-    // activityType omitted when not supplied.
-    expect('activityType' in sent).toBe(false)
-    expect(result).toEqual({ currentCategory: 'D', activityType: 'services' })
-  })
-
-  test('includes activityType in the body when supplied', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ data: { currentCategory: 'E', activityType: 'goods' } }),
-        { status: 200 },
-      ),
-    )
-
-    await updateMonotributoCategory('E', 'goods')
-
-    const [, init] = vi.mocked(fetch).mock.calls[0]
-    const sent = JSON.parse(init?.body as string)
-    expect(sent).toEqual({ currentCategory: 'E', activityType: 'goods' })
-  })
-
-  test('a 422 (unknown category) throws a MonotributoApiError carrying the status', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
-      new Response('unknown category', { status: 422 }),
-    )
-
-    await expect(updateMonotributoCategory('Z')).rejects.toBeInstanceOf(
-      MonotributoApiError,
-    )
-
-    vi.mocked(fetch).mockResolvedValueOnce(
-      new Response('unknown category', { status: 422 }),
-    )
-    await expect(updateMonotributoCategory('Z')).rejects.toMatchObject({
-      status: 422,
-    })
   })
 })

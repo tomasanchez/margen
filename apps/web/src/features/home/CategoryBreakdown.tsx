@@ -13,7 +13,7 @@ import Skeleton from '@mui/material/Skeleton'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { monoFontFamily } from '../../theme'
-import { formatCurrency } from '../../lib/format'
+import { useDisplayMoney } from '../settings/displayCurrencyContext'
 import type { CategorySpend } from '../../mock/types'
 import { SectionCard } from '../../components/SectionCard'
 
@@ -30,7 +30,16 @@ export interface CategoryBreakdownProps {
  */
 const BODY_MIN_HEIGHT = 280
 
-function CategoryRow({ row, maxPct }: { row: CategorySpend; maxPct: number }) {
+function CategoryRow({
+  row,
+  maxPct,
+  formatMoney,
+}: {
+  row: CategorySpend
+  maxPct: number
+  /** Currency-aware money formatter from the display-currency context (ADR-056). */
+  formatMoney: (ars: number | null | undefined) => string
+}) {
   const widthPct = maxPct > 0 ? Math.min((row.pct / maxPct) * 100, 100) : 0
   const rose = Boolean(row.up)
   return (
@@ -96,7 +105,7 @@ function CategoryRow({ row, maxPct }: { row: CategorySpend; maxPct: number }) {
             flex: 'none',
           }}
         >
-          {formatCurrency(row.amount, 'ARS')}
+          {formatMoney(row.amount)}
         </Typography>
       </Box>
       <Box
@@ -126,6 +135,8 @@ export function CategoryBreakdown({
   categories,
   loading = false,
 }: CategoryBreakdownProps) {
+  const formatMoney = useDisplayMoney()
+
   if (loading || !categories) {
     return (
       <SectionCard
@@ -183,7 +194,12 @@ export function CategoryBreakdown({
     >
       <Stack spacing={1.875}>
         {categories.map((row) => (
-          <CategoryRow key={row.category} row={row} maxPct={maxPct} />
+          <CategoryRow
+            key={row.category}
+            row={row}
+            maxPct={maxPct}
+            formatMoney={formatMoney}
+          />
         ))}
       </Stack>
     </SectionCard>

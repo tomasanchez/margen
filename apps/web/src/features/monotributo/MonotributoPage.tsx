@@ -29,8 +29,9 @@ import { StatusPill } from '../../components/StatusPill'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
 import { formatCurrency, formatPercent } from '../../lib/format'
-import { MonotributoApiError } from '../../api/monotributoClient'
+import { SettingsApiError } from '../../api/settingsClient'
 import { deriveComparison } from '../../api/monotributoClient'
+import { ManualThresholdNote } from '../settings/ManualThresholdNote'
 import {
   useMonotributoSnapshot,
   useUpdateMonotributoCategory,
@@ -87,7 +88,7 @@ export function MonotributoPage() {
   // fall back to a generic line (the page itself stays usable).
   const categoryError =
     updateCategory.isError && updateCategory.error
-      ? updateCategory.error instanceof MonotributoApiError &&
+      ? updateCategory.error instanceof SettingsApiError &&
         updateCategory.error.status === 422
         ? "That category isn't recognized. Pick one from the list."
         : "We couldn't update your category. Try again."
@@ -173,6 +174,9 @@ export function MonotributoPage() {
               </Box>
             </Typography>
           ) : null}
+          <Box sx={{ mt: 1 }}>
+            <ManualThresholdNote />
+          </Box>
         </Box>
 
         {ready && snapshot && standing ? (

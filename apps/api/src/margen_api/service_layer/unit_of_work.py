@@ -7,11 +7,9 @@ from collections.abc import Iterator
 from types import TracebackType
 
 from margen_api.domain.messages import Event
-from margen_api.service_layer.monotributo_config_repository import (
-    AbstractMonotributoConfigRepository,
-)
 from margen_api.service_layer.monotributo_repository import AbstractMonotributoSnapshotRepository
 from margen_api.service_layer.repository import AbstractTransactionRepository
+from margen_api.service_layer.settings_repository import AbstractSettingsRepository
 
 
 class IntegrityConflict(RuntimeError):
@@ -29,13 +27,13 @@ class AbstractUnitOfWork(ABC):
             inside the ``async with`` boundary.
         monotributo_snapshots: Repository for the Monotributo snapshot history,
             written by the read-records capture handler (ADR-052).
-        monotributo_config: Repository for the single-row Monotributo config,
-            written by the update-config handler (ADR-048).
+        settings: Repository for the single-row application settings, written by
+            the update-settings handler (ADR-054).
     """
 
     transactions: AbstractTransactionRepository
     monotributo_snapshots: AbstractMonotributoSnapshotRepository
-    monotributo_config: AbstractMonotributoConfigRepository
+    settings: AbstractSettingsRepository
 
     async def __aenter__(self) -> AbstractUnitOfWork:
         """Enter the transaction boundary."""

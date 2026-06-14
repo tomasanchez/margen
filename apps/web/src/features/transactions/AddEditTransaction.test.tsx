@@ -22,9 +22,10 @@ import { useAddTransaction } from './addContext'
 // Mock the HTTP client so the flow never touches a real backend (ADR-038), and
 // the dolarapi FX adapter so no real network is hit (ADR-044). The suggested
 // MEP + official rates are controllable per-test via `fxMock`.
-const { createMock, fxMock } = vi.hoisted(() => ({
+const { createMock, fxMock, fetchSettingsMock } = vi.hoisted(() => ({
   createMock: vi.fn(),
   fxMock: vi.fn(),
+  fetchSettingsMock: vi.fn(),
 }))
 
 vi.mock('../../api/transactionsClient', () => ({
@@ -40,9 +41,30 @@ vi.mock('../../api/fxClient', () => ({
   fetchSuggestedRates: fxMock,
 }))
 
+// The form now reads the configured FX default from settings (ADR-057). Mock the
+// settings client so the default source is controllable per-test via
+// `fetchSettingsMock`; the default below is a stable MEP (the existing
+// assertions assume the MEP default), with one test overriding it to official.
+vi.mock('../../api/settingsClient', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../api/settingsClient')
+  >('../../api/settingsClient')
+  return {
+    ...actual,
+    fetchSettings: fetchSettingsMock,
+  }
+})
+
 beforeEach(() => {
   // Default: dolarapi suggests MEP 1245 + official 1045 (seeded prototype values).
   fxMock.mockResolvedValue({ mep: 1245, official: 1045 })
+  // Default: the configured FX default is MEP (existing behavior).
+  fetchSettingsMock.mockResolvedValue({
+    preferredDisplayCurrency: 'ARS',
+    fxDefaultRateType: 'MEP',
+    monotributoCurrentCategory: 'C',
+    monotributoActivityType: 'services',
+  })
 })
 
 afterEach(() => {
@@ -149,6 +171,35 @@ describe('Add flow — USD picks an explicit FX source (ADR-044/045)', () => {
     ).toBeInTheDocument()
     expect(
       form.getByRole('button', { name: 'Official 1.045' }),
+    ).toBeInTheDocument()
+  })
+
+  test('with settings.fxDefaultRateType=official, USD defaults the source to Official (ADR-057)', async () => {
+    // The configured FX default is Official for this user.
+    fetchSettingsMock.mockResolvedValue({
+      preferredDisplayCurrency: 'ARS',
+      fxDefaultRateType: 'official',
+      monotributoCurrentCategory: 'C',
+      monotributoActivityType: 'services',
+    })
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    await user.type(form.getByLabelText(/^Amount in /), '500')
+    await user.click(form.getByRole('button', { name: 'USD' }))
+
+    // The default source is the configured Official rate (1045), pre-filled into
+    // the rate field — NOT the MEP default the other tests assume.
+    const rateField = await form.findByLabelText('FX rate')
+    await waitFor(() => expect(rateField).toHaveValue('1045'))
+
+    // The Official option is the pressed/selected source and the subline reads
+    // "official"; 500 USD * 1045 = ARS 522.500.
+    expect(
+      form.getByRole('button', { name: 'Official 1.045', pressed: true }),
+    ).toBeInTheDocument()
+    expect(
+      await form.findByText('≈ ARS 522.500 at official 1.045'),
     ).toBeInTheDocument()
   })
 

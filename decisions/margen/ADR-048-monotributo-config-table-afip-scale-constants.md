@@ -4,7 +4,7 @@ adr: 48
 title: "Persist Monotributo config (current category + activity type) with a migration; A-K ceilings as reference constants; editable via PATCH"
 category: data
 date: 2026-06-14
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -43,7 +43,9 @@ One small config table plus its Alembic migration and a minimal write path land 
 ## Status History
 
 - 2026-06-14: accepted
+- 2026-06-14: superseded by ADR-054
 
 ## Notes
 
 - 2026-06-14: A `monotributo_snapshot` history table is added alongside `monotributo_config` to persist periodic computed standings (one row per trailing-12-month period, keyed by `period_end` month). This enables the prior-period comparison without recomputing historical figures against today's scale. See ADR-052.
+- 2026-06-14: **Superseded by ADR-054** (issue #10). The `monotributo_config` table is replaced by a single-row `app_settings` table that consolidates all user settings (display currency, FX default, Monotributo category + activity type). The `PATCH /api/v1/monotributo/config` endpoint is removed; the category is now written via `PATCH /api/v1/settings`. The data migration (create `app_settings`, carry over the `monotributo_config` row, drop `monotributo_config`) is specified in ADR-055.
