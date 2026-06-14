@@ -13,11 +13,27 @@
  * never submit), so no re-seed is needed.
  */
 
-import { describe, expect, test } from 'vitest'
-import { screen, within } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../test/renderWithProviders'
 import { useAddTransaction } from './addContext'
+
+// Mock the HTTP client so the flow never touches a real backend (ADR-038).
+const { createMock } = vi.hoisted(() => ({ createMock: vi.fn() }))
+
+vi.mock('../../api/transactionsClient', () => ({
+  transactionsClient: {
+    list: vi.fn(() => Promise.resolve([])),
+    create: createMock,
+    update: vi.fn(),
+    remove: vi.fn(),
+  },
+}))
+
+afterEach(() => {
+  vi.clearAllMocks()
+})
 
 /** A trigger that opens the Add flow; rendered under the AddTransactionProvider. */
 function OpenAddTrigger() {
@@ -122,5 +138,26 @@ describe('Add flow — USD shows the FX context line', () => {
     expect(
       await form.findByText('≈ ARS 100.000 at MEP 1.000'),
     ).toBeInTheDocument()
+  })
+})
+
+describe('Add flow — a save failure keeps the form open', () => {
+  test('a rejected create surfaces an error notice without closing the form', async () => {
+    createMock.mockRejectedValueOnce(new Error('save failed'))
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    // Enter a valid ARS amount, then save.
+    await user.type(form.getByLabelText(/^Amount in /), '5000')
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+
+    // The calm error notice appears and the form is still open (ADR-036/037).
+    expect(
+      await screen.findByText(
+        "We couldn't save your transaction. Please try again.",
+      ),
+    ).toBeInTheDocument()
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 })
