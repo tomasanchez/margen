@@ -267,6 +267,15 @@ export interface AddEditFormState {
   clearImportedDocument: () => void
 
   /**
+   * Autofill the EXPENSE path with the user's monthly Monotributo cuota. Sets the
+   * amount to the ARS cuota, forces a plain ARS expense (clearing any FX state),
+   * picks the `Taxes` category, and names the row after the configured category
+   * (e.g. "Monotributo C"). The button that calls this is shown on the Expense
+   * tab only; the caller computes the cuota from the snapshot.
+   */
+  applyMonotributoCuota: (amount: number, categoryLabel: string) => void
+
+  /**
    * Reset every field to its blank new-entry default and clear the attachment +
    * duplicate advisory (issue #26 polish). Resets in place (no remount), so it
    * works whether the form opened blank or via an upload. Does NOT close the
@@ -556,6 +565,25 @@ export function useAddEditFormState(
     setImportedName(prefill?.name ?? null)
   }, [prefill?.name])
 
+  // Autofill the expense path with the monthly Monotributo cuota. The cuota is an
+  // ARS amount, so we set ARS and clear any FX state (rate/source/suggestions) so
+  // `buildInput` produces a plain ARS expense. We pin the `Taxes` category and set
+  // the name override to the configured category label (e.g. "Monotributo C").
+  const applyMonotributoCuota = useCallback(
+    (amount: number, categoryLabel: string) => {
+      setAmountText(String(amount))
+      setCurrency('ARS')
+      setRateTextRaw('')
+      setRateEdited(false)
+      setFxSourceRaw(fxDefaultRef.current)
+      setSuggestedRates({ MEP: null, official: null })
+      setRateSuggestionStatus('idle')
+      setCategory('Taxes')
+      setImportedName(categoryLabel)
+    },
+    [],
+  )
+
   // Reset every field to its blank new-entry default + clear the attachment and
   // duplicate advisory (issue #26). Resets in place so it works whether the form
   // opened blank or via an upload; it does not close the surface.
@@ -690,6 +718,7 @@ export function useAddEditFormState(
     attachedFileName,
     applyParsedInvoice,
     clearImportedDocument,
+    applyMonotributoCuota,
     resetForm,
     buildInput,
   }

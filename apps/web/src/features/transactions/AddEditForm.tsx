@@ -48,6 +48,7 @@ import {
   InvoicesApiError,
   parseInvoice,
 } from '../../api/invoicesClient'
+import { useMonotributoSnapshot } from '../monotributo/queries'
 import type { AddPrefill } from './addContext'
 import {
   EXPENSE_CATEGORIES,
@@ -125,6 +126,22 @@ export function AddEditForm({
 }: AddEditFormProps) {
   const form = useAddEditFormState(prefill)
   const [moreOpen, setMoreOpen] = useState(false)
+
+  // Monotributo cuota shortcut (expense path only): load the user's monthly tax
+  // as a plain ARS expense, autofilled from their configured category. The cuota
+  // is the scale row matching the current category, taking the services or goods
+  // fee per the configured activity type. We read the snapshot non-blockingly —
+  // while it's pending or absent the button stays calmly disabled (no crash).
+  const monotributoQuery = useMonotributoSnapshot()
+  const standing = monotributoQuery.data?.current
+  const cuotaRow = standing
+    ? monotributoQuery.data?.scale.find((row) => row.letter === standing.category)
+    : undefined
+  const monotributoCuota = cuotaRow
+    ? standing?.activityType === 'services'
+      ? cuotaRow.cuotaServicios
+      : cuotaRow.cuotaBienes
+    : undefined
 
   // In-form ARCA invoice upload (ADR-072): a calm parsing flag + an inline,
   // non-blocking failure message. On success the parse autofills the fields; the
@@ -214,6 +231,20 @@ export function AddEditForm({
 
   const handleFxSourceChange = (_: unknown, next: FxSource | null) => {
     if (next) form.setFxSource(next)
+  }
+
+  // Load the monthly Monotributo cuota into the expense fields (ARS, Taxes,
+  // "Monotributo <category>"). Guarded by the disabled state below, but re-check
+  // the figures so a late/absent snapshot never autofills garbage.
+  const handleLoadMonotributoCuota = () => {
+    if (
+      typeof monotributoCuota !== 'number' ||
+      monotributoCuota <= 0 ||
+      !standing
+    ) {
+      return
+    }
+    form.applyMonotributoCuota(monotributoCuota, `Monotributo ${standing.category}`)
   }
 
   // FX context line: converted ARS value + rate source + rate value. The source
@@ -653,7 +684,43 @@ export function AddEditForm({
       {/* Category chips (single select; Income is implicit for income type). */}
       {isExpense ? (
         <Box sx={{ mt: 2.5 }}>
-          <SectionLabel>Category</SectionLabel>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'baseline',
+              justifyContent: 'space-between',
+              gap: 1,
+            }}
+          >
+            <SectionLabel>Category</SectionLabel>
+            {/* Expense-only shortcut: load the user's monthly Monotributo cuota
+                as an ARS Taxes expense, autofilled from their configured category
+                (the income/invoice path has the upload control instead). Calmly
+                disabled while the snapshot is pending or unavailable. */}
+            <Button
+              type="button"
+              variant="text"
+              size="small"
+              onClick={handleLoadMonotributoCuota}
+              disabled={
+                monotributoQuery.isPending ||
+                typeof monotributoCuota !== 'number' ||
+                monotributoCuota <= 0
+              }
+              sx={{
+                flex: 'none',
+                px: 1,
+                fontSize: 12.5,
+                fontWeight: 600,
+                color: 'text.secondary',
+                textTransform: 'none',
+              }}
+            >
+              {typeof monotributoCuota === 'number'
+                ? `Load Monotributo cuota (ARS ${formatARS(monotributoCuota)})`
+                : 'Load Monotributo cuota'}
+            </Button>
+          </Box>
           <Stack
             direction="row"
             spacing={1}
