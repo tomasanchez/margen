@@ -14,9 +14,9 @@
  *   - the invoice drilldown lists exactly the API invoices, cumulative included;
  *   - the "Compare to previous period" toggle: off → no comparison; on + prior →
  *     previous figures + deltas; on + no prior → calm empty state;
- *   - the category selector calls updateMonotributoCategory and triggers a
- *     refetch (the snapshot re-fetches on success); a 422 surfaces a calm inline
- *     message;
+ *   - the category selector writes via `PATCH /settings` (ADR-054/057) and
+ *     triggers a refetch (the snapshot re-fetches on success); a 422 surfaces a
+ *     calm inline message;
  *   - calm loading and error states render.
  */
 
@@ -41,6 +41,7 @@ import {
 import { ColorModeProvider } from '../../theme/colorMode'
 import { MonotributoPage } from './MonotributoPage'
 import { MonotributoApiError } from '../../api/monotributoClient'
+import { SettingsApiError } from '../../api/settingsClient'
 import type {
   MonotributoSnapshot,
   MonotributoScaleRow,
@@ -48,8 +49,10 @@ import type {
   StatusLevel,
 } from '../../mock/types'
 
-// Mock the HTTP client so the page never touches a real backend (ADR-038). The
+// Mock the HTTP clients so the page never touches a real backend (ADR-038). The
 // query + mutation flow through the real queries.ts hooks over these mocks.
+// Reads go through monotributoClient.fetchMonotributo; the category WRITE path
+// moved to settingsClient.updateSettings (ADR-054/057).
 const { fetchMock, updateMock } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
   updateMock: vi.fn(),
@@ -57,14 +60,24 @@ const { fetchMock, updateMock } = vi.hoisted(() => ({
 
 vi.mock('../../api/monotributoClient', async () => {
   // Keep the real adapters + error class + deriveComparison; only the network
-  // entry points are mocked.
+  // entry point is mocked.
   const actual = await vi.importActual<
     typeof import('../../api/monotributoClient')
   >('../../api/monotributoClient')
   return {
     ...actual,
     fetchMonotributo: fetchMock,
-    updateMonotributoCategory: updateMock,
+  }
+})
+
+vi.mock('../../api/settingsClient', async () => {
+  // Keep the real SettingsApiError class; mock only the write entry point.
+  const actual = await vi.importActual<
+    typeof import('../../api/settingsClient')
+  >('../../api/settingsClient')
+  return {
+    ...actual,
+    updateSettings: updateMock,
   }
 })
 
@@ -177,7 +190,13 @@ function renderPage() {
 
 beforeEach(() => {
   fetchMock.mockResolvedValue(makeSnapshot())
-  updateMock.mockResolvedValue({ currentCategory: 'D', activityType: 'services' })
+  // settingsClient.updateSettings resolves the full settings row (ADR-054).
+  updateMock.mockResolvedValue({
+    preferredDisplayCurrency: 'ARS',
+    fxDefaultRateType: 'MEP',
+    monotributoCurrentCategory: 'D',
+    monotributoActivityType: 'services',
+  })
 })
 
 afterEach(() => {
@@ -339,7 +358,7 @@ describe('compare to previous period toggle (ADR-052)', () => {
 })
 
 describe('category selector (ADR-049)', () => {
-  test('changing the category calls updateMonotributoCategory and refetches', async () => {
+  test('changing the category writes via PATCH /settings and refetches', async () => {
     const user = userEvent.setup()
     renderPage()
 
@@ -352,7 +371,11 @@ describe('category selector (ADR-049)', () => {
       await screen.findByRole('option', { name: 'Category D' }),
     )
 
-    expect(updateMock).toHaveBeenCalledWith('D', undefined)
+    // The category write now goes through PATCH /settings (ADR-054/057): the
+    // legacy { currentCategory } input is mapped to the settings payload.
+    expect(updateMock).toHaveBeenCalledWith({
+      monotributoCurrentCategory: 'D',
+    })
 
     // On success the snapshot query is invalidated → a refetch fires.
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
@@ -360,7 +383,7 @@ describe('category selector (ADR-049)', () => {
 
   test('a 422 surfaces a calm inline message and keeps the page usable', async () => {
     updateMock.mockRejectedValue(
-      new MonotributoApiError(422, 'unknown category'),
+      new SettingsApiError(422, 'unknown category'),
     )
     const user = userEvent.setup()
     renderPage()
@@ -379,6 +402,18 @@ describe('category selector (ADR-049)', () => {
       screen.getByRole('meter', {
         name: '60% of the Category C annual limit used',
       }),
+    ).toBeInTheDocument()
+  })
+})
+
+describe('manual-threshold note (ADR-051/057)', () => {
+  test('renders the AFIP scale 2026 note on the page', async () => {
+    renderPage()
+
+    expect(
+      await screen.findByText(
+        'Thresholds are manually maintained · AFIP scale 2026',
+      ),
     ).toBeInTheDocument()
   })
 })
