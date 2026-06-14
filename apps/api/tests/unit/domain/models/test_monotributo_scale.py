@@ -1,57 +1,114 @@
-"""Unit tests for the Monotributo scale constants and helpers (ADR-048).
+"""Unit tests for the effective-dated Monotributo scale registry (ADR-067, ADR-048).
 
-The scale is a versioned constant; these tests pin its shape and the pure
-lookup/projection helpers used by the trailing-12-month reader (ADR-046).
+The scale is a versioned, effective-dated registry; these tests pin its shape,
+the date-based vintage selection (with the earliest-vintage fallback) and the
+pure lookup helpers used by the trailing-12-month reader (ADR-046).
 """
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from itertools import pairwise
 
 import pytest
 
 from margen_api.domain.models.monotributo_scale import (
-    MONOTRIBUTO_SCALE,
-    SCALE_VERSION,
-    SCALE_YEAR,
+    CURRENT_SCALE_VERSION,
+    CURRENT_SCALE_YEAR,
+    KNOWN_CATEGORIES,
+    MONOTRIBUTO_SCALES,
+    MonotributoScaleVersion,
+    current_scale,
     get_category,
     get_ceiling,
+    scale_for,
     smallest_category_for,
 )
 
 
 class TestScaleShape:
-    """The scale covers A-K with monotonically-increasing ceilings."""
+    """Each vintage covers A-K with monotonically-increasing ceilings."""
 
-    def test_scale_letters_are_a_to_k_in_order(self) -> None:
-        """GIVEN the scale WHEN listing letters THEN they run A through K in order."""
+    @pytest.mark.parametrize("vintage", MONOTRIBUTO_SCALES, ids=[v.version for v in MONOTRIBUTO_SCALES])
+    def test_scale_letters_are_a_to_k_in_order(self, vintage: MonotributoScaleVersion) -> None:
+        """GIVEN a vintage WHEN listing letters THEN they run A through K in order."""
         # WHEN
-        letters = [row.letter for row in MONOTRIBUTO_SCALE]
+        letters = [row.letter for row in vintage.categories]
         # THEN
         assert letters == list("ABCDEFGHIJK")
 
-    def test_ceilings_strictly_increase(self) -> None:
-        """GIVEN the scale THEN each ceiling is strictly larger than the previous."""
-        ceilings = [row.annual_ceiling for row in MONOTRIBUTO_SCALE]
+    @pytest.mark.parametrize("vintage", MONOTRIBUTO_SCALES, ids=[v.version for v in MONOTRIBUTO_SCALES])
+    def test_ceilings_strictly_increase(self, vintage: MonotributoScaleVersion) -> None:
+        """GIVEN a vintage THEN each ceiling is strictly larger than the previous."""
+        ceilings = [row.annual_ceiling for row in vintage.categories]
         assert all(b > a for a, b in pairwise(ceilings))
 
-    def test_version_markers_are_present(self) -> None:
-        """GIVEN the module THEN the vintage markers are populated."""
-        assert SCALE_YEAR == 2026
-        assert SCALE_VERSION.startswith("2026")
+    def test_registry_is_ordered_by_effective_from(self) -> None:
+        """GIVEN the registry THEN vintages are ordered by effective_from ascending."""
+        dates = [vintage.effective_from for vintage in MONOTRIBUTO_SCALES]
+        assert all(a < b for a, b in pairwise(dates))
+
+    def test_current_markers_track_latest_vintage(self) -> None:
+        """GIVEN the module THEN the current markers reflect the latest vintage."""
+        latest = MONOTRIBUTO_SCALES[-1]
+        assert CURRENT_SCALE_VERSION == latest.version == "2026-02"
+        assert CURRENT_SCALE_YEAR == 2026
+        assert current_scale() is latest
+
+    def test_known_categories_derived_from_latest(self) -> None:
+        """GIVEN the latest vintage THEN KNOWN_CATEGORIES are its A-K letters."""
+        assert frozenset("ABCDEFGHIJK") == KNOWN_CATEGORIES
+
+
+class TestScaleFor:
+    """``scale_for`` selects the vintage in effect on a date (ADR-067)."""
+
+    def test_none_returns_latest_vintage(self) -> None:
+        """GIVEN no date WHEN selecting THEN the latest vintage returns (clock-free)."""
+        assert scale_for(None) is MONOTRIBUTO_SCALES[-1]
+        assert scale_for().version == "2026-02"
+
+    def test_date_in_2025_window_returns_2025_vintage(self) -> None:
+        """GIVEN a date in the 2025 second-semester window THEN the 2025-08 vintage returns."""
+        assert scale_for(date(2025, 9, 1)).version == "2025-08"
+        # The day before the next vintage's effective_from still resolves to 2025-08.
+        assert scale_for(date(2026, 1, 31)).version == "2025-08"
+
+    def test_date_on_or_after_2026_effective_from_returns_2026_vintage(self) -> None:
+        """GIVEN a Feb-2026-or-later date THEN the 2026-02 vintage returns."""
+        assert scale_for(date(2026, 2, 1)).version == "2026-02"
+        assert scale_for(date(2026, 6, 14)).version == "2026-02"
+
+    def test_date_before_all_vintages_falls_back_to_earliest(self) -> None:
+        """GIVEN a date before every vintage THEN the earliest vintage is the fallback."""
+        assert scale_for(date(2024, 1, 1)) is MONOTRIBUTO_SCALES[0]
+        assert scale_for(date(2024, 1, 1)).version == "2025-08"
 
 
 class TestGetCategoryAndCeiling:
-    """Letter lookups resolve rows and ceilings case-insensitively."""
+    """Letter lookups resolve rows and ceilings case-insensitively, honoring as_of."""
 
     def test_get_category_is_case_insensitive(self) -> None:
         """GIVEN a lowercase letter WHEN looked up THEN the matching row returns."""
         assert get_category("c").letter == "C"
 
-    def test_get_ceiling_matches_row(self) -> None:
-        """GIVEN a letter WHEN fetching its ceiling THEN it matches the row value."""
-        assert get_ceiling("A") == MONOTRIBUTO_SCALE[0].annual_ceiling
+    def test_get_ceiling_matches_latest_row_by_default(self) -> None:
+        """GIVEN a letter and no date WHEN fetching its ceiling THEN it is the latest vintage value."""
+        assert get_ceiling("A") == MONOTRIBUTO_SCALES[-1].categories[0].annual_ceiling
+
+    def test_get_ceiling_honors_as_of_vintage(self) -> None:
+        """GIVEN a past date WHEN fetching a ceiling THEN it is the period's historical value."""
+        # 2025 second-semester C ceiling vs the current (2026-02) C ceiling.
+        assert get_ceiling("C", as_of=date(2025, 9, 1)) == Decimal("18473166.15")
+        assert get_ceiling("C") == Decimal("21113696.52")
+        assert get_ceiling("C", as_of=date(2026, 6, 14)) == Decimal("21113696.52")
+
+    def test_get_category_honors_as_of_vintage(self) -> None:
+        """GIVEN a past date WHEN fetching a row THEN its cuotas come from that vintage."""
+        row_2025 = get_category("A", as_of=date(2025, 9, 1))
+        assert row_2025.cuota_servicios == Decimal("37085.74")
+        assert get_category("A").cuota_servicios == Decimal("42386.74")
 
     def test_unknown_letter_raises(self) -> None:
         """GIVEN an unknown letter WHEN looked up THEN KeyError is raised."""
@@ -68,10 +125,17 @@ class TestSmallestCategoryFor:
 
     def test_amount_at_ceiling_boundary_is_inclusive(self) -> None:
         """GIVEN an amount equal to a ceiling THEN that same category is chosen."""
-        ceiling_b = MONOTRIBUTO_SCALE[1].annual_ceiling
+        ceiling_b = MONOTRIBUTO_SCALES[-1].categories[1].annual_ceiling
         assert smallest_category_for(ceiling_b) == "B"
 
     def test_amount_above_all_ceilings_returns_top(self) -> None:
         """GIVEN an amount over every ceiling THEN the top category K returns."""
-        over = MONOTRIBUTO_SCALE[-1].annual_ceiling + Decimal("1.00")
+        over = MONOTRIBUTO_SCALES[-1].categories[-1].annual_ceiling + Decimal("1.00")
         assert smallest_category_for(over) == "K"
+
+    def test_honors_as_of_vintage(self) -> None:
+        """GIVEN an amount near a boundary WHEN classified per date THEN the vintage matters."""
+        # 14M fits 2025-08 category B (ceiling 13.18M? no -> C 18.47M) but in 2026-02 fits B (15.06M).
+        amount = Decimal("14000000.00")
+        assert smallest_category_for(amount, as_of=date(2025, 9, 1)) == "C"
+        assert smallest_category_for(amount, as_of=date(2026, 6, 14)) == "B"
