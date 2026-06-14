@@ -16,6 +16,8 @@ from uuid import UUID
 
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.value_objects import Kind, TxType
+from margen_api.service_layer.insights_read_models import MonthlyInsights
+from margen_api.service_layer.insights_reader import AbstractInsightsReader
 from margen_api.service_layer.monotributo_read_models import (
     MonotributoSnapshot,
     MonotributoStanding,
@@ -265,6 +267,32 @@ class FakeSummaryReader(AbstractSummaryReader):
         """Record the requested month and return the canned summary."""
         self.requested_month = month
         return self._summary
+
+
+class FakeInsightsReader(AbstractInsightsReader):
+    """Insights reader returning a canned :class:`MonthlyInsights` for route tests.
+
+    The route tests assert wiring and the HTTP contract, not the aggregation
+    itself (which the pure-function and integration tiers cover), so this fake
+    records the requested month and reference and returns the insights it was
+    given (ADR-061, ADR-032).
+    """
+
+    def __init__(self, insights: MonthlyInsights) -> None:
+        """Initialize the reader with the insights every call returns.
+
+        Args:
+            insights: The monthly insights every call returns.
+        """
+        self._insights = insights
+        self.requested_month: date | None = None
+        self.requested_reference: date | None = None
+
+    async def monthly_insights(self, month: date, reference: date) -> MonthlyInsights:
+        """Record the requested month and reference and return the canned facts."""
+        self.requested_month = month
+        self.requested_reference = reference
+        return self._insights
 
 
 class FakeMonotributoReader(AbstractMonotributoReader):

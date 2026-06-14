@@ -19,6 +19,7 @@ from margen_api.adapters.models.app_settings import AppSettingsRecord
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.adapters.queries import (
+    SqlAlchemyInsightsReader,
     SqlAlchemyMonotributoReader,
     SqlAlchemySettingsReader,
     SqlAlchemySummaryReader,
@@ -244,6 +245,187 @@ class TestSummaryReader:
         # THEN
         assert summary.trend[-1].expenses == Decimal("250.5")
         assert summary.categories[0].amount == Decimal("250.5")
+
+
+def _recurring_row(count: int, total: object) -> MagicMock:
+    """Wrap a recurring (count, total) row in a fake result exposing ``one``."""
+    result = MagicMock()
+    result.one.return_value = SimpleNamespace(recurring_count=count, recurring_total=total)
+    return result
+
+
+def _usd_record(
+    occurred_on: date,
+    usd: str,
+    rate: str | None,
+    *,
+    fx_rate_type: str | None = "MEP",
+) -> TransactionRecord:
+    """Build a USD transaction record for the latest-USD-invoice projection."""
+    record = TransactionRecord()
+    record.id = uuid4()
+    record.occurred_on = occurred_on
+    record.name = "USD invoice"
+    record.kind = "invoice"
+    record.amount = Decimal("120000")
+    record.currency = "USD"
+    record.usd_amount = Decimal(usd)
+    record.fx_rate = Decimal(rate) if rate is not None else None
+    record.fx_rate_type = fx_rate_type
+    return record
+
+
+class TestInsightsReader:
+    """``monthly_insights`` runs six aggregations and assembles the facts (ADR-061)."""
+
+    async def test_assembles_all_facts(self):
+        """
+        GIVEN a session whose six executes return month/prior categories, recurring,
+              inflow, expense and a latest USD invoice
+        WHEN monthly_insights runs for a past month
+        THEN it picks the mover, sums recurring, computes actual savings and projects
+             the latest USD invoice
+        """
+        # GIVEN — execute sequence: month cats, prior cats, recurring, inflow, expense, latest USD.
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([_category_row("Food", Decimal("300.00")), _category_row("Rent", Decimal("100.00"))]),
+            _result([_category_row("Food", Decimal("150.00"))]),
+            _recurring_row(2, Decimal("900.00")),
+            _scalar_result(Decimal("3000.00")),
+            _scalar_result(Decimal("400.00")),
+            _scalar_result(_usd_record(date(2026, 6, 20), "100.00", "1200.00")),
+        ]
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN — reference in July makes June a past month: actual savings.
+        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1))
+
+        # THEN — six aggregation queries ran as Selects.
+        assert session.execute.await_count == 6
+        for call in session.execute.await_args_list:
+            (statement,) = call.args
+            assert isinstance(statement, Select)
+
+        # THEN — facts.
+        assert insights.month == "2026-06"
+        assert insights.top_category_mover is not None
+        assert insights.top_category_mover.category == "Food"
+        assert insights.top_category_mover.delta_pct == Decimal("100")
+        assert insights.recurring is not None
+        assert insights.recurring.count == 2
+        assert insights.recurring.total == Decimal("900.00")
+        # Savings actual = inflow 3000 - expense 400 = 2600.
+        assert insights.savings.is_projected is False
+        assert insights.savings.amount == Decimal("2600.00")
+        assert insights.latest_usd_invoice is not None
+        assert insights.latest_usd_invoice.usd == Decimal("100.00")
+        assert insights.latest_usd_invoice.rate == Decimal("1200.00")
+        assert insights.latest_usd_invoice.rate_type == "MEP"
+        assert insights.latest_usd_invoice.occurred_on == date(2026, 6, 20)
+
+    async def test_empty_month_has_none_facts_and_zero_savings(self):
+        """
+        GIVEN a session whose executes all return empty / None aggregates
+        WHEN monthly_insights runs
+        THEN the optional facts are None and savings are 0
+        """
+        # GIVEN — execute sequence with no data anywhere.
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([]),  # month categories
+            _result([]),  # prior categories
+            _recurring_row(0, Decimal("0")),  # no recurring
+            _scalar_result(None),  # no inflow -> 0
+            _scalar_result(None),  # no expense -> 0
+            _scalar_result(None),  # no latest USD invoice
+        ]
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN
+        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1))
+
+        # THEN
+        assert insights.top_category_mover is None
+        assert insights.recurring is None
+        assert insights.latest_usd_invoice is None
+        assert insights.savings.amount == Decimal("0")
+
+    async def test_latest_usd_invoice_defaults_rate_type_when_missing(self):
+        """
+        GIVEN a USD invoice row carrying no ``fx_rate_type``
+        WHEN monthly_insights runs
+        THEN the latest USD invoice falls back to the documented MEP rate type
+        """
+        # GIVEN
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([]),
+            _result([]),
+            _recurring_row(0, Decimal("0")),
+            _scalar_result(None),
+            _scalar_result(None),
+            _scalar_result(_usd_record(date(2026, 6, 9), "50.00", "1100.00", fx_rate_type=None)),
+        ]
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN
+        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1))
+
+        # THEN
+        assert insights.latest_usd_invoice is not None
+        assert insights.latest_usd_invoice.rate_type == FxRateType.MEP.value
+
+    async def test_january_prior_month_rolls_back_a_year(self):
+        """
+        GIVEN a requested month of January
+        WHEN monthly_insights runs
+        THEN the prior-category query targets the previous December (year - 1)
+        """
+        # GIVEN — six no-data executes; we only assert the prior bound rolled back.
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([]),
+            _result([]),
+            _recurring_row(0, Decimal("0")),
+            _scalar_result(None),
+            _scalar_result(None),
+            _scalar_result(None),
+        ]
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN
+        insights = await reader.monthly_insights(date(2026, 1, 1), date(2026, 2, 1))
+
+        # THEN — no crash on the year rollover and the requested month is January.
+        assert insights.month == "2026-01"
+        assert session.execute.await_count == 6
+
+    async def test_coerces_float_sums_to_decimal(self):
+        """
+        GIVEN a backend (e.g. SQLite) returning float SUMs
+        WHEN monthly_insights runs
+        THEN the recurring total and savings totals are coerced to Decimal (ADR-025)
+        """
+        # GIVEN
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([]),
+            _result([]),
+            _recurring_row(1, 250.5),  # float total
+            _scalar_result(1000.5),  # float inflow
+            _scalar_result(250.25),  # float expense
+            _scalar_result(None),
+        ]
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN
+        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1))
+
+        # THEN
+        assert insights.recurring is not None
+        assert insights.recurring.total == Decimal("250.5")
+        assert insights.savings.amount == Decimal("1000.5") - Decimal("250.25")
 
 
 def _config_row(category: str = "A", activity: str = "services") -> SimpleNamespace:
