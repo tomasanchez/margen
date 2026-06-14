@@ -6,16 +6,32 @@
  * bar. The badge pairs its color with the explicit percentage text, never color
  * alone (ADR-019). Bars scale against the largest category so the leader fills
  * the track. Long category names truncate with an ellipsis (ADR-020).
+ *
+ * Each row is a router link that drills into the Transactions screen pre-filtered
+ * to that category (`/transactions?category=<name>`, ADR-062), so a category
+ * total is directly explainable. The link carries an explicit accessible name
+ * and a visible focus ring (HIG); hover lifts it gently.
  */
 
 import Box from '@mui/material/Box'
 import Skeleton from '@mui/material/Skeleton'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
+import { Link } from '@tanstack/react-router'
 import { monoFontFamily } from '../../theme'
+import { formatCurrency } from '../../lib/format'
 import { useDisplayMoney } from '../settings/displayCurrencyContext'
 import type { CategorySpend } from '../../mock/types'
 import { SectionCard } from '../../components/SectionCard'
+
+/**
+ * CSS class (defined in `index.css` with the shared --mg-* tokens) for the
+ * clickable category row. The row is a BARE TanStack {@link Link} — not
+ * `Box component={Link}` — so the typed `to` / `search` inference is preserved
+ * and `search={{ category }}` is checked against the route's search schema
+ * (ADR-062). The visual block/hover/focus styling lives in the class.
+ */
+const categoryRowLinkClass = 'mg-category-row-link'
 
 export interface CategoryBreakdownProps {
   categories: CategorySpend[] | undefined
@@ -42,8 +58,19 @@ function CategoryRow({
 }) {
   const widthPct = maxPct > 0 ? Math.min((row.pct / maxPct) * 100, 100) : 0
   const rose = Boolean(row.up)
+  // The accessible name spells out the action + the literal ARS amount so the
+  // link reads clearly to screen readers regardless of the display currency.
+  const linkLabel = `${row.category}, ${formatCurrency(
+    row.amount,
+    'ARS',
+  )}${row.up ? `, up ${row.up}` : ''} — view transactions`
   return (
-    <Box>
+    <Link
+      to="/transactions"
+      search={{ category: row.category }}
+      aria-label={linkLabel}
+      className={categoryRowLinkClass}
+    >
       <Box
         sx={{
           display: 'flex',
@@ -127,7 +154,7 @@ function CategoryRow({
           }}
         />
       </Box>
-    </Box>
+    </Link>
   )
 }
 

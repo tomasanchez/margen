@@ -8,17 +8,18 @@
  *
  * Server state comes from TanStack Query (useTransactions for the live month
  * figures + activity; useSummary for the real spending trend + category
- * breakdown; useMonotributo / useInsights for the still-seed-derived panels).
+ * breakdown; useMonotributo / useInsights for the Monotributo + Insights panels).
  * The metrics + recent activity are scoped to the SELECTED viewing month from
  * the top-bar navigator (ADR-040), filtering the real transactions by their
  * `occurredOn` year+month; income / expenses stay consistent with the
  * Transactions screen. Month-over-month deltas compare the selected month
  * against the previous calendar month from the same data. The spending trend and
  * "Where it went" cards are now real and month-reactive via `/summaries`
- * (ADR-042/043); the Insights + Monotributo panels stay mock (ADR-035). Each
- * section shows a skeleton while its query resolves, the summary cards show a
- * calm fallback if `/summaries` errors, and everything degrades gracefully for
- * the ADR-020 / empty-month edge cases.
+ * (ADR-042/043); the Insights panel is real and month-reactive via `/insights`
+ * (ADR-061/062), and the Monotributo panel reads `/monotributo`. Each section
+ * shows a skeleton while its query resolves, the summary cards show a calm
+ * fallback if `/summaries` errors, and everything degrades gracefully for the
+ * ADR-020 / empty-month edge cases.
  *
  * The visible page <h1> ("Your command center") names the route landmark; the
  * hero headline is a supporting statement beneath the status pill.
@@ -59,7 +60,6 @@ function pctChange(current: number, previous: number): number {
 
 export function HomePage() {
   const monotributoQuery = useMonotributo()
-  const insightsQuery = useInsights()
   const transactionsQuery = useTransactions()
 
   // Calm note when USD is preferred but the live rate couldn't be fetched, so
@@ -72,6 +72,8 @@ export function HomePage() {
   // Real spending trend + category breakdown for the selected month (ADR-043).
   // The query key includes the YYYY-MM, so navigating months refetches both.
   const summaryQuery = useSummary(viewingMonth)
+  // Real, month-reactive insights for the selected month (ADR-061/062).
+  const insightsQuery = useInsights(viewingMonth)
   const previousMonth = useMemo(
     () => addMonths(viewingMonth, -1),
     [viewingMonth],

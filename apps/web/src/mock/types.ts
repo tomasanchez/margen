@@ -360,14 +360,3 @@ export interface CategorySpend {
   up?: string
 }
 
-/** Insight category, drives the dot color / icon in the insights list. */
-export type InsightKind = 'spending' | 'recurring' | 'projection' | 'fx'
-
-/** One item in the Home insights list. */
-export interface Insight {
-  id: string
-  kind: InsightKind
-  /** Eyebrow label, e.g. "Spending". */
-  label: string
-  text: string
-}

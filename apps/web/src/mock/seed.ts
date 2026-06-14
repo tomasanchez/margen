@@ -9,7 +9,7 @@
  * USD rows additionally carry `usd` + `rate`.
  */
 
-import type { Bank, Category, Insight } from './types'
+import type { Bank, Category } from './types'
 
 /** All categories, in the order shown in filters and the Add form. */
 export const CATEGORIES: readonly Category[] = [
@@ -44,14 +44,6 @@ export const BANKS: readonly Bank[] = [
  */
 export const ARCA_SCALE_URL =
   'https://www.afip.gob.ar/monotributo/categorias.asp'
-
-/** Home insights list. */
-export const SEED_INSIGHTS: readonly Insight[] = [
-  { id: 'spending', kind: 'spending', label: 'Spending', text: 'Food is up 22% vs. May — mostly delivery & groceries.' },
-  { id: 'recurring', kind: 'recurring', label: 'Recurring', text: '3 recurring expenses due this week (≈ ARS 748.200).' },
-  { id: 'projection', kind: 'projection', label: 'Projection', text: 'At this pace, projected savings: USD 820 this month.' },
-  { id: 'fx', kind: 'fx', label: 'FX', text: 'Latest invoice · USD 500 at MEP ARS 1.245 · Jun 12.' },
-] as const
 
 /** Hardcoded MEP rate used for new USD entries (ADR-020, non-goal of live FX). */
 export const MEP_RATE = 1245

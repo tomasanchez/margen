@@ -1,18 +1,33 @@
 /**
- * Insights — a compact list of short observations (Issue #12, ADR-017).
+ * Insights — a compact list of real, calm observations (Issue #6, ADR-060/062).
  *
- * Each item pairs a colored dot (keyed to the insight kind, purely decorative)
- * with an uppercase eyebrow label and the insight text. The label carries the
- * category meaning so the dot color is never the only cue (ADR-019). This is a
- * deliberately small list, not a wall of charts (ADR-017).
+ * The structured facts from `GET /api/v1/insights` ({@link MonthlyInsights}) are
+ * composed here into short, scan-friendly sentences using the es-AR formatters
+ * and the display-currency preference (ADR-016/ADR-056) — the backend returns
+ * facts, the frontend formats prose (ADR-061). Each row pairs a colored dot
+ * (keyed to the insight kind, purely decorative) with an uppercase eyebrow label
+ * and the sentence; the label carries the meaning so the dot color is never the
+ * only cue (ADR-019). A row renders only when its underlying fact is present; if
+ * none apply, the calm empty state shows (ADR-037). English-only.
  */
 
 import Box from '@mui/material/Box'
 import Skeleton from '@mui/material/Skeleton'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
-import type { Insight, InsightKind } from '../../mock/types'
+import {
+  formatARS,
+  formatDelta,
+  formatDispDate,
+  formatUSD,
+  fxSourceLabel,
+} from '../../lib/format'
+import { useDisplayMoney } from '../settings/displayCurrencyContext'
+import type { MonthlyInsights } from '../../api/insightsClient'
 import { SectionCard } from '../../components/SectionCard'
+
+/** Insight kinds, used to key the redundant dot color beside each label. */
+type InsightKind = 'spending' | 'recurring' | 'projection' | 'fx'
 
 /** Dot token per insight kind — a redundant cue beside the text label. */
 const KIND_DOT: Record<InsightKind, string> = {
@@ -22,12 +37,89 @@ const KIND_DOT: Record<InsightKind, string> = {
   fx: 'var(--mg-gold)',
 }
 
+/** One composed insight row: a stable key, its kind, eyebrow label, and text. */
+interface InsightRowData {
+  id: string
+  kind: InsightKind
+  /** Eyebrow label, e.g. "Spending". */
+  label: string
+  text: string
+}
+
 export interface InsightsProps {
-  insights: Insight[] | undefined
+  insights: MonthlyInsights | undefined
   loading?: boolean
 }
 
-function InsightRow({ insight }: { insight: Insight }) {
+/**
+ * Compose the structured facts into the ordered, calm sentences the card shows
+ * (mover → recurring → savings → fx). Only non-null facts produce a row, so a
+ * sparse month yields fewer rows and a truly empty month yields none.
+ *
+ * `formatMoney` is the display-currency-aware ARS formatter (ADR-056), applied
+ * to the ARS money in the recurring + savings sentences so they honor the USD
+ * display preference. The FX invoice keeps its literal USD + ARS rate (it states
+ * the original figures, not a display-converted amount).
+ */
+function composeInsightRows(
+  insights: MonthlyInsights,
+  formatMoney: (ars: number | null | undefined) => string,
+): InsightRowData[] {
+  const rows: InsightRowData[] = []
+
+  const { topCategoryMover, recurring, savings, latestUsdInvoice } = insights
+
+  if (topCategoryMover) {
+    rows.push({
+      id: 'spending',
+      kind: 'spending',
+      label: 'Spending',
+      text: `${topCategoryMover.category} is up ${formatDelta(
+        topCategoryMover.deltaPct,
+      )} vs last month`,
+    })
+  }
+
+  if (recurring) {
+    const noun = recurring.count === 1 ? 'expense' : 'expenses'
+    rows.push({
+      id: 'recurring',
+      kind: 'recurring',
+      label: 'Recurring',
+      text: `${recurring.count} recurring ${noun} · ≈ ${formatMoney(
+        recurring.total,
+      )}`,
+    })
+  }
+
+  // Savings is always present: a projection for the current month, the actual
+  // saved amount for a past month.
+  rows.push({
+    id: 'projection',
+    kind: 'projection',
+    label: savings.isProjected ? 'Projection' : 'Savings',
+    text: savings.isProjected
+      ? `At this pace, projected savings ≈ ${formatMoney(savings.amount)}`
+      : `Saved ${formatMoney(savings.amount)} this month`,
+  })
+
+  if (latestUsdInvoice) {
+    rows.push({
+      id: 'fx',
+      kind: 'fx',
+      label: 'FX',
+      text: `Latest invoice · USD ${formatUSD(
+        latestUsdInvoice.usd,
+      )} at ${fxSourceLabel(latestUsdInvoice.rateType)} ${formatARS(
+        latestUsdInvoice.rate,
+      )} · ${formatDispDate(latestUsdInvoice.occurredOn)}`,
+    })
+  }
+
+  return rows
+}
+
+function InsightRow({ insight }: { insight: InsightRowData }) {
   return (
     <Box sx={{ display: 'flex', gap: 1.375, minWidth: 0 }}>
       <Box
@@ -57,6 +149,8 @@ function InsightRow({ insight }: { insight: Insight }) {
 }
 
 export function Insights({ insights, loading = false }: InsightsProps) {
+  const formatMoney = useDisplayMoney()
+
   if (loading || !insights) {
     return (
       <SectionCard title="Insights">
@@ -72,7 +166,9 @@ export function Insights({ insights, loading = false }: InsightsProps) {
     )
   }
 
-  if (insights.length === 0) {
+  const rows = composeInsightRows(insights, formatMoney)
+
+  if (rows.length === 0) {
     return (
       <SectionCard title="Insights">
         <Typography sx={{ fontSize: 13.5 }} color="text.disabled">
@@ -85,7 +181,7 @@ export function Insights({ insights, loading = false }: InsightsProps) {
   return (
     <SectionCard title="Insights">
       <Stack spacing={2}>
-        {insights.map((insight) => (
+        {rows.map((insight) => (
           <InsightRow key={insight.id} insight={insight} />
         ))}
       </Stack>
