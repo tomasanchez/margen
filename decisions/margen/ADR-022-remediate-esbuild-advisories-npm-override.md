@@ -40,3 +40,5 @@ Vitest was subsequently upgraded from 3.2.6 to **4.1.8** (for currency, not as t
 - 2026-06-13: proposed
 - 2026-06-13: accepted
 - 2026-06-13: updated — Vitest upgraded 3 -> 4 for currency; override retained as the necessary remediation
+
+> **Note (2026-06-13):** The esbuild pin stands. The override mechanism moved from npm `overrides` to `pnpm.overrides` when `apps/web` migrated to pnpm — see ADR-039.

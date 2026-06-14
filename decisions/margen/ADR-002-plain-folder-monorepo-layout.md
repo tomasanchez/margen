@@ -32,3 +32,5 @@ Each app keeps its own toolchain and lockfile; no cross-app dependency hoisting.
 
 - 2026-06-13: proposed
 - 2026-06-13: accepted
+
+> **Note (2026-06-13):** The plain-folder layout stands. The `apps/web` package manager changed from npm to pnpm — see ADR-039.
