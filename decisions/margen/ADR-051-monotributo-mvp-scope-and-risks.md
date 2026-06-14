@@ -44,3 +44,11 @@ A focused, shippable MVP with explicitly recorded deferrals. Future issues (#10 
 ## Status History
 
 - 2026-06-14: accepted
+
+> **Update (2026-06-14): scale verified + refreshed.** The placeholder ceilings in
+> `monotributo_scale.py` (carried from the 2025 table, `TODO(ADR-051)`) were replaced with the
+> official ARCA scale in effect **February–July 2026** (annual ceilings + servicios/bienes cuotas;
+> `SCALE_VERSION = "2026-02"`), cross-checked against the frontend's existing AFIP-2026 values. The
+> staleness risk now reduces to keeping the constant current each semester (≈ February and August) —
+> the scale module documents the cadence and the next bump. Automatic ARCA ingestion remains out of
+> scope.
