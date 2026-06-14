@@ -80,9 +80,29 @@ export interface UseTransactionFilters {
   controls: FilterControls
 }
 
+/** Options for {@link useTransactionFilters}. */
+export interface UseTransactionFiltersOptions {
+  /**
+   * Categories to seed the filter with on first mount (ADR-062 drilldown). Used
+   * once via lazy reducer init; the user can clear or change it normally
+   * afterward, and it does not re-apply on re-render.
+   */
+  initialCategories?: Category[]
+}
+
 /** Own the Transactions filter state and expose stable, typed setters. */
-export function useTransactionFilters(): UseTransactionFilters {
-  const [filters, dispatch] = useReducer(filtersReducer, DEFAULT_FILTERS)
+export function useTransactionFilters(
+  options: UseTransactionFiltersOptions = {},
+): UseTransactionFilters {
+  const { initialCategories } = options
+  const [filters, dispatch] = useReducer(
+    filtersReducer,
+    undefined,
+    (): TransactionFilters =>
+      initialCategories && initialCategories.length > 0
+        ? { ...DEFAULT_FILTERS, categories: [...initialCategories] }
+        : DEFAULT_FILTERS,
+  )
 
   const controls = useMemo<FilterControls>(
     () => ({

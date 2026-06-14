@@ -3,23 +3,19 @@
  *
  * The spending trend and "Where it went" category breakdown are now REAL: they
  * come from `GET /api/v1/summaries?month=YYYY-MM` via {@link fetchSummary} and
- * react to the selected viewing month (ADR-042/ADR-043). Insights and the
- * Monotributo card stay on the read-only in-memory mock seed until their own
- * issues ship (ADR-035); they are keyed under the `home` namespace and
- * invalidated alongside transaction mutations so the wiring already matches the
- * eventual backend.
+ * react to the selected viewing month (ADR-042/ADR-043). The Insights card is
+ * also real and month-reactive, from `GET /api/v1/insights?month=YYYY-MM` via
+ * {@link fetchInsights} (ADR-061/062). The Monotributo card reads its own real
+ * `/monotributo` endpoint. Everything is keyed under the `home` namespace and
+ * invalidated alongside transaction mutations so the cards stay fresh.
  */
 
 import { useQuery } from '@tanstack/react-query'
 import { fetchSummary, type Summary } from '../../api/summariesClient'
+import { fetchInsights, type MonthlyInsights } from '../../api/insightsClient'
 import { fetchMonotributo } from '../../api/monotributoClient'
-import { getInsights } from '../../mock/api'
 import { standingToState } from '../monotributo/derive'
-import type {
-  Insight,
-  MonotributoSnapshot,
-  MonotributoState,
-} from '../../mock/types'
+import type { MonotributoSnapshot, MonotributoState } from '../../mock/types'
 import type { ViewingMonth } from '../../components/months'
 
 /** Stable query-key factory for the Home domain. */
@@ -28,7 +24,9 @@ export const homeQueryKeys = {
   monotributo: () => [...homeQueryKeys.all, 'monotributo'] as const,
   /** Summary is per-month, so the `YYYY-MM` is part of the key (month-reactive). */
   summary: (month: string) => [...homeQueryKeys.all, 'summary', month] as const,
-  insights: () => [...homeQueryKeys.all, 'insights'] as const,
+  /** Insights are per-month too, so the `YYYY-MM` is part of the key. */
+  insights: (month: string) =>
+    [...homeQueryKeys.all, 'insights', month] as const,
 }
 
 /** Format a viewing month to the backend's `YYYY-MM` query value. */
@@ -67,10 +65,17 @@ export function useSummary(viewingMonth: ViewingMonth) {
   })
 }
 
-/** Home insights list (mock seed). */
-export function useInsights() {
-  return useQuery<Insight[]>({
-    queryKey: homeQueryKeys.insights(),
-    queryFn: () => getInsights(),
+/**
+ * Real monthly insights (the structured facts behind the calm Insights card)
+ * for the selected viewing month, from `GET /api/v1/insights?month=YYYY-MM`
+ * (ADR-061/062). Mirrors {@link useSummary}: the query key includes the
+ * `YYYY-MM`, so navigating the month navigator refetches and the card re-renders
+ * with the new month's facts.
+ */
+export function useInsights(viewingMonth: ViewingMonth) {
+  const month = toYearMonth(viewingMonth)
+  return useQuery<MonthlyInsights>({
+    queryKey: homeQueryKeys.insights(month),
+    queryFn: () => fetchInsights(month),
   })
 }

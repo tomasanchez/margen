@@ -25,6 +25,9 @@ from margen_api.adapters.settings_repository import (
     DEFAULT_MONOTRIBUTO_CATEGORY,
 )
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
+from margen_api.service_layer.insights import build_monthly_insights
+from margen_api.service_layer.insights_read_models import LatestUsdInvoice, MonthlyInsights
+from margen_api.service_layer.insights_reader import AbstractInsightsReader
 from margen_api.service_layer.monotributo import (
     build_snapshot,
     build_standing,
@@ -191,6 +194,139 @@ class SqlAlchemySummaryReader(AbstractSummaryReader):
         )
         result = await self.session.execute(statement)
         return {str(row.category): _as_decimal(row.total) for row in result.all()}
+
+
+# Savings income is the inflow kinds (income + invoice), independent of the
+# Monotributo flag -- savings track real money in, not the taxable subset (ADR-060).
+_INFLOW_KINDS = (Kind.INCOME.value, Kind.INVOICE.value)
+# Recurring expenses: kind 'expense' carrying the recurring flag (ADR-031/ADR-060).
+_RECURRING_EXPENSE = (
+    TransactionRecord.kind == Kind.EXPENSE.value,
+    TransactionRecord.recurring.is_(True),
+)
+
+
+def _month_upper_bound(month: date) -> date:
+    """Return the first day of the month after ``month`` (exclusive upper bound)."""
+    return date(month.year + (month.month // 12), (month.month % 12) + 1, 1)
+
+
+class SqlAlchemyInsightsReader(AbstractInsightsReader):
+    """Serve the monthly insight facts from server-side SQL aggregation (ADR-060, ADR-061).
+
+    Runs read-only ``SUM`` / ``GROUP BY`` / latest-row queries over the
+    ``transactions`` table and projects the raw aggregates into a
+    :class:`MonthlyInsights` of structured facts. SQLAlchemy stays in this adapter;
+    the mover selection, recurring passthrough and savings projection live in the
+    pure :mod:`margen_api.service_layer.insights`. The reader never mutates state.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Initialize the reader.
+
+        Args:
+            session: The async session used for read-only queries.
+        """
+        self.session = session
+
+    async def monthly_insights(self, month: date, reference: date) -> MonthlyInsights:
+        """Aggregate the structured insight facts for a month (ADR-060, ADR-061)."""
+        prior = date(month.year - 1, 12, 1) if month.month == 1 else date(month.year, month.month - 1, 1)
+
+        month_category_totals = await self._expense_category_totals(month)
+        prior_category_totals = await self._expense_category_totals(prior)
+        recurring_count, recurring_total = await self._recurring_expenses(month)
+        income_total = await self._inflow_total(month)
+        expense_total = await self._expense_total(month)
+        latest_usd_invoice = await self._latest_usd_invoice(month)
+
+        return build_monthly_insights(
+            month,
+            reference,
+            month_category_totals=month_category_totals,
+            prior_category_totals=prior_category_totals,
+            recurring_count=recurring_count,
+            recurring_total=recurring_total,
+            income_total=income_total,
+            expense_total=expense_total,
+            latest_usd_invoice=latest_usd_invoice,
+        )
+
+    async def _expense_category_totals(self, month: date) -> dict[str, Decimal]:
+        """Return the month's expense totals keyed by category (mover input)."""
+        statement = (
+            select(_CATEGORY.label("category"), _EXPENSE_AMOUNT.label("total"))
+            .where(
+                TransactionRecord.kind == Kind.EXPENSE.value,
+                TransactionRecord.occurred_on >= month,
+                TransactionRecord.occurred_on < _month_upper_bound(month),
+            )
+            .group_by(_CATEGORY)
+        )
+        result = await self.session.execute(statement)
+        return {str(row.category): _as_decimal(row.total) for row in result.all()}
+
+    async def _recurring_expenses(self, month: date) -> tuple[int, Decimal]:
+        """Return the count and ARS-equivalent total of recurring expenses."""
+        statement = select(
+            func.count().label("recurring_count"),
+            cast(func.coalesce(func.sum(TransactionRecord.amount), _ZERO), Numeric(18, 2)).label("recurring_total"),
+        ).where(
+            *_RECURRING_EXPENSE,
+            TransactionRecord.occurred_on >= month,
+            TransactionRecord.occurred_on < _month_upper_bound(month),
+        )
+        row = (await self.session.execute(statement)).one()
+        return int(row.recurring_count), _as_decimal(row.recurring_total)
+
+    async def _inflow_total(self, month: date) -> Decimal:
+        """SUM the month's ARS-equivalent income + invoice amounts (savings input)."""
+        statement = select(cast(func.sum(TransactionRecord.amount), Numeric(18, 2))).where(
+            TransactionRecord.kind.in_(_INFLOW_KINDS),
+            TransactionRecord.occurred_on >= month,
+            TransactionRecord.occurred_on < _month_upper_bound(month),
+        )
+        total = (await self.session.execute(statement)).scalar_one_or_none()
+        return _ZERO if total is None else _as_decimal(total)
+
+    async def _expense_total(self, month: date) -> Decimal:
+        """SUM the month's ARS-equivalent expense amounts (savings input)."""
+        statement = select(_EXPENSE_AMOUNT).where(
+            TransactionRecord.kind == Kind.EXPENSE.value,
+            TransactionRecord.occurred_on >= month,
+            TransactionRecord.occurred_on < _month_upper_bound(month),
+        )
+        total = (await self.session.execute(statement)).scalar_one_or_none()
+        return _ZERO if total is None else _as_decimal(total)
+
+    async def _latest_usd_invoice(self, month: date) -> LatestUsdInvoice | None:
+        """Return the month's most recent USD transaction with an applied rate.
+
+        Any kind qualifies; the row must be in USD and carry both a ``usd_amount``
+        and an ``fx_rate``. Ordered newest-first by ``occurred_on`` (``created_at``
+        as a stable tiebreak) and limited to one (ADR-060).
+        """
+        statement = (
+            select(TransactionRecord)
+            .where(
+                TransactionRecord.currency == Currency.USD.value,
+                TransactionRecord.usd_amount.is_not(None),
+                TransactionRecord.fx_rate.is_not(None),
+                TransactionRecord.occurred_on >= month,
+                TransactionRecord.occurred_on < _month_upper_bound(month),
+            )
+            .order_by(TransactionRecord.occurred_on.desc(), TransactionRecord.created_at.desc())
+            .limit(1)
+        )
+        record = (await self.session.execute(statement)).scalar_one_or_none()
+        if record is None or record.usd_amount is None or record.fx_rate is None:
+            return None
+        return LatestUsdInvoice(
+            usd=record.usd_amount,
+            rate=record.fx_rate,
+            rate_type=record.fx_rate_type if record.fx_rate_type is not None else FxRateType.MEP.value,
+            occurred_on=record.occurred_on,
+        )
 
 
 # Income that may count toward the Monotributo limit is the invoice/income kinds

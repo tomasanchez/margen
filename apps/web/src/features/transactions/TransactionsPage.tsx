@@ -52,6 +52,7 @@ import {
   type TypeFilter,
 } from './filtering'
 import { useDeleteTransaction, useTransactions } from './queries'
+import type { Category } from '../../mock/types'
 
 /** Summary line: "<count> shown · <in> in · <out> out · net <net>". */
 function SummaryLine({
@@ -251,8 +252,21 @@ function ColumnHeader() {
   )
 }
 
-export function TransactionsPage() {
-  const { filters, controls } = useTransactionFilters()
+export interface TransactionsPageProps {
+  /**
+   * Optional category drilldown seed (ADR-062), supplied by the route from the
+   * validated `/transactions?category=<name>` search param. It only seeds the
+   * filter on first mount; the user can change or clear it afterward. The route
+   * owns the router coupling so the page stays router-agnostic (and rendrable
+   * standalone in tests).
+   */
+  initialCategory?: Category
+}
+
+export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}) {
+  const { filters, controls } = useTransactionFilters({
+    initialCategories: initialCategory ? [initialCategory] : undefined,
+  })
   const { openAdd } = useAddTransaction()
   const transactionsQuery = useTransactions()
   const deleteMutation = useDeleteTransaction()

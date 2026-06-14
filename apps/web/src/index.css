@@ -61,3 +61,28 @@ body,
 body {
   overflow: hidden;
 }
+
+/*
+ * Clickable "Where it went" category row (ADR-062): a router <Link> styled as a
+ * full-width block that drills into the pre-filtered Transactions screen. Styled
+ * here (rather than via MUI's `sx` through `Box component={Link}`) so the bare
+ * <Link> keeps TanStack Router's typed `to` / `search` inference. Uses the shared
+ * --mg-* tokens; hover lifts gently and focus shows a visible ring (HIG).
+ */
+.mg-category-row-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 8px;
+  outline-offset: 2px;
+  margin-inline: -6px;
+  padding-inline: 6px;
+  padding-block: 2px;
+  transition: background-color 160ms ease;
+}
+.mg-category-row-link:hover {
+  background-color: color-mix(in srgb, var(--mg-gold) 6%, transparent);
+}
+.mg-category-row-link:focus-visible {
+  outline: 2px solid var(--mg-gold);
+}

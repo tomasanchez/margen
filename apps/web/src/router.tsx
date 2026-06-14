@@ -9,6 +9,33 @@ import { HomePage } from './features/home/HomePage'
 import { TransactionsPage } from './features/transactions/TransactionsPage'
 import { MonotributoPage } from './features/monotributo/MonotributoPage'
 import { SettingsPage } from './features/settings/SettingsPage'
+import { CATEGORIES } from './mock/seed'
+import type { Category } from './mock/types'
+
+/**
+ * Search params accepted by the `/transactions` route (ADR-062).
+ *
+ * `category` is an optional drilldown seed: a Home "Where it went" row links to
+ * `/transactions?category=<name>` and the screen opens pre-filtered to it. The
+ * value is validated against the known {@link Category} union so an absent or
+ * unknown param is a no-op (`undefined`) rather than seeding a bogus filter.
+ */
+export interface TransactionsSearch {
+  category?: Category
+}
+
+/** A Set of the known categories for O(1) validation of the search param. */
+const KNOWN_CATEGORIES = new Set<string>(CATEGORIES)
+
+/** Validate (and narrow) the `/transactions` search params (ADR-062). */
+function validateTransactionsSearch(
+  search: Record<string, unknown>,
+): TransactionsSearch {
+  const raw = search.category
+  return typeof raw === 'string' && KNOWN_CATEGORIES.has(raw)
+    ? { category: raw as Category }
+    : {}
+}
 
 /**
  * Code-based routing for Margen (ADR-014).
@@ -36,7 +63,14 @@ const homeRoute = createRoute({
 const transactionsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/transactions',
-  component: TransactionsPage,
+  validateSearch: validateTransactionsSearch,
+  // Read the validated `category` search param here and seed the screen's
+  // category filter from it (ADR-062); this keeps TransactionsPage
+  // router-agnostic (rendrable standalone in tests).
+  component: () => {
+    const { category } = transactionsRoute.useSearch()
+    return <TransactionsPage initialCategory={category} />
+  },
 })
 
 const monotributoRoute = createRoute({
