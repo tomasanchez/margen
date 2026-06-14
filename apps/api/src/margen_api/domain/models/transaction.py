@@ -1,0 +1,207 @@
+"""The ``Transaction`` aggregate root.
+
+A transaction is the first real domain object in this service (ADR-028). It is a
+plain Python aggregate — no Pydantic, no SQLAlchemy, no I/O — that enforces its
+own invariants (ADR-031) and derives presentational fields such as ``type`` from
+the persisted source of truth ``kind`` (ADR-027).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from uuid import UUID, uuid4
+
+from margen_api.domain.models.exceptions import EmptyNameError, InvalidAmountError
+from margen_api.domain.models.value_objects import (
+    Currency,
+    FxRateType,
+    Kind,
+    TxType,
+)
+
+ZERO = Decimal("0")
+
+
+@dataclass(eq=False)
+class Transaction:
+    """A single money movement, the aggregate root and consistency boundary.
+
+    ``amount`` is ALWAYS the positive ARS-equivalent magnitude (ADR-025); the
+    visible sign is derived from :attr:`type`. ``kind`` is the persisted source of
+    truth and ``type`` is derived from it (ADR-027). For USD rows, ``usd_amount``
+    and ``fx_rate`` carry the original figure and the rate used to convert it —
+    but a USD row missing its rate is accepted as incomplete, never rejected
+    (ADR-031).
+
+    Attributes:
+        id: Stable UUID identity, safe to expose in URLs (ADR-026).
+        occurred_on: Real calendar date the movement happened; backdating allowed.
+        name: Required human label shown everywhere (e.g. "Coto supermarket",
+            "Apartment rent"); trimmed and never empty (ADR-024).
+        kind: Persisted money kind (expense / income / invoice).
+        amount: Positive ARS-equivalent magnitude.
+        currency: ARS (base) or USD.
+        usd_amount: Original USD amount for USD rows, else ``None``.
+        fx_rate: Rate used for the USD to ARS conversion, else ``None``.
+        fx_rate_type: Rate family (defaults to MEP for USD rows), else ``None``.
+        fx_rate_as_of: Timestamp the rate was observed, else ``None``.
+        category: Validated category string, optional (ADR-027).
+        payment_method: Bank / card / channel label, optional.
+        notes: Free-form optional note, distinct from :attr:`name` (ADR-024).
+        recurring: Whether the movement repeats.
+        counts_toward_monotributo: Only meaningful for income / invoice; forced
+            ``False`` for expense (ADR-027, ADR-031).
+        created_at: Server-managed creation timestamp.
+        updated_at: Server-managed last-update timestamp.
+    """
+
+    id: UUID
+    occurred_on: date
+    name: str
+    kind: Kind
+    amount: Decimal
+    currency: Currency = Currency.ARS
+    usd_amount: Decimal | None = None
+    fx_rate: Decimal | None = None
+    fx_rate_type: FxRateType | None = None
+    fx_rate_as_of: datetime | None = None
+    category: str | None = None
+    payment_method: str | None = None
+    notes: str | None = None
+    recurring: bool = False
+    counts_toward_monotributo: bool = False
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def __post_init__(self) -> None:
+        """Normalize and enforce invariants on construction."""
+        self.kind = Kind.parse(self.kind)
+        self.currency = Currency.parse(self.currency)
+        self._normalize()
+
+    @property
+    def type(self) -> TxType:
+        """Derive the high-level direction from :attr:`kind` (ADR-027).
+
+        Returns:
+            ``TxType.EXPENSE`` when kind is expense, otherwise ``TxType.INCOME``.
+        """
+        return TxType.EXPENSE if self.kind is Kind.EXPENSE else TxType.INCOME
+
+    def _normalize(self) -> None:
+        """Apply lenient normalization and enforce hard invariants (ADR-031)."""
+        # Hard invariant: name is a required, non-empty display label (ADR-024).
+        self.name = self.name.strip() if isinstance(self.name, str) else self.name
+        if not self.name:
+            raise EmptyNameError
+
+        # Hard invariant: amount is a positive ARS-equivalent magnitude.
+        if not isinstance(self.amount, Decimal):
+            self.amount = Decimal(str(self.amount))
+        if self.amount <= ZERO:
+            raise InvalidAmountError(self.amount)
+
+        # Monotributo counting only applies to income / invoice; force False for expense.
+        if self.kind is Kind.EXPENSE:
+            self.counts_toward_monotributo = False
+
+        if self.currency is Currency.USD:
+            # USD rows default to the MEP rate family; usd_amount / fx_rate may be
+            # absent (accepted as incomplete — amount stands authoritative).
+            if self.fx_rate_type is None:
+                self.fx_rate_type = FxRateType.MEP
+        else:
+            # ARS rows must not carry FX metadata; drop it rather than reject.
+            self.usd_amount = None
+            self.fx_rate = None
+            self.fx_rate_type = None
+            self.fx_rate_as_of = None
+
+    @property
+    def has_complete_fx(self) -> bool:
+        """Return whether a USD row carries both its USD amount and FX rate.
+
+        A USD row without a rate is valid-but-incomplete (ADR-031); FX work (#7)
+        may enrich it later.
+        """
+        return self.currency is Currency.USD and self.usd_amount is not None and self.fx_rate is not None
+
+
+def build_transaction(
+    *,
+    occurred_on: date,
+    name: str,
+    kind: Kind | str,
+    amount: Decimal,
+    currency: Currency | str = Currency.ARS,
+    usd_amount: Decimal | None = None,
+    fx_rate: Decimal | None = None,
+    fx_rate_type: FxRateType | str | None = None,
+    fx_rate_as_of: datetime | None = None,
+    category: str | None = None,
+    payment_method: str | None = None,
+    notes: str | None = None,
+    recurring: bool = False,
+    counts_toward_monotributo: bool = False,
+    transaction_id: UUID | None = None,
+    created_at: datetime | None = None,
+    updated_at: datetime | None = None,
+) -> Transaction:
+    """Construct a valid :class:`Transaction`, generating identity and timestamps.
+
+    The domain stays pure: identity and timestamps default here only as a
+    convenience. The application handler is expected to inject ``id``,
+    ``created_at`` and ``updated_at`` so the domain performs no implicit clock or
+    UUID reads in production. Invariants run inside ``Transaction.__post_init__``.
+
+    Args:
+        occurred_on: Real calendar date of the movement.
+        name: Required human label; trimmed and must be non-empty (ADR-024).
+        kind: Money kind, as ``Kind`` or string.
+        amount: Positive ARS-equivalent magnitude.
+        currency: ARS or USD, as ``Currency`` or string.
+        usd_amount: Original USD amount for USD rows.
+        fx_rate: Conversion rate for USD rows.
+        fx_rate_type: Rate family; defaults to MEP for USD rows when omitted.
+        fx_rate_as_of: Timestamp the rate was observed.
+        category: Optional category string.
+        payment_method: Optional bank / card / channel label.
+        notes: Optional free-form note.
+        recurring: Whether the movement repeats.
+        counts_toward_monotributo: Monotributo counting hint (income / invoice only).
+        transaction_id: Optional identity; generated when omitted.
+        created_at: Optional creation timestamp; defaults to now (UTC).
+        updated_at: Optional update timestamp; defaults to now (UTC).
+
+    Returns:
+        A validated, normalized ``Transaction`` aggregate.
+
+    Raises:
+        EmptyNameError: When ``name`` is empty or only whitespace.
+        InvalidAmountError: When ``amount`` is not a positive magnitude.
+        UnknownKindError: When ``kind`` is not a known kind.
+        UnknownCurrencyError: When ``currency`` is not a known currency.
+    """
+    now = datetime.now(UTC)
+    resolved_fx_rate_type = FxRateType(fx_rate_type) if isinstance(fx_rate_type, str) else fx_rate_type
+    return Transaction(
+        id=transaction_id if transaction_id is not None else uuid4(),
+        occurred_on=occurred_on,
+        name=name,
+        kind=Kind.parse(kind),
+        amount=amount,
+        currency=Currency.parse(currency),
+        usd_amount=usd_amount,
+        fx_rate=fx_rate,
+        fx_rate_type=resolved_fx_rate_type,
+        fx_rate_as_of=fx_rate_as_of,
+        category=category,
+        payment_method=payment_method,
+        notes=notes,
+        recurring=recurring,
+        counts_toward_monotributo=counts_toward_monotributo,
+        created_at=created_at if created_at is not None else now,
+        updated_at=updated_at if updated_at is not None else now,
+    )

@@ -1,8 +1,15 @@
 """Unit tests for shared entrypoint dependencies."""
 
+import contextlib
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
-from margen_api.entrypoint.dependencies import get_container
+from margen_api.adapters.queries import SqlAlchemyTransactionReader
+from margen_api.entrypoint.dependencies import (
+    get_bus,
+    get_container,
+    get_transaction_reader,
+)
 
 
 class TestGetContainer:
@@ -24,3 +31,50 @@ class TestGetContainer:
 
         # THEN
         assert resolved is container
+
+
+class TestGetBus:
+    """The bus resolver returns the container's message bus."""
+
+    def test_returns_container_bus(self):
+        """
+        GIVEN a container holding a bus
+        WHEN get_bus is called with it
+        THEN it returns that bus
+        """
+        # GIVEN
+        bus = object()
+        container = SimpleNamespace(bus=bus)
+
+        # WHEN
+        resolved = get_bus(container)  # type: ignore[arg-type]
+
+        # THEN
+        assert resolved is bus
+
+
+class TestGetTransactionReader:
+    """The reader resolver opens and closes a request-scoped session."""
+
+    async def test_yields_reader_and_closes_session(self):
+        """
+        GIVEN a container whose session factory builds a session
+        WHEN the reader dependency is iterated to completion
+        THEN it yields a SqlAlchemyTransactionReader and closes the session
+        """
+        # GIVEN
+        session = AsyncMock()
+        container = SimpleNamespace(session_factory=MagicMock(return_value=session))
+
+        # WHEN
+        iterator = get_transaction_reader(container)  # type: ignore[arg-type]
+        reader = await iterator.__anext__()
+
+        # THEN
+        assert isinstance(reader, SqlAlchemyTransactionReader)
+        assert reader.session is session
+
+        # WHEN the generator is exhausted, the finally block closes the session.
+        with contextlib.suppress(StopAsyncIteration):
+            await iterator.__anext__()
+        session.close.assert_awaited_once()
