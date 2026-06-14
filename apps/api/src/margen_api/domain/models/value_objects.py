@@ -81,16 +81,19 @@ class Currency(StrEnum):
 
 
 class FxRateType(StrEnum):
-    """The exchange-rate family used for a USD conversion.
+    """The source of the exchange rate used for a USD conversion (ADR-044).
 
-    The prototype uses the MEP (Mercado Electrónico de Pagos) rate; ``MEP`` is the
-    default for USD rows. Other members allow later FX work (#7) without a schema
-    change.
+    The prototype suggests the MEP (Mercado Electrónico de Pagos) rate, so ``MEP``
+    stays the default for USD rows. ``MANUAL`` records a rate the user typed or
+    overrode. ``OFFICIAL`` and ``CONFIGURED_DEFAULT`` are stubs for future FX work
+    (#7 / #10). ``fx_rate_type`` is a plain string column, so adding members needs
+    no migration.
     """
 
     MEP = "MEP"
+    MANUAL = "manual"
     OFFICIAL = "official"
-    BLUE = "blue"
+    CONFIGURED_DEFAULT = "configured_default"
 
 
 # Known prototype category set (ADR-024/ADR-027). Unknown strings are tolerated.
