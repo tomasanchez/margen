@@ -17,7 +17,7 @@ cosmic-fastapi is the user's own Copier template (FastAPI, Pydantic 2, SQLAlchem
 
 ## Decision
 
-Generate apps/api via `uvx copier copy gh:tomasanchez/cosmic-fastapi apps/api` with include_user_example=false. Copier identity: project_name='Margen API', project_slug='margen-api', package_name='margen_api', description='Margen backend API', author_name='Tomas Sanchez', author_email='tomas.sanchez@wheels.com', github_owner='tomasanchez', license=MIT, python_version=3.13.
+Generate apps/api via `uvx copier copy gh:tomasanchez/cosmic-fastapi apps/api` with include_user_example=false. Copier identity: project_name='Margen API', project_slug='margen-api', package_name='margen_api', description='Margen backend API', author_name='Tomas Sanchez', author_email='info@tomsanchez.com', github_owner='tomasanchez', license=MIT, python_version=3.13.
 
 ## Alternatives Considered
 

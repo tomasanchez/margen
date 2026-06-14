@@ -2,7 +2,7 @@
 name = "margen-api"
 version = "0.1.0"
 description = "Margen backend API"
-authors = [{ name = "Tomas Sanchez", email = "tomas.sanchez@wheels.com" }]
+authors = [{ name = "Tomas Sanchez", email = "info@tomsanchez.com" }]
 readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"
