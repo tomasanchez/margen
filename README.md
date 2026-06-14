@@ -120,6 +120,7 @@ commit secrets**.
 | `DATABASE_URL` | `postgresql+asyncpg://margen-api:margen-api@localhost:5432/margen-api` | Async SQLAlchemy URL |
 | `FASTAPI_BACKEND_CORS_ORIGINS` | `["http://localhost:5173"]` | JSON array of allowed origins (no wildcard) |
 | `FASTAPI_DEBUG` | `true` | Dev only |
+| `FASTAPI_MONOTRIBUTO_CAPTURE_TOKEN` | _(empty)_ | Bearer token for the scheduled `POST /monotributo/capture`; empty = endpoint disabled (503). Set only where the capture cron runs |
 
 ### Frontend (`apps/web/.env`)
 
