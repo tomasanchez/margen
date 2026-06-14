@@ -20,6 +20,7 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlineOutlined'
 import AttachFileIcon from '@mui/icons-material/AttachFile'
 import { Amount } from '../../components/Amount'
+import { FxBadge } from '../../components/FxBadge'
 import { formatDispDate } from '../../lib/format'
 import { monoFontFamily } from '../../theme'
 import type { Transaction } from '../../mock/types'
@@ -245,7 +246,7 @@ export function TransactionRow(props: TransactionRowProps) {
             {t.name}
           </Typography>
           {t.recurring ? <RowBadge>recurring</RowBadge> : null}
-          {isUsd ? <RowBadge tone="gold">FX</RowBadge> : null}
+          {isUsd ? <FxBadge /> : null}
           <InvoiceAttachmentBadge transaction={t} />
         </Box>
         <Typography
@@ -364,7 +365,7 @@ export function TransactionRowMobile(props: TransactionRowProps) {
             {t.name}
           </Typography>
           {t.recurring ? <RowBadge>recurring</RowBadge> : null}
-          {isUsd ? <RowBadge tone="gold">FX</RowBadge> : null}
+          {isUsd ? <FxBadge /> : null}
         </Box>
         <Box
           sx={{

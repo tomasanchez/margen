@@ -16,6 +16,7 @@ import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import { Link } from '@tanstack/react-router'
 import { Amount } from '../../components/Amount'
+import { FxBadge } from '../../components/FxBadge'
 import { monoFontFamily } from '../../theme'
 import { formatDispDate } from '../../lib/format'
 import type { Transaction } from '../../mock/types'
@@ -96,7 +97,7 @@ function ActivityRow({ transaction: t }: { transaction: Transaction }) {
             {t.name}
           </Typography>
           {t.recurring ? <RowBadge>recurring</RowBadge> : null}
-          {isUsd ? <RowBadge tone="gold">FX</RowBadge> : null}
+          {isUsd ? <FxBadge /> : null}
         </Box>
         <Typography
           component="span"

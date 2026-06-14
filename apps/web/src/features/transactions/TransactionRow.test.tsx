@@ -44,6 +44,16 @@ test('a USD row from a confirmed MEP suggestion shows the FX badge + "MEP" sourc
   expect(screen.getByText('USD 500 · MEP 1.245')).toBeInTheDocument()
 })
 
+test('the FX badge exposes an accessible "Foreign exchange" name + explanatory tooltip', () => {
+  renderRow(baseUsd)
+  // Screen readers / keyboard users get the meaning of "FX" via the accessible
+  // name and the same string as the (hover/focus) tooltip title (ADR-019).
+  const badge = screen.getByLabelText('Foreign exchange')
+  expect(badge).toHaveTextContent('FX')
+  // Reachable without a mouse — the tooltip opens on focus.
+  expect(badge).toHaveAttribute('tabindex', '0')
+})
+
 test('a USD row with a manual rate shows the "manual" source', () => {
   renderRow({ ...baseUsd, rate: 1300, amountNum: 650000, fxRateType: 'manual' })
   expect(screen.getByText('USD 500 · manual 1.300')).toBeInTheDocument()
@@ -65,6 +75,7 @@ test('an ARS row shows no FX badge or subline', () => {
     fxRateType: undefined,
   })
   expect(screen.queryByText('FX')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Foreign exchange')).not.toBeInTheDocument()
   expect(screen.queryByText(/· (MEP|manual)/)).not.toBeInTheDocument()
 })
 
