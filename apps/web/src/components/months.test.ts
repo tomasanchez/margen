@@ -8,12 +8,21 @@
 import { describe, expect, test } from 'vitest'
 import {
   addMonths,
+  boundedMonthsWindow,
+  clampViewingMonth,
   currentViewingMonth,
   formatViewingMonth,
+  isAtLowerBound,
+  isAtUpperBound,
   isSameViewingMonth,
+  lowerBoundMonth,
   monthName,
   recentMonthsWindow,
+  upperBoundMonth,
 } from './months'
+
+/** A fixed client clock: 13 June 2026. */
+const NOW = new Date('2026-06-13T10:00:00')
 
 describe('addMonths', () => {
   test('steps forward and back within a year', () => {
@@ -98,5 +107,54 @@ describe('recentMonthsWindow', () => {
 
   test('defaults to a rolling year (12 months)', () => {
     expect(recentMonthsWindow({ year: 2026, month: 5 })).toHaveLength(12)
+  })
+})
+
+describe('navigator bounds (ADR-041)', () => {
+  test('upperBound is the current month; lowerBound is 6 months back', () => {
+    expect(upperBoundMonth(NOW)).toEqual({ year: 2026, month: 5 })
+    expect(lowerBoundMonth(NOW)).toEqual({ year: 2025, month: 11 })
+  })
+
+  test('isAtUpperBound: true at (or beyond) the current month, false below', () => {
+    expect(isAtUpperBound({ year: 2026, month: 5 }, NOW)).toBe(true)
+    expect(isAtUpperBound({ year: 2026, month: 6 }, NOW)).toBe(true)
+    expect(isAtUpperBound({ year: 2026, month: 4 }, NOW)).toBe(false)
+  })
+
+  test('isAtLowerBound: true at (or below) the floor, false above', () => {
+    expect(isAtLowerBound({ year: 2025, month: 11 }, NOW)).toBe(true)
+    expect(isAtLowerBound({ year: 2025, month: 10 }, NOW)).toBe(true)
+    expect(isAtLowerBound({ year: 2026, month: 0 }, NOW)).toBe(false)
+  })
+
+  test('clampViewingMonth pins out-of-range values into [lower, upper]', () => {
+    // Future → upper bound.
+    expect(clampViewingMonth({ year: 2027, month: 0 }, NOW)).toEqual({
+      year: 2026,
+      month: 5,
+    })
+    // Older than the floor → lower bound.
+    expect(clampViewingMonth({ year: 2024, month: 0 }, NOW)).toEqual({
+      year: 2025,
+      month: 11,
+    })
+    // In range → unchanged.
+    expect(clampViewingMonth({ year: 2026, month: 2 }, NOW)).toEqual({
+      year: 2026,
+      month: 2,
+    })
+  })
+
+  test('boundedMonthsWindow lists the current month down to the floor (7, newest first)', () => {
+    expect(boundedMonthsWindow(NOW)).toEqual([
+      { year: 2026, month: 5 },
+      { year: 2026, month: 4 },
+      { year: 2026, month: 3 },
+      { year: 2026, month: 2 },
+      { year: 2026, month: 1 },
+      { year: 2026, month: 0 },
+      { year: 2025, month: 11 },
+    ])
   })
 })

@@ -6,8 +6,8 @@
  * field names, UUID string ids, Decimal-string money) and the frontend's
  * existing {@link Transaction} shape. Components, formatters and the query hooks
  * keep speaking the prototype shape unchanged; every contract difference
- * (envelope unwrap, Decimal-string → number, `occurredOn` ⇄ `dispDate`/`month`,
- * `bank` ⇄ payment method) is resolved here.
+ * (envelope unwrap, Decimal-string → number, `occurredOn` carried straight from
+ * the form's date picker, `bank` ⇄ payment method) is resolved here.
  *
  * The mock async module (ADR-015) is removed for transactions in favor of this
  * client; the remaining mock slices (trend/breakdown/insights/Monotributo) keep
@@ -165,82 +165,18 @@ export function adaptTransaction(dto: TransactionDto): Transaction {
   }
 }
 
-const MONTH_ABBREVIATIONS: Record<string, number> = {
-  jan: 0,
-  feb: 1,
-  mar: 2,
-  apr: 3,
-  may: 4,
-  jun: 5,
-  jul: 6,
-  aug: 7,
-  sep: 8,
-  oct: 9,
-  nov: 10,
-  dec: 11,
-}
-
-const MONTH_NAME_INDEX: Record<string, number> = {
-  january: 0,
-  february: 1,
-  march: 2,
-  april: 3,
-  may: 4,
-  june: 5,
-  july: 6,
-  august: 7,
-  september: 8,
-  october: 9,
-  november: 10,
-  december: 11,
-}
-
-/** Format a (year, monthIndex, day) tuple as an ISO `YYYY-MM-DD` calendar date. */
-function toIsoDate(year: number, monthIndex: number, day: number): string {
-  const mm = String(monthIndex + 1).padStart(2, '0')
-  const dd = String(day).padStart(2, '0')
-  return `${year}-${mm}-${dd}`
-}
-
-/**
- * Derive the backend's required `occurredOn` ISO date from the form input.
- *
- * The Add/Edit form carries `dispDate` (e.g. "Jun 13") and, on edits, the full
- * `month` name; neither has a year. We resolve the month from `dispDate`'s
- * abbreviation (falling back to the `month` field), the day from `dispDate`, and
- * default the year to the current calendar year. This mapping lives only here so
- * the form is never redesigned (ADR-033).
- */
-export function deriveOccurredOn(
-  input: Pick<NewTransactionInput, 'dispDate' | 'month'>,
-  today: Date = new Date(),
-): string {
-  const year = today.getFullYear()
-  const parts = input.dispDate.trim().split(/\s+/)
-  const abbrev = (parts[0] ?? '').slice(0, 3).toLowerCase()
-  const day = Number.parseInt(parts[1] ?? '', 10)
-
-  let monthIndex = MONTH_ABBREVIATIONS[abbrev]
-  if (monthIndex === undefined && input.month) {
-    monthIndex = MONTH_NAME_INDEX[input.month.toLowerCase()]
-  }
-  if (monthIndex === undefined) monthIndex = today.getMonth()
-  const safeDay = Number.isFinite(day) && day >= 1 && day <= 31 ? day : today.getDate()
-
-  return toIsoDate(year, monthIndex, safeDay)
-}
-
 /**
  * Map a {@link NewTransactionInput} from the form to the backend create body.
  *
- * Derives `occurredOn` from the form date (ADR-033), passes the camelCase money
- * fields straight through (`amountNum`/`usd`/`rate`), and omits empty optionals
- * so the lenient backend (ADR-031) applies its own defaults. `type` is never
- * sent — the backend derives it from `kind` (ADR-027).
+ * Sends the picker's real `occurredOn` ISO date straight through (ADR-041 — no
+ * more dispDate+current-year derivation), passes the camelCase money fields
+ * straight through (`amountNum`/`usd`/`rate`), and omits empty optionals so the
+ * lenient backend (ADR-031) applies its own defaults. `type` is never sent — the
+ * backend derives it from `kind` (ADR-027).
  */
 export function toCreateBody(input: NewTransactionInput): TransactionCreateBody {
   const body: TransactionCreateBody = {
-    occurredOn: deriveOccurredOn(input),
+    occurredOn: input.occurredOn,
     kind: input.kind,
     amountNum: input.amountNum,
     currency: input.currency,
@@ -259,18 +195,15 @@ export function toCreateBody(input: NewTransactionInput): TransactionCreateBody 
 /**
  * Map a {@link TransactionUpdateInput} to the backend patch body. Only the fields
  * the patch actually carries are sent; an omitted field leaves the stored value
- * unchanged (ADR-028). When the patch carries a date (`dispDate`), `occurredOn`
- * is derived from it.
+ * unchanged (ADR-028). When the patch carries a date, the picker's real
+ * `occurredOn` ISO date is sent directly (ADR-041).
  */
 export function toPatchBody(
   patch: TransactionUpdateInput,
 ): TransactionPatchBody {
   const body: TransactionPatchBody = {}
-  if (patch.dispDate !== undefined) {
-    body.occurredOn = deriveOccurredOn({
-      dispDate: patch.dispDate,
-      month: patch.month,
-    })
+  if (patch.occurredOn !== undefined) {
+    body.occurredOn = patch.occurredOn
   }
   if (patch.kind !== undefined) body.kind = patch.kind
   if (patch.amountNum !== undefined) body.amountNum = patch.amountNum

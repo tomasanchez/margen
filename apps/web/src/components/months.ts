@@ -72,3 +72,76 @@ export function recentMonthsWindow(
 ): ViewingMonth[] {
   return Array.from({ length: count }, (_, i) => addMonths(anchor, -i))
 }
+
+/**
+ * How many months back the Home navigator can reach below the current month
+ * (ADR-041). The reachable window is the current month plus the previous
+ * {@link MONTH_NAVIGATOR_FLOOR_OFFSET} months — 7 months total. Older months are
+ * found via Transactions (the redirect), not the Home navigator.
+ */
+export const MONTH_NAVIGATOR_FLOOR_OFFSET = 6
+
+/**
+ * The newest month the navigator can reach: the client's current real month. No
+ * future months exist (consistent with the no-future-date rule on the form).
+ */
+export function upperBoundMonth(now: Date = new Date()): ViewingMonth {
+  return currentViewingMonth(now)
+}
+
+/**
+ * The oldest month the navigator can reach: exactly
+ * {@link MONTH_NAVIGATOR_FLOOR_OFFSET} months before the current month. Going
+ * below this floor redirects to Transactions instead of stepping further.
+ */
+export function lowerBoundMonth(now: Date = new Date()): ViewingMonth {
+  return addMonths(currentViewingMonth(now), -MONTH_NAVIGATOR_FLOOR_OFFSET)
+}
+
+/** Compare two viewing months: <0 if `a` is earlier, >0 if later, 0 if equal. */
+export function compareViewingMonths(a: ViewingMonth, b: ViewingMonth): number {
+  return a.year * 12 + a.month - (b.year * 12 + b.month)
+}
+
+/** True when the viewing month is at (or beyond) the navigator's newest month. */
+export function isAtUpperBound(
+  value: ViewingMonth,
+  now: Date = new Date(),
+): boolean {
+  return compareViewingMonths(value, upperBoundMonth(now)) >= 0
+}
+
+/** True when the viewing month is at (or below) the navigator's 6-months-ago floor. */
+export function isAtLowerBound(
+  value: ViewingMonth,
+  now: Date = new Date(),
+): boolean {
+  return compareViewingMonths(value, lowerBoundMonth(now)) <= 0
+}
+
+/**
+ * Clamp a viewing month into the reachable `[lowerBound, upperBound]` window.
+ * Defensive: keeps the shared state in range even if something sets it outside
+ * (e.g. a stale value or a future restore).
+ */
+export function clampViewingMonth(
+  value: ViewingMonth,
+  now: Date = new Date(),
+): ViewingMonth {
+  const upper = upperBoundMonth(now)
+  const lower = lowerBoundMonth(now)
+  if (compareViewingMonths(value, upper) > 0) return upper
+  if (compareViewingMonths(value, lower) < 0) return lower
+  return value
+}
+
+/**
+ * The bounded month list for the compact picker (ADR-041): the current month
+ * down to the 6-months-ago floor, newest first — no future, no older entries.
+ */
+export function boundedMonthsWindow(now: Date = new Date()): ViewingMonth[] {
+  return recentMonthsWindow(
+    upperBoundMonth(now),
+    MONTH_NAVIGATOR_FLOOR_OFFSET + 1,
+  )
+}

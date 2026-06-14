@@ -286,6 +286,8 @@ export function buildEditPrefill(
     category: t.category === 'Income' ? 'Food' : t.category,
     bank: t.bank,
     amountNum: t.amountNum,
+    // The date picker prefills from the row's ISO occurredOn (ADR-041).
+    occurredOn: t.occurredOn,
     dispDate: t.dispDate,
     month: t.month,
     ...(t.usd !== undefined ? { usd: t.usd } : {}),

@@ -7,9 +7,13 @@
  * resolved once at mount; `initialMonth` lets tests pin a deterministic month.
  */
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { MonthContext, type MonthContextValue } from './monthContext'
-import { currentViewingMonth, type ViewingMonth } from './months'
+import {
+  clampViewingMonth,
+  currentViewingMonth,
+  type ViewingMonth,
+} from './months'
 
 export function MonthProvider({
   children,
@@ -18,13 +22,20 @@ export function MonthProvider({
   children: ReactNode
   initialMonth?: ViewingMonth
 }) {
-  const [viewingMonth, setViewingMonth] = useState<ViewingMonth>(
-    () => initialMonth ?? currentViewingMonth(),
+  // Clamp the seed (and every later write) into the reachable
+  // [lowerBound, upperBound] window so the shared state can never sit on a
+  // future or older-than-6-months month (ADR-041).
+  const [viewingMonth, setViewingMonthRaw] = useState<ViewingMonth>(() =>
+    clampViewingMonth(initialMonth ?? currentViewingMonth()),
   )
+
+  const setViewingMonth = useCallback((next: ViewingMonth) => {
+    setViewingMonthRaw(clampViewingMonth(next))
+  }, [])
 
   const value = useMemo<MonthContextValue>(
     () => ({ viewingMonth, setViewingMonth }),
-    [viewingMonth],
+    [viewingMonth, setViewingMonth],
   )
 
   return <MonthContext.Provider value={value}>{children}</MonthContext.Provider>

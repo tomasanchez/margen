@@ -86,6 +86,13 @@ export interface Transaction {
 
 /** Input accepted by the add-transaction mutation (id + month derived by the API). */
 export interface NewTransactionInput {
+  /**
+   * ISO calendar date (`YYYY-MM-DD`) the transaction occurred on, set by the
+   * form's date picker (ADR-041). This is the source of truth sent to the
+   * backend as `occurredOn` (no future dates; backdating allowed). `dispDate`
+   * remains a derived display label.
+   */
+  occurredOn: string
   dispDate: string
   name: string
   category: Category

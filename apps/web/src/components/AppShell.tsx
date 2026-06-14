@@ -1,9 +1,15 @@
-import { type ReactNode } from 'react'
-import { Link, Outlet, useRouterState } from '@tanstack/react-router'
+import { useCallback, useState, type ReactNode } from 'react'
+import {
+  Link,
+  Outlet,
+  useNavigate,
+  useRouterState,
+} from '@tanstack/react-router'
 import AppBar from '@mui/material/AppBar'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Fab from '@mui/material/Fab'
+import Snackbar from '@mui/material/Snackbar'
 import Toolbar from '@mui/material/Toolbar'
 import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
@@ -358,6 +364,17 @@ function AppShellBody() {
 
   const { viewingMonth, setViewingMonth } = useViewingMonth()
 
+  const navigate = useNavigate()
+  const [olderHintOpen, setOlderHintOpen] = useState(false)
+
+  // Going older than the 6-months-ago floor lands the user in Transactions,
+  // where older dates are searchable (ADR-041). A brief, calm Snackbar explains
+  // the jump; it auto-dismisses but is non-blocking and dismissible.
+  const handleNavigateOlder = useCallback(() => {
+    setOlderHintOpen(true)
+    void navigate({ to: '/transactions' })
+  }, [navigate])
+
   return (
     <Box
       sx={{
@@ -401,6 +418,7 @@ function AppShellBody() {
               variant="stepper"
               value={viewingMonth}
               onChange={setViewingMonth}
+              onNavigateOlder={handleNavigateOlder}
             />
           </Box>
 
@@ -421,6 +439,7 @@ function AppShellBody() {
                 variant="compact"
                 value={viewingMonth}
                 onChange={setViewingMonth}
+                onNavigateOlder={handleNavigateOlder}
               />
             </Box>
             <AccountMenu />
@@ -473,6 +492,16 @@ function AppShellBody() {
       {/* Mobile-only floating overlays (out of flow; ADR-017, ADR-019). */}
       <FloatingNavPill />
       <AddFab onAddTransaction={onAddTransaction} />
+
+      {/* Calm hint shown when the navigator hits its 6-month floor and we route
+          to Transactions for older dates (ADR-041). Non-blocking, dismissible. */}
+      <Snackbar
+        open={olderHintOpen}
+        onClose={() => setOlderHintOpen(false)}
+        autoHideDuration={5000}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        message="Older than 6 months — search in Transactions"
+      />
     </Box>
   )
 }

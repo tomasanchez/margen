@@ -49,6 +49,32 @@ export function todayDispDate(): string {
 }
 
 /**
+ * Today as an ISO `YYYY-MM-DD` string in LOCAL time (the client clock, ADR-041).
+ * Used as the date picker's default and its `max` (no future-dated transactions).
+ * Local parts avoid the UTC off-by-one `toISOString()` would cause near midnight.
+ */
+export function todayIsoDate(now: Date = new Date()): string {
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+/**
+ * Short display date ("Jun 13") for an ISO `YYYY-MM-DD` date. Parsed as a local
+ * date (noon, to dodge timezone edges) so the label matches the picked day.
+ */
+export function isoToDispDate(iso: string): string {
+  const [y, m, d] = iso.split('-').map((part) => Number.parseInt(part, 10))
+  if (!y || !m || !d) return iso
+  const date = new Date(y, m - 1, d, 12)
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: '2-digit',
+  }).format(date)
+}
+
+/**
  * Parse an es-AR-ish numeric string into a number. Accepts grouping dots and a
  * decimal comma OR a plain decimal point; strips anything else. Empty/garbage
  * yields `NaN` so callers can treat it as "no amount yet".
@@ -117,6 +143,12 @@ export interface AddEditFormState {
   readonly bank: Bank
   setBank: (next: Bank) => void
 
+  /** ISO `YYYY-MM-DD` date from the picker (default today; prefilled on edit). */
+  readonly occurredOn: string
+  setOccurredOn: (next: string) => void
+  /** Today as ISO `YYYY-MM-DD` — the picker's `max` (no future dates). */
+  readonly maxOccurredOn: string
+  /** Short display label derived from `occurredOn`, e.g. "Jun 13". */
   readonly dispDate: string
 
   readonly notes: string
@@ -175,7 +207,13 @@ export function useAddEditFormState(
   const [bank, setBank] = useState<Bank>(prefill?.bank ?? DEFAULT_BANK)
   const [notes, setNotes] = useState<string>('')
 
-  const dispDate = prefill?.dispDate ?? todayDispDate()
+  // Date picker: ISO YYYY-MM-DD. New transactions default to today; edits
+  // prefill from the row's occurredOn (ADR-041). `max` is today (no future).
+  const maxOccurredOn = todayIsoDate()
+  const [occurredOn, setOccurredOn] = useState<string>(
+    prefill?.occurredOn ?? maxOccurredOn,
+  )
+  const dispDate = isoToDispDate(occurredOn)
 
   const amount = useMemo(() => parseAmountInput(amountText), [amountText])
   const rate = useMemo(() => {
@@ -215,11 +253,14 @@ export function useAddEditFormState(
       currency,
       category: type === 'income' ? 'Income' : category,
       bank,
+      // The picker's ISO date is the source of truth sent as occurredOn; the
+      // backend derives the month from it (ADR-041), so no `month` override is
+      // passed. `dispDate` is the derived display label.
+      occurredOn,
       dispDate,
       amountNum: Math.round(amountArs),
       countsTowardMonotributo: type === 'income' && countsTowardMonotributo,
       ...(notes.trim() ? { notes: notes.trim() } : {}),
-      ...(prefill?.month ? { month: prefill.month } : {}),
       ...(prefill?.recurring !== undefined
         ? { recurring: prefill.recurring }
         : {}),
@@ -257,6 +298,9 @@ export function useAddEditFormState(
     setCategory,
     bank,
     setBank,
+    occurredOn,
+    setOccurredOn,
+    maxOccurredOn,
     dispDate,
     notes,
     setNotes,

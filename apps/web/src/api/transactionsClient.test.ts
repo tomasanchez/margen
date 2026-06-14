@@ -3,16 +3,16 @@
  *
  * Asserts the contract adaptation in isolation, with `fetch` mocked (no real
  * backend): the `{ data }` envelope is unwrapped, Decimal-string money is parsed
- * to numbers, the UUID `id` stays a string, and `occurredOn` is derived from the
- * form date on create. DELETE (204) resolves to void; non-2xx throws an error
- * carrying the HTTP status so TanStack Query treats it as a failure.
+ * to numbers, the UUID `id` stays a string, and `occurredOn` is sent straight
+ * from the form's date picker on create (ADR-041). DELETE (204) resolves to
+ * void; non-2xx throws an error carrying the HTTP status so TanStack Query
+ * treats it as a failure.
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   TransactionApiError,
   adaptTransaction,
-  deriveOccurredOn,
   toCreateBody,
   transactionsClient,
   type TransactionDto,
@@ -79,24 +79,10 @@ describe('adaptTransaction', () => {
   })
 })
 
-describe('deriveOccurredOn', () => {
-  const today = new Date('2026-03-15T12:00:00Z')
-
-  test('builds an ISO date from the "Mon DD" display date + current year', () => {
-    expect(deriveOccurredOn({ dispDate: 'Jun 12' }, today)).toBe('2026-06-12')
-    expect(deriveOccurredOn({ dispDate: 'Jan 05' }, today)).toBe('2026-01-05')
-  })
-
-  test('falls back to the month name when the dispDate abbreviation is unknown', () => {
-    expect(
-      deriveOccurredOn({ dispDate: '??? 09', month: 'April' }, today),
-    ).toBe('2026-04-09')
-  })
-})
-
 describe('toCreateBody', () => {
-  test('derives occurredOn and maps the camelCase money fields', () => {
+  test('sends the picker occurredOn straight through and maps the money fields', () => {
     const input: NewTransactionInput = {
+      occurredOn: '2026-06-12',
       dispDate: 'Jun 12',
       name: 'Invoice · Atlas Co.',
       category: 'Income',
@@ -111,7 +97,8 @@ describe('toCreateBody', () => {
     }
     const body = toCreateBody(input)
 
-    expect(body.occurredOn).toMatch(/^\d{4}-06-12$/)
+    // The picker's real ISO date is sent verbatim (ADR-041) — no derivation.
+    expect(body.occurredOn).toBe('2026-06-12')
     expect(body.kind).toBe('invoice')
     expect(body.amountNum).toBe(622500)
     expect(body.usd).toBe(500)
@@ -119,6 +106,21 @@ describe('toCreateBody', () => {
     expect(body.countsTowardMonotributo).toBe(true)
     // `type` is never sent — the backend derives it from `kind` (ADR-027).
     expect('type' in body).toBe(false)
+  })
+
+  test('a backdated date is sent unchanged (backdating allowed)', () => {
+    const input: NewTransactionInput = {
+      occurredOn: '2025-11-03',
+      dispDate: 'Nov 03',
+      name: 'Old expense',
+      category: 'Food',
+      bank: 'Transfer',
+      currency: 'ARS',
+      type: 'expense',
+      kind: 'expense',
+      amountNum: 5000,
+    }
+    expect(toCreateBody(input).occurredOn).toBe('2025-11-03')
   })
 })
 
@@ -147,6 +149,7 @@ describe('transactionsClient HTTP layer', () => {
     )
 
     const created = await transactionsClient.create({
+      occurredOn: '2026-06-12',
       dispDate: 'Jun 12',
       name: 'Invoice · Atlas Co.',
       category: 'Income',
@@ -163,7 +166,7 @@ describe('transactionsClient HTTP layer', () => {
     const [, init] = vi.mocked(fetch).mock.calls[0]
     expect(init?.method).toBe('POST')
     const sent = JSON.parse(init?.body as string)
-    expect(sent.occurredOn).toMatch(/^\d{4}-06-12$/)
+    expect(sent.occurredOn).toBe('2026-06-12')
     expect(sent.amountNum).toBe(622500)
   })
 

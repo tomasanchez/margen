@@ -35,25 +35,38 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-/** A trigger that opens the Add flow; rendered under the AddTransactionProvider. */
-function OpenAddTrigger() {
+import type { AddPrefill } from './addContext'
+
+/** A trigger that opens the Add/Edit flow with an optional prefill. */
+function OpenAddTrigger({ prefill }: { prefill?: AddPrefill }) {
   const { openAdd } = useAddTransaction()
   return (
-    <button type="button" onClick={() => openAdd()}>
+    <button type="button" onClick={() => openAdd(prefill)}>
       open add
     </button>
   )
 }
 
-/** Open the Add dialog and return the dialog element + a userEvent session. */
-async function openAddDialog() {
+/** Open the Add/Edit dialog and return the dialog element + a userEvent session. */
+async function openAddDialog(prefill?: AddPrefill) {
   const user = userEvent.setup()
-  renderWithProviders(<OpenAddTrigger />, { withAddProvider: true })
+  renderWithProviders(<OpenAddTrigger prefill={prefill} />, {
+    withAddProvider: true,
+  })
 
   await user.click(screen.getByRole('button', { name: 'open add' }))
   // The Dialog (desktop, jsdom's default width) is labelled by the form title.
   const dialog = await screen.findByRole('dialog')
   return { user, dialog }
+}
+
+/** Today as a local ISO YYYY-MM-DD string (mirrors the form's `todayIsoDate`). */
+function todayIso(): string {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
 describe('Add flow — type toggles required fields', () => {
@@ -159,5 +172,54 @@ describe('Add flow — a save failure keeps the form open', () => {
     ).toBeInTheDocument()
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+})
+
+describe('Date picker (ADR-041)', () => {
+  test('shows a date input defaulting to today with max=today', async () => {
+    const { dialog } = await openAddDialog()
+    const date = within(dialog).getByLabelText('Transaction date')
+
+    expect(date).toHaveAttribute('type', 'date')
+    expect(date).toHaveValue(todayIso())
+    expect(date).toHaveAttribute('max', todayIso())
+  })
+
+  test('creating sends occurredOn equal to the picked (backdated) date', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    // Pick an older date, enter an amount, save.
+    const date = form.getByLabelText('Transaction date')
+    await user.clear(date)
+    await user.type(date, '2026-02-09')
+    await user.type(form.getByLabelText(/^Amount in /), '5000')
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    const [input] = createMock.mock.calls[0]
+    expect(input.occurredOn).toBe('2026-02-09')
+    // The display label is derived from the picked date, not "today".
+    expect(input.dispDate).toBe('Feb 09')
+  })
+
+  test('editing prefills the date from the row occurredOn', async () => {
+    const { dialog } = await openAddDialog({
+      id: 'edit-1',
+      name: 'Old expense',
+      type: 'expense',
+      kind: 'expense',
+      currency: 'ARS',
+      category: 'Food',
+      bank: 'Transfer',
+      amountNum: 5000,
+      occurredOn: '2026-01-20',
+      dispDate: 'Jan 20',
+    })
+
+    expect(within(dialog).getByLabelText('Transaction date')).toHaveValue(
+      '2026-01-20',
+    )
   })
 })

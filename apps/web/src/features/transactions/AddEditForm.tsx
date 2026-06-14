@@ -5,8 +5,9 @@
  * (mobile) by {@link AddEditTransaction}. It ports the concept's Add modal
  * (Margen Home.dc.html) to MUI: segmented Expense / Invoice·income tabs, a large
  * IBM Plex Mono amount input with a currency-symbol prefix, an ARS/USD toggle
- * with an editable MEP FX context line, category + bank chips, a Today date
- * control, an optional "More details" section, and Cancel / Save.
+ * with an editable MEP FX context line, category + bank chips, a native date
+ * picker (default today, max today; backdating allowed — ADR-041), an optional
+ * "More details" section, and Cancel / Save.
  *
  * Color comes from the design tokens via the theme; layout uses MUI sx. All
  * controls are keyboard-operable and labelled (ADR-019); focus trapping and
@@ -115,6 +116,7 @@ export function AddEditForm({
 
   const amountInputId = useId()
   const rateInputId = useId()
+  const dateInputId = useId()
   const notesInputId = useId()
 
   const isExpense = form.type === 'expense'
@@ -394,31 +396,48 @@ export function AddEditForm({
         </Stack>
       </Box>
 
-      {/* Date (defaults to Today). */}
+      {/* Date — a native date picker. Defaults to today for a new transaction
+          and prefills from the row's occurredOn on edit; `max` is today so no
+          future-dated transactions are possible (ADR-041). Backdating is allowed. */}
       <Box
         sx={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          gap: 2,
           mt: 2.5,
         }}
       >
-        <Typography sx={{ fontSize: 13.5, color: 'text.secondary' }}>
+        <Typography
+          component="label"
+          htmlFor={dateInputId}
+          sx={{ fontSize: 13.5, color: 'text.secondary' }}
+        >
           Date
         </Typography>
-        <Box
-          sx={{
-            fontFamily: monoFontFamily,
-            fontSize: 13,
-            color: 'var(--mg-text-mid)',
-            border: '1px solid var(--mg-border-2)',
-            borderRadius: 1.5,
-            px: 1.75,
-            py: 0.9,
+        <TextField
+          id={dateInputId}
+          type="date"
+          value={form.occurredOn}
+          onChange={(e) => form.setOccurredOn(e.target.value)}
+          size="small"
+          slotProps={{
+            htmlInput: {
+              max: form.maxOccurredOn,
+              'aria-label': 'Transaction date',
+            },
           }}
-        >
-          {form.mode === 'edit' ? form.dispDate : `Today · ${form.dispDate}`}
-        </Box>
+          sx={{
+            '& .MuiInputBase-input': {
+              fontFamily: monoFontFamily,
+              fontSize: 13,
+              py: 0.9,
+            },
+            '& .MuiOutlinedInput-notchedOutline': {
+              borderColor: 'var(--mg-border-2)',
+            },
+          }}
+        />
       </Box>
 
       {/* Monotributo toggle (income only). */}
