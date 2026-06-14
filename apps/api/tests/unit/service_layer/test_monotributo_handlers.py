@@ -1,0 +1,148 @@
+"""Unit tests for the Monotributo capture / config handlers (ADR-052, ADR-048).
+
+These drive the handlers through the in-memory :class:`FakeUnitOfWork` so they run
+with no database (ADR-032). They verify the read-records capture UPSERTs the
+current period and backfills missing months on first capture, that re-capturing a
+period updates rather than duplicates it, and that the config handler validates,
+normalizes and persists the category — raising for unknown letters.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from decimal import Decimal
+
+import pytest
+
+from margen_api.domain.commands.monotributo import (
+    CaptureMonotributoSnapshot,
+    UpdateMonotributoConfig,
+)
+from margen_api.domain.models.monotributo_scale import UnknownCategoryError
+from margen_api.service_layer.monotributo import month_start, trailing_window
+from margen_api.service_layer.monotributo_handlers import (
+    capture_monotributo_snapshot,
+    update_monotributo_config,
+)
+from tests.fakes.persistence import FakeUnitOfWork
+
+AS_OF = date(2026, 6, 14)
+
+
+def _seed_window_total(uow: FakeUnitOfWork, period_end: date, total: str) -> None:
+    """Seed the per-window included-income total the capture handler reads."""
+    window_start, window_end = trailing_window(period_end)
+    uow.used_by_window[(window_start, window_end)] = Decimal(total)
+
+
+class TestCaptureSnapshot:
+    """``capture_monotributo_snapshot`` UPSERTs and backfills on the unit of work."""
+
+    async def test_captures_current_and_backfills_missing_months(self):
+        """
+        GIVEN no existing snapshots
+        WHEN the capture handler runs for June 2026
+        THEN it captures the current period and backfills the elapsed trailing months
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+
+        # WHEN
+        await capture_monotributo_snapshot(CaptureMonotributoSnapshot(as_of=AS_OF), uow)
+
+        # THEN — the current month and 12 prior month-ends are populated (13 in total).
+        assert uow.committed is True
+        assert month_start(AS_OF) in uow.snapshots
+        assert len(uow.snapshots) == 13
+        # Each backfilled row uses the default category when no config exists.
+        assert all(standing.category == "A" for standing in uow.snapshots.values())
+
+    async def test_uses_configured_category(self):
+        """
+        GIVEN a persisted config of category H
+        WHEN the capture handler runs
+        THEN the captured standings use that category
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        uow.config.update({"current_category": "H", "activity_type": "services"})
+
+        # WHEN
+        await capture_monotributo_snapshot(CaptureMonotributoSnapshot(as_of=AS_OF), uow)
+
+        # THEN
+        assert uow.snapshots[month_start(AS_OF)].category == "H"
+
+    async def test_recapture_updates_not_duplicates(self):
+        """
+        GIVEN an already-captured current period
+        WHEN the capture handler runs again with a new window total
+        THEN the current period row is refreshed in place (the count is unchanged)
+        """
+        # GIVEN — first capture.
+        uow = FakeUnitOfWork()
+        _seed_window_total(uow, month_start(AS_OF), "1000000.00")
+        await capture_monotributo_snapshot(CaptureMonotributoSnapshot(as_of=AS_OF), uow)
+        first_count = len(uow.snapshots)
+        assert uow.snapshots[month_start(AS_OF)].used == Decimal("1000000.00")
+
+        # WHEN — the window total changes and we re-capture.
+        _seed_window_total(uow, month_start(AS_OF), "2000000.00")
+        await capture_monotributo_snapshot(CaptureMonotributoSnapshot(as_of=AS_OF), uow)
+
+        # THEN — same number of rows, current period refreshed (backfilled months skipped).
+        assert len(uow.snapshots) == first_count
+        assert uow.snapshots[month_start(AS_OF)].used == Decimal("2000000.00")
+
+
+class TestUpdateConfig:
+    """``update_monotributo_config`` validates, normalizes and persists the category."""
+
+    async def test_persists_normalized_category(self):
+        """
+        GIVEN a lowercase category and an activity
+        WHEN the config handler runs
+        THEN it uppercases the letter, persists the pair and returns it
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+
+        # WHEN
+        result = await update_monotributo_config(
+            UpdateMonotributoConfig(current_category="  h ", activity_type="bienes"), uow
+        )
+
+        # THEN
+        assert result == ("H", "bienes")
+        assert uow.config == {"current_category": "H", "activity_type": "bienes"}
+        assert uow.committed is True
+
+    async def test_activity_none_leaves_existing(self):
+        """
+        GIVEN an existing activity and a patch without one
+        WHEN the config handler runs
+        THEN the persisted activity is left unchanged
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        uow.config.update({"current_category": "A", "activity_type": "bienes"})
+
+        # WHEN
+        result = await update_monotributo_config(UpdateMonotributoConfig(current_category="C", activity_type=None), uow)
+
+        # THEN
+        assert result == ("C", "bienes")
+
+    async def test_unknown_category_raises(self):
+        """
+        GIVEN an unknown category letter
+        WHEN the config handler runs
+        THEN it raises UnknownCategoryError before touching the unit of work
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+
+        # WHEN / THEN
+        with pytest.raises(UnknownCategoryError):
+            await update_monotributo_config(UpdateMonotributoConfig(current_category="Z"), uow)
+        assert uow.committed is False

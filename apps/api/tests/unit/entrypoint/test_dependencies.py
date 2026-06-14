@@ -4,10 +4,15 @@ import contextlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from margen_api.adapters.queries import SqlAlchemySummaryReader, SqlAlchemyTransactionReader
+from margen_api.adapters.queries import (
+    SqlAlchemyMonotributoReader,
+    SqlAlchemySummaryReader,
+    SqlAlchemyTransactionReader,
+)
 from margen_api.entrypoint.dependencies import (
     get_bus,
     get_container,
+    get_monotributo_reader,
     get_summary_reader,
     get_transaction_reader,
 )
@@ -73,6 +78,33 @@ class TestGetTransactionReader:
 
         # THEN
         assert isinstance(reader, SqlAlchemyTransactionReader)
+        assert reader.session is session
+
+        # WHEN the generator is exhausted, the finally block closes the session.
+        with contextlib.suppress(StopAsyncIteration):
+            await iterator.__anext__()
+        session.close.assert_awaited_once()
+
+
+class TestGetMonotributoReader:
+    """The Monotributo reader resolver opens and closes a request-scoped session."""
+
+    async def test_yields_reader_and_closes_session(self):
+        """
+        GIVEN a container whose session factory builds a session
+        WHEN the Monotributo reader dependency is iterated to completion
+        THEN it yields a SqlAlchemyMonotributoReader and closes the session
+        """
+        # GIVEN
+        session = AsyncMock()
+        container = SimpleNamespace(session_factory=MagicMock(return_value=session))
+
+        # WHEN
+        iterator = get_monotributo_reader(container)  # type: ignore[arg-type]
+        reader = await iterator.__anext__()
+
+        # THEN
+        assert isinstance(reader, SqlAlchemyMonotributoReader)
         assert reader.session is session
 
         # WHEN the generator is exhausted, the finally block closes the session.

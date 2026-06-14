@@ -15,8 +15,24 @@ from uuid import UUID
 from sqlalchemy import Numeric, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from margen_api.adapters.models.monotributo_config import MonotributoConfigRecord
+from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
+from margen_api.service_layer.monotributo import (
+    DEFAULT_ACTIVITY_TYPE,
+    DEFAULT_CATEGORY,
+    build_snapshot,
+    build_standing,
+    prior_window,
+    trailing_window,
+)
+from margen_api.service_layer.monotributo_read_models import (
+    MonotributoInvoice,
+    MonotributoSnapshot,
+    MonotributoStanding,
+)
+from margen_api.service_layer.monotributo_reader import AbstractMonotributoReader
 from margen_api.service_layer.read_models import TransactionReadModel
 from margen_api.service_layer.reader import AbstractTransactionReader
 from margen_api.service_layer.summaries import (
@@ -90,6 +106,9 @@ _YEAR = func.extract("year", TransactionRecord.occurred_on)
 _MONTH = func.extract("month", TransactionRecord.occurred_on)
 # Null categories bucket under a single "Uncategorized" label (ADR-042).
 _CATEGORY = func.coalesce(TransactionRecord.category, UNCATEGORIZED)
+
+
+_ZERO = Decimal(0)
 
 
 def _as_decimal(value: object) -> Decimal:
@@ -166,3 +185,149 @@ class SqlAlchemySummaryReader(AbstractSummaryReader):
         )
         result = await self.session.execute(statement)
         return {str(row.category): _as_decimal(row.total) for row in result.all()}
+
+
+# Income that may count toward the Monotributo limit is the invoice/income kinds
+# carrying the authoritative ``counts_toward_monotributo`` flag (ADR-027/ADR-046).
+_MONOTRIBUTO_KINDS = (Kind.INVOICE.value, Kind.INCOME.value)
+# SUM widens NUMERIC; cast back so the driver returns a Decimal for money (ADR-025).
+_INCLUDED_AMOUNT = cast(func.sum(TransactionRecord.amount), Numeric(18, 2))
+# Invoices that count toward the Monotributo limit: the invoice/income kinds
+# carrying the authoritative flag (ADR-027/ADR-046).
+_COUNTS_TOWARD_LIMIT = (
+    TransactionRecord.kind.in_(_MONOTRIBUTO_KINDS),
+    TransactionRecord.counts_toward_monotributo.is_(True),
+)
+
+
+class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
+    """Serve the Monotributo page from server-side aggregation (ADR-046, ADR-052).
+
+    Runs read-only queries over ``transactions``, ``monotributo_config`` and
+    ``monotributo_snapshot`` and projects them into a :class:`MonotributoSnapshot`.
+    The standing math (status band, projection, margin) lives in the pure
+    :mod:`margen_api.service_layer.monotributo`; this adapter only does I/O and
+    never mutates state (the read-records write is a separate command, ADR-052).
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Initialize the reader.
+
+        Args:
+            session: The async session used for read-only queries.
+        """
+        self.session = session
+
+    async def snapshot(self, reference: date) -> MonotributoSnapshot:
+        """Assemble the current standing, previous standing and drilldown."""
+        current = await self.current_standing(reference)
+        invoices = await self._invoices_in_window(current.period_start, current.period_end)
+        previous = await self._previous_standing(reference)
+        return build_snapshot(current=current, previous=previous, invoices=invoices)
+
+    async def current_standing(self, reference: date) -> MonotributoStanding:
+        """Compute the live trailing-12-month standing (ADR-046)."""
+        window_start, window_end = trailing_window(reference)
+        category, activity_type = await self._configured_category()
+        used = await self._used_in_window(window_start, window_end)
+        return build_standing(
+            used=used,
+            category=category,
+            activity_type=activity_type,
+            window_start=window_start,
+            window_end=window_end,
+            reference=reference,
+        )
+
+    async def _previous_standing(self, reference: date) -> MonotributoStanding | None:
+        """Resolve the prior-window standing from a snapshot, else compute it.
+
+        Reads the persisted snapshot for the prior window's ``period_end`` when one
+        exists (frozen historical figures, ADR-052); otherwise computes the prior
+        window live so the comparison still has data on first read.
+        """
+        prior_start, prior_end = prior_window(reference)
+        persisted = await self._snapshot_at(prior_end)
+        if persisted is not None:
+            return persisted
+        category, activity_type = await self._configured_category()
+        used = await self._used_in_window(prior_start, prior_end)
+        return build_standing(
+            used=used,
+            category=category,
+            activity_type=activity_type,
+            window_start=prior_start,
+            window_end=prior_end,
+            reference=prior_end,
+        )
+
+    async def _configured_category(self) -> tuple[str, str]:
+        """Return the persisted ``(category, activity_type)`` or the defaults."""
+        statement = select(
+            MonotributoConfigRecord.current_category,
+            MonotributoConfigRecord.activity_type,
+        ).limit(1)
+        row = (await self.session.execute(statement)).first()
+        if row is None:
+            return DEFAULT_CATEGORY, DEFAULT_ACTIVITY_TYPE
+        return str(row.current_category), str(row.activity_type)
+
+    async def _used_in_window(self, window_start: date, window_end: date) -> Decimal:
+        """SUM the included income over the inclusive ``[start, end]`` window."""
+        statement = select(_INCLUDED_AMOUNT).where(
+            *_COUNTS_TOWARD_LIMIT,
+            TransactionRecord.occurred_on >= window_start,
+            TransactionRecord.occurred_on <= window_end,
+        )
+        total = (await self.session.execute(statement)).scalar_one_or_none()
+        return _ZERO if total is None else _as_decimal(total)
+
+    async def _invoices_in_window(self, window_start: date, window_end: date) -> list[MonotributoInvoice]:
+        """List the counted invoices oldest-first with a running cumulative."""
+        statement = (
+            select(TransactionRecord)
+            .where(
+                *_COUNTS_TOWARD_LIMIT,
+                TransactionRecord.occurred_on >= window_start,
+                TransactionRecord.occurred_on <= window_end,
+            )
+            .order_by(TransactionRecord.occurred_on.asc(), TransactionRecord.created_at.asc())
+        )
+        result = await self.session.execute(statement)
+        invoices: list[MonotributoInvoice] = []
+        cumulative = _ZERO
+        for record in result.scalars().all():
+            cumulative += record.amount
+            invoices.append(
+                MonotributoInvoice(
+                    id=record.id,
+                    occurred_on=record.occurred_on,
+                    name=record.name,
+                    category=record.category,
+                    amount=record.amount,
+                    currency=record.currency,
+                    cumulative=cumulative,
+                    is_foreign_currency=Currency.parse(record.currency) is not Currency.ARS,
+                )
+            )
+        return invoices
+
+    async def _snapshot_at(self, period_end: date) -> MonotributoStanding | None:
+        """Read a persisted standing for a ``period_end`` month, or ``None``."""
+        statement = select(MonotributoSnapshotRecord).where(MonotributoSnapshotRecord.period_end == period_end).limit(1)
+        record = (await self.session.execute(statement)).scalar_one_or_none()
+        if record is None:
+            return None
+        return MonotributoStanding(
+            category=record.category,
+            activity_type=record.activity_type,
+            limit=record.limit_amount,
+            used=record.used,
+            remaining=record.remaining,
+            percent_used=record.percent_used,
+            status=record.status,
+            projected_category=record.projected_category,
+            projection_note="Saved snapshot from this period.",
+            period_start=record.period_start,
+            period_end=record.period_end,
+        )

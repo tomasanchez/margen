@@ -2,29 +2,18 @@
  * In-memory mock async API for the still-mocked Margen slices (ADR-015, ADR-035).
  *
  * Transactions read/write through the real backend client
- * (`src/api/transactionsClient.ts`); the spending trend + category breakdown now
- * read the real `/summaries` endpoint via `src/api/summariesClient.ts`
- * (ADR-042/043). What remains here is the read-only seed for the slices that
- * still have no backend yet — the Home insights and ALL Monotributo data — kept
- * behind these async getters so #8/#10 can swap each to a real client without
- * touching the components. Every function is async and returns a structural copy
- * after a small simulated latency, exactly as the eventual clients will.
+ * (`src/api/transactionsClient.ts`); the spending trend + category breakdown read
+ * the real `/summaries` endpoint via `src/api/summariesClient.ts`
+ * (ADR-042/043); and ALL Monotributo data now reads the real `/monotributo`
+ * endpoint via `src/api/monotributoClient.ts` (ADR-049/052). What remains here is
+ * the read-only seed for the one slice that still has no backend yet — the Home
+ * insights — kept behind this async getter so #10 can swap it to a real client
+ * without touching the component. The function is async and returns a structural
+ * copy after a small simulated latency, exactly as the eventual client will.
  */
 
-import {
-  SEED_INSIGHTS,
-  SEED_MONOTRIBUTO,
-  SEED_MONOTRIBUTO_INVOICES,
-  SEED_MONOTRIBUTO_PROJECTION,
-  SEED_MONOTRIBUTO_SCALE,
-} from './seed'
-import type {
-  Insight,
-  MonotributoInvoice,
-  MonotributoProjection,
-  MonotributoScaleRow,
-  MonotributoState,
-} from './types'
+import { SEED_INSIGHTS } from './seed'
+import type { Insight } from './types'
 
 /** Simulated network latency (ms) so loading states are exercised. */
 const LATENCY_MS = 240
@@ -36,26 +25,6 @@ function withLatency<T>(value: T): Promise<T> {
   })
 }
 
-/** Current Monotributo standing (read-only seed snapshot). */
-export function getMonotributo(): Promise<MonotributoState> {
-  return withLatency({ ...SEED_MONOTRIBUTO })
-}
-
-/** Official AFIP/ARCA 2026 category scale A–K (read-only reference data). */
-export function getMonotributoScale(): Promise<MonotributoScaleRow[]> {
-  return withLatency(SEED_MONOTRIBUTO_SCALE.map((r) => ({ ...r })))
-}
-
-/** Fiscal-period invoices behind the annual total (read-only seed snapshot). */
-export function getMonotributoInvoices(): Promise<MonotributoInvoice[]> {
-  return withLatency(SEED_MONOTRIBUTO_INVOICES.map((i) => ({ ...i })))
-}
-
-/** Linear pace projection figures (read-only seed snapshot). */
-export function getMonotributoProjection(): Promise<MonotributoProjection> {
-  return withLatency({ ...SEED_MONOTRIBUTO_PROJECTION })
-}
-
 /** Home insights list (read-only seed snapshot). */
 export function getInsights(): Promise<Insight[]> {
   return withLatency(SEED_INSIGHTS.map((i) => ({ ...i })))
@@ -63,9 +32,5 @@ export function getInsights(): Promise<Insight[]> {
 
 /** Grouped export so callers can import the still-mocked API as one object. */
 export const mockApi = {
-  getMonotributo,
-  getMonotributoScale,
-  getMonotributoInvoices,
-  getMonotributoProjection,
   getInsights,
 } as const

@@ -20,17 +20,21 @@ import { formatPercent } from '../../lib/format'
 import type { MonotributoState, StatusLevel } from '../../mock/types'
 import { useAddTransaction } from '../transactions/addContext'
 
-/** Headline keyed to the overall standing. */
+/** Headline keyed to the overall standing (calm copy, ADR-046). */
 const HEADLINE: Record<StatusLevel, string> = {
   safe: "You're within margin this month.",
   watch: "You're within margin this month.",
+  close: "You're getting close to your Monotributo limit.",
+  over: "You're over your Monotributo limit.",
   risk: 'Spending is outrunning your income this month.',
 }
 
-/** Short status-line label keyed to the standing. */
+/** Short status-line label keyed to the standing (calm copy, ADR-046). */
 const STATUS_LABEL: Record<StatusLevel, string> = {
   safe: 'On track',
-  watch: 'On track',
+  watch: 'Keep an eye on this',
+  close: 'Close to your limit',
+  over: 'Over your limit',
   risk: 'Needs attention',
 }
 
