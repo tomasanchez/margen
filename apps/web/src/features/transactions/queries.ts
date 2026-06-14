@@ -1,10 +1,14 @@
 /**
- * TanStack Query hooks for transactions, over the in-memory mock API (ADR-015).
+ * TanStack Query hooks for transactions, over the real backend API
+ * (ADR-033/036). The mock async transactions store was removed (ADR-035); these
+ * hooks now read and mutate through {@link transactionsClient}, which adapts the
+ * backend DTO to the frontend {@link Transaction} shape.
  *
- * The mock API holds the single shared transactions store; Home and
- * Transactions both read through these hooks, so a mutation here updates the
- * data both screens see. Mutations invalidate the transactions list (and the
- * Home derived queries) so the cache re-reads the mutated store.
+ * Home and Transactions both read the single `transactions` list, so a mutation
+ * here keeps both screens consistent. Mutations invalidate the transactions list
+ * (and the Home derived queries) on success so the cache re-reads the backend
+ * (ADR-036). Mutation hooks return TanStack Query's full result, so callers can
+ * surface `isError` / `error` for the calm failure UX (ADR-037).
  */
 
 import {
@@ -13,16 +17,10 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import {
-  addTransaction,
-  deleteTransaction,
-  listTransactions,
-  updateTransaction,
-} from '../../mock/api'
-import type {
-  NewTransactionInput,
-  Transaction,
-  TransactionPatch,
-} from '../../mock/types'
+  transactionsClient,
+  type TransactionUpdateInput,
+} from '../../api/transactionsClient'
+import type { NewTransactionInput, Transaction } from '../../mock/types'
 import { homeQueryKeys } from '../home/queries'
 
 /** Stable query-key factory for the transactions domain. */
@@ -39,7 +37,7 @@ export const transactionsKeys = {
 export function useTransactions() {
   return useQuery<Transaction[]>({
     queryKey: transactionsKeys.list(),
-    queryFn: () => listTransactions(),
+    queryFn: () => transactionsClient.list(),
   })
 }
 
@@ -60,7 +58,7 @@ function useInvalidateTransactionDerived() {
 export function useAddTransaction() {
   const invalidate = useInvalidateTransactionDerived()
   return useMutation<Transaction, Error, NewTransactionInput>({
-    mutationFn: (input) => addTransaction(input),
+    mutationFn: (input) => transactionsClient.create(input),
     onSuccess: invalidate,
   })
 }
@@ -71,9 +69,9 @@ export function useUpdateTransaction() {
   return useMutation<
     Transaction,
     Error,
-    { id: number; patch: TransactionPatch }
+    { id: string; patch: TransactionUpdateInput }
   >({
-    mutationFn: ({ id, patch }) => updateTransaction(id, patch),
+    mutationFn: ({ id, patch }) => transactionsClient.update(id, patch),
     onSuccess: invalidate,
   })
 }
@@ -81,8 +79,8 @@ export function useUpdateTransaction() {
 /** Delete a transaction by id, then refresh the shared list + Home queries. */
 export function useDeleteTransaction() {
   const invalidate = useInvalidateTransactionDerived()
-  return useMutation<number, Error, number>({
-    mutationFn: (id) => deleteTransaction(id),
+  return useMutation<void, Error, string>({
+    mutationFn: (id) => transactionsClient.remove(id),
     onSuccess: invalidate,
   })
 }

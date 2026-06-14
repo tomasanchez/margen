@@ -22,6 +22,7 @@ import { useMemo } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { visuallyHidden } from '@mui/utils'
+import { ErrorState } from '../../components/ErrorState'
 import {
   useCategoryBreakdown,
   useInsights,
@@ -107,6 +108,20 @@ export function HomePage() {
     }
     return metrics ? pctChange(metrics.expenses, previousMetrics.expenses) : 0
   })()
+
+  if (transactionsQuery.isError) {
+    return (
+      <Box>
+        <Typography component="h1" sx={visuallyHidden}>
+          Your command center
+        </Typography>
+        <ErrorState
+          description="We couldn't reach the server to load your data. Check your connection and try again."
+          onRetry={() => void transactionsQuery.refetch()}
+        />
+      </Box>
+    )
+  }
 
   return (
     <Box>

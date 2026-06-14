@@ -57,7 +57,8 @@ export type MonthName =
  * the original USD amount and the MEP rate used to convert it to `amountNum`.
  */
 export interface Transaction {
-  id: number
+  /** Stable UUID identity issued by the backend (ADR-034). */
+  id: string
   /** Short display date as seeded, e.g. "Jun 12". */
   dispDate: string
   month: MonthName
@@ -89,9 +90,16 @@ export interface NewTransactionInput {
   usd?: number
   rate?: number
   recurring?: boolean
+  /** Optional free-text note, distinct from `name` (backend contract, ADR-033). */
+  notes?: string
   /**
-   * Optional month override; when omitted the mock API defaults to the current
-   * prototype month (June).
+   * Whether this income/invoice row counts toward the Monotributo annual total.
+   * Income-only; the backend forces `false` for expenses (ADR-031).
+   */
+  countsTowardMonotributo?: boolean
+  /**
+   * Optional month override; when omitted the API derives the month from the
+   * supplied date. Carried so an Edit can preserve the original month.
    */
   month?: MonthName
 }

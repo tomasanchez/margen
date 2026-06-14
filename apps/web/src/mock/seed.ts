@@ -17,7 +17,6 @@ import type {
   MonotributoProjection,
   MonotributoScaleRow,
   MonotributoState,
-  Transaction,
   TrendPoint,
   CategorySpend,
 } from './types'
@@ -43,32 +42,6 @@ export const BANKS: readonly Bank[] = [
   'Mercado Pago',
   'Brubank',
   'Transfer',
-] as const
-
-/**
- * The 19-transaction concept dataset (June current, May/April historical).
- * Sorting/grouping is the consumer's responsibility; this is source order.
- */
-export const SEED_TRANSACTIONS: readonly Transaction[] = [
-  { id: 1, dispDate: 'Jun 12', month: 'June', name: 'Invoice · Atlas Co.', category: 'Income', bank: 'Transfer', currency: 'USD', type: 'income', kind: 'invoice', amountNum: 622500, usd: 500, rate: 1245 },
-  { id: 2, dispDate: 'Jun 11', month: 'June', name: 'Coto supermarket', category: 'Food', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 38400 },
-  { id: 3, dispDate: 'Jun 10', month: 'June', name: 'Netflix · Spotify', category: 'Subscriptions', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 14200, recurring: true },
-  { id: 4, dispDate: 'Jun 09', month: 'June', name: 'Apartment rent', category: 'Rent', bank: 'Transfer', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 720000, recurring: true },
-  { id: 5, dispDate: 'Jun 08', month: 'June', name: 'Uber', category: 'Transport', bank: 'Brubank', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 6800 },
-  { id: 6, dispDate: 'Jun 07', month: 'June', name: 'Refund · MercadoLibre', category: 'Income', bank: 'Mercado Pago', currency: 'ARS', type: 'income', kind: 'income', amountNum: 18500 },
-  { id: 7, dispDate: 'Jun 06', month: 'June', name: 'Farmacity', category: 'Health', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 22300 },
-  { id: 8, dispDate: 'Jun 05', month: 'June', name: 'Mercado Libre', category: 'Shopping', bank: 'Mercado Pago', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 48900 },
-  { id: 9, dispDate: 'Jun 03', month: 'June', name: 'AWS', category: 'Subscriptions', bank: 'Galicia · Visa', currency: 'USD', type: 'expense', kind: 'expense', amountNum: 39616, usd: 32, rate: 1238, recurring: true },
-  { id: 10, dispDate: 'May 28', month: 'May', name: 'Invoice · Beta Studio', category: 'Income', bank: 'Transfer', currency: 'ARS', type: 'income', kind: 'invoice', amountNum: 1480000 },
-  { id: 11, dispDate: 'May 24', month: 'May', name: 'Carrefour', category: 'Food', bank: 'Santander · Mastercard', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 41200 },
-  { id: 12, dispDate: 'May 20', month: 'May', name: 'Edenor (electricity)', category: 'Services', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 33500, recurring: true },
-  { id: 13, dispDate: 'May 15', month: 'May', name: 'YPF fuel', category: 'Transport', bank: 'Santander · Mastercard', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 28000 },
-  { id: 14, dispDate: 'May 12', month: 'May', name: 'Invoice · Atlas Co.', category: 'Income', bank: 'Transfer', currency: 'USD', type: 'income', kind: 'invoice', amountNum: 605000, usd: 500, rate: 1210 },
-  { id: 15, dispDate: 'May 09', month: 'May', name: 'Apartment rent', category: 'Rent', bank: 'Transfer', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 700000, recurring: true },
-  { id: 16, dispDate: 'May 05', month: 'May', name: 'Spotify · Netflix', category: 'Subscriptions', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 13900, recurring: true },
-  { id: 17, dispDate: 'Apr 27', month: 'April', name: 'Invoice · Gamma SA', category: 'Income', bank: 'Transfer', currency: 'ARS', type: 'income', kind: 'invoice', amountNum: 980000 },
-  { id: 18, dispDate: 'Apr 18', month: 'April', name: 'Coto', category: 'Food', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 37800 },
-  { id: 19, dispDate: 'Apr 10', month: 'April', name: 'Apartment rent', category: 'Rent', bank: 'Transfer', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 700000, recurring: true },
 ] as const
 
 /**
@@ -115,8 +88,8 @@ export const ARCA_SCALE_URL =
  * The 7 fiscal-period invoices behind the annual total (ADR-023), oldest-first,
  * Jan–Jun 2026. `cumulative` is the running ARS total counted toward the limit;
  * the final cumulative equals SEED_MONOTRIBUTO.used (ARS 12.713.696). This list
- * is intentionally separate from SEED_TRANSACTIONS (recent months only) so the
- * already-reviewed Home/Transactions data stays untouched.
+ * is intentionally separate from the (now real-backed) transactions data so the
+ * Monotributo page stays self-contained until #8 ships (ADR-035).
  */
 export const SEED_MONOTRIBUTO_INVOICES: readonly MonotributoInvoice[] = (() => {
   const raw: ReadonlyArray<Omit<MonotributoInvoice, 'id' | 'cumulative'>> = [

@@ -16,7 +16,7 @@ export type AddPrefill = Partial<NewTransactionInput> & {
    * mutations; add-shortcut prefills omit it. Additive to the
    * `NewTransactionInput` shape, so the seam stays input-compatible.
    */
-  id?: number
+  id?: string
 }
 
 export interface AddTransactionContextValue {

@@ -81,13 +81,13 @@ export function parseAmountInput(raw: string): number {
 
 /** Whether the prefill describes an edit (carries a row id) vs an add. */
 export function isEditPrefill(prefill: AddPrefill | null): boolean {
-  return typeof prefill?.id === 'number'
+  return typeof prefill?.id === 'string'
 }
 
 export interface AddEditFormState {
   /** Edit mode if an id was prefilled; otherwise add mode. */
   readonly mode: 'add' | 'edit'
-  readonly editId: number | undefined
+  readonly editId: string | undefined
 
   readonly type: TxType
   setType: (next: TxType) => void
@@ -143,7 +143,7 @@ export function useAddEditFormState(
   prefill: AddPrefill | null,
 ): AddEditFormState {
   const mode = isEditPrefill(prefill) ? 'edit' : 'add'
-  const editId = typeof prefill?.id === 'number' ? prefill.id : undefined
+  const editId = typeof prefill?.id === 'string' ? prefill.id : undefined
 
   const [type, setType] = useState<TxType>(prefill?.type ?? 'expense')
   const [countsTowardMonotributo, setCountsTowardMonotributo] =
@@ -217,6 +217,8 @@ export function useAddEditFormState(
       bank,
       dispDate,
       amountNum: Math.round(amountArs),
+      countsTowardMonotributo: type === 'income' && countsTowardMonotributo,
+      ...(notes.trim() ? { notes: notes.trim() } : {}),
       ...(prefill?.month ? { month: prefill.month } : {}),
       ...(prefill?.recurring !== undefined
         ? { recurring: prefill.recurring }

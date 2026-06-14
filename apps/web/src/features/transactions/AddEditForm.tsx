@@ -89,7 +89,7 @@ export interface AddEditFormProps {
   /** Prefill the form was opened with (add-shortcut intent or an Edit patch). */
   prefill: AddPrefill | null
   /** Save handler; receives the assembled input + the edit id when editing. */
-  onSubmit: (input: NewTransactionInput, editId: number | undefined) => void
+  onSubmit: (input: NewTransactionInput, editId: string | undefined) => void
   /** Whether a save mutation is in flight (disables the form / shows progress). */
   isSaving: boolean
   /** Cancel / dismiss the form. */

@@ -14,6 +14,8 @@
 import Dialog from '@mui/material/Dialog'
 import Drawer from '@mui/material/Drawer'
 import Box from '@mui/material/Box'
+import Alert from '@mui/material/Alert'
+import Snackbar from '@mui/material/Snackbar'
 import { useMediaQuery, useTheme } from '@mui/material'
 import { useId } from 'react'
 import type { NewTransactionInput } from '../../mock/types'
@@ -39,9 +41,9 @@ export function AddEditTransaction() {
 
   const handleSubmit = (
     input: NewTransactionInput,
-    editId: number | undefined,
+    editId: string | undefined,
   ) => {
-    if (typeof editId === 'number') {
+    if (typeof editId === 'string') {
       updateMutation.mutate(
         { id: editId, patch: input },
         { onSuccess: () => closeAdd() },
@@ -67,8 +69,37 @@ export function AddEditTransaction() {
     />
   )
 
-  if (isMobile) {
-    return (
+  // Surface a save failure without losing the form (ADR-036/037): the form only
+  // closes on success, so it stays open with the user's input intact while this
+  // calm snackbar explains the failure and lets them retry by saving again.
+  const saveError = updateMutation.isError || addMutation.isError
+  const saveErrorSnackbar = (
+    <Snackbar
+      open={saveError && isOpen}
+      autoHideDuration={null}
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      onClose={(_, reason) => {
+        if (reason === 'clickaway') return
+        addMutation.reset()
+        updateMutation.reset()
+      }}
+    >
+      <Alert
+        severity="error"
+        variant="filled"
+        onClose={() => {
+          addMutation.reset()
+          updateMutation.reset()
+        }}
+        sx={{ width: '100%' }}
+      >
+        We couldn't save your transaction. Please try again.
+      </Alert>
+    </Snackbar>
+  )
+
+  const surface = isMobile ? (
+    (
       <Drawer
         anchor="bottom"
         open={isOpen}
@@ -105,9 +136,7 @@ export function AddEditTransaction() {
         {formNode}
       </Drawer>
     )
-  }
-
-  return (
+  ) : (
     <Dialog
       open={isOpen}
       onClose={closeAdd}
@@ -128,5 +157,12 @@ export function AddEditTransaction() {
     >
       {formNode}
     </Dialog>
+  )
+
+  return (
+    <>
+      {surface}
+      {saveErrorSnackbar}
+    </>
   )
 }
