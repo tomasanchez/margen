@@ -33,7 +33,7 @@ Validate with domain invariants but stay lenient:
 
 ## Consequences
 
-Entry is never blocked on incomplete FX metadata or missing category; the data store may contain incomplete-but-valid rows that #6 (categories) and #7 (FX display) can enrich later. Core invariants still prevent contradictory `kind`/`type` states and negative magnitudes. See ADR-029 for how the FX block accommodates the null-rate case.
+Entry is never blocked on incomplete FX metadata or missing category; the data store may contain incomplete-but-valid rows that #6 (categories) and #7 (FX display) can enrich later. Core invariants still prevent contradictory `kind`/`type` states and negative magnitudes. See ADR-029 for how the FX block accommodates the null-rate case. Note: ADR-044 revisits the UI side — the frontend now requires a rate before saving a USD transaction; this backend leniency remains unchanged.
 
 ## Status History
 
