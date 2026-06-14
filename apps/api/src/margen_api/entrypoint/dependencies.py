@@ -11,12 +11,14 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from margen_api.adapters.queries import (
+    SqlAlchemyInsightsReader,
     SqlAlchemyMonotributoReader,
     SqlAlchemySettingsReader,
     SqlAlchemySummaryReader,
     SqlAlchemyTransactionReader,
 )
 from margen_api.bootstrap import ApplicationContainer
+from margen_api.service_layer.insights_reader import AbstractInsightsReader
 from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.monotributo_reader import AbstractMonotributoReader
 from margen_api.service_layer.reader import AbstractTransactionReader
@@ -70,6 +72,22 @@ async def get_summary_reader(container: Container) -> AsyncIterator[AbstractSumm
 
 
 SummaryReader = Annotated[AbstractSummaryReader, Depends(get_summary_reader)]
+
+
+async def get_insights_reader(container: Container) -> AsyncIterator[AbstractInsightsReader]:
+    """Yield an insights reader over a request-scoped read-only session (ADR-061).
+
+    Query paths bypass the unit of work by design (ADR-028); the session opened
+    here is closed when the request finishes.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemyInsightsReader(session)
+    finally:
+        await session.close()
+
+
+InsightsReader = Annotated[AbstractInsightsReader, Depends(get_insights_reader)]
 
 
 async def get_monotributo_reader(container: Container) -> AsyncIterator[AbstractMonotributoReader]:
