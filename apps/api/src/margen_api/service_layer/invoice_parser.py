@@ -28,7 +28,15 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import fitz  # PyMuPDF; native PDF rendering + text extraction (ADR-069).
-from pyzbar import pyzbar  # Wraps the native `zbar` library for QR decoding.
+
+try:
+    from pyzbar import pyzbar  # Wraps the native `zbar` library for QR decoding.
+except (ImportError, OSError):  # pragma: no cover - native zbar absent in CI/test envs
+    # The native `zbar` shared library may be missing where the QR decode is never
+    # exercised for real (the fast tiers mock this boundary, ADR-074); the module
+    # must still import. `pyzbar` stays a module attribute so tests can patch it,
+    # and the runtime image installs `zbar` so real decoding works (deploy follow-up).
+    pyzbar = None  # type: ignore[assignment]
 
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind
 from margen_api.service_layer.invoice_parser_read_models import (
@@ -97,6 +105,8 @@ def decode_qr_payloads(pdf_bytes: bytes) -> list[str]:
     Returns:
         The decoded QR string payloads across all pages (possibly empty).
     """
+    if pyzbar is None:  # pragma: no cover - zbar is present at runtime; mocked in fast tests
+        raise RuntimeError("the native zbar library is required to decode invoice QR codes")
     payloads: list[str] = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
         for page in document:
