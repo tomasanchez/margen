@@ -18,10 +18,10 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 
 from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
-from margen_api.entrypoint.dependencies import Bus, MonotributoReader
+from margen_api.entrypoint.dependencies import Bus, MonotributoReader, require_capture_token
 from margen_api.entrypoint.monotributo_schemas import (
     MonotributoCaptureResponse,
     MonotributoSnapshotResponse,
@@ -67,6 +67,7 @@ async def monotributo_snapshot(
     name="Capture Monotributo snapshot",
     status_code=status.HTTP_202_ACCEPTED,
     response_model=ResponseModel[MonotributoCaptureResponse],
+    dependencies=[Depends(require_capture_token)],
 )
 async def capture_monotributo(bus: Bus) -> ResponseModel[MonotributoCaptureResponse]:
     """Trigger a Monotributo snapshot capture for the current period (ADR-052).
@@ -76,9 +77,9 @@ async def capture_monotributo(bus: Bus) -> ResponseModel[MonotributoCaptureRespo
     idempotently UPSERTs the current-period snapshot (and backfills missing months)
     on the unit of work.
 
-    TODO(ADR-052): add an authentication guard before exposing this remotely — no
-    auth dependency exists in the scaffold yet, so this is currently unauthenticated.
-    The external-scheduler wiring is a separate devops follow-up issue.
+    Guarded by ``require_capture_token`` (ADR-064): the shared-secret bearer token
+    must be configured (else ``503``) and the request must carry a matching
+    ``Authorization: Bearer <token>`` header (else ``401``).
     """
     await bus.handle(CaptureMonotributoSnapshot(as_of=_today()))
     return ResponseModel(data=MonotributoCaptureResponse())

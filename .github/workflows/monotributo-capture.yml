@@ -1,0 +1,59 @@
+# Margen Monotributo scheduled capture (issue #20, ADR-065).
+# Fires once a month so the month-keyed snapshot history stays complete even
+# when no user opens the page (ADR-046/048). The endpoint is bearer-guarded
+# (ADR-064): 503 when unconfigured, 401 on a bad token, 202 on success.
+# This workflow is a safe no-op until the API is deployed and both secrets are
+# set, so it can be merged ahead of the deploy.
+
+name: Monotributo capture
+
+on:
+  # 00:00 UTC on the 1st of every month. Monthly cadence keeps every period in
+  # the snapshot history and naturally covers ARCA's Jan/Jul recategorization.
+  schedule:
+    - cron: '0 0 1 * *'
+  # Manual trigger for testing without waiting for the cron.
+  workflow_dispatch:
+
+# Outbound call only; no repo contents are read or written.
+permissions: {}
+
+jobs:
+  # Single job: probe whether the schedule is configured, then POST once.
+  capture:
+    name: Trigger capture
+    runs-on: ubuntu-latest
+    steps:
+      # `secrets` can't be referenced in a step-level `if:`, so we map them into
+      # env here and emit a `configured` output. The token is only compared for
+      # emptiness ([ -n ... ]); it is never echoed.
+      - name: Check configuration
+        id: check
+        env:
+          MONOTRIBUTO_API_BASE_URL: ${{ secrets.MONOTRIBUTO_API_BASE_URL }}
+          MONOTRIBUTO_CAPTURE_TOKEN: ${{ secrets.MONOTRIBUTO_CAPTURE_TOKEN }}
+        run: |
+          if [ -n "$MONOTRIBUTO_API_BASE_URL" ] && [ -n "$MONOTRIBUTO_CAPTURE_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # No-op path: inert until the API is deployed and secrets are set.
+      - name: Skip (not configured)
+        if: steps.check.outputs.configured != 'true'
+        run: |
+          echo "Monotributo capture schedule not configured (set MONOTRIBUTO_API_BASE_URL + MONOTRIBUTO_CAPTURE_TOKEN); skipping."
+
+      # One authenticated POST. The token is passed via env, never interpolated
+      # into the command line where it could be logged. `-f` makes curl exit
+      # non-zero on any HTTP error (401/503/5xx) so a broken schedule is visible.
+      - name: POST capture
+        if: steps.check.outputs.configured == 'true'
+        env:
+          MONOTRIBUTO_API_BASE_URL: ${{ secrets.MONOTRIBUTO_API_BASE_URL }}
+          MONOTRIBUTO_CAPTURE_TOKEN: ${{ secrets.MONOTRIBUTO_CAPTURE_TOKEN }}
+        run: |
+          curl -fsS -X POST \
+            "$MONOTRIBUTO_API_BASE_URL/api/v1/monotributo/capture" \
+            -H "Authorization: Bearer $MONOTRIBUTO_CAPTURE_TOKEN"

@@ -50,6 +50,7 @@ class ApplicationSettings(BaseSettings):
         * FASTAPI_VERSION
         * FASTAPI_DOCS_URL
         * FASTAPI_BACKEND_CORS_ORIGINS
+        * FASTAPI_MONOTRIBUTO_CAPTURE_TOKEN
 
     Attributes:
         DEBUG (bool): FastAPI logging level. You should disable this for
@@ -62,6 +63,10 @@ class ApplicationSettings(BaseSettings):
         DOCS_URL (str): Path where swagger ui will be served at.
         BACKEND_CORS_ORIGINS (list[str]): Origins allowed by the CORS
             middleware. Defaults to a safe localhost allow-list.
+        MONOTRIBUTO_CAPTURE_TOKEN (str | None): Shared-secret bearer token that
+            guards ``POST /api/v1/monotributo/capture`` (ADR-064). ``None`` (the
+            default) disables the endpoint — it fails closed with ``503`` until
+            a machine-to-machine secret is configured.
 
     Resources:
         1. https://docs.pydantic.dev/latest/usage/pydantic_settings/
@@ -77,6 +82,7 @@ class ApplicationSettings(BaseSettings):
     VERSION: str = __version__
     DOCS_URL: str = "/docs"
     BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+    MONOTRIBUTO_CAPTURE_TOKEN: str | None = None
 
     # All your additional application configuration should go either here or in
     # separate file in this submodule.

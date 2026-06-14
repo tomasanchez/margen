@@ -4,6 +4,10 @@ import contextlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+from fastapi import HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials
+
 from margen_api.adapters.queries import (
     SqlAlchemyInsightsReader,
     SqlAlchemyMonotributoReader,
@@ -16,10 +20,20 @@ from margen_api.entrypoint.dependencies import (
     get_container,
     get_insights_reader,
     get_monotributo_reader,
+    get_settings,
     get_settings_reader,
     get_summary_reader,
     get_transaction_reader,
+    require_capture_token,
 )
+from margen_api.settings.api_settings import ApplicationSettings
+
+CAPTURE_TOKEN = "s3cr3t-capture-token"  # noqa: S105 — test fixture, not a real secret
+
+
+def _bearer(token: str) -> HTTPAuthorizationCredentials:
+    """Build parsed bearer credentials carrying ``token``."""
+    return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
 
 class TestGetContainer:
@@ -61,6 +75,92 @@ class TestGetBus:
 
         # THEN
         assert resolved is bus
+
+
+class TestGetSettings:
+    """The settings resolver builds process-level settings from the environment."""
+
+    def test_returns_application_settings_from_environment(self):
+        """
+        GIVEN the cached settings resolver
+        WHEN get_settings is called
+        THEN it returns an ApplicationSettings built from the environment
+
+        The lru_cache is cleared before and after so this test neither reads a
+        stale cache nor leaks one into the suite (ADR-066).
+        """
+        # GIVEN
+        get_settings.cache_clear()
+        try:
+            # WHEN
+            settings = get_settings()
+
+            # THEN
+            assert isinstance(settings, ApplicationSettings)
+        finally:
+            get_settings.cache_clear()
+
+
+class TestRequireCaptureToken:
+    """The capture guard fails closed when unconfigured and authenticates otherwise (ADR-064)."""
+
+    async def test_503_when_token_not_configured(self):
+        """
+        GIVEN settings with no capture token (the fail-closed default)
+        WHEN the guard runs with a bearer token present
+        THEN it raises 503 — you cannot authenticate against an unset secret
+        """
+        # GIVEN
+        settings = ApplicationSettings(MONOTRIBUTO_CAPTURE_TOKEN=None)
+
+        # WHEN / THEN
+        with pytest.raises(HTTPException) as exc_info:
+            await require_capture_token(settings, _bearer(CAPTURE_TOKEN))
+        assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+    async def test_401_when_credentials_missing(self):
+        """
+        GIVEN a configured capture token
+        WHEN the guard runs with no parsed credentials
+        THEN it raises 401 with a WWW-Authenticate: Bearer challenge
+        """
+        # GIVEN
+        settings = ApplicationSettings(MONOTRIBUTO_CAPTURE_TOKEN=CAPTURE_TOKEN)
+
+        # WHEN / THEN
+        with pytest.raises(HTTPException) as exc_info:
+            await require_capture_token(settings, None)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.headers == {"WWW-Authenticate": "Bearer"}
+
+    async def test_401_when_token_mismatched(self):
+        """
+        GIVEN a configured capture token
+        WHEN the guard runs with a wrong bearer token
+        THEN it raises 401 (constant-time compare rejects the mismatch)
+        """
+        # GIVEN
+        settings = ApplicationSettings(MONOTRIBUTO_CAPTURE_TOKEN=CAPTURE_TOKEN)
+
+        # WHEN / THEN
+        with pytest.raises(HTTPException) as exc_info:
+            await require_capture_token(settings, _bearer("wrong-token"))
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+    async def test_allows_matching_token(self):
+        """
+        GIVEN a configured capture token
+        WHEN the guard runs with the matching bearer token
+        THEN it returns None without raising (request is authorized)
+        """
+        # GIVEN
+        settings = ApplicationSettings(MONOTRIBUTO_CAPTURE_TOKEN=CAPTURE_TOKEN)
+
+        # WHEN
+        result = await require_capture_token(settings, _bearer(CAPTURE_TOKEN))
+
+        # THEN
+        assert result is None
 
 
 class TestGetTransactionReader:
