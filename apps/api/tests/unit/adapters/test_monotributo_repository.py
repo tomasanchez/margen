@@ -2,8 +2,9 @@
 
 Per ADR-032 these mock the ``AsyncSession`` and the execute result — no real
 database. They assert the snapshot repository UPSERTs by ``period_end`` (insert
-when absent, overlay when present) and exposes the focused read helpers, and that
-the config repository upserts the single row and reads it back.
+when absent, overlay when present) and exposes the focused read helpers. The
+configured category now lives in ``app_settings`` (ADR-054); its write-side tests
+live with the settings adapter.
 """
 
 from __future__ import annotations
@@ -13,11 +14,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from margen_api.adapters.models.monotributo_config import MonotributoConfigRecord
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
-from margen_api.adapters.monotributo_config_repository import (
-    SqlAlchemyMonotributoConfigRepository,
-)
 from margen_api.adapters.monotributo_repository import (
     SqlAlchemyMonotributoSnapshotRepository,
 )
@@ -123,7 +120,9 @@ class TestSnapshotRepositoryReads:
         """GIVEN a config row WHEN configured_category runs THEN it returns the pair."""
         # GIVEN
         session = _session()
-        session.execute.return_value = _first_result(SimpleNamespace(current_category="C", activity_type="bienes"))
+        session.execute.return_value = _first_result(
+            SimpleNamespace(monotributo_current_category="C", monotributo_activity_type="bienes")
+        )
         repo = SqlAlchemyMonotributoSnapshotRepository(session)
 
         # WHEN / THEN
@@ -178,103 +177,3 @@ class TestSnapshotRepositoryReads:
 
         # WHEN / THEN
         assert await repo.existing_period_ends() == {date(2026, 6, 1), date(2026, 5, 1)}
-
-
-class TestConfigRepository:
-    """``SqlAlchemyMonotributoConfigRepository`` upserts the single config row."""
-
-    async def test_set_config_inserts_when_absent(self):
-        """
-        GIVEN no config row
-        WHEN set_config runs
-        THEN a new config record is added with the activity defaulting to services
-        """
-        # GIVEN
-        session = _session()
-        session.execute.return_value = _scalar_result(None)
-        repo = SqlAlchemyMonotributoConfigRepository(session)
-
-        # WHEN — activity omitted defaults to services on insert.
-        await repo.set_config(current_category="A", activity_type=None)
-
-        # THEN
-        session.add.assert_called_once()
-        (added,) = session.add.call_args.args
-        assert isinstance(added, MonotributoConfigRecord)
-        assert added.current_category == "A"
-        assert added.activity_type == "services"
-
-    async def test_set_config_inserts_with_explicit_activity(self):
-        """GIVEN no row and an explicit activity WHEN set_config runs THEN it is stored."""
-        # GIVEN
-        session = _session()
-        session.execute.return_value = _scalar_result(None)
-        repo = SqlAlchemyMonotributoConfigRepository(session)
-
-        # WHEN
-        await repo.set_config(current_category="H", activity_type="bienes")
-
-        # THEN
-        (added,) = session.add.call_args.args
-        assert added.activity_type == "bienes"
-
-    async def test_set_config_overlays_category_only(self):
-        """
-        GIVEN an existing config row and no activity in the patch
-        WHEN set_config runs
-        THEN only the category changes; the activity is left unchanged
-        """
-        # GIVEN
-        existing = MonotributoConfigRecord()
-        existing.current_category = "A"
-        existing.activity_type = "bienes"
-        session = _session()
-        session.execute.return_value = _scalar_result(existing)
-        repo = SqlAlchemyMonotributoConfigRepository(session)
-
-        # WHEN
-        await repo.set_config(current_category="C", activity_type=None)
-
-        # THEN
-        session.add.assert_not_called()
-        assert existing.current_category == "C"
-        assert existing.activity_type == "bienes"
-
-    async def test_set_config_overlays_activity_when_given(self):
-        """GIVEN an existing row WHEN set_config carries an activity THEN it is updated."""
-        # GIVEN
-        existing = MonotributoConfigRecord()
-        existing.current_category = "A"
-        existing.activity_type = "services"
-        session = _session()
-        session.execute.return_value = _scalar_result(existing)
-        repo = SqlAlchemyMonotributoConfigRepository(session)
-
-        # WHEN
-        await repo.set_config(current_category="C", activity_type="bienes")
-
-        # THEN
-        assert existing.activity_type == "bienes"
-
-    async def test_get_config_returns_pair(self):
-        """GIVEN a config row WHEN get_config runs THEN it returns the persisted pair."""
-        # GIVEN
-        existing = MonotributoConfigRecord()
-        existing.current_category = "D"
-        existing.activity_type = "services"
-        session = _session()
-        session.execute.return_value = _scalar_result(existing)
-        repo = SqlAlchemyMonotributoConfigRepository(session)
-
-        # WHEN / THEN
-        assert await repo.get_config() == ("D", "services")
-
-    async def test_get_config_none_when_absent(self):
-        """GIVEN no config row WHEN get_config runs THEN it returns None."""
-        # GIVEN
-        session = _session()
-        session.execute.return_value = _scalar_result(None)
-        repo = SqlAlchemyMonotributoConfigRepository(session)
-
-        # WHEN / THEN
-        assert await repo.get_config() is None

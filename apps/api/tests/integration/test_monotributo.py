@@ -21,9 +21,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
-from margen_api.adapters.monotributo_config_repository import SqlAlchemyMonotributoConfigRepository
 from margen_api.adapters.queries import SqlAlchemyMonotributoReader
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
+from margen_api.adapters.settings_repository import SqlAlchemySettingsRepository
 from margen_api.adapters.unit_of_work import SqlAlchemyUnitOfWork
 from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
 from margen_api.domain.models.monotributo_scale import get_ceiling
@@ -130,9 +130,10 @@ class TestMonotributoAggregation:
 
         # THEN — used excludes the non-counting invoice, the expense and the old row.
         assert standing.used == Decimal("1700000.00")
-        assert standing.category == "A"  # no config seeded under create_all → default
-        assert standing.limit == get_ceiling("A")
-        assert standing.remaining == get_ceiling("A") - Decimal("1700000.00")
+        # No app_settings row under create_all → the settings default category 'C' (ADR-054/055).
+        assert standing.category == "C"
+        assert standing.limit == get_ceiling("C")
+        assert standing.remaining == get_ceiling("C") - Decimal("1700000.00")
 
         # THEN — drilldown is the counting rows oldest-first with a running cumulative.
         amounts = [(invoice.amount, invoice.cumulative) for invoice in snapshot.invoices]
@@ -218,30 +219,33 @@ class TestReadRecordsAndBackfill:
 
 
 class TestConfigRoundTrip:
-    """The PATCH config path persists the category the reader then applies."""
+    """The settings category persists where the Monotributo reader then applies it (ADR-054)."""
 
-    async def test_set_config_is_read_back_and_used_by_the_reader(
+    async def test_settings_category_is_read_back_and_used_by_the_reader(
         self, session_factory: async_sessionmaker[AsyncSession]
     ):
         """
-        GIVEN a configured category D written through the config repository
+        GIVEN a configured category D written through the settings repository
         WHEN it is read back and the reader computes the current standing
-        THEN the persisted pair round-trips and the standing uses category D's ceiling
+        THEN the persisted category round-trips and the standing uses category D's ceiling
         """
         # GIVEN
         async with session_factory() as session:
-            repository = SqlAlchemyMonotributoConfigRepository(session)
-            await repository.set_config(current_category="D", activity_type="services")
+            repository = SqlAlchemySettingsRepository(session)
+            await repository.upsert_settings(
+                monotributo_current_category="D",
+                monotributo_activity_type="services",
+            )
             await session.commit()
 
         # WHEN
         async with session_factory() as session:
-            repository = SqlAlchemyMonotributoConfigRepository(session)
-            persisted = await repository.get_config()
+            persisted = await SqlAlchemySettingsRepository(session).get_settings()
         async with session_factory() as session:
             standing = await SqlAlchemyMonotributoReader(session).current_standing(REFERENCE)
 
         # THEN
-        assert persisted == ("D", "services")
+        assert persisted.monotributo_current_category == "D"
+        assert persisted.monotributo_activity_type == "services"
         assert standing.category == "D"
         assert standing.limit == get_ceiling("D")

@@ -15,12 +15,20 @@ from uuid import uuid4
 
 from sqlalchemy import Select
 
+from margen_api.adapters.models.app_settings import AppSettingsRecord
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.adapters.queries import (
     SqlAlchemyMonotributoReader,
+    SqlAlchemySettingsReader,
     SqlAlchemySummaryReader,
     SqlAlchemyTransactionReader,
+)
+from margen_api.adapters.settings_repository import (
+    DEFAULT_DISPLAY_CURRENCY,
+    DEFAULT_FX_RATE_TYPE,
+    DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
+    DEFAULT_MONOTRIBUTO_CATEGORY,
 )
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
 
@@ -239,8 +247,8 @@ class TestSummaryReader:
 
 
 def _config_row(category: str = "A", activity: str = "services") -> SimpleNamespace:
-    """Build a fake configured-category row."""
-    return SimpleNamespace(current_category=category, activity_type=activity)
+    """Build a fake configured-category row from ``app_settings`` (ADR-054)."""
+    return SimpleNamespace(monotributo_current_category=category, monotributo_activity_type=activity)
 
 
 def _scalar_result(value: object) -> MagicMock:
@@ -330,20 +338,21 @@ class TestMonotributoReader:
 
     async def test_snapshot_computes_previous_live_when_absent(self):
         """
-        GIVEN no persisted prior snapshot and no config row
+        GIVEN no persisted prior snapshot and no app_settings row
         WHEN the snapshot is assembled
-        THEN current and previous both use the default category and previous is computed live
+        THEN current and previous both use the settings default category (ADR-054)
+             and previous is computed live
         """
         # GIVEN — execute sequence: config(None), used(current), invoices(none),
         # snapshot_at(None), config(None) again, used(prior).
         reference = date(2026, 6, 14)
         session = AsyncMock()
         session.execute.side_effect = [
-            _first_result(None),  # no config -> defaults
+            _first_result(None),  # no app_settings -> settings defaults
             _scalar_result(None),  # no current income -> 0
             _scalars_result([]),  # no invoices
             _scalar_result(None),  # no persisted prior snapshot
-            _first_result(None),  # no config (prior) -> defaults
+            _first_result(None),  # no app_settings (prior) -> settings defaults
             _scalar_result(Decimal("300000.00")),  # prior used
         ]
         reader = SqlAlchemyMonotributoReader(session)
@@ -351,8 +360,8 @@ class TestMonotributoReader:
         # WHEN
         snapshot = await reader.snapshot(reference)
 
-        # THEN — defaults applied, zero current, live previous.
-        assert snapshot.current.category == "A"
+        # THEN — the documented settings default category (C) applies, zero current, live previous.
+        assert snapshot.current.category == "C"
         assert snapshot.current.activity_type == "services"
         assert snapshot.current.used == Decimal("0")
         assert snapshot.invoices == []
@@ -404,3 +413,63 @@ class TestMonotributoReader:
         # THEN
         assert standing.category == "H"
         assert standing.used == Decimal("5000000.00")
+
+
+def _settings_record(
+    *,
+    currency: str = "USD",
+    fx: str = "official",
+    category: str = "F",
+    activity: str = "bienes",
+) -> AppSettingsRecord:
+    """Build a persisted app_settings row for the reader projection."""
+    record = AppSettingsRecord()
+    record.preferred_display_currency = currency
+    record.fx_default_rate_type = fx
+    record.monotributo_current_category = category
+    record.monotributo_activity_type = activity
+    return record
+
+
+class TestSettingsReader:
+    """``SqlAlchemySettingsReader`` projects the single app_settings row (ADR-054)."""
+
+    async def test_projects_persisted_row(self):
+        """
+        GIVEN a persisted app_settings row
+        WHEN the settings are read
+        THEN the four fields are projected into the read model
+        """
+        # GIVEN
+        session = AsyncMock()
+        session.execute.return_value = _scalar_result(_settings_record())
+        reader = SqlAlchemySettingsReader(session)
+
+        # WHEN
+        settings = await reader.get_settings()
+
+        # THEN
+        assert settings.preferred_display_currency == "USD"
+        assert settings.fx_default_rate_type == "official"
+        assert settings.monotributo_current_category == "F"
+        assert settings.monotributo_activity_type == "bienes"
+
+    async def test_returns_documented_defaults_when_absent(self):
+        """
+        GIVEN no app_settings row yet
+        WHEN the settings are read
+        THEN the documented defaults are returned so the query side never yields None
+        """
+        # GIVEN
+        session = AsyncMock()
+        session.execute.return_value = _scalar_result(None)
+        reader = SqlAlchemySettingsReader(session)
+
+        # WHEN
+        settings = await reader.get_settings()
+
+        # THEN
+        assert settings.preferred_display_currency == DEFAULT_DISPLAY_CURRENCY
+        assert settings.fx_default_rate_type == DEFAULT_FX_RATE_TYPE
+        assert settings.monotributo_current_category == DEFAULT_MONOTRIBUTO_CATEGORY
+        assert settings.monotributo_activity_type == DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE

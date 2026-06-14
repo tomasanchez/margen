@@ -16,9 +16,6 @@ from uuid import UUID
 
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.value_objects import Kind, TxType
-from margen_api.service_layer.monotributo_config_repository import (
-    AbstractMonotributoConfigRepository,
-)
 from margen_api.service_layer.monotributo_read_models import (
     MonotributoSnapshot,
     MonotributoStanding,
@@ -30,9 +27,18 @@ from margen_api.service_layer.monotributo_repository import (
 from margen_api.service_layer.read_models import TransactionReadModel
 from margen_api.service_layer.reader import AbstractTransactionReader
 from margen_api.service_layer.repository import AbstractTransactionRepository
+from margen_api.service_layer.settings_read_models import AppSettings
+from margen_api.service_layer.settings_reader import AbstractSettingsReader
+from margen_api.service_layer.settings_repository import AbstractSettingsRepository
 from margen_api.service_layer.summary_read_models import MonthlySummary
 from margen_api.service_layer.summary_reader import AbstractSummaryReader
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
+
+# Documented default settings used when the fake's settings store is empty (ADR-054).
+_DEFAULT_DISPLAY_CURRENCY = "ARS"
+_DEFAULT_FX_RATE_TYPE = "MEP"
+_DEFAULT_MONOTRIBUTO_CATEGORY = "C"
+_DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE = "services"
 
 
 class FakeTransactionRepository(AbstractTransactionRepository):
@@ -111,37 +117,63 @@ class FakeMonotributoSnapshotRepository(AbstractMonotributoSnapshotRepository):
         self._committed[standing.period_end] = standing
 
 
-class FakeMonotributoConfigRepository(AbstractMonotributoConfigRepository):
-    """In-memory single-row Monotributo config (ADR-048)."""
+class FakeSettingsRepository(AbstractSettingsRepository):
+    """In-memory single-row application settings (ADR-054).
 
-    def __init__(self, config: dict[str, str]) -> None:
-        """Initialize over a shared single-row config dict."""
-        self._config = config
+    Mirrors the SQLAlchemy adapter: ``upsert_settings`` merges only the provided
+    fields onto a shared single-row dict and ``get_settings`` projects it, falling
+    back to the documented defaults when a field is unset. The Monotributo
+    category/activity share the same backing dict the snapshot fake reads from, so
+    ``app_settings`` is the single source of truth for the category.
+    """
 
-    async def set_config(self, *, current_category: str, activity_type: str | None) -> None:
-        """Upsert the category, leaving the activity unchanged when ``None``."""
-        self._config["current_category"] = current_category
-        if activity_type is not None:
-            self._config["activity_type"] = activity_type
-        elif "activity_type" not in self._config:
-            self._config["activity_type"] = "services"
+    def __init__(self, settings: dict[str, str]) -> None:
+        """Initialize over a shared single-row settings dict."""
+        self._settings = settings
 
-    async def get_config(self) -> tuple[str, str] | None:
-        """Return the persisted ``(current_category, activity_type)``, or ``None``."""
-        if "current_category" not in self._config:
-            return None
-        return self._config["current_category"], self._config.get("activity_type", "services")
+    async def get_settings(self) -> AppSettings:
+        """Return the persisted settings, falling back to the documented defaults."""
+        return self._as_read_model()
+
+    async def upsert_settings(
+        self,
+        *,
+        preferred_display_currency: str | None = None,
+        fx_default_rate_type: str | None = None,
+        monotributo_current_category: str | None = None,
+        monotributo_activity_type: str | None = None,
+    ) -> AppSettings:
+        """Merge only the provided fields onto the single settings row."""
+        if preferred_display_currency is not None:
+            self._settings["preferred_display_currency"] = preferred_display_currency
+        if fx_default_rate_type is not None:
+            self._settings["fx_default_rate_type"] = fx_default_rate_type
+        if monotributo_current_category is not None:
+            self._settings["current_category"] = monotributo_current_category
+        if monotributo_activity_type is not None:
+            self._settings["activity_type"] = monotributo_activity_type
+        return self._as_read_model()
+
+    def _as_read_model(self) -> AppSettings:
+        """Project the shared dict into an :class:`AppSettings`, applying defaults."""
+        return AppSettings(
+            preferred_display_currency=self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY),
+            fx_default_rate_type=self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE),
+            monotributo_current_category=self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY),
+            monotributo_activity_type=self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE),
+        )
 
 
 class FakeUnitOfWork(AbstractUnitOfWork):
     """In-memory unit of work exposing the write-side repositories.
 
     Beyond the transaction repository it exposes fake Monotributo snapshot and
-    config repositories (ADR-052, ADR-048) so the read-records capture and config
-    handlers can be driven without a database. ``snapshots`` is the committed
-    snapshot history keyed by ``period_end``; ``config`` is the single-row config;
-    ``used_by_window`` seeds the per-window included-income totals the capture
-    handler reads.
+    application-settings repositories (ADR-052, ADR-054) so the read-records
+    capture and settings handlers can be driven without a database. ``snapshots``
+    is the committed snapshot history keyed by ``period_end``; ``config`` is the
+    single-row settings dict (the Monotributo category/activity live here too,
+    ADR-054); ``used_by_window`` seeds the per-window included-income totals the
+    capture handler reads.
     """
 
     def __init__(self) -> None:
@@ -153,7 +185,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.used_by_window: dict[tuple[date, date], Decimal] = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
-        self.monotributo_config = FakeMonotributoConfigRepository(self.config)
+        self.settings = FakeSettingsRepository(self.config)
         self.committed = False
 
     async def __aenter__(self) -> FakeUnitOfWork:
@@ -162,7 +194,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
-        self.monotributo_config = FakeMonotributoConfigRepository(self.config)
+        self.settings = FakeSettingsRepository(self.config)
         return self
 
     async def __aexit__(
@@ -257,6 +289,29 @@ class FakeMonotributoReader(AbstractMonotributoReader):
         """Return the canned snapshot's current standing."""
         self.requested_reference = reference
         return self._snapshot.current
+
+
+class FakeSettingsReader(AbstractSettingsReader):
+    """Settings reader projecting a shared single-row dict for route tests (ADR-054).
+
+    Mirrors :class:`FakeSettingsRepository`'s read side so the GET route returns
+    the documented defaults when a field is unset, and -- when backed by a unit of
+    work's ``config`` dict -- reflects writes a PATCH committed through that unit of
+    work (the e2e round-trip), all without a database (ADR-032).
+    """
+
+    def __init__(self, settings: dict[str, str]) -> None:
+        """Initialize over a shared single-row settings dict."""
+        self._settings = settings
+
+    async def get_settings(self) -> AppSettings:
+        """Project the shared dict into an :class:`AppSettings`, applying defaults."""
+        return AppSettings(
+            preferred_display_currency=self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY),
+            fx_default_rate_type=self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE),
+            monotributo_current_category=self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY),
+            monotributo_activity_type=self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE),
+        )
 
 
 def _project(transaction: Transaction) -> TransactionReadModel:
