@@ -56,6 +56,8 @@ describe('adaptTransaction', () => {
     expect(t.currency).toBe('USD')
     expect(t.dispDate).toBe('Jun 12')
     expect(t.month).toBe('June')
+    // occurredOn (ISO date) is carried so Home can filter by year+month (ADR-040).
+    expect(t.occurredOn).toBe('2026-06-12')
   })
 
   test('omits usd/rate when the DTO carries null FX fields', () => {

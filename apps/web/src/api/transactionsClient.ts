@@ -140,6 +140,7 @@ function asMonth(value: string): MonthName {
  * Adapt a backend {@link TransactionDto} to the frontend {@link Transaction}.
  *
  * Parses Decimal-string money to numbers (ADR-034), keeps the UUID string id,
+ * carries `occurredOn` (ISO date) so Home can filter by year+month (ADR-040),
  * and drops the contract-only fields the UI does not consume (notes, FX rate
  * metadata, timestamps) — the screens stay untouched.
  */
@@ -148,6 +149,7 @@ export function adaptTransaction(dto: TransactionDto): Transaction {
   const rate = parseMoney(dto.rate)
   return {
     id: dto.id,
+    occurredOn: dto.occurredOn,
     dispDate: dto.dispDate,
     month: asMonth(dto.month),
     name: dto.name,

@@ -10,15 +10,40 @@
  * shape exactly.
  */
 
-import type { Transaction } from '../../../mock/types'
+import type { MonthName, Transaction } from '../../../mock/types'
 
 /** Build a stable, readable fixture id (mirrors a UUID string shape). */
 function fid(n: number): string {
   return `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 }
 
-/** The 19-row sample dataset used by the pure filtering tests. */
-export const TRANSACTIONS_FIXTURE: readonly Transaction[] = [
+/** All fixture rows fall in the 2026 concept window. */
+const FIXTURE_YEAR = 2026
+
+/** 1-based month number for the fixture's {@link MonthName}s (concept window). */
+const FIXTURE_MONTH_NUMBER: Partial<Record<MonthName, number>> = {
+  April: 4,
+  May: 5,
+  June: 6,
+}
+
+/**
+ * Derive an ISO `occurredOn` from a fixture row's `month` + `dispDate` day so
+ * the fixture matches the live {@link Transaction} shape (ADR-040) without
+ * duplicating the date in every literal. The day is read from `dispDate`
+ * ("Jun 12" → 12).
+ */
+function withOccurredOn(
+  row: Omit<Transaction, 'occurredOn'>,
+): Transaction {
+  const day = Number.parseInt(row.dispDate.split(' ')[1] ?? '1', 10)
+  const mm = String(FIXTURE_MONTH_NUMBER[row.month] ?? 1).padStart(2, '0')
+  const dd = String(day).padStart(2, '0')
+  return { ...row, occurredOn: `${FIXTURE_YEAR}-${mm}-${dd}` }
+}
+
+/** Base rows (no `occurredOn`); the export derives it via {@link withOccurredOn}. */
+const FIXTURE_ROWS: readonly Omit<Transaction, 'occurredOn'>[] = [
   { id: fid(1), dispDate: 'Jun 12', month: 'June', name: 'Invoice · Atlas Co.', category: 'Income', bank: 'Transfer', currency: 'USD', type: 'income', kind: 'invoice', amountNum: 622500, usd: 500, rate: 1245 },
   { id: fid(2), dispDate: 'Jun 11', month: 'June', name: 'Coto supermarket', category: 'Food', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 38400 },
   { id: fid(3), dispDate: 'Jun 10', month: 'June', name: 'Netflix · Spotify', category: 'Subscriptions', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 14200, recurring: true },
@@ -39,3 +64,7 @@ export const TRANSACTIONS_FIXTURE: readonly Transaction[] = [
   { id: fid(18), dispDate: 'Apr 18', month: 'April', name: 'Coto', category: 'Food', bank: 'Galicia · Visa', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 37800 },
   { id: fid(19), dispDate: 'Apr 10', month: 'April', name: 'Apartment rent', category: 'Rent', bank: 'Transfer', currency: 'ARS', type: 'expense', kind: 'expense', amountNum: 700000, recurring: true },
 ] as const
+
+/** The 19-row sample dataset used by the pure filtering tests (with `occurredOn`). */
+export const TRANSACTIONS_FIXTURE: readonly Transaction[] =
+  FIXTURE_ROWS.map(withOccurredOn)

@@ -8,11 +8,15 @@
  *
  * Server state comes from TanStack Query (useTransactions for the live month
  * figures + activity; useMonotributo / useTrend / useCategoryBreakdown /
- * useInsights for the seed-derived panels). Income/Expenses are derived from the
- * shared transactions store so Home and Transactions agree; month-over-month
- * deltas compare the current month against the previous one from the same data
- * (expenses fall back to the trend series). Each section shows a skeleton while
- * its query resolves and degrades gracefully for the ADR-020 edge cases.
+ * useInsights for the seed-derived panels). The metrics + recent activity are
+ * scoped to the SELECTED viewing month from the top-bar navigator (ADR-040),
+ * filtering the real transactions by their `occurredOn` year+month; income /
+ * expenses stay consistent with the Transactions screen. Month-over-month deltas
+ * compare the selected month against the previous calendar month from the same
+ * data. The mock panels (trend / breakdown / insights / Monotributo) do NOT
+ * react to the selected month (ADR-035). Each section shows a skeleton while its
+ * query resolves and degrades gracefully for the ADR-020 / empty-month edge
+ * cases.
  *
  * The visible page <h1> ("Your command center") names the route landmark; the
  * hero headline is a supporting statement beneath the status pill.
@@ -30,9 +34,15 @@ import {
   useTrend,
 } from './queries'
 import { useTransactions } from '../transactions/queries'
+import { useViewingMonth } from '../../components/monthContext'
 import {
-  CURRENT_MONTH,
+  addMonths,
+  formatViewingMonth,
+  monthName,
+} from '../../components/months'
+import {
   deriveMonthMetrics,
+  occurredInMonth,
   recentTransactions,
 } from './homeMetrics'
 import { StatusHero } from './StatusHero'
@@ -42,9 +52,6 @@ import { CategoryBreakdown } from './CategoryBreakdown'
 import { MonotributoCard } from './MonotributoCard'
 import { Insights } from './Insights'
 import { RecentActivity } from './RecentActivity'
-
-const CURRENT_MONTH_LABEL = 'June 2026'
-const PREVIOUS_MONTH_LABEL = 'May'
 
 /** Percentage change from `previous` to `current`; 0 when previous is 0. */
 function pctChange(current: number, previous: number): number {
@@ -59,6 +66,17 @@ export function HomePage() {
   const insightsQuery = useInsights()
   const transactionsQuery = useTransactions()
 
+  // The selected viewing month (top-bar navigator), shared via context (ADR-040).
+  const { viewingMonth } = useViewingMonth()
+  const previousMonth = useMemo(
+    () => addMonths(viewingMonth, -1),
+    [viewingMonth],
+  )
+
+  const monthLabel = formatViewingMonth(viewingMonth)
+  // Short previous-month name for the delta captions, e.g. "May".
+  const previousMonthLabel = monthName(previousMonth)
+
   const allTransactions = useMemo(
     () => transactionsQuery.data ?? [],
     [transactionsQuery.data],
@@ -68,46 +86,42 @@ export function HomePage() {
     () =>
       transactionsQuery.isPending
         ? undefined
-        : deriveMonthMetrics(allTransactions, CURRENT_MONTH),
-    [allTransactions, transactionsQuery.isPending],
+        : deriveMonthMetrics(allTransactions, viewingMonth),
+    [allTransactions, transactionsQuery.isPending, viewingMonth],
   )
 
+  // Previous calendar month, for the month-over-month deltas (ADR-040).
   const previousMetrics = useMemo(
-    () => deriveMonthMetrics(allTransactions, 'May'),
-    [allTransactions],
+    () => deriveMonthMetrics(allTransactions, previousMonth),
+    [allTransactions, previousMonth],
   )
 
   const recent = useMemo(
     () =>
       transactionsQuery.isPending
         ? undefined
-        : recentTransactions(allTransactions),
-    [allTransactions, transactionsQuery.isPending],
+        : recentTransactions(allTransactions, viewingMonth),
+    [allTransactions, transactionsQuery.isPending, viewingMonth],
   )
 
   const invoiceCount = useMemo(
     () =>
       allTransactions.filter(
-        (t) => t.kind === 'invoice' && t.month === CURRENT_MONTH,
+        (t) => t.kind === 'invoice' && occurredInMonth(t.occurredOn, viewingMonth),
       ).length,
-    [allTransactions],
+    [allTransactions, viewingMonth],
   )
 
   const incomeDeltaPct = metrics
     ? pctChange(metrics.income, previousMetrics.income)
     : 0
 
-  // Expenses: prefer the trend series (current vs previous month) so the delta
-  // matches the chart; fall back to the derived month totals.
+  // Expenses: compare the selected month against the previous calendar month
+  // from the same real data (ADR-040). The mock trend stays non-reactive.
   const trend = trendQuery.data
-  const expenseDeltaPct = (() => {
-    if (trend && trend.length >= 2) {
-      const current = trend[trend.length - 1]
-      const previous = trend[trend.length - 2]
-      return pctChange(current.value, previous.value)
-    }
-    return metrics ? pctChange(metrics.expenses, previousMetrics.expenses) : 0
-  })()
+  const expenseDeltaPct = metrics
+    ? pctChange(metrics.expenses, previousMetrics.expenses)
+    : 0
 
   if (transactionsQuery.isError) {
     return (
@@ -133,7 +147,7 @@ export function HomePage() {
         monotributo={monotributoQuery.data}
         savings={metrics?.savings}
         expenseDeltaPct={expenseDeltaPct}
-        monthLabel={CURRENT_MONTH_LABEL}
+        monthLabel={monthLabel}
         loading={transactionsQuery.isPending || monotributoQuery.isPending}
       />
 
@@ -142,7 +156,7 @@ export function HomePage() {
         monotributo={monotributoQuery.data}
         incomeDeltaPct={incomeDeltaPct}
         expenseDeltaPct={expenseDeltaPct}
-        previousMonthLabel={PREVIOUS_MONTH_LABEL}
+        previousMonthLabel={previousMonthLabel}
         loading={transactionsQuery.isPending || monotributoQuery.isPending}
       />
 

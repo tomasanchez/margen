@@ -59,6 +59,13 @@ export type MonthName =
 export interface Transaction {
   /** Stable UUID identity issued by the backend (ADR-034). */
   id: string
+  /**
+   * ISO calendar date the transaction occurred on (`YYYY-MM-DD`), carried from
+   * the backend contract (ADR-024/ADR-030). Unlike the `month` label this
+   * encodes the year too, so Home can filter precisely by year+month across
+   * years (ADR-040). The Add/Edit form still works off `dispDate`/`month`.
+   */
+  occurredOn: string
   /** Short display date as seeded, e.g. "Jun 12". */
   dispDate: string
   month: MonthName

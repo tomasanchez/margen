@@ -12,13 +12,20 @@ import CheckRoundedIcon from '@mui/icons-material/CheckRounded'
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import { monoFontFamily } from '../theme'
-import { MONTHS, type MonthLabel } from './months'
+import {
+  addMonths,
+  currentViewingMonth,
+  formatViewingMonth,
+  isSameViewingMonth,
+  recentMonthsWindow,
+  type ViewingMonth,
+} from './months'
 
 /**
  * Presentation of the month control:
  * - `stepper` — desktop inline `‹ June 2026 ›` prev/label/next (the original).
  * - `compact` — mobile floating circular calendar button that opens a month
- *   picker (Menu) listing the available months, the current one marked with a
+ *   picker (Menu) listing a recent-months window, the current one marked with a
  *   check (non-color cue, ADR-019).
  */
 export type MonthSwitcherVariant = 'stepper' | 'compact'
@@ -26,44 +33,43 @@ export type MonthSwitcherVariant = 'stepper' | 'compact'
 export interface MonthSwitcherProps {
   /** Which presentation to render. Defaults to the desktop `stepper`. */
   variant?: MonthSwitcherVariant
-  /** Selected month label. Uncontrolled (local state) when omitted. */
-  value?: string
-  /** Called with the new month label when the user changes the selection. */
-  onChange?: (month: string) => void
-}
-
-/** Resolve the controlled value to a clamped index into MONTHS. */
-function indexOfMonth(current: string): number {
-  return Math.max(0, MONTHS.indexOf(current as MonthLabel))
+  /** Selected viewing month. Uncontrolled (local state) when omitted. */
+  value?: ViewingMonth
+  /** Called with the new viewing month when the user navigates/picks. */
+  onChange?: (month: ViewingMonth) => void
 }
 
 /**
- * Top-bar month control (ADR-017, ADR-019).
+ * Top-bar month navigator (ADR-017, ADR-019, ADR-040).
  *
- * Two presentations sharing one controlled/uncontrolled state model:
+ * A REAL month navigator (no longer cosmetic): `‹`/`›` step one calendar month,
+ * crossing year boundaries; the label is the full "Month Year". Two presentations
+ * share one controlled/uncontrolled `{ year, month }` state model:
  *
  * - `stepper` (desktop): ‹ June 2026 › where each chevron is a real button with
  *   an aria-label and the current month is announced via a polite live region.
- *   Stepping is clamped to the months that exist in the mock data.
  * - `compact` (mobile): a floating circular calendar button (iOS feel) that
- *   opens a Menu month picker. The trigger carries an aria-label naming the
- *   current month plus `aria-haspopup`/`aria-expanded`; each item is
- *   keyboard-selectable and the current month is flagged with a check icon
- *   (not color alone) plus `aria-checked`.
+ *   opens a Menu listing a rolling window of recent months. The trigger carries
+ *   an aria-label naming the current month plus `aria-haspopup`/`aria-expanded`;
+ *   each item is keyboard-selectable and the current month is flagged with a
+ *   check icon (not color alone) plus `aria-checked`.
  *
- * Selection is cosmetic for now — screens consume it later; this control only
- * owns the presentation and the shared state seam.
+ * Home reads the shared selection (via MonthContext) and filters its real
+ * transactions by the selected year+month; the mock panels stay non-reactive
+ * (ADR-035).
  */
 export function MonthSwitcher({
   variant = 'stepper',
   value,
   onChange,
 }: MonthSwitcherProps) {
-  const [internal, setInternal] = useState<string>(MONTHS[0])
+  const [internal, setInternal] = useState<ViewingMonth>(() =>
+    currentViewingMonth(),
+  )
   const current = value ?? internal
 
-  const select = (next: string) => {
-    if (next === current) return
+  const select = (next: ViewingMonth) => {
+    if (isSameViewingMonth(next, current)) return
     if (value === undefined) setInternal(next)
     onChange?.(next)
   }
@@ -80,25 +86,17 @@ function Stepper({
   current,
   onSelect,
 }: {
-  current: string
-  onSelect: (month: string) => void
+  current: ViewingMonth
+  onSelect: (month: ViewingMonth) => void
 }) {
-  const index = indexOfMonth(current)
-  const atNewest = index <= 0
-  const atOldest = index >= MONTHS.length - 1
-
-  const step = (delta: number) => {
-    const nextIndex = Math.min(MONTHS.length - 1, Math.max(0, index + delta))
-    onSelect(MONTHS[nextIndex])
-  }
+  const label = formatViewingMonth(current)
 
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
       <IconButton
         size="small"
         aria-label="Previous month"
-        disabled={atOldest}
-        onClick={() => step(1)}
+        onClick={() => onSelect(addMonths(current, -1))}
         sx={{ border: 1, borderColor: 'divider', borderRadius: 1.75 }}
       >
         <ChevronLeftIcon fontSize="small" />
@@ -108,23 +106,22 @@ function Stepper({
         component="span"
         role="status"
         aria-live="polite"
-        aria-label={`Selected month: ${current}`}
+        aria-label={`Selected month: ${label}`}
         sx={{
           fontFamily: monoFontFamily,
           color: 'text.primary',
-          minWidth: 96,
+          minWidth: 110,
           textAlign: 'center',
           fontSize: '0.875rem',
         }}
       >
-        {current}
+        {label}
       </Typography>
 
       <IconButton
         size="small"
         aria-label="Next month"
-        disabled={atNewest}
-        onClick={() => step(-1)}
+        onClick={() => onSelect(addMonths(current, 1))}
         sx={{ border: 1, borderColor: 'divider', borderRadius: 1.75 }}
       >
         <ChevronRightIcon fontSize="small" />
@@ -137,24 +134,35 @@ function Stepper({
  * Mobile floating circular calendar button + month-picker Menu (iOS feel).
  *
  * The 40px circle reads as floating against the transparent bar: a translucent
- * paper surface with a subtle blur and a divider border. The Menu lists the
- * available months with the current one marked by a trailing check (ADR-019).
+ * paper surface with a subtle blur and a divider border. The Menu lists a rolling
+ * window of recent months (the current month + the previous eleven) with the
+ * current one marked by a trailing check (ADR-019).
  */
 function CompactPicker({
   current,
   onSelect,
 }: {
-  current: string
-  onSelect: (month: string) => void
+  current: ViewingMonth
+  onSelect: (month: ViewingMonth) => void
 }) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const open = Boolean(anchorEl)
   const menuId = useId()
+  const currentLabel = formatViewingMonth(current)
+
+  // A rolling year of recent months ending at the current calendar month; the
+  // selected month is included even if it sits outside that window (so the
+  // check still shows after stepping far back via the desktop stepper).
+  const months = (() => {
+    const window = recentMonthsWindow(currentViewingMonth())
+    if (window.some((m) => isSameViewingMonth(m, current))) return window
+    return [current, ...window]
+  })()
 
   const handleOpen = (event: MouseEvent<HTMLElement>) =>
     setAnchorEl(event.currentTarget)
   const handleClose = () => setAnchorEl(null)
-  const handleSelect = (month: string) => {
+  const handleSelect = (month: ViewingMonth) => {
     onSelect(month)
     handleClose()
   }
@@ -164,7 +172,7 @@ function CompactPicker({
       <Tooltip title="Select month">
         <IconButton
           onClick={handleOpen}
-          aria-label={`Select month, ${current}`}
+          aria-label={`Select month, ${currentLabel}`}
           aria-haspopup="menu"
           aria-controls={open ? menuId : undefined}
           aria-expanded={open ? 'true' : undefined}
@@ -202,6 +210,7 @@ function CompactPicker({
             sx: {
               mt: 1,
               minWidth: 184,
+              maxHeight: 360,
               borderRadius: 2,
               border: 1,
               borderColor: 'divider',
@@ -212,18 +221,19 @@ function CompactPicker({
           list: { sx: { py: 0.5 }, 'aria-label': 'Select month' },
         }}
       >
-        {MONTHS.map((month) => {
-          const selected = month === current
+        {months.map((month) => {
+          const label = formatViewingMonth(month)
+          const selected = isSameViewingMonth(month, current)
           return (
             <MenuItem
-              key={month}
+              key={label}
               selected={selected}
               aria-checked={selected}
               onClick={() => handleSelect(month)}
               sx={{ py: 1.25 }}
             >
               <ListItemText
-                primary={month}
+                primary={label}
                 slotProps={{
                   primary: {
                     sx: {
