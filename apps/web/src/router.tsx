@@ -7,6 +7,7 @@ import { AppShell } from './components/AppShell'
 import { AddTransactionProvider } from './features/transactions/AddTransactionProvider'
 import { HomePage } from './features/home/HomePage'
 import { TransactionsPage } from './features/transactions/TransactionsPage'
+import { ImportStatement } from './features/statements/ImportStatement'
 import { MonotributoPage } from './features/monotributo/MonotributoPage'
 import { SettingsPage } from './features/settings/SettingsPage'
 import { CATEGORIES } from './mock/seed'
@@ -73,6 +74,12 @@ const transactionsRoute = createRoute({
   },
 })
 
+const importStatementRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/import-statement',
+  component: ImportStatement,
+})
+
 const monotributoRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/monotributo',
@@ -88,6 +95,7 @@ const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   homeRoute,
   transactionsRoute,
+  importStatementRoute,
   monotributoRoute,
   settingsRoute,
 ])

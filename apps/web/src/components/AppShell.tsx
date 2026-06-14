@@ -14,6 +14,7 @@ import Toolbar from '@mui/material/Toolbar'
 import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import AddIcon from '@mui/icons-material/Add'
+import UploadFileIcon from '@mui/icons-material/UploadFile'
 import HomeIcon from '@mui/icons-material/Home'
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
@@ -155,9 +156,31 @@ function Sidebar({ onAddTransaction }: { onAddTransaction: () => void }) {
         startIcon={<AddIcon />}
         onClick={onAddTransaction}
         fullWidth
-        sx={{ mb: 1.75, py: 1.25, fontWeight: 600 }}
+        sx={{ mb: 1, py: 1.25, fontWeight: 600 }}
       >
         Add transaction
+      </Button>
+
+      {/* Import statement: a sibling to the add CTA that opens the multi-row
+          statement-import flow (ADR-080). Routed (not the Add dialog) because the
+          review table needs the full page width. */}
+      <Button
+        component={Link}
+        to="/import-statement"
+        variant="outlined"
+        color="secondary"
+        startIcon={<UploadFileIcon fontSize="small" />}
+        fullWidth
+        sx={{
+          mb: 1.75,
+          py: 1.1,
+          fontWeight: 600,
+          textTransform: 'none',
+          color: 'text.secondary',
+          borderColor: 'var(--mg-border-2)',
+        }}
+      >
+        Import statement
       </Button>
 
       {NAV_ITEMS.map((item) => {
