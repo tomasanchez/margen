@@ -8,15 +8,23 @@
  *
  * Money convention (mock/types.ts): `amountNum` is ALWAYS the ARS-equivalent
  * magnitude. For USD entries we store the original `usd` + `rate` and compute
- * `amountNum = round(usd * rate)`; for ARS, `amountNum` is the entered value.
+ * `amountNum = round(usd * rate, 2)`; for ARS, `amountNum` is the entered value.
+ *
+ * USD FX (ADR-044/045): the rate is no longer a hardcoded default. When USD is
+ * selected (and on open for a USD edit without a stored rate) the form fetches a
+ * SUGGESTED MEP rate from dolarapi.com and pre-fills it; the user confirms it
+ * (`fxRateType = 'MEP'`) or edits it (`fxRateType = 'manual'`). The rate is
+ * REQUIRED before a USD transaction can be saved (revisits ADR-031 for the UI).
+ * If the fetch fails, the user must enter a rate manually — never a silent guess.
  */
 
-import { useMemo, useState } from 'react'
-import { MEP_RATE } from '../../mock/seed'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { fetchSuggestedMepRate } from '../../api/fxClient'
 import type {
   Bank,
   Category,
   Currency,
+  FxRateType,
   NewTransactionInput,
   TxType,
 } from '../../mock/types'
@@ -75,6 +83,17 @@ export function isoToDispDate(iso: string): string {
 }
 
 /**
+ * Convert an ISO `YYYY-MM-DD` date to an ISO datetime (`fx_rate_as_of`, ADR-044).
+ * We anchor at local noon then serialize to UTC so the calendar day is stable
+ * across timezones; an empty/garbage date falls back to "now".
+ */
+export function isoDateToAsOf(iso: string): string {
+  const [y, m, d] = iso.split('-').map((part) => Number.parseInt(part, 10))
+  if (!y || !m || !d) return new Date().toISOString()
+  return new Date(y, m - 1, d, 12).toISOString()
+}
+
+/**
  * Parse an es-AR-ish numeric string into a number. Accepts grouping dots and a
  * decimal comma OR a plain decimal point; strips anything else. Empty/garbage
  * yields `NaN` so callers can treat it as "no amount yet".
@@ -110,6 +129,14 @@ export function isEditPrefill(prefill: AddPrefill | null): boolean {
   return typeof prefill?.id === 'string'
 }
 
+/** Round to 2 decimals, the ARS-equivalent precision sent as `amountNum`. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
+/** Loading status of the suggested-rate fetch (ADR-045 affordances). */
+export type RateSuggestionStatus = 'idle' | 'loading' | 'suggested' | 'failed'
+
 export interface AddEditFormState {
   /** Edit mode if an id was prefilled; otherwise add mode. */
   readonly mode: 'add' | 'edit'
@@ -131,11 +158,17 @@ export interface AddEditFormState {
   readonly currency: Currency
   setCurrency: (next: Currency) => void
 
-  /** MEP rate used for USD→ARS (default {@link MEP_RATE}; user-overridable). */
+  /** Parsed FX rate used for USD→ARS (NaN when missing/invalid). */
   readonly rate: number
-  /** Raw rate-override string (kept so the field can be cleared mid-edit). */
+  /** Raw rate string (kept so the field can be cleared mid-edit). */
   readonly rateText: string
   setRateText: (next: string) => void
+  /** Source of the current rate: `MEP` (confirmed suggestion) or `manual`. */
+  readonly fxRateType: FxRateType
+  /** Status of the suggested-rate fetch (drives the loading/refresh/fail hint). */
+  readonly rateSuggestionStatus: RateSuggestionStatus
+  /** Re-fetch the suggested MEP rate (refresh affordance, ADR-045). */
+  refreshSuggestedRate: () => void
 
   readonly category: Category
   setCategory: (next: Category) => void
@@ -158,7 +191,7 @@ export interface AddEditFormState {
   readonly amountArs: number
   /** True when USD is selected but the rate is missing/invalid. */
   readonly usdRateMissing: boolean
-  /** Save is allowed: a positive amount and a category are present. */
+  /** Save is allowed: a positive amount, a present rate for USD, etc. */
   readonly canSave: boolean
 
   /** Assemble the mutation input from the current state. */
@@ -195,9 +228,32 @@ export function useAddEditFormState(
     typeof seededAmount === 'number' ? String(seededAmount) : '',
   )
 
-  const [rateText, setRateText] = useState<string>(
-    typeof prefill?.rate === 'number' ? String(prefill.rate) : String(MEP_RATE),
+  // The rate field starts EMPTY (no hardcoded default, ADR-044). An edit prefills
+  // the stored rate; an add leaves it blank until the suggestion arrives.
+  const [rateText, setRateTextRaw] = useState<string>(
+    typeof prefill?.rate === 'number' ? String(prefill.rate) : '',
   )
+
+  // The numeric value of the suggested MEP rate once fetched (null until then /
+  // on failure). Compared against the current rate to decide MEP vs manual.
+  const [suggestedRate, setSuggestedRate] = useState<number | null>(null)
+  const [rateSuggestionStatus, setRateSuggestionStatus] =
+    useState<RateSuggestionStatus>('idle')
+
+  // Whether the user has touched the rate field (an explicit manual override).
+  // Editing an existing row's stored rate also counts as manual.
+  const [rateEdited, setRateEdited] = useState<boolean>(false)
+
+  // An existing USD edit that already has a stored source. We treat a stored
+  // rate as the baseline: if the user does not touch it, keep its source; the
+  // moment they edit it, it becomes manual.
+  const seededFxRateType: FxRateType | undefined = prefill?.fxRateType
+
+  const setRateText = useCallback((next: string) => {
+    setRateTextRaw(next)
+    // Any user edit marks the rate as manually set (ADR-044).
+    setRateEdited(true)
+  }, [])
 
   const [category, setCategory] = useState<Category>(
     prefill?.category && prefill.category !== 'Income'
@@ -221,15 +277,84 @@ export function useAddEditFormState(
     return Number.isFinite(parsed) && parsed > 0 ? parsed : Number.NaN
   }, [rateText])
 
+  // Fetch a suggested MEP rate and pre-fill it when it lands. Only pre-fills when
+  // the user has not already typed a rate, so a refresh never clobbers an edit.
+  const fetchToken = useRef(0)
+  const fetchSuggestion = useCallback(async () => {
+    const token = ++fetchToken.current
+    setRateSuggestionStatus('loading')
+    const fetched = await fetchSuggestedMepRate()
+    // Ignore a stale response if a newer fetch (or unmount) superseded it.
+    if (token !== fetchToken.current) return
+    if (fetched === null) {
+      setSuggestedRate(null)
+      setRateSuggestionStatus('failed')
+      return
+    }
+    setSuggestedRate(fetched)
+    setRateSuggestionStatus('suggested')
+    // Pre-fill only if the user hasn't entered/edited a rate yet (ADR-045).
+    setRateEdited((edited) => {
+      if (!edited) setRateTextRaw(String(fetched))
+      return edited
+    })
+  }, [])
+
+  // On switching to USD (or opening a USD entry without a stored rate), fetch
+  // the suggestion. This is a one-shot external adapter call (ADR-044), not the
+  // app's own server state, so a focused effect is appropriate here.
+  useEffect(() => {
+    if (currency !== 'USD') return
+    // An edit that already carries a stored rate keeps it; don't auto-suggest.
+    if (rateEdited) return
+    if (typeof prefill?.rate === 'number') return
+    if (rateSuggestionStatus !== 'idle') return
+    // Fetching a suggested rate from dolarapi.com is a legitimate effect: it
+    // synchronizes the form with an external system (ADR-044). The loading
+    // setState it triggers is the sanctioned "subscribe/fetch" case, not a
+    // render-cascade, so the rule is scoped-off for this trigger only.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchSuggestion()
+  }, [
+    currency,
+    rateEdited,
+    prefill?.rate,
+    rateSuggestionStatus,
+    fetchSuggestion,
+  ])
+
+  const refreshSuggestedRate = useCallback(() => {
+    // A manual refresh re-fetches and re-suggests, clearing the "edited" flag so
+    // the fresh value pre-fills (the user explicitly asked for the suggestion).
+    setRateEdited(false)
+    void fetchSuggestion()
+  }, [fetchSuggestion])
+
   const usdRateMissing = currency === 'USD' && !Number.isFinite(rate)
+
+  // Source resolution (ADR-044): an untouched stored source is kept; a confirmed
+  // suggestion (rate equals the fetched value, unedited) is MEP; anything the
+  // user entered/edited is manual.
+  const fxRateType: FxRateType = useMemo(() => {
+    if (!rateEdited && seededFxRateType !== undefined) return seededFxRateType
+    if (
+      !rateEdited &&
+      suggestedRate !== null &&
+      Number.isFinite(rate) &&
+      rate === suggestedRate
+    ) {
+      return 'MEP'
+    }
+    return 'manual'
+  }, [rateEdited, seededFxRateType, suggestedRate, rate])
 
   const amountArs = useMemo(() => {
     if (!Number.isFinite(amount) || amount <= 0) return Number.NaN
     if (currency === 'USD') {
       if (!Number.isFinite(rate)) return Number.NaN
-      return Math.round(amount * rate)
+      return round2(amount * rate)
     }
-    return Math.round(amount)
+    return round2(amount)
   }, [amount, currency, rate])
 
   const canSave =
@@ -258,7 +383,7 @@ export function useAddEditFormState(
       // passed. `dispDate` is the derived display label.
       occurredOn,
       dispDate,
-      amountNum: Math.round(amountArs),
+      amountNum: round2(amountArs),
       countsTowardMonotributo: type === 'income' && countsTowardMonotributo,
       ...(notes.trim() ? { notes: notes.trim() } : {}),
       ...(prefill?.recurring !== undefined
@@ -269,11 +394,16 @@ export function useAddEditFormState(
     if (currency === 'USD') {
       base.usd = amount
       base.rate = rate
+      base.fxRateType = fxRateType
+      // The rate applies as-of the transaction's own date (ADR-044).
+      base.fxRateAsOf = isoDateToAsOf(occurredOn)
     } else {
       // Editing a USD row down to ARS must clear the stale FX figures. The patch
       // is spread over the existing row, so set them explicitly to undefined.
       base.usd = undefined
       base.rate = undefined
+      base.fxRateType = undefined
+      base.fxRateAsOf = undefined
     }
 
     return base
@@ -294,6 +424,9 @@ export function useAddEditFormState(
     rate,
     rateText,
     setRateText,
+    fxRateType,
+    rateSuggestionStatus,
+    refreshSuggestedRate,
     category,
     setCategory,
     bank,

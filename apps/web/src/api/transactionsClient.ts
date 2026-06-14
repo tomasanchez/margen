@@ -19,6 +19,7 @@ import type {
   Bank,
   Category,
   Currency,
+  FxRateType,
   MonthName,
   NewTransactionInput,
   Transaction,
@@ -78,6 +79,8 @@ interface TransactionCreateBody {
   bank?: string
   usd?: number
   rate?: number
+  fxRateType?: FxRateType
+  fxRateAsOf?: string
   recurring?: boolean
   countsTowardMonotributo?: boolean
   notes?: string
@@ -136,6 +139,15 @@ function asMonth(value: string): MonthName {
   return value as MonthName
 }
 
+/** Narrow the backend `fx_rate_type` string to the {@link FxRateType} union. */
+function asFxRateType(
+  value: string | null | undefined,
+): FxRateType | undefined {
+  return value === null || value === undefined
+    ? undefined
+    : (value as FxRateType)
+}
+
 /**
  * Adapt a backend {@link TransactionDto} to the frontend {@link Transaction}.
  *
@@ -147,6 +159,8 @@ function asMonth(value: string): MonthName {
 export function adaptTransaction(dto: TransactionDto): Transaction {
   const usd = parseMoney(dto.usd)
   const rate = parseMoney(dto.rate)
+  const fxRateType = asFxRateType(dto.fxRateType)
+  const fxRateAsOf = dto.fxRateAsOf ?? undefined
   return {
     id: dto.id,
     occurredOn: dto.occurredOn,
@@ -161,6 +175,10 @@ export function adaptTransaction(dto: TransactionDto): Transaction {
     amountNum: parseMoney(dto.amountNum) ?? 0,
     ...(usd !== undefined ? { usd } : {}),
     ...(rate !== undefined ? { rate } : {}),
+    // FX source/as-of drive the row's source indicator (ADR-045); only USD rows
+    // carry them, so keep them off ARS rows to keep the shape clean.
+    ...(fxRateType !== undefined ? { fxRateType } : {}),
+    ...(fxRateAsOf !== undefined ? { fxRateAsOf } : {}),
     ...(dto.recurring ? { recurring: dto.recurring } : {}),
   }
 }
@@ -187,6 +205,8 @@ export function toCreateBody(input: NewTransactionInput): TransactionCreateBody 
   }
   if (input.usd !== undefined) body.usd = input.usd
   if (input.rate !== undefined) body.rate = input.rate
+  if (input.fxRateType !== undefined) body.fxRateType = input.fxRateType
+  if (input.fxRateAsOf !== undefined) body.fxRateAsOf = input.fxRateAsOf
   if (input.recurring !== undefined) body.recurring = input.recurring
   if (input.notes) body.notes = input.notes
   return body
@@ -213,6 +233,8 @@ export function toPatchBody(
   if (patch.bank !== undefined) body.bank = patch.bank
   if (patch.usd !== undefined) body.usd = patch.usd
   if (patch.rate !== undefined) body.rate = patch.rate
+  if (patch.fxRateType !== undefined) body.fxRateType = patch.fxRateType
+  if (patch.fxRateAsOf !== undefined) body.fxRateAsOf = patch.fxRateAsOf
   if (patch.recurring !== undefined) body.recurring = patch.recurring
   if (patch.notes !== undefined) body.notes = patch.notes
   if (patch.countsTowardMonotributo !== undefined) {

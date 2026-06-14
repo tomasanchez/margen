@@ -246,6 +246,7 @@ export function TransactionRow(props: TransactionRowProps) {
           size="sm"
           fxUsd={isUsd ? t.usd : undefined}
           fxRate={isUsd ? t.rate : undefined}
+          fxSource={isUsd ? t.fxRateType : undefined}
         />
       </Box>
 
@@ -355,6 +356,7 @@ export function TransactionRowMobile(props: TransactionRowProps) {
           size="sm"
           fxUsd={isUsd ? t.usd : undefined}
           fxRate={isUsd ? t.rate : undefined}
+          fxSource={isUsd ? t.fxRateType : undefined}
         />
         <Typography
           component="span"

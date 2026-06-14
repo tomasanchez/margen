@@ -53,6 +53,9 @@ describe('adaptTransaction', () => {
     expect(typeof t.amountNum).toBe('number')
     expect(t.usd).toBe(500)
     expect(t.rate).toBe(1245)
+    // FX source + as-of are carried so rows can show "which dollar" (ADR-044/045).
+    expect(t.fxRateType).toBe('MEP')
+    expect(t.fxRateAsOf).toBe('2026-06-12T00:00:00Z')
     expect(t.currency).toBe('USD')
     expect(t.dispDate).toBe('Jun 12')
     expect(t.month).toBe('June')
@@ -76,6 +79,12 @@ describe('adaptTransaction', () => {
     expect(t.usd).toBeUndefined()
     expect(t.rate).toBeUndefined()
     expect('recurring' in t).toBe(false)
+  })
+
+  test('omits FX source/as-of when the DTO carries them null', () => {
+    const t = adaptTransaction({ ...usdDto, fxRateType: null, fxRateAsOf: null })
+    expect('fxRateType' in t).toBe(false)
+    expect('fxRateAsOf' in t).toBe(false)
   })
 })
 
@@ -106,6 +115,27 @@ describe('toCreateBody', () => {
     expect(body.countsTowardMonotributo).toBe(true)
     // `type` is never sent — the backend derives it from `kind` (ADR-027).
     expect('type' in body).toBe(false)
+  })
+
+  test('sends the FX source + as-of for a USD entry (ADR-044)', () => {
+    const input: NewTransactionInput = {
+      occurredOn: '2026-06-12',
+      dispDate: 'Jun 12',
+      name: 'Invoice · Atlas Co.',
+      category: 'Income',
+      bank: 'Transfer',
+      currency: 'USD',
+      type: 'income',
+      kind: 'invoice',
+      amountNum: 650000,
+      usd: 500,
+      rate: 1300,
+      fxRateType: 'manual',
+      fxRateAsOf: '2026-06-12T12:00:00.000Z',
+    }
+    const body = toCreateBody(input)
+    expect(body.fxRateType).toBe('manual')
+    expect(body.fxRateAsOf).toBe('2026-06-12T12:00:00.000Z')
   })
 
   test('a backdated date is sent unchanged (backdating allowed)', () => {

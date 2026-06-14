@@ -118,6 +118,7 @@ function ActivityRow({ transaction: t }: { transaction: Transaction }) {
           size="md"
           fxUsd={isUsd ? t.usd : undefined}
           fxRate={isUsd ? t.rate : undefined}
+          fxSource={isUsd ? t.fxRateType : undefined}
         />
       </Box>
     </Box>

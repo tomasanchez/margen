@@ -18,6 +18,7 @@ import { useId, useState } from 'react'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
+import CircularProgress from '@mui/material/CircularProgress'
 import Collapse from '@mui/material/Collapse'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import IconButton from '@mui/material/IconButton'
@@ -29,8 +30,8 @@ import ToggleButton from '@mui/material/ToggleButton'
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
 import Typography from '@mui/material/Typography'
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded'
-import EditRoundedIcon from '@mui/icons-material/EditRounded'
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
+import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded'
 import { BANKS } from '../../mock/seed'
 import type {
   Bank,
@@ -112,7 +113,6 @@ export function AddEditForm({
 }: AddEditFormProps) {
   const form = useAddEditFormState(prefill)
   const [moreOpen, setMoreOpen] = useState(false)
-  const [rateEditing, setRateEditing] = useState(false)
 
   const amountInputId = useId()
   const rateInputId = useId()
@@ -143,12 +143,25 @@ export function AddEditForm({
     onSubmit(form.buildInput(), form.editId)
   }
 
-  // FX context line: converted ARS value + rate type (MEP) + rate value.
+  // FX context line: converted ARS value + rate source + rate value. The source
+  // label (MEP vs manual) is shown so the user always knows "which dollar".
+  const sourceLabel = form.fxRateType === 'MEP' ? 'MEP' : 'manual'
   const fxConvertedLabel = form.usdRateMissing
     ? '≈ ARS — · enter a rate'
     : Number.isFinite(form.amountArs)
-      ? `≈ ARS ${formatARS(form.amountArs)} at MEP ${formatARS(form.rate)}`
-      : `Enter an amount · MEP ${formatARS(form.rate)}`
+      ? `≈ ARS ${formatARS(form.amountArs)} at ${sourceLabel} ${formatARS(form.rate)}`
+      : `Enter an amount · ${sourceLabel} ${formatARS(form.rate)}`
+
+  // Suggestion hint under the rate field (ADR-045): loading / suggested / failed.
+  const isFetchingRate = form.rateSuggestionStatus === 'loading'
+  const rateFetchFailed = form.rateSuggestionStatus === 'failed'
+  const rateHelperText = form.usdRateMissing
+    ? rateFetchFailed
+      ? "Couldn't fetch a rate — enter it manually."
+      : 'A rate is required to convert this USD amount.'
+    : form.fxRateType === 'MEP'
+      ? 'Suggested MEP rate — confirm or edit.'
+      : 'Manual rate — edit anytime.'
 
   return (
     <Box component="form" onSubmit={handleSubmit} noValidate>
@@ -290,7 +303,9 @@ export function AddEditForm({
         <ToggleButton value="USD">USD</ToggleButton>
       </ToggleButtonGroup>
 
-      {/* FX context line (USD only): converted ARS + MEP rate + edit affordance. */}
+      {/* FX block (USD only): suggested-then-confirmed MEP rate (ADR-044/045).
+          The rate is REQUIRED to save; the source (MEP vs manual) and the live
+          converted ARS are always visible so the user knows "which dollar". */}
       {isUsd ? (
         <Box
           sx={{
@@ -322,9 +337,16 @@ export function AddEditForm({
             <Button
               type="button"
               size="small"
-              startIcon={<EditRoundedIcon sx={{ fontSize: 15 }} />}
-              onClick={() => setRateEditing((v) => !v)}
-              aria-expanded={rateEditing}
+              startIcon={
+                isFetchingRate ? (
+                  <CircularProgress size={13} thickness={5} color="inherit" />
+                ) : (
+                  <RefreshRoundedIcon sx={{ fontSize: 15 }} />
+                )
+              }
+              onClick={form.refreshSuggestedRate}
+              disabled={isFetchingRate}
+              aria-label="Refresh suggested MEP rate"
               sx={{
                 fontSize: 12,
                 color: 'text.secondary',
@@ -332,30 +354,28 @@ export function AddEditForm({
                 px: 1,
               }}
             >
-              {rateEditing ? 'Done' : 'Edit rate'}
+              {isFetchingRate ? 'Fetching…' : 'Refresh rate'}
             </Button>
           </Box>
-          <Collapse in={rateEditing} unmountOnExit>
-            <TextField
-              id={rateInputId}
-              label="MEP rate (ARS per USD)"
-              value={form.rateText}
-              onChange={(e) => form.setRateText(e.target.value)}
-              size="small"
-              fullWidth
-              error={form.usdRateMissing}
-              helperText={
-                form.usdRateMissing
-                  ? 'Enter a rate to convert this USD amount.'
-                  : undefined
-              }
-              slotProps={{ htmlInput: { inputMode: 'decimal' } }}
-              sx={{
-                mt: 1.25,
-                '& .MuiInputBase-input': { fontFamily: monoFontFamily },
-              }}
-            />
-          </Collapse>
+          <TextField
+            id={rateInputId}
+            label="MEP rate (ARS per USD)"
+            value={form.rateText}
+            onChange={(e) => form.setRateText(e.target.value)}
+            size="small"
+            fullWidth
+            required
+            error={form.usdRateMissing}
+            helperText={rateHelperText}
+            placeholder={isFetchingRate ? 'Fetching suggested rate…' : '0'}
+            slotProps={{
+              htmlInput: { inputMode: 'decimal', 'aria-label': 'MEP rate' },
+            }}
+            sx={{
+              mt: 1.25,
+              '& .MuiInputBase-input': { fontFamily: monoFontFamily },
+            }}
+          />
         </Box>
       ) : null}
 

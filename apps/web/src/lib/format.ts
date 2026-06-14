@@ -7,7 +7,7 @@
  * Intl.NumberFormat, so styling and sign rules never drift.
  */
 
-import type { Currency, TxType } from '../mock/types'
+import type { Currency, FxRateType, TxType } from '../mock/types'
 
 /** Unicode minus (U+2212) — visually balanced with `+` and the digits. */
 export const MINUS = '−'
@@ -136,15 +136,32 @@ export function formatPercent(
 }
 
 /**
- * FX subline for USD transactions, e.g. "USD 500 · MEP 1.245". Returns an empty
- * string when either value is missing so callers can render it conditionally.
+ * Human label for an FX rate source (ADR-044/045). `MEP` reads as "MEP";
+ * everything else reads as "manual" — the UI only distinguishes the confirmed
+ * suggestion from a user-entered value (`official`/`configured_default` are
+ * future backend stubs and fall through to "manual" until they ship).
+ */
+export function fxSourceLabel(
+  source: FxRateType | null | undefined,
+): string {
+  return source === 'MEP' ? 'MEP' : 'manual'
+}
+
+/**
+ * FX subline for USD transactions, e.g. "USD 500 · MEP 1.245" for a confirmed
+ * MEP suggestion or "USD 500 · manual 1.300" for a user-entered rate. The source
+ * defaults to MEP when not supplied (legacy rows). Returns an empty string when
+ * either money value is missing so callers can render it conditionally.
  */
 export function formatFxSubline(
   usd: number | null | undefined,
   rate: number | null | undefined,
+  source?: FxRateType | null,
 ): string {
   if (usd == null || rate == null) return ''
-  return `USD ${formatUSD(usd)} · MEP ${formatARS(rate)}`
+  return `USD ${formatUSD(usd)} · ${fxSourceLabel(source ?? 'MEP')} ${formatARS(
+    rate,
+  )}`
 }
 
 /** es-AR 1-decimal formatter for the compact millions label (10277988 -> "10,3"). */

@@ -17,7 +17,7 @@ import {
   formatFxSubline,
   formatSignedAmount,
 } from '../lib/format'
-import type { Currency, TxType } from '../mock/types'
+import type { Currency, FxRateType, TxType } from '../mock/types'
 
 /** Size variants map to the figure font-size used across screens. */
 export type AmountSize = 'sm' | 'md' | 'lg' | 'xl'
@@ -42,6 +42,8 @@ export interface AmountProps {
   fxUsd?: number
   /** MEP rate used for the USD→ARS conversion. */
   fxRate?: number
+  /** Source of the FX rate (`MEP` vs `manual`); drives the subline label. */
+  fxSource?: FxRateType
   /** Figure size variant. */
   size?: AmountSize
   /** Override the income/neutral color decision (e.g. force neutral on totals). */
@@ -59,13 +61,14 @@ export function Amount({
   type,
   fxUsd,
   fxRate,
+  fxSource,
   size = 'md',
   emphasizeSign = true,
   className,
 }: AmountProps) {
   const text = formatSignedAmount(value, type, currency)
   const srLabel = amountAccessibleLabel(value, type, currency)
-  const subline = formatFxSubline(fxUsd, fxRate)
+  const subline = formatFxSubline(fxUsd, fxRate, fxSource)
 
   // Income reads in the Safe token; expenses use the neutral amount token so
   // the screen is not awash in red (concept intent + ADR-019: never rely on
