@@ -27,6 +27,8 @@ In #14, ONLY the transactions CRUD switches to the real API. Home income/expense
 
 A clear, documented boundary: transactions are real; the rest is mock behind hooks that #6/#8/#10 will replace. Removing the transaction mock proves the seam design from ADR-015 works as intended. Each subsequent issue can replace its own mock slice without touching transactions.
 
+Note (2026-06-13): the spending trend and category breakdown are no longer mock — ADR-042 (backend summaries endpoint) and ADR-043 (frontend consumer) made them real in issue #6 / PR #14/#17. Insights and Monotributo remain mock.
+
 ## Status History
 
 - 2026-06-13: proposed
