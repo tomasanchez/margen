@@ -38,6 +38,7 @@ export type Category =
   | 'Shopping'
   | 'Services'
   | 'Taxes'
+  | 'Fee'
   | 'Other'
 
 /** Banks / cards a transaction can be attributed to. */
@@ -46,6 +47,7 @@ export type Bank =
   | 'Santander · Mastercard'
   | 'Mercado Pago'
   | 'Brubank'
+  | 'Deel'
   | 'Transfer'
 
 /** Months present in the mock dataset, newest-first ordering handled elsewhere. */

@@ -22,6 +22,7 @@ export const CATEGORIES: readonly Category[] = [
   'Shopping',
   'Services',
   'Taxes',
+  'Fee',
   'Other',
 ] as const
 
@@ -31,6 +32,7 @@ export const BANKS: readonly Bank[] = [
   'Santander · Mastercard',
   'Mercado Pago',
   'Brubank',
+  'Deel',
   'Transfer',
 ] as const
 
