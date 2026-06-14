@@ -50,6 +50,12 @@ class StatementDocumentRecord(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True),
         primary_key=True,
+        # Generate the id client-side so it is bound through the UUID type in the
+        # SAME format used by every lookup. Relying solely on the DB server default
+        # stores a dialect-rendered value (a dashed string under SQLite) that the
+        # bind processor's no-dash form never matches — get-by-id would 404. The
+        # server default is kept as a fallback for raw-SQL inserts on Postgres.
+        default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
     pdf_bytes: Mapped[bytes] = mapped_column(LargeBinary(), nullable=False)

@@ -75,7 +75,8 @@ class SqlAlchemyStatementStore(AbstractStatementStore):
 
     async def get(self, statement_document_id: UUID) -> StatementDocument | None:
         """Return the stored document by identity, or ``None`` when absent."""
-        record = await self.session.get(StatementDocumentRecord, statement_document_id)
+        statement = select(StatementDocumentRecord).where(StatementDocumentRecord.id == statement_document_id).limit(1)
+        record = (await self.session.execute(statement)).scalar_one_or_none()
         if record is None:
             return None
         return _to_read_model(record)

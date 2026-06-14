@@ -469,7 +469,7 @@ class GaliciaVisaParser(StatementParser):
             return None
 
         pesos = _parse_ar_decimal(money[0])
-        if pesos is None:
+        if pesos is None:  # pragma: no cover - _MONEY_TOKEN pre-filter guarantees a parseable amount
             return None
 
         # A second money cell is the DÓLARES column → USD line (ADR-079). The sample
@@ -559,7 +559,7 @@ class GaliciaVisaParser(StatementParser):
                 index = label_at + 1
                 continue
             amount = _parse_ar_decimal(region[money_at])
-            if amount is not None:
+            if amount is not None:  # pragma: no branch - _MONEY_TOKEN pre-filter guarantees parseable
                 root = self._fee_root(label)
                 sums[root] = sums.get(root, Decimal("0")) + amount
                 dates[root] = occurred_on
