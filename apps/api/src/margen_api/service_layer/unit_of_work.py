@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from types import TracebackType
 
 from margen_api.domain.messages import Event
+from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.monotributo_repository import AbstractMonotributoSnapshotRepository
 from margen_api.service_layer.repository import AbstractTransactionRepository
 from margen_api.service_layer.settings_repository import AbstractSettingsRepository
@@ -29,11 +30,14 @@ class AbstractUnitOfWork(ABC):
             written by the read-records capture handler (ADR-052).
         settings: Repository for the single-row application settings, written by
             the update-settings handler (ADR-054).
+        documents: Storage port for the original invoice PDF and its import
+            metadata, written by the create-with-attachment handler (ADR-071).
     """
 
     transactions: AbstractTransactionRepository
     monotributo_snapshots: AbstractMonotributoSnapshotRepository
     settings: AbstractSettingsRepository
+    documents: AbstractDocumentStore
 
     async def __aenter__(self) -> AbstractUnitOfWork:
         """Enter the transaction boundary."""

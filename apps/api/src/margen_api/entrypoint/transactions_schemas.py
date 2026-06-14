@@ -22,6 +22,8 @@ helpers keep working without a client-side derivation step.
 
 from __future__ import annotations
 
+import base64
+import binascii
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
@@ -29,10 +31,77 @@ from uuid import UUID
 
 from pydantic import Field
 
-from margen_api.domain.commands.transaction import CreateTransaction, UpdateTransaction
+from margen_api.domain.commands.transaction import (
+    CreateTransaction,
+    TransactionDocumentPayload,
+    UpdateTransaction,
+)
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
 from margen_api.entrypoint.schemas import CamelCaseModel
 from margen_api.service_layer.read_models import TransactionReadModel
+
+
+class InvalidDocumentBase64Error(ValueError):
+    """Raised when an attachment's ``pdfBase64`` is not valid base64 (ADR-070)."""
+
+    def __init__(self) -> None:
+        super().__init__("pdfBase64 is not valid base64.")
+
+
+class TransactionDocumentRequest(CamelCaseModel):
+    """Optional invoice attachment on ``POST /transactions`` (ADR-070, ADR-071).
+
+    The PDF crosses the JSON boundary as base64 (``pdfBase64``); everything else
+    is the import metadata produced by the parse endpoint that the client echoes
+    back on confirm. Decoding to raw bytes happens in :meth:`to_payload` so the
+    bytes never enter the transaction aggregate (they become a side record).
+    Money is ``Decimal`` (ADR-025).
+    """
+
+    pdf_base64: str = Field(description="The original PDF, base64-encoded for the JSON body.")
+    content_type: str = Field(default="application/pdf", description="MIME type of the upload.")
+    extracted_text: str | None = Field(default=None, description="Parsed PDF text, echoed from parse.")
+    qr_json: dict | None = Field(default=None, description="Decoded AFIP QR JSON payload, echoed from parse.")
+    emisor_cuit: str | None = Field(default=None, description="Issuer CUIT from the natural key.")
+    pto_vta: str | None = Field(default=None, description="Point of sale from the natural key.")
+    tipo_cmp: str | None = Field(default=None, description="Voucher type code from the natural key.")
+    nro_cmp: str | None = Field(default=None, description="Voucher number from the natural key.")
+    cae: str | None = Field(default=None, description="Electronic authorization code, if parsed.")
+    fecha: date | None = Field(default=None, description="Invoice date, if parsed.")
+    importe: Decimal | None = Field(default=None, description="Invoice total in its original currency, if parsed.")
+    moneda: str | None = Field(default=None, description="Currency code (e.g. ARS), if parsed.")
+    ctz: Decimal | None = Field(default=None, description="Exchange rate declared on the invoice, if parsed.")
+
+    def to_payload(self) -> TransactionDocumentPayload:
+        """Decode the base64 PDF and build the command's document payload.
+
+        Returns:
+            The :class:`TransactionDocumentPayload` carrying raw PDF bytes (kept
+            out of the aggregate) and the import metadata.
+
+        Raises:
+            InvalidDocumentBase64Error: When ``pdfBase64`` is not valid base64.
+        """
+        try:
+            pdf_bytes = base64.b64decode(self.pdf_base64, validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise InvalidDocumentBase64Error from error
+        return TransactionDocumentPayload(
+            pdf_bytes=pdf_bytes,
+            content_type=self.content_type,
+            byte_size=len(pdf_bytes),
+            extracted_text=self.extracted_text,
+            qr_json=self.qr_json,
+            emisor_cuit=self.emisor_cuit,
+            pto_vta=self.pto_vta,
+            tipo_cmp=self.tipo_cmp,
+            nro_cmp=self.nro_cmp,
+            cae=self.cae,
+            fecha=self.fecha,
+            importe=self.importe,
+            moneda=self.moneda,
+            ctz=self.ctz,
+        )
 
 
 def _disp_date(value: date) -> str:
@@ -182,12 +251,21 @@ class TransactionCreateRequest(CamelCaseModel):
         default=False,
         description="Monotributo counting hint; forced False for expense (ADR-031).",
     )
+    document: TransactionDocumentRequest | None = Field(
+        default=None,
+        description="Optional imported invoice PDF to store and link (ADR-070, ADR-071).",
+    )
 
     def to_command(self) -> CreateTransaction:
         """Translate the request into a :class:`CreateTransaction` command.
 
         Returns:
-            The boundary-agnostic command the message bus dispatches.
+            The boundary-agnostic command the message bus dispatches; the optional
+            ``document`` is decoded to a side-record payload (raw bytes stay out of
+            the aggregate) when supplied.
+
+        Raises:
+            InvalidDocumentBase64Error: When a document's ``pdfBase64`` is invalid.
         """
         return CreateTransaction(
             occurred_on=self.occurred_on,
@@ -204,6 +282,7 @@ class TransactionCreateRequest(CamelCaseModel):
             notes=self.notes,
             recurring=self.recurring,
             counts_toward_monotributo=self.counts_toward_monotributo,
+            document=self.document.to_payload() if self.document is not None else None,
         )
 
 

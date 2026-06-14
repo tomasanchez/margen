@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 from margen_api.domain.commands.transaction import (
     CreateTransaction,
     DeleteTransaction,
+    TransactionDocumentPayload,
     UpdateTransaction,
 )
 from margen_api.domain.models.exceptions import TransactionNotFoundError
@@ -47,11 +48,15 @@ async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork
     The handler injects the UUID identity and ``created_at``/``updated_at``
     timestamps so the domain stays clock- and UUID-free in production (ADR-026),
     then builds the aggregate through the domain factory so invariants run
-    (ADR-031).
+    (ADR-031). When the command carries an optional invoice ``document``, the PDF
+    and its import metadata are saved as a 1:1 side record through the
+    ``DocumentStore`` port in the same unit of work, before the single commit
+    (ADR-070, ADR-071); the bytes are a side record and never enter the aggregate.
 
     Args:
         command: The validated create request.
-        uow: The unit of work providing the transaction repository.
+        uow: The unit of work providing the transaction repository and the
+            invoice document store.
 
     Returns:
         The UUID identity of the newly persisted transaction.
@@ -78,8 +83,45 @@ async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork
     )
     async with uow:
         uow.transactions.add(transaction)
+        if command.document is not None:
+            await _save_invoice_document(uow, transaction.id, command.document)
         await uow.commit()
     return transaction.id
+
+
+async def _save_invoice_document(
+    uow: AbstractUnitOfWork,
+    transaction_id: UUID,
+    document: TransactionDocumentPayload,
+) -> None:
+    """Stage the imported invoice PDF as a 1:1 side record (ADR-070, ADR-071).
+
+    Persists through the ``DocumentStore`` port on the same unit of work as the
+    transaction so both land in one commit. The document is a side record, not
+    part of the transaction aggregate, so its bytes stay out of the domain model.
+
+    Args:
+        uow: The unit of work whose document store stages the row.
+        transaction_id: The just-built transaction the document belongs to.
+        document: The validated document payload carrying the PDF and metadata.
+    """
+    await uow.documents.save(
+        transaction_id=transaction_id,
+        pdf_bytes=document.pdf_bytes,
+        content_type=document.content_type,
+        byte_size=document.byte_size,
+        extracted_text=document.extracted_text,
+        qr_json=document.qr_json,
+        emisor_cuit=document.emisor_cuit,
+        pto_vta=document.pto_vta,
+        tipo_cmp=document.tipo_cmp,
+        nro_cmp=document.nro_cmp,
+        cae=document.cae,
+        fecha=document.fecha,
+        importe=document.importe,
+        moneda=document.moneda,
+        ctz=document.ctz,
+    )
 
 
 async def update_transaction(command: UpdateTransaction, uow: AbstractUnitOfWork) -> UUID:

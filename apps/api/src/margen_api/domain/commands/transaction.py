@@ -15,8 +15,52 @@ from uuid import UUID
 
 from pydantic import Field
 
-from margen_api.domain.messages import Command
+from margen_api.domain.messages import Command, Message
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind
+
+
+class TransactionDocumentPayload(Message):
+    """Optional invoice document to store alongside a created transaction (ADR-070).
+
+    Carries the uploaded PDF and its import metadata so the create handler can
+    persist it as a 1:1 side record through the ``DocumentStore`` port in the same
+    unit of work (ADR-071). The bytes travel as raw :class:`bytes` here — the
+    entrypoint decodes the base64 wire value at the boundary so the bytes never
+    enter the transaction aggregate. The fiscal natural-key fields back the
+    advisory dedupe check; all are optional because a text-only or malformed
+    invoice may not yield every field (ADR-071). Money is ``Decimal`` (ADR-025).
+
+    Attributes:
+        pdf_bytes: The original uploaded PDF bytes.
+        content_type: The MIME type of the upload (``application/pdf``).
+        byte_size: The PDF size in bytes.
+        extracted_text: Parsed PDF text, or ``None`` when none was extracted.
+        qr_json: Decoded AFIP QR JSON payload, or ``None`` when absent.
+        emisor_cuit: Issuer CUIT from the natural key, or ``None``.
+        pto_vta: Point of sale from the natural key, or ``None``.
+        tipo_cmp: Voucher type code from the natural key, or ``None``.
+        nro_cmp: Voucher number from the natural key, or ``None``.
+        cae: Electronic authorization code, or ``None``.
+        fecha: Invoice date, or ``None``.
+        importe: Invoice total in its original currency, or ``None``.
+        moneda: Currency code (e.g. ``ARS``), or ``None``.
+        ctz: Exchange rate declared on the invoice, or ``None``.
+    """
+
+    pdf_bytes: bytes
+    content_type: str
+    byte_size: int
+    extracted_text: str | None = None
+    qr_json: dict | None = None
+    emisor_cuit: str | None = None
+    pto_vta: str | None = None
+    tipo_cmp: str | None = None
+    nro_cmp: str | None = None
+    cae: str | None = None
+    fecha: date | None = None
+    importe: Decimal | None = None
+    moneda: str | None = None
+    ctz: Decimal | None = None
 
 
 class CreateTransaction(Command):
@@ -25,6 +69,9 @@ class CreateTransaction(Command):
     The handler generates ``id``, ``created_at`` and ``updated_at`` and applies
     domain invariants via the aggregate (e.g. positive amount, monotributo
     counting forced ``False`` for expense). USD rows without a rate are accepted.
+    An optional ``document`` attaches the imported invoice PDF, stored as a side
+    record in the same unit of work (ADR-070, ADR-071); omitting it leaves the
+    existing create contract unchanged.
     """
 
     occurred_on: date
@@ -41,6 +88,7 @@ class CreateTransaction(Command):
     notes: str | None = None
     recurring: bool = False
     counts_toward_monotributo: bool = False
+    document: TransactionDocumentPayload | None = None
 
 
 class UpdateTransaction(Command):

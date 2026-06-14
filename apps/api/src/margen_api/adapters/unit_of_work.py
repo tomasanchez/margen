@@ -7,6 +7,7 @@ from types import TracebackType
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.monotributo_repository import SqlAlchemyMonotributoSnapshotRepository
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
 from margen_api.adapters.settings_repository import SqlAlchemySettingsRepository
@@ -30,6 +31,7 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
         self.transactions = SqlAlchemyTransactionRepository(self.session)
         self.monotributo_snapshots = SqlAlchemyMonotributoSnapshotRepository(self.session)
         self.settings = SqlAlchemySettingsRepository(self.session)
+        self.documents = SqlAlchemyDocumentStore(self.session)
         return self
 
     async def __aexit__(

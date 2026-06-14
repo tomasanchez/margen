@@ -13,6 +13,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.queries import (
     SqlAlchemyInsightsReader,
     SqlAlchemyMonotributoReader,
@@ -21,6 +22,7 @@ from margen_api.adapters.queries import (
     SqlAlchemyTransactionReader,
 )
 from margen_api.bootstrap import ApplicationContainer
+from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
 from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.monotributo_reader import AbstractMonotributoReader
@@ -189,3 +191,22 @@ async def get_settings_reader(container: Container) -> AsyncIterator[AbstractSet
 
 
 SettingsReader = Annotated[AbstractSettingsReader, Depends(get_settings_reader)]
+
+
+async def get_document_store(container: Container) -> AsyncIterator[AbstractDocumentStore]:
+    """Yield a read-only invoice document store over a request-scoped session (ADR-071).
+
+    The parse endpoint uses ``exists_by_natural_key`` for the advisory dedupe flag
+    and the attachment endpoint uses ``get`` to stream the stored PDF; both are
+    query-only paths that bypass the unit of work by design (ADR-028). The session
+    opened here is closed when the request finishes. Document *writes* go through
+    the create handler's unit of work instead, keeping this dependency read-only.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemyDocumentStore(session)
+    finally:
+        await session.close()
+
+
+DocumentReader = Annotated[AbstractDocumentStore, Depends(get_document_store)]
