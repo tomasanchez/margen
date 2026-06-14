@@ -38,9 +38,33 @@ import { HomePage } from './HomePage'
 import { homeQueryKeys } from './queries'
 import { AddTransactionProvider } from '../transactions/AddTransactionProvider'
 import { transactionsKeys } from '../transactions/queries'
-import { SEED_MONOTRIBUTO } from '../../mock/seed'
 import type { Summary } from '../../api/summariesClient'
-import type { Transaction } from '../../mock/types'
+import type { MonotributoSnapshot, Transaction } from '../../mock/types'
+
+/**
+ * A minimal real-shaped Monotributo snapshot the Home card's `useMonotributo`
+ * query (`select`-adapted to a MonotributoState) resolves from, seeded into the
+ * cache so no `/monotributo` fetch is hit. Mirrors the ADR-046 standing shape.
+ */
+const MONOTRIBUTO_SNAPSHOT: MonotributoSnapshot = {
+  current: {
+    category: 'C',
+    activityType: 'services',
+    annualLimit: 21_113_697,
+    used: 12_713_696,
+    remaining: 8_400_001,
+    percentUsed: 60,
+    ratio: 0.6,
+    status: 'watch',
+    projectedCategory: 'D',
+    projectionNote: 'Estimate, assumes steady pace',
+    periodStart: '2025-06-01',
+    periodEnd: '2026-06-01',
+  },
+  previous: null,
+  scale: [],
+  invoices: [],
+}
 
 /** Minimal transaction builder for the integration rows. */
 function tx(
@@ -125,7 +149,7 @@ function renderHome(initialMonth: ViewingMonth) {
   // mock panels resolve from the in-memory mock and only affect their own
   // skeletons, which these assertions don't touch).
   queryClient.setQueryData(transactionsKeys.list(), ROWS)
-  queryClient.setQueryData(homeQueryKeys.monotributo(), SEED_MONOTRIBUTO)
+  queryClient.setQueryData(homeQueryKeys.monotributo(), MONOTRIBUTO_SNAPSHOT)
   // Seed the per-month real summaries so the trend + breakdown cards resolve
   // without a fetch; stepping the navigator switches to the other month's key.
   for (const [month, summary] of Object.entries(SUMMARIES)) {
@@ -229,6 +253,42 @@ test('renders the real summary cards for the selected month and reacts to naviga
   expect(within(mayCategories).queryByText('Food')).not.toBeInTheDocument()
   // May's current trend bar is ARS 555.
   expect(within(spendingTrendSection()).getByText(/May: ARS\s*555/)).toBeInTheDocument()
+})
+
+/** The Monotributo card, located by its "Category C" header. */
+function monotributoCardSection() {
+  return screen
+    .getByText('Monotributo · Category C')
+    .closest('section') as HTMLElement
+}
+
+test('the Monotributo card shows the real standing and the invoice drill-in link', async () => {
+  renderHome({ year: 2026, month: 5 }) // June 2026 (one invoice: j1)
+
+  await screen.findByText(/· June 2026/)
+
+  const card = monotributoCardSection()
+  const scoped = within(card)
+
+  // The card reads the real standing adapted from the seeded snapshot:
+  // category in the header, used / annual-limit figures, and the % used.
+  expect(scoped.getByText('Monotributo · Category C')).toBeInTheDocument()
+  expect(scoped.getByText('ARS 12.713.696')).toBeInTheDocument()
+  expect(
+    scoped.getByText('used of ARS 21.113.697 annual limit'),
+  ).toBeInTheDocument()
+  expect(scoped.getByText('60% used')).toBeInTheDocument()
+  // `remaining` surfaces as the margin figure.
+  expect(scoped.getByText('ARS 8.400.001 margin')).toBeInTheDocument()
+  // The status pill carries the watch band (icon + text, never color alone).
+  expect(scoped.getByRole('status', { name: /watch/i })).toBeInTheDocument()
+
+  // The drill-in link to the Transactions screen renders; the seed has no
+  // invoice-kind rows in June, so the count reads zero (the singular/plural copy
+  // is covered at the MonotributoCard component level).
+  expect(
+    scoped.getByRole('link', { name: 'See the 0 invoices behind this →' }),
+  ).toHaveAttribute('href', '/transactions')
 })
 
 test('a month with no transactions shows the calm empty state', async () => {
