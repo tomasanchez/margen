@@ -9,6 +9,7 @@ then ``created_at`` (ADR-030).
 
 from __future__ import annotations
 
+from datetime import date
 from types import TracebackType
 from uuid import UUID
 
@@ -17,6 +18,8 @@ from margen_api.domain.models.value_objects import Kind, TxType
 from margen_api.service_layer.read_models import TransactionReadModel
 from margen_api.service_layer.reader import AbstractTransactionReader
 from margen_api.service_layer.repository import AbstractTransactionRepository
+from margen_api.service_layer.summary_read_models import MonthlySummary
+from margen_api.service_layer.summary_reader import AbstractSummaryReader
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
 
 
@@ -119,6 +122,29 @@ class FakeTransactionReader(AbstractTransactionReader):
         """Return one read model, or ``None`` when absent."""
         transaction = self._committed.get(transaction_id)
         return _project(transaction) if transaction is not None else None
+
+
+class FakeSummaryReader(AbstractSummaryReader):
+    """Summary reader returning a canned :class:`MonthlySummary` for route tests.
+
+    The route tests assert wiring and the HTTP contract, not the aggregation
+    itself (which the pure-function and integration tiers cover), so this fake
+    simply records the requested month and returns the summary it was given.
+    """
+
+    def __init__(self, summary: MonthlySummary) -> None:
+        """Initialize the reader with the summary it should return.
+
+        Args:
+            summary: The monthly summary every call returns.
+        """
+        self._summary = summary
+        self.requested_month: date | None = None
+
+    async def monthly_summary(self, month: date) -> MonthlySummary:
+        """Record the requested month and return the canned summary."""
+        self.requested_month = month
+        return self._summary
 
 
 def _project(transaction: Transaction) -> TransactionReadModel:
