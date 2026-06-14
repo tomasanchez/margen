@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from types import TracebackType
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.value_objects import Kind, TxType
@@ -33,6 +33,7 @@ from margen_api.service_layer.repository import AbstractTransactionRepository
 from margen_api.service_layer.settings_read_models import AppSettings
 from margen_api.service_layer.settings_reader import AbstractSettingsReader
 from margen_api.service_layer.settings_repository import AbstractSettingsRepository
+from margen_api.service_layer.statement_store import AbstractStatementStore, StatementDocument
 from margen_api.service_layer.summary_read_models import MonthlySummary
 from margen_api.service_layer.summary_reader import AbstractSummaryReader
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
@@ -241,6 +242,76 @@ class FakeDocumentStore(AbstractDocumentStore):
         )
 
 
+class FakeStatementStore(AbstractStatementStore):
+    """In-memory statement document store keyed by a generated id (ADR-077).
+
+    Mirrors the SQLAlchemy adapter closely enough to drive the import handler and
+    parse-endpoint dedupe without a database: ``save`` writes one row under a
+    freshly generated UUID and returns that id (the FK target every imported
+    transaction links back to), ``get`` projects it into the download read model,
+    and ``exists_by_natural_key`` backs the advisory dedupe check (warn, not
+    block). Thorough behavior is covered by the integration tier (ADR-082).
+    """
+
+    def __init__(self, committed: dict[UUID, StatementDocument]) -> None:
+        """Initialize the store over the unit of work's committed dict."""
+        self._committed = committed
+
+    async def save(
+        self,
+        *,
+        pdf_bytes: bytes,
+        content_type: str,
+        byte_size: int,
+        extracted_text: str | None,
+        bank_name: str | None,
+        network: str | None,
+        card_last4: str | None,
+        issuer_cuit: str | None,
+        statement_number: str | None,
+        period_close: date | None,
+        period_due: date | None,
+        total_amount: Decimal | None,
+    ) -> UUID:
+        """Store one document row under a generated id and return that id."""
+        document_id = uuid4()
+        self._committed[document_id] = StatementDocument(
+            id=document_id,
+            pdf_bytes=pdf_bytes,
+            content_type=content_type,
+            byte_size=byte_size,
+            extracted_text=extracted_text,
+            bank_name=bank_name,
+            network=network,
+            card_last4=card_last4,
+            issuer_cuit=issuer_cuit,
+            statement_number=statement_number,
+            period_close=period_close,
+            period_due=period_due,
+            total_amount=total_amount,
+        )
+        return document_id
+
+    async def get(self, statement_document_id: UUID) -> StatementDocument | None:
+        """Return the stored document by identity, or ``None`` when absent."""
+        return self._committed.get(statement_document_id)
+
+    async def exists_by_natural_key(
+        self,
+        *,
+        issuer_cuit: str | None,
+        card_last4: str | None,
+        statement_number: str | None,
+    ) -> bool:
+        """Return whether a stored document matches the statement natural key."""
+        return any(
+            document.issuer_cuit == issuer_cuit
+            and document.card_last4 == card_last4
+            and document.statement_number == statement_number
+            for document in self._committed.values()
+        )
+
+
 class FakeUnitOfWork(AbstractUnitOfWork):
     """In-memory unit of work exposing the write-side repositories.
 
@@ -261,10 +332,12 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.config: dict[str, str] = {}
         self.used_by_window: dict[tuple[date, date], Decimal] = {}
         self.documents_store: dict[UUID, InvoiceDocument] = {}
+        self.statements_store: dict[UUID, StatementDocument] = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
         self.settings = FakeSettingsRepository(self.config)
         self.documents = FakeDocumentStore(self.documents_store)
+        self.statements = FakeStatementStore(self.statements_store)
         self.committed = False
 
     async def __aenter__(self) -> FakeUnitOfWork:
@@ -275,6 +348,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
         self.settings = FakeSettingsRepository(self.config)
         self.documents = FakeDocumentStore(self.documents_store)
+        self.statements = FakeStatementStore(self.statements_store)
         return self
 
     async def __aexit__(

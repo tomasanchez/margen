@@ -6,10 +6,34 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.functions import Function
 
 from margen_api.asgi import get_application
 from margen_api.bootstrap import ApplicationContainer, bootstrap
 from margen_api.settings.database_settings import DatabaseSettings
+
+
+@compiles(Function, "sqlite")
+def _compile_generic_function_on_sqlite(element, compiler, **kwargs):  # type: ignore[no-untyped-def]
+    """Render Postgres-only server-default functions on the in-memory SQLite tier.
+
+    The offline e2e tier runs the REAL application container on in-memory async
+    SQLite (ADR-019), but the persistence models use Postgres ``server_default``
+    functions — ``gen_random_uuid()`` for UUID primary keys (ADR-026). SQLite has
+    no such builtin, so a write that relies on the DB-generated default (the
+    statement-import path's ``statement_document`` insert) fails there. This shim
+    maps ``gen_random_uuid()`` to SQLite's own ``hex(randomblob(16))`` UUID-shaped
+    expression for the test dialect only; production Postgres is untouched (the
+    override is scoped to the ``"sqlite"`` dialect).
+    """
+    if element.name == "gen_random_uuid":
+        return (
+            "lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || "
+            "substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random())%4+1,1) || "
+            "substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))"
+        )
+    return compiler.visit_function(element, **kwargs)
 
 
 @pytest.fixture(name="container")
