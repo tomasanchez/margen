@@ -15,8 +15,10 @@ from uuid import uuid4
 
 from sqlalchemy import Select
 
+from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.adapters.queries import (
+    SqlAlchemyMonotributoReader,
     SqlAlchemySummaryReader,
     SqlAlchemyTransactionReader,
 )
@@ -234,3 +236,171 @@ class TestSummaryReader:
         # THEN
         assert summary.trend[-1].expenses == Decimal("250.5")
         assert summary.categories[0].amount == Decimal("250.5")
+
+
+def _config_row(category: str = "A", activity: str = "services") -> SimpleNamespace:
+    """Build a fake configured-category row."""
+    return SimpleNamespace(current_category=category, activity_type=activity)
+
+
+def _scalar_result(value: object) -> MagicMock:
+    """Wrap a value in a fake result exposing ``scalar_one_or_none``."""
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = value
+    return result
+
+
+def _first_result(row: object) -> MagicMock:
+    """Wrap a row in a fake result exposing ``first``."""
+    result = MagicMock()
+    result.first.return_value = row
+    return result
+
+
+def _scalars_result(rows: list[object]) -> MagicMock:
+    """Wrap rows in a fake result exposing ``scalars().all``."""
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = rows
+    return result
+
+
+def _invoice_record(occurred_on: date, amount: str, currency: str = "ARS") -> TransactionRecord:
+    """Build an invoice record for the drilldown projection."""
+    record = TransactionRecord()
+    record.id = uuid4()
+    record.occurred_on = occurred_on
+    record.name = "Invoice"
+    record.kind = "invoice"
+    record.amount = Decimal(amount)
+    record.currency = currency
+    record.category = "Consulting"
+    return record
+
+
+def _snapshot_record(period_end: date) -> MonotributoSnapshotRecord:
+    """Build a persisted snapshot row for the prior-window lookup."""
+    record = MonotributoSnapshotRecord()
+    record.period_start = date(2024, 6, 1)
+    record.period_end = period_end
+    record.category = "B"
+    record.activity_type = "services"
+    record.limit_amount = Decimal("13175201.52")
+    record.used = Decimal("700000.00")
+    record.remaining = Decimal("12475201.52")
+    record.percent_used = Decimal("5.31")
+    record.status = "safe"
+    record.projected_category = "A"
+    return record
+
+
+class TestMonotributoReader:
+    """``SqlAlchemyMonotributoReader`` aggregates the standing, drilldown and previous."""
+
+    async def test_snapshot_with_persisted_previous(self):
+        """
+        GIVEN a configured category, a window SUM, an invoice and a persisted prior snapshot
+        WHEN the snapshot is assembled
+        THEN current is computed live, the drilldown carries a cumulative, and previous
+             reads the frozen persisted snapshot
+        """
+        # GIVEN — execute sequence: config, used(current), invoices, snapshot_at(prior).
+        reference = date(2026, 6, 14)
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _first_result(_config_row(category="A")),
+            _scalar_result(Decimal("1500000.50")),
+            _scalars_result([_invoice_record(date(2026, 1, 15), "1500000.50")]),
+            _scalar_result(_snapshot_record(date(2025, 6, 1))),
+        ]
+        reader = SqlAlchemyMonotributoReader(session)
+
+        # WHEN
+        snapshot = await reader.snapshot(reference)
+
+        # THEN
+        assert snapshot.current.category == "A"
+        assert snapshot.current.used == Decimal("1500000.50")
+        assert [entry.letter for entry in snapshot.scale] == list("ABCDEFGHIJK")
+        assert snapshot.invoices[0].cumulative == Decimal("1500000.50")
+        assert snapshot.invoices[0].is_foreign_currency is False
+        # previous resolved from the persisted snapshot (note labels it a saved snapshot).
+        assert snapshot.previous is not None
+        assert snapshot.previous.category == "B"
+        assert snapshot.previous.projection_note == "Saved snapshot from this period."
+
+    async def test_snapshot_computes_previous_live_when_absent(self):
+        """
+        GIVEN no persisted prior snapshot and no config row
+        WHEN the snapshot is assembled
+        THEN current and previous both use the default category and previous is computed live
+        """
+        # GIVEN — execute sequence: config(None), used(current), invoices(none),
+        # snapshot_at(None), config(None) again, used(prior).
+        reference = date(2026, 6, 14)
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _first_result(None),  # no config -> defaults
+            _scalar_result(None),  # no current income -> 0
+            _scalars_result([]),  # no invoices
+            _scalar_result(None),  # no persisted prior snapshot
+            _first_result(None),  # no config (prior) -> defaults
+            _scalar_result(Decimal("300000.00")),  # prior used
+        ]
+        reader = SqlAlchemyMonotributoReader(session)
+
+        # WHEN
+        snapshot = await reader.snapshot(reference)
+
+        # THEN — defaults applied, zero current, live previous.
+        assert snapshot.current.category == "A"
+        assert snapshot.current.activity_type == "services"
+        assert snapshot.current.used == Decimal("0")
+        assert snapshot.invoices == []
+        assert snapshot.previous is not None
+        assert snapshot.previous.used == Decimal("300000.00")
+        assert snapshot.previous.projection_note != "Saved snapshot from this period."
+
+    async def test_foreign_currency_invoice_flagged(self):
+        """
+        GIVEN a USD invoice in the window
+        WHEN current_standing then the drilldown are read
+        THEN the row is flagged as foreign currency
+        """
+        # GIVEN — snapshot path: config, used, invoices(USD), snapshot_at(None), config, used.
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _first_result(_config_row()),
+            _scalar_result(Decimal("1000.00")),
+            _scalars_result([_invoice_record(date(2026, 2, 1), "1000.00", currency="USD")]),
+            _scalar_result(None),
+            _first_result(_config_row()),
+            _scalar_result(Decimal("0")),
+        ]
+        reader = SqlAlchemyMonotributoReader(session)
+
+        # WHEN
+        snapshot = await reader.snapshot(date(2026, 6, 14))
+
+        # THEN
+        assert snapshot.invoices[0].is_foreign_currency is True
+
+    async def test_current_standing_reads_configured_category(self):
+        """
+        GIVEN a persisted config row of category H
+        WHEN the live current standing is computed
+        THEN it uses the configured category's ceiling
+        """
+        # GIVEN — current_standing: config, used.
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _first_result(_config_row(category="H")),
+            _scalar_result(Decimal("5000000.00")),
+        ]
+        reader = SqlAlchemyMonotributoReader(session)
+
+        # WHEN
+        standing = await reader.current_standing(date(2026, 6, 14))
+
+        # THEN
+        assert standing.category == "H"
+        assert standing.used == Decimal("5000000.00")

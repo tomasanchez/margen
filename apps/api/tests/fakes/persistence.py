@@ -10,11 +10,23 @@ then ``created_at`` (ADR-030).
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from types import TracebackType
 from uuid import UUID
 
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.value_objects import Kind, TxType
+from margen_api.service_layer.monotributo_config_repository import (
+    AbstractMonotributoConfigRepository,
+)
+from margen_api.service_layer.monotributo_read_models import (
+    MonotributoSnapshot,
+    MonotributoStanding,
+)
+from margen_api.service_layer.monotributo_reader import AbstractMonotributoReader
+from margen_api.service_layer.monotributo_repository import (
+    AbstractMonotributoSnapshotRepository,
+)
 from margen_api.service_layer.read_models import TransactionReadModel
 from margen_api.service_layer.reader import AbstractTransactionReader
 from margen_api.service_layer.repository import AbstractTransactionRepository
@@ -60,14 +72,88 @@ class FakeTransactionRepository(AbstractTransactionRepository):
         return staged is not None or committed is not None
 
 
+class FakeMonotributoSnapshotRepository(AbstractMonotributoSnapshotRepository):
+    """In-memory snapshot history keyed by ``period_end`` month (ADR-052).
+
+    Mirrors the SQLAlchemy adapter: ``upsert`` replaces the row for a
+    ``period_end`` (idempotent — never duplicates), and the focused read helpers
+    return the unit of work's configured category and the per-window included
+    income that the capture handler derives its standings from.
+    """
+
+    def __init__(
+        self,
+        committed: dict[date, MonotributoStanding],
+        config: dict[str, str],
+        used_by_window: dict[tuple[date, date], Decimal],
+    ) -> None:
+        """Initialize the repository over the unit of work's stores."""
+        self._committed = committed
+        self._config = config
+        self._used_by_window = used_by_window
+
+    async def configured_category(self) -> tuple[str, str] | None:
+        """Return the configured ``(category, activity_type)`` pair, if set."""
+        if not self._config:
+            return None
+        return self._config["current_category"], self._config["activity_type"]
+
+    async def used_in_window(self, window_start: date, window_end: date) -> Decimal:
+        """Return the canned SUM of included income for a window, else 0."""
+        return self._used_by_window.get((window_start, window_end), Decimal(0))
+
+    async def existing_period_ends(self) -> set[date]:
+        """Return the ``period_end`` months that already have a snapshot."""
+        return set(self._committed)
+
+    async def upsert(self, standing: MonotributoStanding) -> None:
+        """Insert or update the snapshot for the standing's ``period_end``."""
+        self._committed[standing.period_end] = standing
+
+
+class FakeMonotributoConfigRepository(AbstractMonotributoConfigRepository):
+    """In-memory single-row Monotributo config (ADR-048)."""
+
+    def __init__(self, config: dict[str, str]) -> None:
+        """Initialize over a shared single-row config dict."""
+        self._config = config
+
+    async def set_config(self, *, current_category: str, activity_type: str | None) -> None:
+        """Upsert the category, leaving the activity unchanged when ``None``."""
+        self._config["current_category"] = current_category
+        if activity_type is not None:
+            self._config["activity_type"] = activity_type
+        elif "activity_type" not in self._config:
+            self._config["activity_type"] = "services"
+
+    async def get_config(self) -> tuple[str, str] | None:
+        """Return the persisted ``(current_category, activity_type)``, or ``None``."""
+        if "current_category" not in self._config:
+            return None
+        return self._config["current_category"], self._config.get("activity_type", "services")
+
+
 class FakeUnitOfWork(AbstractUnitOfWork):
-    """In-memory unit of work exposing a fake transaction repository."""
+    """In-memory unit of work exposing the write-side repositories.
+
+    Beyond the transaction repository it exposes fake Monotributo snapshot and
+    config repositories (ADR-052, ADR-048) so the read-records capture and config
+    handlers can be driven without a database. ``snapshots`` is the committed
+    snapshot history keyed by ``period_end``; ``config`` is the single-row config;
+    ``used_by_window`` seeds the per-window included-income totals the capture
+    handler reads.
+    """
 
     def __init__(self) -> None:
         """Initialize an empty unit of work."""
         self.committed_aggregates: dict[UUID, Transaction] = {}
         self._staged: dict[UUID, Transaction] = {}
+        self.snapshots: dict[date, MonotributoStanding] = {}
+        self.config: dict[str, str] = {}
+        self.used_by_window: dict[tuple[date, date], Decimal] = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
+        self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
+        self.monotributo_config = FakeMonotributoConfigRepository(self.config)
         self.committed = False
 
     async def __aenter__(self) -> FakeUnitOfWork:
@@ -75,6 +161,8 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.committed = False
         self._staged = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
+        self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
+        self.monotributo_config = FakeMonotributoConfigRepository(self.config)
         return self
 
     async def __aexit__(
@@ -145,6 +233,30 @@ class FakeSummaryReader(AbstractSummaryReader):
         """Record the requested month and return the canned summary."""
         self.requested_month = month
         return self._summary
+
+
+class FakeMonotributoReader(AbstractMonotributoReader):
+    """Monotributo reader returning a canned snapshot for route tests (ADR-052).
+
+    The route tests assert wiring and the HTTP contract, not the aggregation
+    (covered by the pure-function and integration tiers), so this fake records the
+    requested reference date and returns the snapshot it was given.
+    """
+
+    def __init__(self, snapshot: MonotributoSnapshot) -> None:
+        """Initialize the reader with the snapshot every call returns."""
+        self._snapshot = snapshot
+        self.requested_reference: date | None = None
+
+    async def snapshot(self, reference: date) -> MonotributoSnapshot:
+        """Record the reference and return the canned snapshot."""
+        self.requested_reference = reference
+        return self._snapshot
+
+    async def current_standing(self, reference: date) -> MonotributoStanding:
+        """Return the canned snapshot's current standing."""
+        self.requested_reference = reference
+        return self._snapshot.current
 
 
 def _project(transaction: Transaction) -> TransactionReadModel:
