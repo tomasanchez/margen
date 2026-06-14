@@ -7,6 +7,10 @@ from types import TracebackType
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from margen_api.adapters.monotributo_config_repository import (
+    SqlAlchemyMonotributoConfigRepository,
+)
+from margen_api.adapters.monotributo_repository import SqlAlchemyMonotributoSnapshotRepository
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork, IntegrityConflict
 
@@ -26,6 +30,8 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
         """Open a session and repositories."""
         self.session = self.session_factory()
         self.transactions = SqlAlchemyTransactionRepository(self.session)
+        self.monotributo_snapshots = SqlAlchemyMonotributoSnapshotRepository(self.session)
+        self.monotributo_config = SqlAlchemyMonotributoConfigRepository(self.session)
         return self
 
     async def __aexit__(

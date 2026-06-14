@@ -7,6 +7,10 @@ from collections.abc import Iterator
 from types import TracebackType
 
 from margen_api.domain.messages import Event
+from margen_api.service_layer.monotributo_config_repository import (
+    AbstractMonotributoConfigRepository,
+)
+from margen_api.service_layer.monotributo_repository import AbstractMonotributoSnapshotRepository
 from margen_api.service_layer.repository import AbstractTransactionRepository
 
 
@@ -23,9 +27,15 @@ class AbstractUnitOfWork(ABC):
     Attributes:
         transactions: Repository for the ``Transaction`` aggregate, available
             inside the ``async with`` boundary.
+        monotributo_snapshots: Repository for the Monotributo snapshot history,
+            written by the read-records capture handler (ADR-052).
+        monotributo_config: Repository for the single-row Monotributo config,
+            written by the update-config handler (ADR-048).
     """
 
     transactions: AbstractTransactionRepository
+    monotributo_snapshots: AbstractMonotributoSnapshotRepository
+    monotributo_config: AbstractMonotributoConfigRepository
 
     async def __aenter__(self) -> AbstractUnitOfWork:
         """Enter the transaction boundary."""

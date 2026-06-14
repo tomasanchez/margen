@@ -10,9 +10,14 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
-from margen_api.adapters.queries import SqlAlchemySummaryReader, SqlAlchemyTransactionReader
+from margen_api.adapters.queries import (
+    SqlAlchemyMonotributoReader,
+    SqlAlchemySummaryReader,
+    SqlAlchemyTransactionReader,
+)
 from margen_api.bootstrap import ApplicationContainer
 from margen_api.service_layer.messagebus import MessageBus
+from margen_api.service_layer.monotributo_reader import AbstractMonotributoReader
 from margen_api.service_layer.reader import AbstractTransactionReader
 from margen_api.service_layer.summary_reader import AbstractSummaryReader
 
@@ -63,3 +68,20 @@ async def get_summary_reader(container: Container) -> AsyncIterator[AbstractSumm
 
 
 SummaryReader = Annotated[AbstractSummaryReader, Depends(get_summary_reader)]
+
+
+async def get_monotributo_reader(container: Container) -> AsyncIterator[AbstractMonotributoReader]:
+    """Yield a Monotributo reader over a request-scoped read-only session (ADR-052).
+
+    Query paths bypass the unit of work by design (ADR-028); the session opened
+    here is closed when the request finishes. The read-records snapshot write goes
+    through the message bus / unit of work instead, keeping this reader read-only.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemyMonotributoReader(session)
+    finally:
+        await session.close()
+
+
+MonotributoReader = Annotated[AbstractMonotributoReader, Depends(get_monotributo_reader)]
