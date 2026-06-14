@@ -27,6 +27,12 @@ export interface SectionCardProps {
   highlight?: boolean
   /** Inner padding override (theme spacing units). */
   padding?: number
+  /**
+   * Reserve a minimum height for the card body (the area below the header),
+   * so a section keeps its populated footprint even when its data is empty
+   * and the card never collapses or jumps between states (any CSS length).
+   */
+  minHeight?: number | string
   children?: React.ReactNode
 }
 
@@ -38,6 +44,7 @@ export function SectionCard({
   action,
   highlight = false,
   padding = 2.75,
+  minHeight,
   children,
 }: SectionCardProps) {
   const hasHeader = title != null || action != null
@@ -97,7 +104,21 @@ export function SectionCard({
           ) : null}
         </Box>
       ) : null}
-      {children}
+      {minHeight != null ? (
+        <Box
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight,
+          }}
+        >
+          {children}
+        </Box>
+      ) : (
+        children
+      )}
     </Paper>
   )
 }

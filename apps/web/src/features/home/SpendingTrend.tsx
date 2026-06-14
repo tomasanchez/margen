@@ -34,12 +34,20 @@ export interface SpendingTrendProps {
 
 const BAR_AREA_HEIGHT = 150
 
+/**
+ * Reserved body height so the card keeps the same footprint in every state
+ * (loading, all-zero month, populated) and never collapses or jumps between
+ * months. Covers the fixed bar area plus the month-label row beneath it.
+ */
+const BODY_MIN_HEIGHT = BAR_AREA_HEIGHT + 28
+
 export function SpendingTrend({ trend, loading = false }: SpendingTrendProps) {
   if (loading || !trend) {
     return (
       <SectionCard
         title="Spending trend"
         subtitle="Monthly expenses · last 6 months"
+        minHeight={BODY_MIN_HEIGHT}
       >
         <Skeleton variant="rounded" height={BAR_AREA_HEIGHT} />
       </SectionCard>
@@ -56,6 +64,7 @@ export function SpendingTrend({ trend, loading = false }: SpendingTrendProps) {
     <SectionCard
       title="Spending trend"
       subtitle="Monthly expenses · last 6 months"
+      minHeight={BODY_MIN_HEIGHT}
       action={
         current ? (
           <Typography
