@@ -150,8 +150,17 @@ export interface NewTransactionInput {
 /** Partial patch accepted by the update mutation. Id and identity stay fixed. */
 export type TransactionPatch = Partial<Omit<Transaction, 'id'>>
 
-/** Safe / Watch / Risk status used by the Monotributo meter and status pills. */
-export type StatusLevel = 'safe' | 'watch' | 'risk'
+/**
+ * Status band used by the Monotributo meter and status pills.
+ *
+ * The backend's Monotributo read endpoint (ADR-046) returns four bands keyed by
+ * percentage of the category ceiling: `safe` (<70%), `watch` (70–90%), `close`
+ * (90–100%), and `over` (>100%). The Home month-status surfaces (StatusHero /
+ * MetricCards) only ever map the dashboard's own derived standing onto the
+ * legacy three (`safe` / `watch` / `risk`); the two Monotributo-only bands
+ * (`close` / `over`) flow through {@link StatusPill} with their own calm copy.
+ */
+export type StatusLevel = 'safe' | 'watch' | 'close' | 'over' | 'risk'
 
 /**
  * Monotributo standing for the current period.
@@ -252,6 +261,83 @@ export interface MonotributoProjection {
   evaluates: string
   /** Authoritative ARCA (ex-AFIP) scale URL. */
   arcaUrl: string
+}
+
+/**
+ * A single trailing-12-month Monotributo standing (ADR-046, ADR-052).
+ *
+ * Returned for both the live `current` period and the prior `previous` window
+ * by `GET /api/v1/monotributo`. Money fields are already parsed to numbers in
+ * the client adapter; `status` carries one of the four bands; `ratio` is the
+ * convenience `percentUsed / 100` in [0, 1] the meters consume.
+ */
+export interface MonotributoStanding {
+  /** Current AFIP category letter, e.g. "C". */
+  category: string
+  /** Activity type — `services` for MVP (ADR-046). */
+  activityType: string
+  /** ARS annual ceiling for the category. */
+  annualLimit: number
+  /** ARS invoiced over the trailing 12-month window. */
+  used: number
+  /** Remaining ARS before the ceiling (`annualLimit − used`). */
+  remaining: number
+  /** Percentage of the ceiling used, 0–100+. */
+  percentUsed: number
+  /** Convenience ratio in [0, 1] (`percentUsed / 100`) for the meters. */
+  ratio: number
+  /** Status band for non-color status cues (ADR-046). */
+  status: StatusLevel
+  /** Projected category letter at the current pace, e.g. "D". */
+  projectedCategory: string
+  /** Explicit estimate note (e.g. "Estimate, assumes steady pace"). */
+  projectionNote: string
+  /** ISO date the trailing window starts (`YYYY-MM-DD`). */
+  periodStart: string
+  /** ISO date the trailing window ends (`YYYY-MM-DD`). */
+  periodEnd: string
+}
+
+/** A signed delta between the current and previous standing for one field. */
+export interface MonotributoNumericDelta {
+  /** Current-period value. */
+  current: number
+  /** Previous-period value. */
+  previous: number
+  /** `current − previous`. */
+  diff: number
+}
+
+/**
+ * Period-over-period deltas surfaced by the "Compare to previous period" toggle
+ * (ADR-052). Derived from `current` vs `previous`; only present when a prior
+ * trailing-12-month snapshot exists.
+ */
+export interface MonotributoComparison {
+  used: MonotributoNumericDelta
+  percentUsed: MonotributoNumericDelta
+  /** Category letters; `changed` is true when they differ. */
+  category: { current: string; previous: string; changed: boolean }
+  /** Status bands; `changed` is true when they differ. */
+  status: {
+    current: StatusLevel
+    previous: StatusLevel
+    changed: boolean
+  }
+}
+
+/**
+ * The full Monotributo snapshot the page consumes (ADR-049, ADR-052).
+ *
+ * One query owns it; the page derives the meter standing, scale, invoices, and
+ * projection from it. `previous` is null when no prior trailing-12-month period
+ * exists yet (calm empty state for the comparison toggle).
+ */
+export interface MonotributoSnapshot {
+  current: MonotributoStanding
+  previous: MonotributoStanding | null
+  scale: MonotributoScaleRow[]
+  invoices: MonotributoInvoice[]
 }
 
 /** One bar in the 6-month spending trend. `current` flags the active month. */

@@ -1,64 +1,127 @@
 /**
  * Monotributo — limit meter, projection & the invoices behind it
- * (Issue #8, ADR-012/015/017/019/020/023).
+ * (Issue #8, ADR-046/049/052).
  *
- * UI-first on mock data: the meter hero, category ladder, projection breakdown,
- * invoice drilldown, and the full official AFIP/ARCA scale. Server state comes
- * from TanStack Query over the in-memory mock API — the snapshot (reused from
- * Home) plus the dedicated scale / invoices / projection queries. There is no
- * real recategorization engine; the projection is an illustrative linear pace
- * estimate (ADR-023).
+ * Real-data: the whole page reads ONE snapshot query
+ * (`GET /api/v1/monotributo`, {@link useMonotributoSnapshot}) and derives the
+ * meter standing, A–K scale, included invoices, and the projection figures from
+ * it. A compact category selector PATCHes the configured category (and refetches
+ * the snapshot + Home card on success); a "Compare to previous period" toggle
+ * reveals the prior trailing-12-month standing alongside the current one with
+ * deltas (or a calm empty state when no prior period exists). The projection is
+ * a clearly-labeled estimate carrying the API's own `projectionNote` (ADR-046).
  *
  * Layout (ADR-017): a single column of stacked sections; the projection +
  * invoices sit in a two-column grid on desktop that stacks on mobile. The shell
  * (top bar, sidebar, mobile pill/FAB) is provided by AppShell — this renders
- * only the routed main content.
+ * only the routed main content. The page shows the trailing-12-month standing
+ * independently and does NOT consume the Home month navigator (ADR-040).
  *
  * The visible page <h1> ("Monotributo") names the route landmark.
  */
 
+import { useMemo, useState } from 'react'
 import Box from '@mui/material/Box'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import { monoFontFamily } from '../../theme'
 import { StatusPill } from '../../components/StatusPill'
 import { SectionCard } from '../../components/SectionCard'
+import { ErrorState } from '../../components/ErrorState'
 import { formatCurrency, formatPercent } from '../../lib/format'
+import { MonotributoApiError } from '../../api/monotributoClient'
+import { deriveComparison } from '../../api/monotributoClient'
 import {
-  useMonotributo,
-  useMonotributoInvoices,
-  useMonotributoProjection,
-  useMonotributoScale,
+  useMonotributoSnapshot,
+  useUpdateMonotributoCategory,
 } from './queries'
+import { deriveProjection, standingToState } from './derive'
 import { MeterHero } from './MeterHero'
 import { CategoryLadder } from './CategoryLadder'
 import { ProjectionBreakdown } from './ProjectionBreakdown'
 import { InvoiceDrilldown } from './InvoiceDrilldown'
 import { ScaleTable } from './ScaleTable'
+import { MonotributoControls } from './MonotributoControls'
+import { ComparisonRow } from './ComparisonRow'
+import type { StatusLevel } from '../../mock/types'
 
-/** Maps a status level to its short label word for the header pill. */
-const STATUS_WORD: Record<'safe' | 'watch' | 'risk', string> = {
+/** Maps a status band to its short label word for the header pill (ADR-046). */
+const STATUS_WORD: Record<StatusLevel, string> = {
   safe: 'Safe',
   watch: 'Watch',
+  close: 'Close',
+  over: 'Over',
   risk: 'Risk',
 }
 
 export function MonotributoPage() {
-  const snapshotQuery = useMonotributo()
-  const scaleQuery = useMonotributoScale()
-  const invoicesQuery = useMonotributoInvoices()
-  const projectionQuery = useMonotributoProjection()
+  const snapshotQuery = useMonotributoSnapshot()
+  const updateCategory = useUpdateMonotributoCategory()
 
-  const monotributo = snapshotQuery.data
-  const projection = projectionQuery.data
-  const scale = scaleQuery.data
-  const invoices = invoicesQuery.data
+  // The comparison toggle is local view state (not server state, not URL state):
+  // it only reveals the prior-period figures already in the snapshot (ADR-052).
+  const [compare, setCompare] = useState(false)
 
-  const loading =
-    snapshotQuery.isPending ||
-    projectionQuery.isPending ||
-    scaleQuery.isPending ||
-    invoicesQuery.isPending
+  const snapshot = snapshotQuery.data
+
+  // Derive every display shape from the single snapshot so a category change
+  // refetches everything at once and the components keep their prototype props.
+  const standing = snapshot?.current
+  const monotributo = useMemo(
+    () => (standing ? standingToState(standing) : undefined),
+    [standing],
+  )
+  const projection = useMemo(
+    () =>
+      standing && snapshot
+        ? deriveProjection(standing, snapshot.scale)
+        : undefined,
+    [standing, snapshot],
+  )
+  const comparison = useMemo(
+    () => (snapshot ? deriveComparison(snapshot) : null),
+    [snapshot],
+  )
+
+  // Surface an unknown-category 422 as a calm inline message; other failures
+  // fall back to a generic line (the page itself stays usable).
+  const categoryError =
+    updateCategory.isError && updateCategory.error
+      ? updateCategory.error instanceof MonotributoApiError &&
+        updateCategory.error.status === 422
+        ? "That category isn't recognized. Pick one from the list."
+        : "We couldn't update your category. Try again."
+      : null
+
+  function handleCategoryChange(letter: string) {
+    if (letter === standing?.category) return
+    updateCategory.mutate({ currentCategory: letter })
+  }
+
+  if (snapshotQuery.isError) {
+    return (
+      <Box>
+        <Typography
+          component="h1"
+          sx={{ fontSize: { xs: '1.25rem', md: '1.375rem' }, fontWeight: 600, mb: 2.5 }}
+          color="text.primary"
+        >
+          Monotributo
+        </Typography>
+        <ErrorState
+          title="Monotributo data unavailable"
+          description="We couldn't load your Monotributo standing. Check your connection and try again."
+          onRetry={() => void snapshotQuery.refetch()}
+        />
+      </Box>
+    )
+  }
+
+  const ready =
+    !snapshotQuery.isPending &&
+    snapshot != null &&
+    monotributo != null &&
+    projection != null
 
   return (
     <Box>
@@ -91,7 +154,7 @@ export function MonotributoPage() {
               />
             ) : null}
           </Box>
-          {monotributo ? (
+          {monotributo && projection ? (
             <Typography
               component="p"
               sx={{ fontSize: 13.5, mt: 0.75 }}
@@ -102,63 +165,41 @@ export function MonotributoPage() {
                 {monotributo.category}
               </Box>{' '}
               · services · monthly fee{' '}
-              {projection ? (
-                <Box
-                  component="span"
-                  sx={{ fontFamily: monoFontFamily, color: 'var(--mg-text-mid)' }}
-                >
-                  {formatCurrency(projection.currentCuota, 'ARS')}
-                </Box>
-              ) : null}
+              <Box
+                component="span"
+                sx={{ fontFamily: monoFontFamily, color: 'var(--mg-text-mid)' }}
+              >
+                {formatCurrency(projection.currentCuota, 'ARS')}
+              </Box>
             </Typography>
           ) : null}
         </Box>
 
-        {projection ? (
-          <Box
-            sx={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: { xs: 'flex-start', md: 'flex-end' },
-              px: 1.75,
-              py: 1,
-              borderRadius: '11px',
-              border: '1px solid var(--mg-border-2)',
-              bgcolor: 'var(--mg-raised)',
-              flex: 'none',
-              // Full width on mobile (stacked header); content-width on desktop.
-              width: { xs: '100%', md: 'auto' },
-            }}
-          >
-            <Typography
-              sx={{
-                fontSize: 10.5,
-                letterSpacing: '0.08em',
-                textTransform: 'uppercase',
-                fontWeight: 600,
-              }}
-              color="text.disabled"
-            >
-              Next recategorization
-            </Typography>
-            <Typography sx={{ fontSize: 13.5, mt: 0.25 }} color="var(--mg-text-mid)">
-              {projection.nextRecategorization}{' '}
-              <Box component="span" sx={{ color: 'var(--mg-text-3)' }}>
-                · evaluates {projection.evaluates}
-              </Box>
-            </Typography>
-          </Box>
+        {ready && snapshot && standing ? (
+          <MonotributoControls
+            scale={snapshot.scale}
+            currentCategory={standing.category}
+            onCategoryChange={handleCategoryChange}
+            saving={updateCategory.isPending}
+            categoryError={categoryError}
+            compare={compare}
+            onCompareChange={setCompare}
+          />
         ) : null}
       </Box>
 
-      {loading || !monotributo || !projection || !scale || !invoices ? (
+      {!ready ? (
         <PageSkeleton />
       ) : (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: { xs: 1.75, md: 2.25 } }}>
           <MeterHero monotributo={monotributo} projection={projection} />
 
+          {compare ? (
+            <ComparisonRow comparison={comparison} previous={snapshot.previous} />
+          ) : null}
+
           <CategoryLadder
-            scale={scale}
+            scale={snapshot.scale}
             current={monotributo.category}
             projected={projection.landsInCategory}
           />
@@ -173,14 +214,14 @@ export function MonotributoPage() {
           >
             <ProjectionBreakdown projection={projection} />
             <InvoiceDrilldown
-              invoices={invoices}
+              invoices={snapshot.invoices}
               annualLimit={monotributo.annualLimit}
               total={monotributo.used}
             />
           </Box>
 
           <ScaleTable
-            scale={scale}
+            scale={snapshot.scale}
             current={monotributo.category}
             projected={projection.landsInCategory}
             arcaUrl={projection.arcaUrl}

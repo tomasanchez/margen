@@ -12,8 +12,14 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { fetchSummary, type Summary } from '../../api/summariesClient'
-import { getInsights, getMonotributo } from '../../mock/api'
-import type { Insight, MonotributoState } from '../../mock/types'
+import { fetchMonotributo } from '../../api/monotributoClient'
+import { getInsights } from '../../mock/api'
+import { standingToState } from '../monotributo/derive'
+import type {
+  Insight,
+  MonotributoSnapshot,
+  MonotributoState,
+} from '../../mock/types'
 import type { ViewingMonth } from '../../components/months'
 
 /** Stable query-key factory for the Home domain. */
@@ -31,11 +37,20 @@ export function toYearMonth(value: ViewingMonth): string {
   return `${value.year}-${month}`
 }
 
-/** Current Monotributo standing for the meter + status pill (mock seed). */
+/**
+ * Current Monotributo standing for the Home card + status pill, from the real
+ * `GET /api/v1/monotributo` endpoint (ADR-046/049). The card consumes the legacy
+ * {@link MonotributoState}, so the snapshot's live `current` standing is adapted
+ * via `select`. Kept under the `home` namespace and invalidated alongside a
+ * category change so the card refetches; the dedicated page query
+ * (`useMonotributoSnapshot`) owns the richer prior-period + scale data.
+ */
 export function useMonotributo() {
-  return useQuery<MonotributoState>({
+  return useQuery<MonotributoSnapshot, Error, MonotributoState>({
     queryKey: homeQueryKeys.monotributo(),
-    queryFn: () => getMonotributo(),
+    queryFn: () => fetchMonotributo(),
+    select: (snapshot) => standingToState(snapshot.current),
+    staleTime: 5 * 60 * 1000,
   })
 }
 

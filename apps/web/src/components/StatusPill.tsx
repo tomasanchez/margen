@@ -37,6 +37,18 @@ const PRESENTATION: Record<StatusLevel, StatusPresentation> = {
     icon: <WarningAmberRoundedIcon fontSize="small" />,
     srDescription: 'Status: watch',
   },
+  close: {
+    label: 'Close',
+    color: 'var(--mg-watch)',
+    icon: <WarningAmberRoundedIcon fontSize="small" />,
+    srDescription: 'Status: close to your limit',
+  },
+  over: {
+    label: 'Over',
+    color: 'var(--mg-risk)',
+    icon: <ErrorOutlinedIcon fontSize="small" />,
+    srDescription: 'Status: over your limit',
+  },
   risk: {
     label: 'Risk',
     color: 'var(--mg-risk)',
