@@ -14,6 +14,17 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.41",
     "alembic>=1.16.2",
     "asyncpg>=0.30.0",
+    # ARCA invoice parser (ADR-069): PyMuPDF (import name `fitz` / `pymupdf`)
+    # extracts text and renders pages to images; pyzbar decodes the AFIP QR.
+    # NOTE: pyzbar wraps the native `zbar` system library, which must be present
+    # at runtime (e.g. `apt-get install libzbar0` in the container image) — a
+    # deploy/container follow-up tracked alongside ADR-069.
+    "pymupdf>=1.27.2.3",
+    "pyzbar>=0.1.9",
+    # Required by FastAPI to parse multipart uploads for the stateless invoice
+    # parse endpoint (POST /invoices/parse, ADR-070). FastAPI eagerly verifies
+    # this is installed when an UploadFile parameter is declared.
+    "python-multipart>=0.0.18",
 ]
 
 [dependency-groups]
