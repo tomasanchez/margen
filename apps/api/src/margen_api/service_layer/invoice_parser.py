@@ -8,11 +8,16 @@ without a usable QR.
 The native-library boundary is deliberately narrow so the fast test tier can mock
 it without ``zbar`` installed:
 
-- :func:`extract_text` and :func:`decode_qr_payloads` are the *only* functions
-  that touch PyMuPDF (``fitz``) and ``pyzbar``.
+- :func:`extract_text`, :func:`extract_words`, and :func:`decode_qr_payloads` are
+  the *only* functions that touch PyMuPDF (``fitz``) and ``pyzbar``.
 - :func:`extract_afip_qr_data`, :func:`derive_client_name`, and
   :func:`to_transaction_input` are PURE: no I/O, fully unit-testable from plain
-  strings and dataclasses.
+  strings, word-coordinate tuples, and dataclasses.
+
+The receptor/client name lives in a two-column layout that flat
+:func:`extract_text` reorders, so :func:`derive_client_name` reads the value to
+the *right* of the receptor label using the word coordinates from
+:func:`extract_words` (issue #26).
 
 This module performs NO persistence and NO HTTP calls (ADR-069).
 """
@@ -22,6 +27,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import unicodedata
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -62,15 +68,33 @@ _ARS_MONEDA_CODES = frozenset({"ARS", "PES"})
 # Default category for an imported invoice; editable at the confirm step (ADR-068).
 _DEFAULT_INVOICE_CATEGORY = "Services"
 
-# Best-effort labels that precede the receptor/client name in ARCA PDF text.
-_CLIENT_NAME_LABELS = (
-    "Apellido y Nombre / Razón Social",
-    "Apellido y Nombre / Razon Social",
-    "Razón Social",
-    "Razon Social",
-    "Apellido y Nombre",
-    "Nombre y Apellido",
+# RECEPTOR-specific labels that precede the client name, in PREFERENCE order. These
+# are deliberately distinct from the issuer's bare "Razón Social:" label so the
+# emisor block is never picked (issue #26): the "Señor(es)" family identifies the
+# receptor unambiguously, and the standard receptor variant always pairs the name
+# with "Apellido y Nombre". Each label is given as its normalized words so we can
+# match a run of adjacent words on a physical line regardless of casing/accents.
+_RECEPTOR_NAME_LABELS: tuple[tuple[str, ...], ...] = (
+    ("senor(es):",),
+    ("senores:",),
+    ("senor/es:",),
+    ("apellido", "y", "nombre", "/", "razon", "social:"),
+    ("apellido", "y", "nombre", "/", "razon", "social"),
+    ("apellido", "y", "nombre:"),
+    ("apellido", "y", "nombre"),
 )
+
+# Vertical tolerance (PDF points) for treating two words as sharing one physical
+# line; ARCA glyphs on a line vary by < 1pt in y, so a small band is ample.
+_LINE_Y_TOLERANCE = 3.0
+
+# Word indices in a PyMuPDF ``page.get_text("words")`` tuple
+# ``(x0, y0, x1, y1, word, block_no, line_no, word_no)``.
+_WORD_X0, _WORD_Y0, _WORD_X1, _WORD_Y1, _WORD_TEXT = 0, 1, 2, 3, 4
+
+# Tokens that, when met after the label on the same physical line, mark the start
+# of the NEXT column (e.g. "Domicilio:") so the client value stops cleanly.
+_NEXT_COLUMN_TOKENS = frozenset({"domicilio:", "domicilio"})
 
 
 # --------------------------------------------------------------------------- #
@@ -95,6 +119,33 @@ def extract_text(pdf_bytes: bytes) -> str:
         for page in document:
             parts.append(str(page.get_text()))
     return "\n".join(parts)
+
+
+def extract_words(pdf_bytes: bytes) -> list[tuple]:
+    """Extract every word of a PDF with its bounding box, across all pages.
+
+    Native boundary: uses PyMuPDF (``fitz``). Each tuple is
+    ``(x0, y0, x1, y1, word, block_no, line_no, word_no)`` (PyMuPDF's
+    ``page.get_text("words")`` shape). Unlike flat :func:`extract_text`, the
+    coordinates preserve the physical two-column layout, which
+    :func:`derive_client_name` needs to read the value to the *right* of the
+    receptor label (issue #26). Isolated here so the fast test tier can mock the
+    word source without the native stack.
+
+    Args:
+        pdf_bytes: The raw PDF document bytes.
+
+    Returns:
+        A flat list of word-coordinate tuples (empty when the PDF carries no text).
+    """
+    words: list[tuple] = []
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
+        for page in document:
+            # get_text("words") returns the word-coordinate tuples; the cast pins
+            # the type for pyrefly since the overload is a broad union.
+            page_words: list[tuple] = list(page.get_text("words"))  # type: ignore[arg-type]
+            words.extend(page_words)
+    return words
 
 
 def decode_qr_payloads(pdf_bytes: bytes) -> list[str]:
@@ -260,15 +311,122 @@ def extract_afip_qr_data(payloads: list[str]) -> ArcaQrData | None:
     )
 
 
-def derive_client_name(text: str, qr: ArcaQrData | None) -> str | None:
-    """Best-effort extraction of the receptor/client name from PDF text (PURE).
-
-    The AFIP QR does not carry the human-readable receptor name, so it is scraped
-    from the PDF text (ADR-068). Looks for a known ARCA label and returns the value
-    on the same line (after a colon) or the next non-empty line. Performs no I/O.
+def _normalize_token(word: str) -> str:
+    """Lowercase and strip accents from a word for case/accent-insensitive matching.
 
     Args:
-        text: The extracted PDF text.
+        word: A raw word as emitted by PyMuPDF.
+
+    Returns:
+        The word folded to lowercase ASCII (accents removed), preserving its
+        punctuation so label colons (e.g. ``"señor(es):"``) still match.
+    """
+    decomposed = unicodedata.normalize("NFKD", word)
+    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return stripped.lower()
+
+
+def _group_words_into_lines(words: list[tuple]) -> list[list[tuple]]:
+    """Group unordered word tuples into physical lines, left-to-right within a line.
+
+    Words are bucketed by a vertical tolerance (:data:`_LINE_Y_TOLERANCE`) so that
+    glyphs sharing one printed line land together even when the word list is
+    unordered; each line is then sorted by ``x0``.
+
+    Args:
+        words: Word-coordinate tuples (PyMuPDF ``get_text("words")`` shape).
+
+    Returns:
+        Lines (lists of word tuples), each sorted left-to-right.
+    """
+    # Multi-page comprobantes repeat the header (receptor block) on every page, so
+    # words at the same (x, y, text) recur; dedupe by rounded position+text so the
+    # repeats don't multiply the joined client name.
+    seen: set[tuple[float, float, str]] = set()
+    unique: list[tuple] = []
+    for word in words:
+        key = (round(word[_WORD_X0], 1), round(word[_WORD_Y0], 1), str(word[_WORD_TEXT]))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(word)
+
+    lines: list[list[tuple]] = []
+    for word in sorted(unique, key=lambda w: (w[_WORD_Y0], w[_WORD_X0])):
+        y0 = word[_WORD_Y0]
+        for line in lines:
+            if abs(line[0][_WORD_Y0] - y0) <= _LINE_Y_TOLERANCE:
+                line.append(word)
+                break
+        else:
+            lines.append([word])
+    for line in lines:
+        line.sort(key=lambda w: w[_WORD_X0])
+    return lines
+
+
+def _match_label_at(line: list[tuple], label: tuple[str, ...]) -> int | None:
+    """Return the index just past ``label`` if the line starts with it, else ``None``.
+
+    Args:
+        line: The words of one physical line, left-to-right.
+        label: The label as a tuple of normalized tokens.
+
+    Returns:
+        The index of the first word *after* the matched label run, or ``None`` when
+        the line does not begin with the label.
+    """
+    if len(line) < len(label):
+        return None
+    for offset, expected in enumerate(label):
+        if _normalize_token(line[offset][_WORD_TEXT]) != expected:
+            return None
+    return len(label)
+
+
+def _client_name_from_line(line: list[tuple], value_start: int) -> str | None:
+    """Join the words right of the label into a client name, stopping at the next column.
+
+    Reads words at ``value_start`` onward whose ``x0`` lies right of the label,
+    halting at the first next-column label token (e.g. ``"Domicilio:"``) so the
+    adjacent address column never bleeds in. Trailing punctuation is trimmed.
+
+    Args:
+        line: The words of the receptor's physical line, left-to-right.
+        value_start: Index of the first word after the label run.
+
+    Returns:
+        The client name, or ``None`` when no value words follow the label.
+    """
+    if value_start >= len(line):
+        return None
+    label_right_edge = line[value_start - 1][_WORD_X1]
+    value_words: list[str] = []
+    for word in line[value_start:]:
+        if word[_WORD_X0] <= label_right_edge:
+            continue
+        if _normalize_token(word[_WORD_TEXT]) in _NEXT_COLUMN_TOKENS:
+            break
+        value_words.append(str(word[_WORD_TEXT]))
+    name = " ".join(value_words).strip().rstrip(",;:")
+    return name or None
+
+
+def derive_client_name(words: list[tuple], qr: ArcaQrData | None) -> str | None:
+    """Extract the receptor/client name from PDF word coordinates (PURE).
+
+    The AFIP QR does not carry the human-readable receptor name, so it is read from
+    the PDF (ADR-068). ARCA lays out the receptor on one physical line split into
+    label/value columns, which flat text extraction reorders; here the words are
+    grouped into lines by a y-tolerance and, for the first matched RECEPTOR label
+    (preferring the unambiguous ``"Señor(es)"`` family), the value is the words to
+    the right of the label on that same line — stopping before the next column.
+    The issuer's bare ``"Razón Social:"`` is intentionally NOT in the receptor
+    label set, so the emisor name is never picked (issue #26). Performs no I/O.
+
+    Args:
+        words: Word-coordinate tuples (e.g. from :func:`extract_words`), possibly
+            unordered.
         qr: The decoded QR data, used only as a hint; currently unused for the name
             but kept in the signature so callers pass full parse context.
 
@@ -276,23 +434,19 @@ def derive_client_name(text: str, qr: ArcaQrData | None) -> str | None:
         The client name when confidently found, otherwise ``None``.
     """
     del qr  # Reserved for future heuristics; the name is not in the QR payload.
-    if not text:
+    if not words:
         return None
 
-    lines = [line.strip() for line in text.splitlines()]
-    for index, line in enumerate(lines):
-        for label in _CLIENT_NAME_LABELS:
-            if not line.startswith(label):
+    lines = _group_words_into_lines(words)
+    # Prefer labels in declared order so "Señor(es)" wins over the generic variant.
+    for label in _RECEPTOR_NAME_LABELS:
+        for line in lines:
+            value_start = _match_label_at(line, label)
+            if value_start is None:
                 continue
-            # Prefer an inline "Label: value" form.
-            remainder = line[len(label) :].lstrip(" :\t")
-            if remainder:
-                return remainder
-            # Otherwise take the next non-empty line.
-            for candidate in lines[index + 1 :]:
-                if candidate:
-                    return candidate
-            return None
+            name = _client_name_from_line(line, value_start)
+            if name is not None:
+                return name
     return None
 
 
@@ -314,7 +468,8 @@ def parse_invoice(pdf_bytes: bytes) -> ParsedInvoice:
     """Parse an ARCA invoice PDF into a structured :class:`ParsedInvoice`.
 
     Orchestrates the native and pure steps (ADR-069): decode QR payloads -> AFIP
-    data; extract text; derive the client name and natural key. The status is
+    data; extract text (for the fallback status/stored text) and word coordinates;
+    derive the client name from the words and the natural key. The status is
     ``OK_QR`` when QR data is decoded, ``OK_TEXT_FALLBACK`` when only text is
     available, and ``UNPARSEABLE`` when neither is obtained.
 
@@ -328,7 +483,8 @@ def parse_invoice(pdf_bytes: bytes) -> ParsedInvoice:
     payloads = decode_qr_payloads(pdf_bytes)
     qr = extract_afip_qr_data(payloads)
     text = extract_text(pdf_bytes)
-    client_name = derive_client_name(text, qr)
+    words = extract_words(pdf_bytes)
+    client_name = derive_client_name(words, qr)
     natural_key = _derive_natural_key(qr)
 
     if qr is not None:

@@ -29,6 +29,7 @@ from margen_api.service_layer.invoice_parser import (
     derive_client_name,
     extract_afip_qr_data,
     extract_text,
+    extract_words,
     parse_invoice,
     to_transaction_input,
 )
@@ -381,51 +382,154 @@ class TestToTransactionInput:
         assert draft.name == "Invoice None-None"
 
 
+def _word(text: str, x0: float, *, y: float = 100.0, width: float = 20.0) -> tuple:
+    """Build a PyMuPDF-shaped word tuple (x0, y0, x1, y1, word, block, line, word_no).
+
+    Only the coordinates and the word text drive :func:`derive_client_name`; the
+    block/line/word_no trailers are filler to match the native tuple shape.
+    """
+    return (x0, y, x0 + width, y + 9.0, text, 0, 0, 0)
+
+
 class TestDeriveClientName:
-    """derive_client_name scrapes the receptor name from ARCA PDF text (ADR-068)."""
+    """derive_client_name reads the receptor name from word coordinates (issue #26).
 
-    def test_inline_label_value(self):
+    The receptor sits on one physical line split into label/value columns; the name
+    is the words to the RIGHT of the receptor label on that same line. The issuer's
+    bare 'Razón Social:' must never be picked.
+    """
+
+    def test_senor_es_label_value_to_the_right_same_line(self):
         """
-        GIVEN PDF text with an inline 'Label: value' receptor line
+        GIVEN a 'Señor(es):' label with the value words to its right on one line
+              (mirroring the real two-column ARCA layout)
         WHEN the client name is derived
-        THEN the inline value is returned
+        THEN the right-of-label words join into the client name
         """
-        text = "Some header\nApellido y Nombre / Razón Social: Acme SRL\nMore text"
-        assert derive_client_name(text, None) == "Acme SRL"
+        # GIVEN — label at x≈24..68, value "Deel," "Inc." to the right, all y≈177;
+        # a next-column "Domicilio:" label sits further right and must be excluded.
+        words = [
+            _word("Señor(es):", 24.0, y=177.0, width=44.0),
+            _word("Deel,", 79.0, y=177.0, width=21.0),
+            _word("Inc.", 102.0, y=177.0, width=15.0),
+            _word("Domicilio:", 265.0, y=177.0, width=43.0),
+            _word("425", 314.0, y=177.0),
+            _word("Street", 346.0, y=177.0),
+        ]
 
-    def test_value_on_next_line(self):
+        # WHEN / THEN
+        assert derive_client_name(words, None) == "Deel, Inc."
+
+    def test_standard_apellido_razon_social_receptor_label(self):
         """
-        GIVEN PDF text where the value follows the label on the next line
+        GIVEN the standard 'Apellido y Nombre / Razón Social:' receptor label with
+              the client value to its right on the same line
         WHEN the client name is derived
-        THEN the next non-empty line is returned
+        THEN the client value is returned
         """
-        text = "Razón Social\n\nGlobex SA\n"
-        assert derive_client_name(text, None) == "Globex SA"
+        # GIVEN — the multi-word receptor label, then the value to its right.
+        words = [
+            _word("Apellido", 24.0, y=177.0, width=40.0),
+            _word("y", 66.0, y=177.0, width=6.0),
+            _word("Nombre", 74.0, y=177.0, width=35.0),
+            _word("/", 111.0, y=177.0, width=4.0),
+            _word("Razón", 117.0, y=177.0, width=27.0),
+            _word("Social:", 146.0, y=177.0, width=30.0),
+            _word("Acme", 200.0, y=177.0, width=30.0),
+            _word("SRL", 232.0, y=177.0, width=22.0),
+        ]
 
-    def test_label_with_no_following_value_returns_none(self):
+        # WHEN / THEN
+        assert derive_client_name(words, None) == "Acme SRL"
+
+    def test_issuer_only_razon_social_is_not_picked(self):
         """
-        GIVEN a label that ends the text with no inline or following value
+        GIVEN only the issuer's bare 'Razón Social:' label (the emisor block) and
+              no receptor label
+        WHEN the client name is derived
+        THEN it returns None — the issuer name is never mistaken for the client
+        """
+        # GIVEN — the emisor's "Razón Social: SANCHEZ TOMAS AGUSTIN" line.
+        words = [
+            _word("Razón", 24.0, y=108.0, width=27.0),
+            _word("Social:", 53.0, y=108.0, width=30.0),
+            _word("SANCHEZ", 85.0, y=108.0, width=43.0),
+            _word("TOMAS", 130.0, y=108.0, width=32.0),
+            _word("AGUSTIN", 165.0, y=108.0, width=40.0),
+        ]
+
+        # WHEN / THEN
+        assert derive_client_name(words, None) is None
+
+    def test_label_with_no_value_to_the_right_returns_none(self):
+        """
+        GIVEN a receptor label with no word to its right on the line
         WHEN the client name is derived
         THEN it returns None
         """
-        text = "Apellido y Nombre"
-        assert derive_client_name(text, None) is None
+        words = [_word("Señor(es):", 24.0, y=177.0, width=44.0)]
+        assert derive_client_name(words, None) is None
 
-    def test_empty_text_returns_none(self):
+    def test_empty_words_returns_none(self):
         """
-        GIVEN empty PDF text
+        GIVEN no words at all
         WHEN the client name is derived
         THEN it returns None
         """
-        assert derive_client_name("", None) is None
+        assert derive_client_name([], None) is None
 
     def test_no_known_label_returns_none(self):
         """
-        GIVEN PDF text with no known receptor label
+        GIVEN words with no known receptor label
         WHEN the client name is derived
         THEN it returns None
         """
-        assert derive_client_name("Random invoice body without labels", None) is None
+        words = [_word("Random", 24.0), _word("body", 60.0)]
+        assert derive_client_name(words, None) is None
+
+    def test_multiple_lines_and_value_word_at_label_edge(self):
+        """
+        GIVEN words across two physical lines (an emisor line above the receptor
+              line) plus a stray value word that does NOT sit right of the label
+        WHEN the client name is derived
+        THEN the words are bucketed into the correct lines and only the words truly
+             right of the receptor label form the name
+        """
+        # GIVEN — line A (y=108) is an unrelated emisor row; line B (y=177) is the
+        # receptor. A word whose x0 is at/left of the label's right edge is ignored.
+        words = [
+            _word("CUIT:", 24.0, y=108.0, width=24.0),
+            _word("20999", 60.0, y=108.0, width=40.0),
+            _word("Señor(es):", 24.0, y=177.0, width=44.0),
+            _word("clipped", 40.0, y=177.0, width=10.0),  # x0 < label right edge (68) -> skipped
+            _word("Globex", 79.0, y=177.0, width=35.0),
+            _word("SA", 117.0, y=177.0, width=18.0),
+        ]
+
+        # WHEN / THEN
+        assert derive_client_name(words, None) == "Globex SA"
+
+    def test_unordered_words_are_grouped_by_line(self):
+        """
+        GIVEN the receptor words supplied out of order (and a repeated header line
+              from a second page sharing the same y)
+        WHEN the client name is derived
+        THEN they are grouped by their y-coordinate and the name is still read,
+             de-duplicated across the repeated page header
+        """
+        # GIVEN — value words before the label, plus a duplicate page-2 copy.
+        words = [
+            _word("Inc.", 102.0, y=177.0, width=15.0),
+            _word("Señor(es):", 24.0, y=177.0, width=44.0),
+            _word("Deel,", 79.0, y=177.0, width=21.0),
+            # Exact-duplicate header from another page (same x/y/text).
+            _word("Señor(es):", 24.0, y=177.0, width=44.0),
+            _word("Deel,", 79.0, y=177.0, width=21.0),
+            _word("Inc.", 102.0, y=177.0, width=15.0),
+        ]
+
+        # WHEN / THEN
+        assert derive_client_name(words, None) == "Deel, Inc."
 
 
 class TestParseInvoiceStatus:
@@ -441,14 +545,16 @@ class TestParseInvoiceStatus:
         THEN the status is OK_QR, the QR is decoded, the name scraped and the
              natural key derived
         """
-        # GIVEN
+        # GIVEN — the receptor name lives in the word coordinates, not the flat text.
         url = _afip_qr_url(_SAMPLE_QR_JSON)
+        receptor_words = [
+            _word("Señor(es):", 24.0, y=177.0, width=44.0),
+            _word("Acme", 79.0, y=177.0, width=30.0),
+            _word("SRL", 112.0, y=177.0, width=22.0),
+        ]
         monkeypatch.setattr(invoice_parser, "decode_qr_payloads", lambda _pdf: [url])
-        monkeypatch.setattr(
-            invoice_parser,
-            "extract_text",
-            lambda _pdf: "Apellido y Nombre / Razón Social: Acme SRL",
-        )
+        monkeypatch.setattr(invoice_parser, "extract_text", lambda _pdf: "ignored flat text")
+        monkeypatch.setattr(invoice_parser, "extract_words", lambda _pdf: receptor_words)
 
         # WHEN
         parsed = parse_invoice(b"%PDF-fake")
@@ -472,6 +578,7 @@ class TestParseInvoiceStatus:
         # GIVEN
         monkeypatch.setattr(invoice_parser, "decode_qr_payloads", lambda _pdf: [])
         monkeypatch.setattr(invoice_parser, "extract_text", lambda _pdf: "Plain invoice text")
+        monkeypatch.setattr(invoice_parser, "extract_words", lambda _pdf: [])
 
         # WHEN
         parsed = parse_invoice(b"%PDF-fake")
@@ -490,6 +597,7 @@ class TestParseInvoiceStatus:
         # GIVEN
         monkeypatch.setattr(invoice_parser, "decode_qr_payloads", lambda _pdf: [])
         monkeypatch.setattr(invoice_parser, "extract_text", lambda _pdf: "   \n  ")
+        monkeypatch.setattr(invoice_parser, "extract_words", lambda _pdf: [])
 
         # WHEN
         parsed = parse_invoice(b"%PDF-fake")
@@ -509,6 +617,7 @@ class TestParseInvoiceStatus:
         url = _afip_qr_url(payload)
         monkeypatch.setattr(invoice_parser, "decode_qr_payloads", lambda _pdf: [url])
         monkeypatch.setattr(invoice_parser, "extract_text", lambda _pdf: "")
+        monkeypatch.setattr(invoice_parser, "extract_words", lambda _pdf: [])
 
         # WHEN
         parsed = parse_invoice(b"%PDF-fake")
@@ -519,13 +628,16 @@ class TestParseInvoiceStatus:
 
 
 class _FakePage:
-    """A stand-in PyMuPDF page exposing the text and pixmap the boundary uses."""
+    """A stand-in PyMuPDF page exposing the text, words, and pixmap the boundary uses."""
 
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, words: list[tuple] | None = None) -> None:
         self._text = text
+        self._words = words or []
 
-    def get_text(self) -> str:
-        """Return the page's canned text."""
+    def get_text(self, kind: str = "text") -> str | list[tuple]:
+        """Return the page's canned text, or its words when asked for ``"words"``."""
+        if kind == "words":
+            return self._words
         return self._text
 
     def get_pixmap(self, *, matrix: object, colorspace: object) -> SimpleNamespace:
@@ -566,6 +678,21 @@ class TestNativeBoundary:
 
         # WHEN / THEN
         assert extract_text(b"%PDF-fake") == "page one\npage two"
+
+    def test_extract_words_flattens_word_tuples_across_pages(self, monkeypatch: pytest.MonkeyPatch):
+        """
+        GIVEN a two-page PDF whose pages each yield word tuples (fitz mocked)
+        WHEN the words are extracted
+        THEN every page's word tuples are returned in one flat list
+        """
+        # GIVEN
+        page_one_words = [(0.0, 0.0, 10.0, 9.0, "alpha", 0, 0, 0)]
+        page_two_words = [(0.0, 0.0, 10.0, 9.0, "beta", 0, 0, 0)]
+        pages = [_FakePage("p1", page_one_words), _FakePage("p2", page_two_words)]
+        monkeypatch.setattr(invoice_parser, "fitz", SimpleNamespace(open=_fake_fitz_open(pages)))
+
+        # WHEN / THEN
+        assert extract_words(b"%PDF-fake") == [*page_one_words, *page_two_words]
 
     def test_decode_qr_payloads_decodes_each_symbol(self, monkeypatch: pytest.MonkeyPatch):
         """
