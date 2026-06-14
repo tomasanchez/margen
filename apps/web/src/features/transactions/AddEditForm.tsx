@@ -18,6 +18,7 @@ import { useId, useState } from 'react'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
+import CircularProgress from '@mui/material/CircularProgress'
 import Collapse from '@mui/material/Collapse'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import IconButton from '@mui/material/IconButton'
@@ -29,8 +30,8 @@ import ToggleButton from '@mui/material/ToggleButton'
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
 import Typography from '@mui/material/Typography'
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded'
-import EditRoundedIcon from '@mui/icons-material/EditRounded'
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
+import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded'
 import { BANKS } from '../../mock/seed'
 import type {
   Bank,
@@ -38,13 +39,14 @@ import type {
   NewTransactionInput,
   TxType,
 } from '../../mock/types'
-import { formatARS } from '../../lib/format'
+import { formatARS, fxSourceLabel } from '../../lib/format'
 import { monoFontFamily } from '../../theme'
 import type { AddPrefill } from './addContext'
 import {
   EXPENSE_CATEGORIES,
   useAddEditFormState,
 } from './useAddEditFormState'
+import type { FxSource } from './useAddEditFormState'
 
 /** Uppercase eyebrow heading shared by the form sections (token-driven). */
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -112,7 +114,6 @@ export function AddEditForm({
 }: AddEditFormProps) {
   const form = useAddEditFormState(prefill)
   const [moreOpen, setMoreOpen] = useState(false)
-  const [rateEditing, setRateEditing] = useState(false)
 
   const amountInputId = useId()
   const rateInputId = useId()
@@ -143,12 +144,50 @@ export function AddEditForm({
     onSubmit(form.buildInput(), form.editId)
   }
 
-  // FX context line: converted ARS value + rate type (MEP) + rate value.
+  const handleFxSourceChange = (_: unknown, next: FxSource | null) => {
+    if (next) form.setFxSource(next)
+  }
+
+  // FX context line: converted ARS value + rate source + rate value. The source
+  // label (MEP / official / manual) is shown so the user always knows "which
+  // dollar".
+  const sourceLabel = fxSourceLabel(form.fxRateType)
   const fxConvertedLabel = form.usdRateMissing
     ? '≈ ARS — · enter a rate'
     : Number.isFinite(form.amountArs)
-      ? `≈ ARS ${formatARS(form.amountArs)} at MEP ${formatARS(form.rate)}`
-      : `Enter an amount · MEP ${formatARS(form.rate)}`
+      ? `≈ ARS ${formatARS(form.amountArs)} at ${sourceLabel} ${formatARS(form.rate)}`
+      : `Enter an amount · ${sourceLabel} ${formatARS(form.rate)}`
+
+  // Suggestion hint under the rate field (ADR-045): loading / suggested / failed.
+  const isFetchingRate = form.rateSuggestionStatus === 'loading'
+  const rateFetchFailed = form.rateSuggestionStatus === 'failed'
+  const rateHelperText = form.usdRateMissing
+    ? rateFetchFailed
+      ? "Couldn't fetch a rate — enter it manually."
+      : 'A rate is required to convert this USD amount.'
+    : form.fxSource === 'manual'
+      ? 'Manual rate — edit anytime.'
+      : form.fxSource === 'official'
+        ? 'Suggested official rate — confirm or edit.'
+        : 'Suggested MEP rate — confirm or edit.'
+
+  // Compact label for each non-manual source option, showing its suggested value
+  // (e.g. "MEP 1.245"). The currently-selected source falls back to the live
+  // rate when no suggestion was fetched (e.g. editing a stored MEP/official row),
+  // so its option stays enabled and labelled. A source with neither a fetched
+  // suggestion nor the active selection is disabled (greyed) with a dash.
+  const optionValue = (source: 'MEP' | 'official'): number | null => {
+    const suggested = form.suggestedRates[source]
+    if (suggested !== null) return suggested
+    if (form.fxSource === source && Number.isFinite(form.rate)) return form.rate
+    return null
+  }
+  const mepValue = optionValue('MEP')
+  const officialValue = optionValue('official')
+  const mepOptionLabel =
+    mepValue !== null ? `MEP ${formatARS(mepValue)}` : 'MEP —'
+  const officialOptionLabel =
+    officialValue !== null ? `Official ${formatARS(officialValue)}` : 'Official —'
 
   return (
     <Box component="form" onSubmit={handleSubmit} noValidate>
@@ -290,7 +329,10 @@ export function AddEditForm({
         <ToggleButton value="USD">USD</ToggleButton>
       </ToggleButtonGroup>
 
-      {/* FX context line (USD only): converted ARS + MEP rate + edit affordance. */}
+      {/* FX block (USD only): explicit MEP / Official / Manual source selector
+          with suggested values, the required rate field, a refresh affordance,
+          and the live converted ARS (ADR-044/045). The source and converted ARS
+          are always visible so the user knows "which dollar". */}
       {isUsd ? (
         <Box
           sx={{
@@ -322,9 +364,16 @@ export function AddEditForm({
             <Button
               type="button"
               size="small"
-              startIcon={<EditRoundedIcon sx={{ fontSize: 15 }} />}
-              onClick={() => setRateEditing((v) => !v)}
-              aria-expanded={rateEditing}
+              startIcon={
+                isFetchingRate ? (
+                  <CircularProgress size={13} thickness={5} color="inherit" />
+                ) : (
+                  <RefreshRoundedIcon sx={{ fontSize: 15 }} />
+                )
+              }
+              onClick={form.refreshSuggestedRate}
+              disabled={isFetchingRate}
+              aria-label="Refresh suggested FX rates"
               sx={{
                 fontSize: 12,
                 color: 'text.secondary',
@@ -332,30 +381,74 @@ export function AddEditForm({
                 px: 1,
               }}
             >
-              {rateEditing ? 'Done' : 'Edit rate'}
+              {isFetchingRate ? 'Fetching…' : 'Refresh rate'}
             </Button>
           </Box>
-          <Collapse in={rateEditing} unmountOnExit>
-            <TextField
-              id={rateInputId}
-              label="MEP rate (ARS per USD)"
-              value={form.rateText}
-              onChange={(e) => form.setRateText(e.target.value)}
-              size="small"
-              fullWidth
-              error={form.usdRateMissing}
-              helperText={
-                form.usdRateMissing
-                  ? 'Enter a rate to convert this USD amount.'
-                  : undefined
-              }
-              slotProps={{ htmlInput: { inputMode: 'decimal' } }}
-              sx={{
-                mt: 1.25,
-                '& .MuiInputBase-input': { fontFamily: monoFontFamily },
-              }}
-            />
-          </Collapse>
+
+          {/* Rate-source selector: MEP / Official / Manual. Non-manual options
+              show their suggested value and are disabled when that rate failed
+              to load (greyed). Picking one pre-fills the rate field. */}
+          <ToggleButtonGroup
+            value={form.fxSource}
+            exclusive
+            onChange={handleFxSourceChange}
+            aria-label="FX rate source"
+            size="small"
+            sx={{
+              mt: 1.25,
+              flexWrap: 'wrap',
+              gap: 0.75,
+              '& .MuiToggleButton-root': {
+                fontFamily: monoFontFamily,
+                fontSize: 12,
+                px: 1.5,
+                py: 0.6,
+                borderRadius: '8px !important',
+                border: '1px solid var(--mg-border-2)',
+                color: 'text.secondary',
+                textTransform: 'none',
+              },
+              '& .MuiToggleButton-root.Mui-selected': {
+                color: 'text.primary',
+                borderColor: 'primary.main',
+                bgcolor: 'color-mix(in srgb, var(--mg-gold) 16%, transparent)',
+                '&:hover': {
+                  bgcolor: 'color-mix(in srgb, var(--mg-gold) 22%, transparent)',
+                },
+              },
+              '& .MuiToggleButton-root.Mui-disabled': {
+                color: 'text.disabled',
+              },
+            }}
+          >
+            <ToggleButton value="MEP" disabled={mepValue === null}>
+              {mepOptionLabel}
+            </ToggleButton>
+            <ToggleButton value="official" disabled={officialValue === null}>
+              {officialOptionLabel}
+            </ToggleButton>
+            <ToggleButton value="manual">Manual</ToggleButton>
+          </ToggleButtonGroup>
+
+          <TextField
+            id={rateInputId}
+            label="FX rate (ARS per USD)"
+            value={form.rateText}
+            onChange={(e) => form.setRateText(e.target.value)}
+            size="small"
+            fullWidth
+            required
+            error={form.usdRateMissing}
+            helperText={rateHelperText}
+            placeholder={isFetchingRate ? 'Fetching suggested rate…' : '0'}
+            slotProps={{
+              htmlInput: { inputMode: 'decimal', 'aria-label': 'FX rate' },
+            }}
+            sx={{
+              mt: 1.25,
+              '& .MuiInputBase-input': { fontFamily: monoFontFamily },
+            }}
+          />
         </Box>
       ) : null}
 

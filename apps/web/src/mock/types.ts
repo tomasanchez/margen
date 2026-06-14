@@ -10,6 +10,14 @@
 /** Currencies the prototype handles. ARS is the base; USD rows carry an FX rate. */
 export type Currency = 'ARS' | 'USD'
 
+/**
+ * Source of a USD transaction's FX rate (ADR-044). `MEP` is the suggested
+ * dolarapi.com MEP/Bolsa rate the user confirmed unchanged; `manual` is a value
+ * the user entered or edited. `official` / `configured_default` are backend
+ * stubs for future use (issue #10) — the UI currently only produces MEP/manual.
+ */
+export type FxRateType = 'MEP' | 'manual' | 'official' | 'configured_default'
+
 /** High-level money direction used for totals and filtering. */
 export type TxType = 'expense' | 'income'
 
@@ -81,6 +89,16 @@ export interface Transaction {
   usd?: number
   /** MEP rate used for the USD→ARS conversion, present only for USD rows. */
   rate?: number
+  /**
+   * Source of the FX `rate`, present only for USD rows (ADR-044). Drives the
+   * row's source indicator ("MEP" vs "manual"); see {@link FxRateType}.
+   */
+  fxRateType?: FxRateType
+  /**
+   * ISO datetime the FX rate was captured / applies as-of, present only for USD
+   * rows (ADR-044). Defaults to the transaction's own date.
+   */
+  fxRateAsOf?: string
   recurring?: boolean
 }
 
@@ -103,6 +121,17 @@ export interface NewTransactionInput {
   amountNum: number
   usd?: number
   rate?: number
+  /**
+   * Source of the FX `rate` for USD entries (ADR-044): `MEP` when the suggested
+   * dolarapi.com rate was confirmed unchanged, `manual` when entered/edited.
+   * Sent to the backend's create/patch contract; omitted for ARS entries.
+   */
+  fxRateType?: FxRateType
+  /**
+   * ISO datetime the FX rate applies as-of (ADR-044). Defaults to the
+   * transaction's date; sent for USD entries, omitted for ARS.
+   */
+  fxRateAsOf?: string
   recurring?: boolean
   /** Optional free-text note, distinct from `name` (backend contract, ADR-033). */
   notes?: string

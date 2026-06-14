@@ -13,14 +13,19 @@
  * never submit), so no re-seed is needed.
  */
 
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../test/renderWithProviders'
 import { useAddTransaction } from './addContext'
 
-// Mock the HTTP client so the flow never touches a real backend (ADR-038).
-const { createMock } = vi.hoisted(() => ({ createMock: vi.fn() }))
+// Mock the HTTP client so the flow never touches a real backend (ADR-038), and
+// the dolarapi FX adapter so no real network is hit (ADR-044). The suggested
+// MEP + official rates are controllable per-test via `fxMock`.
+const { createMock, fxMock } = vi.hoisted(() => ({
+  createMock: vi.fn(),
+  fxMock: vi.fn(),
+}))
 
 vi.mock('../../api/transactionsClient', () => ({
   transactionsClient: {
@@ -30,6 +35,15 @@ vi.mock('../../api/transactionsClient', () => ({
     remove: vi.fn(),
   },
 }))
+
+vi.mock('../../api/fxClient', () => ({
+  fetchSuggestedRates: fxMock,
+}))
+
+beforeEach(() => {
+  // Default: dolarapi suggests MEP 1245 + official 1045 (seeded prototype values).
+  fxMock.mockResolvedValue({ mep: 1245, official: 1045 })
+})
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -103,8 +117,8 @@ describe('Add flow — type toggles required fields', () => {
   })
 })
 
-describe('Add flow — USD shows the FX context line', () => {
-  test('entering an amount and choosing USD shows the converted ARS + MEP rate', async () => {
+describe('Add flow — USD picks an explicit FX source (ADR-044/045)', () => {
+  test('choosing USD fetches both rates + pre-fills the default (MEP), then converts', async () => {
     const { user, dialog } = await openAddDialog()
     const form = within(dialog)
 
@@ -116,41 +130,200 @@ describe('Add flow — USD shows the FX context line', () => {
     await user.type(amount, '500')
     await user.click(form.getByRole('button', { name: 'USD' }))
 
-    // FX context line: 500 USD * MEP 1245 = ARS 622.500 (es-AR grouping).
+    // The default source (MEP, 1245) is fetched and pre-filled into the rate field.
+    const rateField = await form.findByLabelText('FX rate')
+    await waitFor(() => expect(rateField).toHaveValue('1245'))
+    expect(fxMock).toHaveBeenCalled()
+
+    // FX context line: 500 USD * MEP 1245 = ARS 622.500 (es-AR grouping), and
+    // the source reads MEP because that is the default selection.
     expect(
       await form.findByText('≈ ARS 622.500 at MEP 1.245'),
     ).toBeInTheDocument()
-
-    // The rate-edit affordance is present and reveals the rate field.
-    const editRate = form.getByRole('button', { name: /Edit rate/ })
-    expect(editRate).toBeInTheDocument()
-    await user.click(editRate)
     expect(
-      form.getByLabelText('MEP rate (ARS per USD)'),
+      form.getByText('Suggested MEP rate — confirm or edit.'),
+    ).toBeInTheDocument()
+    // Both source options label their suggested value.
+    expect(
+      form.getByRole('button', { name: 'MEP 1.245' }),
+    ).toBeInTheDocument()
+    expect(
+      form.getByRole('button', { name: 'Official 1.045' }),
     ).toBeInTheDocument()
   })
 
-  test('editing the MEP rate recomputes the converted ARS amount', async () => {
+  test('confirming the default sends fxRateType=MEP and amountNum=usd*rate', async () => {
+    createMock.mockResolvedValueOnce({})
     const { user, dialog } = await openAddDialog()
     const form = within(dialog)
 
-    const amount = form.getByLabelText(/^Amount in /)
-    await user.type(amount, '100')
+    await user.type(form.getByLabelText(/^Amount in /), '500')
     await user.click(form.getByRole('button', { name: 'USD' }))
+    await waitFor(() =>
+      expect(form.getByLabelText('FX rate')).toHaveValue('1245'),
+    )
+
+    // Save without touching the suggestion → MEP.
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+
+    const [input] = createMock.mock.calls[0]
+    expect(input.currency).toBe('USD')
+    expect(input.usd).toBe(500)
+    expect(input.rate).toBe(1245)
+    expect(input.fxRateType).toBe('MEP')
+    expect(input.amountNum).toBe(622500)
+    expect(typeof input.fxRateAsOf).toBe('string')
+  })
+
+  test('selecting Official pre-fills its rate and sends fxRateType=official', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    await user.type(form.getByLabelText(/^Amount in /), '500')
+    await user.click(form.getByRole('button', { name: 'USD' }))
+    await waitFor(() =>
+      expect(form.getByLabelText('FX rate')).toHaveValue('1245'),
+    )
+
+    // Pick the official source: the rate field switches to the official value.
+    await user.click(form.getByRole('button', { name: 'Official 1.045' }))
+    await waitFor(() =>
+      expect(form.getByLabelText('FX rate')).toHaveValue('1045'),
+    )
+    // 500 USD * 1045 = ARS 522.500, source reads "official".
     expect(
-      await form.findByText('≈ ARS 124.500 at MEP 1.245'),
+      await form.findByText('≈ ARS 522.500 at official 1.045'),
+    ).toBeInTheDocument()
+    expect(
+      form.getByText('Suggested official rate — confirm or edit.'),
     ).toBeInTheDocument()
 
-    // Open the rate editor and override the MEP rate.
-    await user.click(form.getByRole('button', { name: /Edit rate/ }))
-    const rateField = form.getByLabelText('MEP rate (ARS per USD)')
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    const [input] = createMock.mock.calls[0]
+    expect(input.fxRateType).toBe('official')
+    expect(input.rate).toBe(1045)
+    expect(input.amountNum).toBe(522500)
+  })
+
+  test('editing the rate switches the source to manual and recomputes amountNum', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    await user.type(form.getByLabelText(/^Amount in /), '100')
+    await user.click(form.getByRole('button', { name: 'USD' }))
+    const rateField = await form.findByLabelText('FX rate')
+    await waitFor(() => expect(rateField).toHaveValue('1245'))
+
+    // Override the suggestion.
     await user.clear(rateField)
-    await user.type(rateField, '1000')
+    await user.type(rateField, '1300')
 
-    // 100 USD * 1000 = ARS 100.000.
+    // 100 USD * 1300 = ARS 130.000, now labelled "manual".
     expect(
-      await form.findByText('≈ ARS 100.000 at MEP 1.000'),
+      await form.findByText('≈ ARS 130.000 at manual 1.300'),
     ).toBeInTheDocument()
+
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    const [input] = createMock.mock.calls[0]
+    expect(input.fxRateType).toBe('manual')
+    expect(input.rate).toBe(1300)
+    expect(input.amountNum).toBe(130000)
+  })
+
+  test('editing an existing USD row prefills the stored rate (no re-suggest)', async () => {
+    const { dialog } = await openAddDialog({
+      id: 'usd-edit-1',
+      name: 'Invoice · Atlas Co.',
+      type: 'income',
+      kind: 'invoice',
+      currency: 'USD',
+      category: 'Income',
+      bank: 'Transfer',
+      amountNum: 650000,
+      usd: 500,
+      rate: 1300,
+      fxRateType: 'manual',
+      fxRateAsOf: '2026-06-12T12:00:00.000Z',
+      occurredOn: '2026-06-12',
+      dispDate: 'Jun 12',
+    })
+    const form = within(dialog)
+
+    // The stored rate is loaded; no suggestion fetch fires (it already has one).
+    expect(form.getByLabelText('FX rate')).toHaveValue('1300')
+    expect(fxMock).not.toHaveBeenCalled()
+    // The stored source is preserved until the user edits the rate.
+    expect(
+      form.getByText('≈ ARS 650.000 at manual 1.300'),
+    ).toBeInTheDocument()
+  })
+
+  test('editing an existing official row keeps source=official until edited', async () => {
+    const { user, dialog } = await openAddDialog({
+      id: 'usd-edit-official',
+      name: 'Invoice · Atlas Co.',
+      type: 'income',
+      kind: 'invoice',
+      currency: 'USD',
+      category: 'Income',
+      bank: 'Transfer',
+      amountNum: 522500,
+      usd: 500,
+      rate: 1045,
+      fxRateType: 'official',
+      fxRateAsOf: '2026-06-12T12:00:00.000Z',
+      occurredOn: '2026-06-12',
+      dispDate: 'Jun 12',
+    })
+    const form = within(dialog)
+
+    // The stored official rate is loaded; no re-suggest, source stays official:
+    // the Official option is pressed and the subline reads "official".
+    expect(form.getByLabelText('FX rate')).toHaveValue('1045')
+    expect(fxMock).not.toHaveBeenCalled()
+    expect(
+      form.getByText('≈ ARS 522.500 at official 1.045'),
+    ).toBeInTheDocument()
+    expect(
+      form.getByRole('button', { name: 'Official 1.045', pressed: true }),
+    ).toBeInTheDocument()
+
+    // Editing the rate flips the source to manual (the indicator updates).
+    await user.clear(form.getByLabelText('FX rate'))
+    await user.type(form.getByLabelText('FX rate'), '1100')
+    expect(
+      await form.findByText('≈ ARS 550.000 at manual 1.100'),
+    ).toBeInTheDocument()
+  })
+
+  test('USD cannot be saved when both rates fail (required manual entry)', async () => {
+    // dolarapi is fully down: neither suggestion arrives.
+    fxMock.mockResolvedValue({ mep: null, official: null })
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    await user.type(form.getByLabelText(/^Amount in /), '500')
+    await user.click(form.getByRole('button', { name: 'USD' }))
+
+    // The fetch failed → manual-entry prompt, no silent rate, Save disabled.
+    expect(
+      await form.findByText("Couldn't fetch a rate — enter it manually."),
+    ).toBeInTheDocument()
+    expect(form.getByLabelText('FX rate')).toHaveValue('')
+    expect(form.getByRole('button', { name: /^Save$/ })).toBeDisabled()
+    expect(createMock).not.toHaveBeenCalled()
+    // Both suggested options are disabled when their rate failed to load.
+    expect(form.getByRole('button', { name: 'MEP —' })).toBeDisabled()
+    expect(form.getByRole('button', { name: 'Official —' })).toBeDisabled()
+
+    // Entering a manual rate enables Save and records it as manual.
+    await user.type(form.getByLabelText('FX rate'), '1300')
+    expect(form.getByRole('button', { name: /^Save$/ })).toBeEnabled()
   })
 })
 

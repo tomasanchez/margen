@@ -41,3 +41,38 @@ test('renders a USD expense as the ARS-equivalent figure with an FX subline', ()
     screen.getByLabelText('minus 39.616 Argentine pesos'),
   ).toBeInTheDocument()
 })
+
+test('shows a "manual" source in the FX subline when the rate was overridden', () => {
+  renderAmount(
+    <Amount
+      value={650000}
+      type="income"
+      fxUsd={500}
+      fxRate={1300}
+      fxSource="manual"
+    />,
+  )
+
+  // A user-entered rate reads "manual" so the source is never ambiguous.
+  expect(screen.getByText('USD 500 · manual 1.300')).toBeInTheDocument()
+})
+
+test('shows the MEP source when the rate came from the confirmed suggestion', () => {
+  renderAmount(
+    <Amount value={622500} type="income" fxUsd={500} fxRate={1245} fxSource="MEP" />,
+  )
+  expect(screen.getByText('USD 500 · MEP 1.245')).toBeInTheDocument()
+})
+
+test('shows the official source when the rate came from the official dollar', () => {
+  renderAmount(
+    <Amount
+      value={522500}
+      type="income"
+      fxUsd={500}
+      fxRate={1045}
+      fxSource="official"
+    />,
+  )
+  expect(screen.getByText('USD 500 · official 1.045')).toBeInTheDocument()
+})

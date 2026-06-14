@@ -354,7 +354,7 @@ class TestBuildTransactionDefaults:
         THEN it is resolved into the FxRateType member
         """
         # WHEN
-        transaction = _build(currency=Currency.USD, fx_rate_type="blue")
+        transaction = _build(currency=Currency.USD, fx_rate_type="manual")
 
         # THEN
-        assert transaction.fx_rate_type is FxRateType.BLUE
+        assert transaction.fx_rate_type is FxRateType.MANUAL

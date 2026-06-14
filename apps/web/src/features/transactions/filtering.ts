@@ -292,6 +292,10 @@ export function buildEditPrefill(
     month: t.month,
     ...(t.usd !== undefined ? { usd: t.usd } : {}),
     ...(t.rate !== undefined ? { rate: t.rate } : {}),
+    // Carry the existing FX source + as-of so the form reloads the rate and its
+    // origin (MEP vs manual) on edit (ADR-044/045).
+    ...(t.fxRateType !== undefined ? { fxRateType: t.fxRateType } : {}),
+    ...(t.fxRateAsOf !== undefined ? { fxRateAsOf: t.fxRateAsOf } : {}),
     ...(t.recurring !== undefined ? { recurring: t.recurring } : {}),
   }
 }
