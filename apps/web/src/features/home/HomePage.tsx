@@ -7,16 +7,18 @@
  * everything collapses to a single column on mobile (with a 2-col metric grid).
  *
  * Server state comes from TanStack Query (useTransactions for the live month
- * figures + activity; useMonotributo / useTrend / useCategoryBreakdown /
- * useInsights for the seed-derived panels). The metrics + recent activity are
- * scoped to the SELECTED viewing month from the top-bar navigator (ADR-040),
- * filtering the real transactions by their `occurredOn` year+month; income /
- * expenses stay consistent with the Transactions screen. Month-over-month deltas
- * compare the selected month against the previous calendar month from the same
- * data. The mock panels (trend / breakdown / insights / Monotributo) do NOT
- * react to the selected month (ADR-035). Each section shows a skeleton while its
- * query resolves and degrades gracefully for the ADR-020 / empty-month edge
- * cases.
+ * figures + activity; useSummary for the real spending trend + category
+ * breakdown; useMonotributo / useInsights for the still-seed-derived panels).
+ * The metrics + recent activity are scoped to the SELECTED viewing month from
+ * the top-bar navigator (ADR-040), filtering the real transactions by their
+ * `occurredOn` year+month; income / expenses stay consistent with the
+ * Transactions screen. Month-over-month deltas compare the selected month
+ * against the previous calendar month from the same data. The spending trend and
+ * "Where it went" cards are now real and month-reactive via `/summaries`
+ * (ADR-042/043); the Insights + Monotributo panels stay mock (ADR-035). Each
+ * section shows a skeleton while its query resolves, the summary cards show a
+ * calm fallback if `/summaries` errors, and everything degrades gracefully for
+ * the ADR-020 / empty-month edge cases.
  *
  * The visible page <h1> ("Your command center") names the route landmark; the
  * hero headline is a supporting statement beneath the status pill.
@@ -27,12 +29,7 @@ import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { visuallyHidden } from '@mui/utils'
 import { ErrorState } from '../../components/ErrorState'
-import {
-  useCategoryBreakdown,
-  useInsights,
-  useMonotributo,
-  useTrend,
-} from './queries'
+import { useInsights, useMonotributo, useSummary } from './queries'
 import { useTransactions } from '../transactions/queries'
 import { useViewingMonth } from '../../components/monthContext'
 import {
@@ -61,13 +58,15 @@ function pctChange(current: number, previous: number): number {
 
 export function HomePage() {
   const monotributoQuery = useMonotributo()
-  const trendQuery = useTrend()
-  const breakdownQuery = useCategoryBreakdown()
   const insightsQuery = useInsights()
   const transactionsQuery = useTransactions()
 
   // The selected viewing month (top-bar navigator), shared via context (ADR-040).
   const { viewingMonth } = useViewingMonth()
+
+  // Real spending trend + category breakdown for the selected month (ADR-043).
+  // The query key includes the YYYY-MM, so navigating months refetches both.
+  const summaryQuery = useSummary(viewingMonth)
   const previousMonth = useMemo(
     () => addMonths(viewingMonth, -1),
     [viewingMonth],
@@ -117,8 +116,7 @@ export function HomePage() {
     : 0
 
   // Expenses: compare the selected month against the previous calendar month
-  // from the same real data (ADR-040). The mock trend stays non-reactive.
-  const trend = trendQuery.data
+  // from the same real data (ADR-040).
   const expenseDeltaPct = metrics
     ? pctChange(metrics.expenses, previousMetrics.expenses)
     : 0
@@ -177,11 +175,24 @@ export function HomePage() {
             minWidth: 0,
           }}
         >
-          <SpendingTrend trend={trend} loading={trendQuery.isPending} />
-          <CategoryBreakdown
-            categories={breakdownQuery.data}
-            loading={breakdownQuery.isPending}
-          />
+          {summaryQuery.isError ? (
+            <ErrorState
+              title="Spending data unavailable"
+              description="We couldn't load this month's spending trend and breakdown. Try again."
+              onRetry={() => void summaryQuery.refetch()}
+            />
+          ) : (
+            <>
+              <SpendingTrend
+                trend={summaryQuery.data?.trend}
+                loading={summaryQuery.isPending}
+              />
+              <CategoryBreakdown
+                categories={summaryQuery.data?.categories}
+                loading={summaryQuery.isPending}
+              />
+            </>
+          )}
         </Box>
         <Box
           sx={{

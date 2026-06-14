@@ -17,8 +17,6 @@ import type {
   MonotributoProjection,
   MonotributoScaleRow,
   MonotributoState,
-  TrendPoint,
-  CategorySpend,
 } from './types'
 
 /** All categories, in the order shown in filters and the Add form. */
@@ -128,27 +126,6 @@ export const SEED_MONOTRIBUTO_PROJECTION: MonotributoProjection = {
   evaluates: 'Jan–Jun',
   arcaUrl: ARCA_SCALE_URL,
 }
-
-/** 6-month spending trend (monthly expenses, ARS). June is the current month. */
-export const SEED_TREND: readonly TrendPoint[] = [
-  { month: 'Jan', value: 2_450_000 },
-  { month: 'Feb', value: 2_300_000 },
-  { month: 'Mar', value: 2_620_000 },
-  { month: 'Apr', value: 2_410_000 },
-  { month: 'May', value: 2_580_000 },
-  { month: 'Jun', value: 2_850_000, current: true },
-] as const
-
-/** "Where it went" category breakdown for the current month (June). */
-export const SEED_CATEGORY_BREAKDOWN: readonly CategorySpend[] = [
-  { category: 'Rent', amount: 720_000, pct: 25 },
-  { category: 'Food', amount: 624_000, pct: 22, up: '+22%' },
-  { category: 'Subscriptions', amount: 342_000, pct: 12 },
-  { category: 'Transport', amount: 285_000, pct: 10 },
-  { category: 'Health', amount: 228_000, pct: 8 },
-  { category: 'Taxes', amount: 199_500, pct: 7 },
-  { category: 'Other', amount: 451_500, pct: 16 },
-] as const
 
 /** Home insights list. */
 export const SEED_INSIGHTS: readonly Insight[] = [
