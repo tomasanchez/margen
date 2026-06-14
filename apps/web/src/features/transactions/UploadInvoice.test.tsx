@@ -293,3 +293,108 @@ describe('In-form upload — calm inline error keeps the form usable', () => {
     ).not.toBeInTheDocument()
   })
 })
+
+describe('In-form upload — the attached file name is shown after a successful parse (issue #26)', () => {
+  test('the picked PDF file name appears in a compact attached-file row', async () => {
+    parseInvoiceMock.mockResolvedValueOnce(arsParse)
+    const { user, dialog, fileInput } = await openIncomeForm()
+    const form = within(dialog)
+
+    await user.upload(fileInput, pdfFile('atlas-may.pdf'))
+
+    // The autofill landed and the attached-file row shows the picked name.
+    await waitFor(() =>
+      expect(form.getByLabelText(/^Amount in /)).toHaveValue('45000'),
+    )
+    expect(form.getByText('atlas-may.pdf')).toBeInTheDocument()
+    // The upload-to-autofill control is replaced by the attached-file row.
+    expect(
+      form.queryByRole('button', {
+        name: /Upload ARCA invoice PDF to autofill/i,
+      }),
+    ).not.toBeInTheDocument()
+    // A remove control is offered with an accessible label.
+    expect(
+      form.getByRole('button', { name: /Remove attached invoice/i }),
+    ).toBeInTheDocument()
+  })
+})
+
+describe('In-form upload — removing the attachment unattaches the PDF (issue #26)', () => {
+  test('clicking remove keeps the autofilled fields but saves WITHOUT the document', async () => {
+    parseInvoiceMock.mockResolvedValueOnce(arsParse)
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog, fileInput } = await openIncomeForm()
+    const form = within(dialog)
+
+    await user.upload(fileInput, pdfFile())
+    await waitFor(() =>
+      expect(form.getByLabelText(/^Amount in /)).toHaveValue('45000'),
+    )
+
+    // Unattach the PDF.
+    await user.click(
+      form.getByRole('button', { name: /Remove attached invoice/i }),
+    )
+
+    // The attached-file row is gone and the upload control returns.
+    expect(form.queryByText('invoice.pdf')).not.toBeInTheDocument()
+    expect(
+      await form.findByRole('button', {
+        name: /Upload ARCA invoice PDF to autofill/i,
+      }),
+    ).toBeInTheDocument()
+    // The autofilled values are kept (unattach ≠ clear).
+    expect(form.getByLabelText(/^Amount in /)).toHaveValue('45000')
+
+    // Saving now creates the transaction WITHOUT the document payload.
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    const [input] = createMock.mock.calls[0]
+    expect(input.document).toBeUndefined()
+    // The kept fields still flow through the create.
+    expect(input.amountNum).toBe(45000)
+  })
+
+  test('removing also dismisses the duplicate warning', async () => {
+    parseInvoiceMock.mockResolvedValueOnce({ ...arsParse, duplicate: true })
+    const { user, dialog, fileInput } = await openIncomeForm()
+    const form = within(dialog)
+
+    await user.upload(fileInput, pdfFile())
+    expect(
+      await form.findByText(/already imported this invoice/i),
+    ).toBeInTheDocument()
+
+    await user.click(
+      form.getByRole('button', { name: /Remove attached invoice/i }),
+    )
+    expect(
+      form.queryByText(/already imported this invoice/i),
+    ).not.toBeInTheDocument()
+  })
+})
+
+describe('In-form upload — Reset clears all fields and the attachment (issue #26)', () => {
+  test('Reset empties an autofilled amount and removes the attached file', async () => {
+    parseInvoiceMock.mockResolvedValueOnce(arsParse)
+    const { user, dialog, fileInput } = await openIncomeForm()
+    const form = within(dialog)
+
+    await user.upload(fileInput, pdfFile('atlas-may.pdf'))
+    await waitFor(() =>
+      expect(form.getByLabelText(/^Amount in /)).toHaveValue('45000'),
+    )
+    expect(form.getByText('atlas-may.pdf')).toBeInTheDocument()
+
+    await user.click(form.getByRole('button', { name: /Reset all fields/i }))
+
+    // Fields fall back to the blank new-entry defaults: amount empty, type back
+    // to expense, and the attachment is gone (upload control returns).
+    expect(form.getByLabelText(/^Amount in /)).toHaveValue('')
+    expect(form.queryByText('atlas-may.pdf')).not.toBeInTheDocument()
+    expect(
+      form.getByRole('heading', { name: 'New expense' }),
+    ).toBeInTheDocument()
+  })
+})

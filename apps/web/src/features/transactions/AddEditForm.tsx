@@ -31,6 +31,7 @@ import ToggleButton from '@mui/material/ToggleButton'
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
 import Typography from '@mui/material/Typography'
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded'
+import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded'
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
@@ -153,7 +154,8 @@ export function AddEditForm({
           setParseError(GENERIC_PARSE_ERROR)
           return
         }
-        form.applyParsedInvoice(parsed)
+        // Carry the picked file's name so the attached-file row can show it.
+        form.applyParsedInvoice(parsed, file.name)
       })
       .catch((error: unknown) => {
         // 415 / 413 / 422 (or any failure) → calm inline message; keep editing.
@@ -162,6 +164,23 @@ export function AddEditForm({
         )
       })
       .finally(() => setIsParsing(false))
+  }
+
+  // Unattach the uploaded invoice (issue #26): drop the stashed PDF + its name +
+  // the duplicate advisory (the hook keeps the autofilled values), and clear the
+  // inline parse error. The upload control reappears so a different file can be
+  // picked, and saving now creates the row WITHOUT a document.
+  const handleRemoveAttachment = () => {
+    form.clearImportedDocument()
+    setParseError(null)
+  }
+
+  // Reset all fields to the blank new-entry defaults + clear the attachment and
+  // parse error (issue #26). Resets state in place — it does not close the form.
+  const handleResetAll = () => {
+    form.resetForm()
+    setParseError(null)
+    setMoreOpen(false)
   }
 
   const amountInputId = useId()
@@ -328,33 +347,81 @@ export function AddEditForm({
           invoices, so the control is hidden there. */}
       {!isExpense ? (
         <Box sx={{ mb: 2.5 }}>
-          <Button
-            type="button"
-            variant="outlined"
-            color="secondary"
-            fullWidth
-            onClick={handlePickFile}
-            disabled={isParsing}
-            startIcon={
-              isParsing ? (
-                <CircularProgress size={15} thickness={5} color="inherit" />
-              ) : (
-                <UploadFileIcon fontSize="small" />
-              )
-            }
-            sx={{
-              py: 1.1,
-              fontWeight: 600,
-              color: 'text.secondary',
-              borderColor: 'var(--mg-border-2)',
-              borderStyle: 'dashed',
-              textTransform: 'none',
-            }}
-          >
-            {isParsing
-              ? 'Reading your invoice…'
-              : 'Upload ARCA invoice PDF to autofill'}
-          </Button>
+          {/* When a PDF is attached, show a compact attached-file row (document
+              icon + truncated name + remove) instead of the upload button, so the
+              user sees which file they picked and can unattach it (issue #26).
+              Otherwise show the upload-to-autofill control. */}
+          {form.hasImportedDocument ? (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                px: 1.5,
+                py: 1,
+                bgcolor: 'var(--mg-paper)',
+                border: '1px solid var(--mg-border-2)',
+                borderRadius: 2,
+              }}
+            >
+              <DescriptionRoundedIcon
+                fontSize="small"
+                aria-hidden
+                sx={{ color: 'var(--mg-gold)', flex: 'none' }}
+              />
+              <Typography
+                title={form.attachedFileName ?? undefined}
+                sx={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: 13.5,
+                  color: 'text.primary',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {form.attachedFileName ?? 'Attached invoice'}
+              </Typography>
+              <IconButton
+                type="button"
+                onClick={handleRemoveAttachment}
+                aria-label="Remove attached invoice"
+                size="small"
+                sx={{ flex: 'none', color: 'text.secondary' }}
+              >
+                <CloseRoundedIcon fontSize="small" />
+              </IconButton>
+            </Box>
+          ) : (
+            <Button
+              type="button"
+              variant="outlined"
+              color="secondary"
+              fullWidth
+              onClick={handlePickFile}
+              disabled={isParsing}
+              startIcon={
+                isParsing ? (
+                  <CircularProgress size={15} thickness={5} color="inherit" />
+                ) : (
+                  <UploadFileIcon fontSize="small" />
+                )
+              }
+              sx={{
+                py: 1.1,
+                fontWeight: 600,
+                color: 'text.secondary',
+                borderColor: 'var(--mg-border-2)',
+                borderStyle: 'dashed',
+                textTransform: 'none',
+              }}
+            >
+              {isParsing
+                ? 'Reading your invoice…'
+                : 'Upload ARCA invoice PDF to autofill'}
+            </Button>
+          )}
 
           {/* Hidden PDF picker for the upload control. The parse boundary
               re-validates the type; we accept PDFs to hint the OS dialog. */}
@@ -757,6 +824,23 @@ export function AddEditForm({
           }}
         >
           Cancel
+        </Button>
+        {/* Reset all fields to blank new-entry defaults (issue #26). Clears the
+            inputs + any attachment; it does NOT submit or close the form. */}
+        <Button
+          type="button"
+          variant="text"
+          color="secondary"
+          onClick={handleResetAll}
+          aria-label="Reset all fields"
+          sx={{
+            flex: 'none',
+            px: 2,
+            py: 1.25,
+            color: 'text.secondary',
+          }}
+        >
+          Reset
         </Button>
         <Button
           type="submit"

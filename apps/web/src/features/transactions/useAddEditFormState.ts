@@ -239,13 +239,39 @@ export interface AddEditFormState {
    */
   readonly duplicate: boolean
 
+  /** True when a parsed invoice PDF is currently attached (sent on save). */
+  readonly hasImportedDocument: boolean
+  /**
+   * The uploaded invoice's file name (e.g. "invoice.pdf"), shown in the attached
+   * -file row so the user sees which file they picked. `null` when nothing is
+   * attached. Set alongside `applyParsedInvoice`; cleared on unattach/reset.
+   */
+  readonly attachedFileName: string | null
+
   /**
    * Autofill the form from a parsed ARCA invoice (ADR-072). Sets amount, date,
    * currency + the FX block (when USD), name, and category, stashes the base64
    * `document` so `buildInput` attaches it on save, and records the `duplicate`
-   * advisory. The user then reviews/edits and decides whether to save.
+   * advisory. The optional `fileName` is the picked File's name, surfaced in the
+   * attached-file row. The user then reviews/edits and decides whether to save.
    */
-  applyParsedInvoice: (parsed: InvoiceParse) => void
+  applyParsedInvoice: (parsed: InvoiceParse, fileName?: string) => void
+
+  /**
+   * Unattach the uploaded invoice PDF (issue #26 polish): clears the stashed
+   * `document`, the file name, and the duplicate advisory — WITHOUT touching the
+   * autofilled field values. Saving afterwards creates the transaction with no
+   * document. The form's parse-error/upload state is reset by the caller.
+   */
+  clearImportedDocument: () => void
+
+  /**
+   * Reset every field to its blank new-entry default and clear the attachment +
+   * duplicate advisory (issue #26 polish). Resets in place (no remount), so it
+   * works whether the form opened blank or via an upload. Does NOT close the
+   * dialog/drawer — that's Cancel's job.
+   */
+  resetForm: () => void
 
   /** Assemble the mutation input from the current state. */
   buildInput: () => NewTransactionInput
@@ -364,6 +390,10 @@ export function useAddEditFormState(
   const [importedName, setImportedName] = useState<string | null>(
     prefill?.name ?? null,
   )
+  // The uploaded PDF's file name, surfaced in the attached-file row so the user
+  // sees which file they picked (issue #26). Set when a parse succeeds; cleared
+  // on unattach/reset. Seeded null — a prefill carries no original file name.
+  const [attachedFileName, setAttachedFileName] = useState<string | null>(null)
 
   // Date picker: ISO YYYY-MM-DD. New transactions default to today; edits
   // prefill from the row's occurredOn (ADR-041). `max` is today (no future).
@@ -478,11 +508,13 @@ export function useAddEditFormState(
   // from the parse, seed the FX block when USD (marking the rate user-owned so
   // the auto-suggest effect never clobbers the declared rate), stash the base64
   // document for confirm-time attach, and record the duplicate advisory.
-  const applyParsedInvoice = useCallback((parsed: InvoiceParse) => {
+  const applyParsedInvoice = useCallback(
+    (parsed: InvoiceParse, fileName?: string) => {
     setType('income')
     setCountsTowardMonotributo(parsed.countsTowardMonotributo ?? true)
     setDuplicate(parsed.duplicate)
     setImportedDocument(parsed.document)
+    if (fileName) setAttachedFileName(fileName)
     if (parsed.name) setImportedName(parsed.name)
     if (parsed.amount !== undefined) setAmountText(String(parsed.amount))
     if (parsed.occurredOn) setOccurredOn(parsed.occurredOn)
@@ -508,7 +540,43 @@ export function useAddEditFormState(
         setAmountText(String(parsed.usdAmount))
       }
     }
-  }, [])
+    },
+    [],
+  )
+
+  // Unattach the uploaded invoice PDF (issue #26): drop the stashed document, its
+  // file name, and the duplicate advisory — but keep the autofilled field values.
+  // After this, `buildInput` attaches no document, so saving creates the row
+  // without a PDF and the upload control reappears for a different file.
+  const clearImportedDocument = useCallback(() => {
+    setImportedDocument(null)
+    setAttachedFileName(null)
+    setDuplicate(false)
+    setImportedName(prefill?.name ?? null)
+  }, [prefill?.name])
+
+  // Reset every field to its blank new-entry default + clear the attachment and
+  // duplicate advisory (issue #26). Resets in place so it works whether the form
+  // opened blank or via an upload; it does not close the surface.
+  const resetForm = useCallback(() => {
+    setType('expense')
+    setCountsTowardMonotributo(false)
+    setAmountText('')
+    setCurrency('ARS')
+    setRateTextRaw('')
+    setRateEdited(false)
+    setFxSourceRaw(fxDefaultRef.current)
+    setSuggestedRates({ MEP: null, official: null })
+    setRateSuggestionStatus('idle')
+    setCategory(DEFAULT_CATEGORY)
+    setBank(DEFAULT_BANK)
+    setNotes('')
+    setOccurredOn(maxOccurredOn)
+    setImportedDocument(null)
+    setAttachedFileName(null)
+    setDuplicate(false)
+    setImportedName(null)
+  }, [maxOccurredOn])
 
   const usdRateMissing = currency === 'USD' && !Number.isFinite(rate)
 
@@ -617,7 +685,11 @@ export function useAddEditFormState(
     usdRateMissing,
     canSave,
     duplicate,
+    hasImportedDocument: importedDocument !== null,
+    attachedFileName,
     applyParsedInvoice,
+    clearImportedDocument,
+    resetForm,
     buildInput,
   }
 }
