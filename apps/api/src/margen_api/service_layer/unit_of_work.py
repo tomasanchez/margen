@@ -57,6 +57,15 @@ class AbstractUnitOfWork(ABC):
         """Commit the current transaction."""
 
     @abstractmethod
+    async def flush(self) -> None:
+        """Flush staged changes within the transaction without committing.
+
+        Used to materialize a parent row before a dependent side record is added
+        in the same unit of work (e.g. a transaction before its invoice document,
+        so the foreign key resolves — ADR-070/071).
+        """
+
+    @abstractmethod
     async def rollback(self) -> None:
         """Roll back the current transaction."""
 

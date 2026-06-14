@@ -21,8 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
+from margen_api.adapters.unit_of_work import SqlAlchemyUnitOfWork
+from margen_api.domain.commands.transaction import CreateTransaction, TransactionDocumentPayload
 from margen_api.domain.models.transaction import build_transaction
 from margen_api.domain.models.value_objects import Currency, Kind
+from margen_api.service_layer.handlers import create_transaction
 
 pytestmark = pytest.mark.integration
 
@@ -136,6 +139,65 @@ class TestDocumentRoundTrip:
 
         # THEN
         assert document is None
+
+
+class TestCreateWithAttachment:
+    """The create handler persists the transaction AND its document in one UoW.
+
+    Guards the foreign-key ordering: the document insert must follow the
+    transaction insert. The mocked fast tiers can't catch this (no real FK), and
+    the other integration tests seed the two rows in separate commits — so this is
+    the only check that exercises create_transaction's single-UoW attachment path
+    against a real foreign key (regression for the IntegrityConflict, ADR-070/071).
+    """
+
+    async def test_create_persists_transaction_and_linked_document(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a create command carrying an invoice document
+        WHEN the real handler runs against PostgreSQL in one unit of work
+        THEN both the transaction and the linked document persist (no FK conflict)
+        """
+        # GIVEN
+        pdf_bytes = b"%PDF-1.4 attached invoice"
+        document = TransactionDocumentPayload(
+            pdf_bytes=pdf_bytes,
+            content_type="application/pdf",
+            byte_size=len(pdf_bytes),
+            extracted_text="Beta SRL",
+            qr_json={"ver": 1},
+            emisor_cuit="20111111110",
+            pto_vta="3",
+            tipo_cmp="11",
+            nro_cmp="42",
+            cae="70000000000009",
+            fecha=date(2026, 6, 12),
+            importe=Decimal("1000.00"),
+            moneda="ARS",
+            ctz=Decimal("1"),
+        )
+        command = CreateTransaction(
+            occurred_on=date(2026, 6, 12),
+            name="Beta SRL",
+            kind=Kind.INVOICE,
+            amount=Decimal("1000.00"),
+            currency=Currency.ARS,
+            counts_toward_monotributo=True,
+            document=document,
+        )
+
+        # WHEN — the handler flushes the transaction, then attaches the document.
+        transaction_id = await create_transaction(command, SqlAlchemyUnitOfWork(session_factory))
+
+        # THEN — both rows persisted and the document links to the transaction.
+        async with session_factory() as session:
+            transaction = await SqlAlchemyTransactionRepository(session).get(transaction_id)
+            stored = await SqlAlchemyDocumentStore(session).get(transaction_id)
+        assert transaction is not None
+        assert stored is not None
+        assert stored.transaction_id == transaction_id
+        assert stored.pdf_bytes == pdf_bytes
 
 
 class TestExistsByNaturalKey:

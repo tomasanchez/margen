@@ -292,6 +292,12 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged.clear()
         self.committed = True
 
+    async def flush(self) -> None:
+        """Materialize staged aggregates within the transaction (no commit)."""
+        # Mirror a real flush: staged rows become visible to later reads in the
+        # same unit of work; commit still promotes + clears them.
+        self.committed_aggregates.update(self._staged)
+
     async def rollback(self) -> None:
         """Discard staged aggregates."""
         self._staged.clear()

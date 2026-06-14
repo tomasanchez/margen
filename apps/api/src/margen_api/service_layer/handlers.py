@@ -84,6 +84,9 @@ async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork
     async with uow:
         uow.transactions.add(transaction)
         if command.document is not None:
+            # Flush the transaction first so the document's foreign key resolves;
+            # SQLAlchemy does not order these two inserts on its own (ADR-070/071).
+            await uow.flush()
             await _save_invoice_document(uow, transaction.id, command.document)
         await uow.commit()
     return transaction.id

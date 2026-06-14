@@ -51,6 +51,18 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
         except IntegrityError as error:
             raise IntegrityConflict from error
 
+    async def flush(self) -> None:
+        """Flush pending inserts so a dependent side record's FK resolves (ADR-070).
+
+        SQLAlchemy does not order inserts across the transaction and its invoice
+        document (no relationship() between them), so the transaction is flushed
+        first to satisfy the document's foreign key.
+        """
+        try:
+            await self.session.flush()
+        except IntegrityError as error:
+            raise IntegrityConflict from error
+
     async def rollback(self) -> None:
         """Roll back the SQLAlchemy transaction."""
         await self.session.rollback()
