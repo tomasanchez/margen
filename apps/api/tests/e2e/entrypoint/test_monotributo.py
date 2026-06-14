@@ -23,7 +23,7 @@ from fastapi import status
 
 from margen_api.asgi import get_application
 from margen_api.bootstrap import ApplicationContainer, bootstrap
-from margen_api.entrypoint.dependencies import get_bus, get_monotributo_reader
+from margen_api.entrypoint.dependencies import get_bus, get_monotributo_reader, get_settings
 from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.monotributo import build_standing, scale_entries, trailing_window
 from margen_api.service_layer.monotributo_read_models import (
@@ -32,11 +32,14 @@ from margen_api.service_layer.monotributo_read_models import (
     MonotributoStanding,
 )
 from margen_api.service_layer.registry import COMMAND_HANDLERS, EVENT_HANDLERS
+from margen_api.settings.api_settings import ApplicationSettings
 from margen_api.settings.database_settings import DatabaseSettings
 from tests.fakes.persistence import FakeMonotributoReader, FakeUnitOfWork
 
 MONOTRIBUTO = "/api/v1/monotributo"
 TODAY = date(2026, 6, 14)
+# Shared-secret capture token used by the guarded-endpoint tests (ADR-064).
+CAPTURE_TOKEN = "s3cr3t-capture-token"  # noqa: S105 — test fixture, not a real secret
 
 
 def _standing(*, used: str, reference: date = TODAY) -> MonotributoStanding:
@@ -87,13 +90,23 @@ def fixture_reader() -> FakeMonotributoReader:
     return FakeMonotributoReader(_snapshot(with_previous=True))
 
 
-def _build_client(uow: FakeUnitOfWork, reader: FakeMonotributoReader) -> tuple[httpx.AsyncClient, ApplicationContainer]:
+def _build_client(
+    uow: FakeUnitOfWork,
+    reader: FakeMonotributoReader,
+    *,
+    capture_token: str | None = CAPTURE_TOKEN,
+) -> tuple[httpx.AsyncClient, ApplicationContainer]:
     """Build an ASGI app whose bus + reader dependencies are mocked.
 
     The bus is real (commands flow through the registered handlers) but its unit
     of work is the shared :class:`FakeUnitOfWork`; the container is bootstrapped on
     in-memory SQLite only to satisfy ``get_application`` — its engine is never
     touched because both persistence dependencies are overridden.
+
+    The ``get_settings`` dependency is overridden with an explicitly-constructed
+    :class:`ApplicationSettings` so the capture token is deterministic and never
+    leaks across tests via the ``lru_cache`` (ADR-064/ADR-066). Pass
+    ``capture_token=None`` to exercise the unconfigured/disabled path.
     """
     container = bootstrap(DatabaseSettings(URL="sqlite+aiosqlite://", AUTO_CREATE_SCHEMA=False))
     app = get_application(container)
@@ -105,6 +118,7 @@ def _build_client(uow: FakeUnitOfWork, reader: FakeMonotributoReader) -> tuple[h
     )
     app.dependency_overrides[get_bus] = lambda: bus
     app.dependency_overrides[get_monotributo_reader] = lambda: reader
+    app.dependency_overrides[get_settings] = lambda: ApplicationSettings(MONOTRIBUTO_CAPTURE_TOKEN=capture_token)
 
     transport = httpx.ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://test"), container
@@ -210,18 +224,113 @@ class TestCaptureMonotributo:
 
     async def test_returns_202_captured(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
         """
-        GIVEN a fake unit of work
-        WHEN the capture endpoint is posted
+        GIVEN a fake unit of work and a configured capture token
+        WHEN the capture endpoint is posted with the correct bearer token
         THEN it returns 202 with status 'captured' and the capture committed a
              snapshot for the current period through the unit of work
         """
         # WHEN
-        response = await client.post(f"{MONOTRIBUTO}/capture")
+        response = await client.post(
+            f"{MONOTRIBUTO}/capture",
+            headers={"Authorization": f"Bearer {CAPTURE_TOKEN}"},
+        )
 
         # THEN
         assert response.status_code == status.HTTP_202_ACCEPTED
         assert response.json()["data"]["status"] == "captured"
         # The command flowed through the bus and committed via the fake UoW.
+        assert uow.committed is True
+        today = datetime.now(UTC).date()
+        assert date(today.year, today.month, 1) in uow.snapshots
+
+
+class TestCaptureMonotributoAuthGuard:
+    """POST /monotributo/capture is guarded by a shared-secret bearer token (ADR-064)."""
+
+    async def test_returns_503_when_token_not_configured(self, uow: FakeUnitOfWork, reader: FakeMonotributoReader):
+        """
+        GIVEN no capture token is configured (the fail-closed default)
+        WHEN the capture endpoint is posted
+        THEN it returns 503 and no capture command is dispatched
+        """
+        # GIVEN — the endpoint is disabled because the secret is unset.
+        client, container = _build_client(uow, reader, capture_token=None)
+
+        # WHEN
+        async with client:
+            response = await client.post(
+                f"{MONOTRIBUTO}/capture",
+                headers={"Authorization": f"Bearer {CAPTURE_TOKEN}"},
+            )
+        await container.shutdown()
+
+        # THEN — fail closed: 503 and nothing flowed through the bus/UoW.
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert uow.committed is False
+        assert uow.snapshots == {}
+
+    async def test_returns_401_on_missing_authorization_header(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN a configured capture token
+        WHEN the capture endpoint is posted with no Authorization header
+        THEN it returns 401 and no capture command is dispatched
+        """
+        # WHEN
+        response = await client.post(f"{MONOTRIBUTO}/capture")
+
+        # THEN
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert uow.committed is False
+        assert uow.snapshots == {}
+
+    async def test_returns_401_on_malformed_authorization_header(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN a configured capture token
+        WHEN the capture endpoint is posted with a non-Bearer Authorization header
+        THEN it returns 401 and no capture command is dispatched
+        """
+        # WHEN — Basic scheme is not parsed as bearer credentials.
+        response = await client.post(
+            f"{MONOTRIBUTO}/capture",
+            headers={"Authorization": f"Basic {CAPTURE_TOKEN}"},
+        )
+
+        # THEN
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert uow.committed is False
+        assert uow.snapshots == {}
+
+    async def test_returns_401_on_mismatched_bearer_token(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN a configured capture token
+        WHEN the capture endpoint is posted with a wrong bearer token
+        THEN it returns 401 and no capture command is dispatched
+        """
+        # WHEN
+        response = await client.post(
+            f"{MONOTRIBUTO}/capture",
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+
+        # THEN
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert uow.committed is False
+        assert uow.snapshots == {}
+
+    async def test_dispatches_with_correct_token(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN a configured capture token
+        WHEN the capture endpoint is posted with the matching bearer token
+        THEN it returns 202 and the capture command is dispatched through the UoW
+        """
+        # WHEN
+        response = await client.post(
+            f"{MONOTRIBUTO}/capture",
+            headers={"Authorization": f"Bearer {CAPTURE_TOKEN}"},
+        )
+
+        # THEN — authorized: the command flowed through the bus and committed.
+        assert response.status_code == status.HTTP_202_ACCEPTED
         assert uow.committed is True
         today = datetime.now(UTC).date()
         assert date(today.year, today.month, 1) in uow.snapshots
