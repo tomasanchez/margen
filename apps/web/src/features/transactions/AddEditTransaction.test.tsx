@@ -22,11 +22,14 @@ import { useAddTransaction } from './addContext'
 // Mock the HTTP client so the flow never touches a real backend (ADR-038), and
 // the dolarapi FX adapter so no real network is hit (ADR-044). The suggested
 // MEP + official rates are controllable per-test via `fxMock`.
-const { createMock, fxMock, fetchSettingsMock } = vi.hoisted(() => ({
-  createMock: vi.fn(),
-  fxMock: vi.fn(),
-  fetchSettingsMock: vi.fn(),
-}))
+const { createMock, fxMock, fetchSettingsMock, monotributoMock } = vi.hoisted(
+  () => ({
+    createMock: vi.fn(),
+    fxMock: vi.fn(),
+    fetchSettingsMock: vi.fn(),
+    monotributoMock: vi.fn(),
+  }),
+)
 
 vi.mock('../../api/transactionsClient', () => ({
   transactionsClient: {
@@ -39,6 +42,13 @@ vi.mock('../../api/transactionsClient', () => ({
 
 vi.mock('../../api/fxClient', () => ({
   fetchSuggestedRates: fxMock,
+}))
+
+// The Expense path reads the Monotributo snapshot to autofill the monthly cuota
+// shortcut. Mock the client so the snapshot (current category + scale) is
+// controllable per-test via `monotributoMock` and no real backend is hit.
+vi.mock('../../api/monotributoClient', () => ({
+  fetchMonotributo: monotributoMock,
 }))
 
 // The form now reads the configured FX default from settings (ADR-057). Mock the
@@ -65,7 +75,46 @@ beforeEach(() => {
     monotributoCurrentCategory: 'C',
     monotributoActivityType: 'services',
   })
+  // Default: the user is on category C / services, whose monthly cuota is
+  // ARS 56.502 (the services fee for the matching scale row).
+  monotributoMock.mockResolvedValue(makeSnapshot('C', 'services'))
 })
+
+/** A minimal Monotributo snapshot with a known category, activity type + scale. */
+function makeSnapshot(category: string, activityType: string) {
+  return {
+    current: {
+      category,
+      activityType,
+      annualLimit: 21_113_697,
+      used: 0,
+      remaining: 21_113_697,
+      percentUsed: 0,
+      ratio: 0,
+      status: 'safe',
+      projectedCategory: category,
+      projectionNote: '',
+      periodStart: '2025-07-01',
+      periodEnd: '2026-06-30',
+    },
+    previous: null,
+    scale: [
+      {
+        letter: 'B',
+        annualCeiling: 15_058_448,
+        cuotaServicios: 48_251,
+        cuotaBienes: 48_251,
+      },
+      {
+        letter: 'C',
+        annualCeiling: 21_113_697,
+        cuotaServicios: 56_502,
+        cuotaBienes: 55_227,
+      },
+    ],
+    invoices: [],
+  }
+}
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -135,6 +184,64 @@ describe('Add flow — type toggles required fields', () => {
     await user.click(form.getByRole('button', { name: 'Expense' }))
     expect(
       form.queryByText('Counts toward Monotributo'),
+    ).not.toBeInTheDocument()
+  })
+})
+
+describe('Add flow — Monotributo cuota shortcut (expense path)', () => {
+  test('clicking the button autofills the cuota, Taxes category + name, then saves as a plain ARS expense', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    // The expense path shows the cuota button labelled with the ARS amount
+    // (category C / services → 56.502).
+    const cuotaButton = await form.findByRole('button', {
+      name: 'Load Monotributo cuota (ARS 56.502)',
+    })
+    await waitFor(() => expect(cuotaButton).toBeEnabled())
+    await user.click(cuotaButton)
+
+    // The amount field is filled with the cuota and the Taxes chip is selected.
+    expect(form.getByLabelText(/^Amount in /)).toHaveValue('56502')
+    expect(form.getByRole('button', { name: 'Taxes' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+
+    const [input] = createMock.mock.calls[0]
+    expect(input.type).toBe('expense')
+    expect(input.currency).toBe('ARS')
+    expect(input.category).toBe('Taxes')
+    expect(input.name).toBe('Monotributo C')
+    expect(input.amountNum).toBe(56502)
+    expect(input.usd).toBeUndefined()
+    expect(input.document).toBeUndefined()
+  })
+
+  test('a goods activity uses the cuotaBienes fee', async () => {
+    monotributoMock.mockResolvedValue(makeSnapshot('C', 'goods'))
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    // Category C / goods → cuotaBienes 55.227.
+    const cuotaButton = await form.findByRole('button', {
+      name: 'Load Monotributo cuota (ARS 55.227)',
+    })
+    await user.click(cuotaButton)
+    expect(form.getByLabelText(/^Amount in /)).toHaveValue('55227')
+  })
+
+  test('the cuota button is absent on the income/invoice path', async () => {
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    await user.click(form.getByRole('button', { name: 'Invoice / income' }))
+    expect(
+      form.queryByRole('button', { name: /Load Monotributo cuota/ }),
     ).not.toBeInTheDocument()
   })
 })

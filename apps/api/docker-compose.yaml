@@ -46,5 +46,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # Disposable PostgreSQL for the DESTRUCTIVE integration tier, which creates and
+  # DROPS the whole schema around every test. A separate database
+  # (margen-api-test) on a separate port, with NO volume (ephemeral), so the test
+  # tier can never touch the dev `db` or persist anything. Only starts with the
+  # `test` profile:  docker compose --profile test up -d db-test
+  db-test:
+    image: pgvector/pgvector:pg17
+    container_name: margen-api-db-test
+    profiles: ["test"]
+    environment:
+      - POSTGRES_USER=margen-api
+      - POSTGRES_PASSWORD=margen-api
+      - POSTGRES_DB=margen-api-test
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U margen-api -d margen-api-test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   db-data:

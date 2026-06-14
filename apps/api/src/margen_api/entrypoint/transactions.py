@@ -32,6 +32,7 @@ from margen_api.domain.models.exceptions import (
 from margen_api.entrypoint.dependencies import Bus, TransactionReader
 from margen_api.entrypoint.schemas import ResponseModel
 from margen_api.entrypoint.transactions_schemas import (
+    InvalidDocumentBase64Error,
     TransactionCreateRequest,
     TransactionPatchRequest,
     TransactionResponse,
@@ -89,10 +90,17 @@ async def create_transaction(
     re-reads the created row via the reader so the response carries the
     server-managed identity and timestamps. Lenient validation applies
     (ADR-031): a non-positive ``amountNum`` or an unknown ``kind`` / ``currency``
-    yields ``422``; USD without a rate is accepted.
+    yields ``422``; USD without a rate is accepted. An optional ``document``
+    attaches an imported invoice PDF (base64), stored as a side record in the same
+    unit of work (ADR-070, ADR-071); a malformed ``pdfBase64`` yields ``422``.
     """
     try:
-        transaction_id = await bus.handle(body.to_command())
+        command = body.to_command()
+    except InvalidDocumentBase64Error as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+
+    try:
+        transaction_id = await bus.handle(command)
     except _INVARIANT_VIOLATIONS as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
 

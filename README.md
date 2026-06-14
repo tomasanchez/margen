@@ -104,9 +104,19 @@ its pnpm scripts (`pnpm dev/build/test/lint`).
 
 ```powershell
 make test              # backend cover (unit+e2e, 100% gate) + frontend Vitest
-# backend integration tier (real PostgreSQL, needs `make db`):
-cd apps/api && make integration
+
+# Backend integration tier — runs against a DISPOSABLE test database, never your
+# dev `db`. It creates and DROPS the schema per test, so it uses a separate,
+# ephemeral Postgres (margen-api-test on port 5433):
+cd apps/api
+docker compose --profile test up -d db-test   # start the throwaway test DB
+make integration                              # defaults to the test DB
 ```
+
+> ⚠️ The integration tier is **destructive** (it drops all tables). `make integration`
+> defaults `TEST_DATABASE_URL` to the disposable `margen-api-test` DB, and the test
+> suite **refuses to run** against any database whose name doesn't contain `test` —
+> so it can never wipe your dev/real database.
 
 ## Environment variables
 

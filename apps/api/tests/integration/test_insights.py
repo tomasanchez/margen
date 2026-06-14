@@ -79,6 +79,28 @@ def _usd_invoice(occurred_on: date, usd: str, rate: str, created_at: datetime):
     )
 
 
+def _usd_expense(occurred_on: date, usd: str, rate: str, created_at: datetime):
+    """Build a USD expense (e.g. a fee paid in dollars) with an applied rate.
+
+    It carries a usd_amount + fx_rate like a USD invoice, but kind=expense — it
+    must NOT be picked as the "latest invoice" insight (#26).
+    """
+    return build_transaction(
+        transaction_id=uuid4(),
+        occurred_on=occurred_on,
+        name="USD fee",
+        kind=Kind.EXPENSE,
+        amount=Decimal(usd) * Decimal(rate),
+        currency=Currency.USD,
+        usd_amount=Decimal(usd),
+        fx_rate=Decimal(rate),
+        fx_rate_type=FxRateType.MEP,
+        category="Fee",
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+
 async def _seed(session_factory: async_sessionmaker[AsyncSession], rows: list) -> None:
     """Persist and commit the given aggregates through the repository."""
     async with session_factory() as session:
@@ -152,6 +174,29 @@ class TestInsightsAggregation:
         assert insights.latest_usd_invoice.usd == Decimal("100.00")
         assert insights.latest_usd_invoice.rate == Decimal("1200.00")
         assert insights.latest_usd_invoice.rate_type == FxRateType.MEP.value
+
+    async def test_latest_usd_invoice_ignores_usd_expenses(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN a USD invoice and a MORE-RECENT USD expense (a fee paid in dollars)
+        WHEN the latest-USD-invoice insight is read
+        THEN it picks the invoice, not the later expense (#26 — a fee must not
+             surface as a positive 'invoice')
+        """
+        # GIVEN — the fee is newer than the invoice but is an expense.
+        rows = [
+            _usd_invoice(date(2026, 6, 10), "100.00", "1200.00", _MOMENT),
+            _usd_expense(date(2026, 6, 20), "30.00", "1200.00", _MOMENT),
+        ]
+        await _seed(session_factory, rows)
+
+        # WHEN
+        async with session_factory() as session:
+            insights = await SqlAlchemyInsightsReader(session).monthly_insights(date(2026, 6, 1), date(2026, 7, 1))
+
+        # THEN — the invoice (10th), not the later fee expense (20th).
+        assert insights.latest_usd_invoice is not None
+        assert insights.latest_usd_invoice.occurred_on == date(2026, 6, 10)
+        assert insights.latest_usd_invoice.usd == Decimal("100.00")
 
     async def test_current_month_savings_are_projected(self, session_factory: async_sessionmaker[AsyncSession]):
         """

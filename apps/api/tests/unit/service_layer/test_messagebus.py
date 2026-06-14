@@ -35,6 +35,9 @@ class _StubUnitOfWork(AbstractUnitOfWork):
         """Record a commit."""
         self.committed = True
 
+    async def flush(self) -> None:
+        """Do nothing."""
+
     async def rollback(self) -> None:
         """Record a rollback."""
         self.rolled_back = True
@@ -146,6 +149,9 @@ class TestUnitOfWorkEventCollection:
             """A unit of work that tracks no aggregates."""
 
             async def commit(self) -> None:
+                """Do nothing."""
+
+            async def flush(self) -> None:
                 """Do nothing."""
 
             async def rollback(self) -> None:

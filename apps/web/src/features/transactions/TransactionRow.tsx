@@ -18,11 +18,61 @@ import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlineOutlined'
+import AttachFileIcon from '@mui/icons-material/AttachFile'
 import { Amount } from '../../components/Amount'
+import { FxBadge } from '../../components/FxBadge'
 import { formatDispDate } from '../../lib/format'
 import { monoFontFamily } from '../../theme'
 import type { Transaction } from '../../mock/types'
+import { documentUrl } from '../../api/invoicesClient'
 import { categoryDotColor } from './presentation'
+
+/**
+ * Compact attachment badge/link for an imported invoice (ADR-072). Imported
+ * ARCA invoices are persisted with `kind === 'invoice'`, so we surface a small
+ * "PDF" chip that opens the stored document (GET /invoices/{id}/document) in a
+ * new tab. It carries an icon + text label (not color alone, ADR-019) and stops
+ * the click from triggering the row's edit affordance.
+ */
+function InvoiceAttachmentBadge({ transaction }: { transaction: Transaction }) {
+  if (transaction.kind !== 'invoice') return null
+  return (
+    <Tooltip title="Open invoice PDF">
+      <Box
+        component="a"
+        href={documentUrl(transaction.id)}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(event) => event.stopPropagation()}
+        aria-label={`Open invoice PDF for ${transaction.name}`}
+        sx={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 0.25,
+          flex: 'none',
+          fontSize: 10,
+          lineHeight: 1.6,
+          px: 0.625,
+          borderRadius: '5px',
+          border: '1px solid var(--mg-border-2)',
+          color: 'text.secondary',
+          bgcolor: 'var(--mg-raised)',
+          textDecoration: 'none',
+          whiteSpace: 'nowrap',
+          '&:hover': { color: 'primary.main', borderColor: 'primary.main' },
+          '&:focus-visible': {
+            outline: '2px solid',
+            outlineColor: 'primary.main',
+            outlineOffset: 2,
+          },
+        }}
+      >
+        <AttachFileIcon sx={{ fontSize: 11 }} aria-hidden />
+        PDF
+      </Box>
+    </Tooltip>
+  )
+}
 
 /** Shared grid template so the column header and each desktop row align. */
 export const DESKTOP_GRID_COLUMNS = '58px minmax(0, 1fr) 140px 150px 72px'
@@ -196,7 +246,8 @@ export function TransactionRow(props: TransactionRowProps) {
             {t.name}
           </Typography>
           {t.recurring ? <RowBadge>recurring</RowBadge> : null}
-          {isUsd ? <RowBadge tone="gold">FX</RowBadge> : null}
+          {isUsd ? <FxBadge /> : null}
+          <InvoiceAttachmentBadge transaction={t} />
         </Box>
         <Typography
           component="span"
@@ -314,7 +365,7 @@ export function TransactionRowMobile(props: TransactionRowProps) {
             {t.name}
           </Typography>
           {t.recurring ? <RowBadge>recurring</RowBadge> : null}
-          {isUsd ? <RowBadge tone="gold">FX</RowBadge> : null}
+          {isUsd ? <FxBadge /> : null}
         </Box>
         <Box
           sx={{
@@ -358,17 +409,26 @@ export function TransactionRowMobile(props: TransactionRowProps) {
           fxRate={isUsd ? t.rate : undefined}
           fxSource={isUsd ? t.fxRateType : undefined}
         />
-        <Typography
-          component="span"
+        <Box
           sx={{
-            fontFamily: monoFontFamily,
-            fontSize: 10.5,
-            color: 'text.disabled',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.5,
             mt: 0.25,
           }}
         >
-          {formatDispDate(t.dispDate)}
-        </Typography>
+          <InvoiceAttachmentBadge transaction={t} />
+          <Typography
+            component="span"
+            sx={{
+              fontFamily: monoFontFamily,
+              fontSize: 10.5,
+              color: 'text.disabled',
+            }}
+          >
+            {formatDispDate(t.dispDate)}
+          </Typography>
+        </Box>
       </Box>
 
       <Tooltip title="Delete">

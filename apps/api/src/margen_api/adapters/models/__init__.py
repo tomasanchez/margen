@@ -6,12 +6,14 @@ which ``migrations/env.py`` uses as the Alembic autogenerate target.
 
 from margen_api.adapters.models.app_settings import AppSettingsRecord
 from margen_api.adapters.models.base import Base
+from margen_api.adapters.models.invoice_document import InvoiceDocumentRecord
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
 from margen_api.adapters.models.transaction import TransactionRecord
 
 __all__ = [
     "AppSettingsRecord",
     "Base",
+    "InvoiceDocumentRecord",
     "MonotributoSnapshotRecord",
     "TransactionRecord",
 ]

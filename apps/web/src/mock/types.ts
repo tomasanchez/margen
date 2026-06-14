@@ -38,6 +38,7 @@ export type Category =
   | 'Shopping'
   | 'Services'
   | 'Taxes'
+  | 'Fee'
   | 'Other'
 
 /** Banks / cards a transaction can be attributed to. */
@@ -46,6 +47,7 @@ export type Bank =
   | 'Santander · Mastercard'
   | 'Mercado Pago'
   | 'Brubank'
+  | 'Deel'
   | 'Transfer'
 
 /** Months present in the mock dataset, newest-first ordering handled elsewhere. */
@@ -145,6 +147,25 @@ export interface NewTransactionInput {
    * supplied date. Carried so an Edit can preserve the original month.
    */
   month?: MonthName
+  /**
+   * Optional imported-invoice PDF attachment (ADR-070/072). Present only when the
+   * transaction is created from an uploaded ARCA invoice; the create client sends
+   * it as the backend's `document` object so the PDF is stored and linked. Typed
+   * loosely here (the shape lives in `api/invoicesClient`) to keep this mock
+   * module dependency-free.
+   */
+  document?: {
+    pdfBase64: string
+    contentType: string
+    emisorCuit?: string
+    ptoVta?: string
+    tipoCmp?: string
+    nroCmp?: string
+    fecha?: string
+    importe?: number
+    moneda?: string
+    ctz?: number
+  }
 }
 
 /** Partial patch accepted by the update mutation. Id and identity stay fixed. */

@@ -56,6 +56,9 @@ class TestAbstractUnitOfWork:
             async def commit(self) -> None:
                 """Do nothing."""
 
+            async def flush(self) -> None:
+                """Do nothing."""
+
             async def rollback(self) -> None:
                 """Record a rollback."""
                 self.rolled_back = True
@@ -101,6 +104,40 @@ class TestSqlAlchemyUnitOfWork:
         # THEN
         async with session_factory() as session:
             assert (await session.execute(select(_Widget).where(_Widget.id == "beta"))).scalar_one_or_none() is None
+
+    async def test_flush_materializes_without_committing(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN a SQLAlchemy unit of work
+        WHEN a row is added and flushed but not committed
+        THEN it is visible within the same transaction yet discarded on exit
+        """
+        # WHEN
+        async with SqlAlchemyUnitOfWork(session_factory) as uow:
+            uow.session.add(_Widget(id="delta"))
+            await uow.flush()
+            # Visible within the same transaction after the flush.
+            assert await uow.session.get(_Widget, "delta") is not None
+
+        # THEN — never committed, so a later session does not see it.
+        async with session_factory() as session:
+            assert await session.get(_Widget, "delta") is None
+
+    async def test_flush_translates_integrity_errors(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN a row that already exists
+        WHEN a conflicting primary key is flushed
+        THEN the adapter raises an application persistence conflict
+        """
+        # GIVEN
+        async with SqlAlchemyUnitOfWork(session_factory) as uow:
+            uow.session.add(_Widget(id="zeta"))
+            await uow.commit()
+
+        # WHEN / THEN
+        with pytest.raises(IntegrityConflict):
+            async with SqlAlchemyUnitOfWork(session_factory) as uow:
+                uow.session.add(_Widget(id="zeta"))
+                await uow.flush()
 
     async def test_translates_integrity_errors(self, session_factory: async_sessionmaker[AsyncSession]):
         """

@@ -14,7 +14,8 @@
  * restoration are handled by the surrounding Dialog/Drawer.
  */
 
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
+import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
@@ -30,8 +31,10 @@ import ToggleButton from '@mui/material/ToggleButton'
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
 import Typography from '@mui/material/Typography'
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded'
+import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded'
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded'
+import UploadFileIcon from '@mui/icons-material/UploadFile'
 import { BANKS } from '../../mock/seed'
 import type {
   Bank,
@@ -41,12 +44,21 @@ import type {
 } from '../../mock/types'
 import { formatARS, fxSourceLabel } from '../../lib/format'
 import { monoFontFamily } from '../../theme'
+import {
+  InvoicesApiError,
+  parseInvoice,
+} from '../../api/invoicesClient'
+import { useMonotributoSnapshot } from '../monotributo/queries'
 import type { AddPrefill } from './addContext'
 import {
   EXPENSE_CATEGORIES,
   useAddEditFormState,
 } from './useAddEditFormState'
 import type { FxSource } from './useAddEditFormState'
+
+/** Calm copy shown under the upload control when a PDF can't be read (ADR-072/037). */
+const GENERIC_PARSE_ERROR =
+  "Couldn't read this as an ARCA invoice — enter the details manually."
 
 /** Uppercase eyebrow heading shared by the form sections (token-driven). */
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -115,6 +127,79 @@ export function AddEditForm({
   const form = useAddEditFormState(prefill)
   const [moreOpen, setMoreOpen] = useState(false)
 
+  // Monotributo cuota shortcut (expense path only): load the user's monthly tax
+  // as a plain ARS expense, autofilled from their configured category. The cuota
+  // is the scale row matching the current category, taking the services or goods
+  // fee per the configured activity type. We read the snapshot non-blockingly —
+  // while it's pending or absent the button stays calmly disabled (no crash).
+  const monotributoQuery = useMonotributoSnapshot()
+  const standing = monotributoQuery.data?.current
+  const cuotaRow = standing
+    ? monotributoQuery.data?.scale.find((row) => row.letter === standing.category)
+    : undefined
+  const monotributoCuota = cuotaRow
+    ? standing?.activityType === 'services'
+      ? cuotaRow.cuotaServicios
+      : cuotaRow.cuotaBienes
+    : undefined
+
+  // In-form ARCA invoice upload (ADR-072): a calm parsing flag + an inline,
+  // non-blocking failure message. On success the parse autofills the fields; the
+  // user reviews and decides whether to save. On failure they keep going
+  // manually. The hidden picker is reset after each pick so re-picking the same
+  // file fires `change` again.
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isParsing, setIsParsing] = useState(false)
+  const [parseError, setParseError] = useState<string | null>(null)
+
+  const handlePickFile = () => {
+    if (isParsing) return
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    // Clear any prior calm error on a new pick.
+    setParseError(null)
+    setIsParsing(true)
+    void parseInvoice(file)
+      .then((parsed) => {
+        if (parsed.status === 'unparseable') {
+          // A valid-but-unreadable PDF: calm inline message, stay in the form.
+          setParseError(GENERIC_PARSE_ERROR)
+          return
+        }
+        // Carry the picked file's name so the attached-file row can show it.
+        form.applyParsedInvoice(parsed, file.name)
+      })
+      .catch((error: unknown) => {
+        // 415 / 413 / 422 (or any failure) → calm inline message; keep editing.
+        setParseError(
+          error instanceof InvoicesApiError ? error.message : GENERIC_PARSE_ERROR,
+        )
+      })
+      .finally(() => setIsParsing(false))
+  }
+
+  // Unattach the uploaded invoice (issue #26): drop the stashed PDF + its name +
+  // the duplicate advisory (the hook keeps the autofilled values), and clear the
+  // inline parse error. The upload control reappears so a different file can be
+  // picked, and saving now creates the row WITHOUT a document.
+  const handleRemoveAttachment = () => {
+    form.clearImportedDocument()
+    setParseError(null)
+  }
+
+  // Reset all fields to the blank new-entry defaults + clear the attachment and
+  // parse error (issue #26). Resets state in place — it does not close the form.
+  const handleResetAll = () => {
+    form.resetForm()
+    setParseError(null)
+    setMoreOpen(false)
+  }
+
   const amountInputId = useId()
   const rateInputId = useId()
   const dateInputId = useId()
@@ -146,6 +231,20 @@ export function AddEditForm({
 
   const handleFxSourceChange = (_: unknown, next: FxSource | null) => {
     if (next) form.setFxSource(next)
+  }
+
+  // Load the monthly Monotributo cuota into the expense fields (ARS, Taxes,
+  // "Monotributo <category>"). Guarded by the disabled state below, but re-check
+  // the figures so a late/absent snapshot never autofills garbage.
+  const handleLoadMonotributoCuota = () => {
+    if (
+      typeof monotributoCuota !== 'number' ||
+      monotributoCuota <= 0 ||
+      !standing
+    ) {
+      return
+    }
+    form.applyMonotributoCuota(monotributoCuota, `Monotributo ${standing.category}`)
   }
 
   // FX context line: converted ARS value + rate source + rate value. The source
@@ -222,6 +321,23 @@ export function AddEditForm({
         </IconButton>
       </Box>
 
+      {/* Calm, non-blocking duplicate warning for an imported invoice (ADR-072).
+          The user can still review and save; the create path is not blocked. */}
+      {form.duplicate ? (
+        <Alert
+          severity="warning"
+          variant="outlined"
+          sx={{
+            mb: 2.5,
+            borderColor: 'var(--mg-border-2)',
+            '& .MuiAlert-message': { fontSize: 13 },
+          }}
+        >
+          Looks like you already imported this invoice. You can still save it if
+          this is intentional.
+        </Alert>
+      ) : null}
+
       {/* Expense / Invoice·income segmented tabs. */}
       <ToggleButtonGroup
         value={form.type}
@@ -254,6 +370,119 @@ export function AddEditForm({
         <ToggleButton value="expense">Expense</ToggleButton>
         <ToggleButton value="income">Invoice / income</ToggleButton>
       </ToggleButtonGroup>
+
+      {/* Upload-to-autofill, on the invoice/income input only (ADR-072). Picking
+          an ARCA PDF parses it and autofills the fields below; the user reviews
+          and decides whether to save (the parse is non-committal). A failed parse
+          shows a calm inline message and the form stays usable. Expenses aren't
+          invoices, so the control is hidden there. */}
+      {!isExpense ? (
+        <Box sx={{ mb: 2.5 }}>
+          {/* When a PDF is attached, show a compact attached-file row (document
+              icon + truncated name + remove) instead of the upload button, so the
+              user sees which file they picked and can unattach it (issue #26).
+              Otherwise show the upload-to-autofill control. */}
+          {form.hasImportedDocument ? (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                px: 1.5,
+                py: 1,
+                bgcolor: 'var(--mg-paper)',
+                border: '1px solid var(--mg-border-2)',
+                borderRadius: 2,
+              }}
+            >
+              <DescriptionRoundedIcon
+                fontSize="small"
+                aria-hidden
+                sx={{ color: 'var(--mg-gold)', flex: 'none' }}
+              />
+              <Typography
+                title={form.attachedFileName ?? undefined}
+                sx={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: 13.5,
+                  color: 'text.primary',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {form.attachedFileName ?? 'Attached invoice'}
+              </Typography>
+              <IconButton
+                type="button"
+                onClick={handleRemoveAttachment}
+                aria-label="Remove attached invoice"
+                size="small"
+                sx={{ flex: 'none', color: 'text.secondary' }}
+              >
+                <CloseRoundedIcon fontSize="small" />
+              </IconButton>
+            </Box>
+          ) : (
+            <Button
+              type="button"
+              variant="outlined"
+              color="secondary"
+              fullWidth
+              onClick={handlePickFile}
+              disabled={isParsing}
+              startIcon={
+                isParsing ? (
+                  <CircularProgress size={15} thickness={5} color="inherit" />
+                ) : (
+                  <UploadFileIcon fontSize="small" />
+                )
+              }
+              sx={{
+                py: 1.1,
+                fontWeight: 600,
+                color: 'text.secondary',
+                borderColor: 'var(--mg-border-2)',
+                borderStyle: 'dashed',
+                textTransform: 'none',
+              }}
+            >
+              {isParsing
+                ? 'Reading your invoice…'
+                : 'Upload ARCA invoice PDF to autofill'}
+            </Button>
+          )}
+
+          {/* Hidden PDF picker for the upload control. The parse boundary
+              re-validates the type; we accept PDFs to hint the OS dialog. */}
+          <Box
+            component="input"
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf"
+            onChange={handleFileChange}
+            aria-hidden
+            tabIndex={-1}
+            sx={{ display: 'none' }}
+          />
+
+          {/* Calm, inline, non-blocking parse-failure message (ADR-072/037). */}
+          {parseError ? (
+            <Alert
+              severity="warning"
+              variant="outlined"
+              sx={{
+                mt: 1.25,
+                borderColor: 'var(--mg-border-2)',
+                '& .MuiAlert-message': { fontSize: 13 },
+              }}
+            >
+              {parseError}
+            </Alert>
+          ) : null}
+        </Box>
+      ) : null}
 
       {/* Amount. */}
       <SectionLabel>Amount</SectionLabel>
@@ -455,7 +684,43 @@ export function AddEditForm({
       {/* Category chips (single select; Income is implicit for income type). */}
       {isExpense ? (
         <Box sx={{ mt: 2.5 }}>
-          <SectionLabel>Category</SectionLabel>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'baseline',
+              justifyContent: 'space-between',
+              gap: 1,
+            }}
+          >
+            <SectionLabel>Category</SectionLabel>
+            {/* Expense-only shortcut: load the user's monthly Monotributo cuota
+                as an ARS Taxes expense, autofilled from their configured category
+                (the income/invoice path has the upload control instead). Calmly
+                disabled while the snapshot is pending or unavailable. */}
+            <Button
+              type="button"
+              variant="text"
+              size="small"
+              onClick={handleLoadMonotributoCuota}
+              disabled={
+                monotributoQuery.isPending ||
+                typeof monotributoCuota !== 'number' ||
+                monotributoCuota <= 0
+              }
+              sx={{
+                flex: 'none',
+                px: 1,
+                fontSize: 12.5,
+                fontWeight: 600,
+                color: 'text.secondary',
+                textTransform: 'none',
+              }}
+            >
+              {typeof monotributoCuota === 'number'
+                ? `Load Monotributo cuota (ARS ${formatARS(monotributoCuota)})`
+                : 'Load Monotributo cuota'}
+            </Button>
+          </Box>
           <Stack
             direction="row"
             spacing={1}
@@ -626,6 +891,23 @@ export function AddEditForm({
           }}
         >
           Cancel
+        </Button>
+        {/* Reset all fields to blank new-entry defaults (issue #26). Clears the
+            inputs + any attachment; it does NOT submit or close the form. */}
+        <Button
+          type="button"
+          variant="text"
+          color="secondary"
+          onClick={handleResetAll}
+          aria-label="Reset all fields"
+          sx={{
+            flex: 'none',
+            px: 2,
+            py: 1.25,
+            color: 'text.secondary',
+          }}
+        >
+          Reset
         </Button>
         <Button
           type="submit"

@@ -12,31 +12,11 @@ import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { Link } from '@tanstack/react-router'
 import { Amount } from '../../components/Amount'
+import { FxBadge } from '../../components/FxBadge'
 import { monoFontFamily } from '../../theme'
 import { formatCurrency, formatDispDate } from '../../lib/format'
 import type { MonotributoInvoice } from '../../mock/types'
 import { SectionCard } from '../../components/SectionCard'
-
-/** Small "FX" badge shown next to foreign-currency invoices. */
-function FxBadge() {
-  return (
-    <Box
-      component="span"
-      sx={{
-        flex: 'none',
-        fontFamily: monoFontFamily,
-        fontSize: 10,
-        color: 'var(--mg-gold)',
-        bgcolor: 'color-mix(in srgb, var(--mg-gold) 12%, transparent)',
-        px: 0.75,
-        py: '1px',
-        borderRadius: '5px',
-      }}
-    >
-      FX
-    </Box>
-  )
-}
 
 const GRID_COLUMNS = '54px minmax(0, 1fr) 116px 124px'
 

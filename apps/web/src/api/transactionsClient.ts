@@ -68,6 +68,24 @@ export interface TransactionDto {
   updatedAt: string
 }
 
+/**
+ * The optional imported-invoice attachment sent on create (ADR-070/071). The PDF
+ * crosses the boundary as base64 (`pdfBase64`); the rest is the parsed fiscal
+ * record the backend stores alongside it. Built by `api/invoicesClient`.
+ */
+interface TransactionDocumentBody {
+  pdfBase64: string
+  contentType: string
+  emisorCuit?: string
+  ptoVta?: string
+  tipoCmp?: string
+  nroCmp?: string
+  fecha?: string
+  importe?: number
+  moneda?: string
+  ctz?: number
+}
+
 /** Request body accepted by `POST /transactions` (camelCase, ADR-024). */
 interface TransactionCreateBody {
   occurredOn: string
@@ -84,6 +102,8 @@ interface TransactionCreateBody {
   recurring?: boolean
   countsTowardMonotributo?: boolean
   notes?: string
+  /** Optional imported-invoice PDF + record to store and link (ADR-070/071). */
+  document?: TransactionDocumentBody
 }
 
 /** Request body accepted by `PATCH /transactions/{id}` (all fields optional). */
@@ -209,6 +229,9 @@ export function toCreateBody(input: NewTransactionInput): TransactionCreateBody 
   if (input.fxRateAsOf !== undefined) body.fxRateAsOf = input.fxRateAsOf
   if (input.recurring !== undefined) body.recurring = input.recurring
   if (input.notes) body.notes = input.notes
+  // Imported invoice: carry the base64 PDF + parsed record so the backend stores
+  // and links the attachment (ADR-070/071). Omitted for manual entries.
+  if (input.document) body.document = input.document
   return body
 }
 

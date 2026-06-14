@@ -300,15 +300,18 @@ class SqlAlchemyInsightsReader(AbstractInsightsReader):
         return _ZERO if total is None else _as_decimal(total)
 
     async def _latest_usd_invoice(self, month: date) -> LatestUsdInvoice | None:
-        """Return the month's most recent USD transaction with an applied rate.
+        """Return the month's most recent USD INVOICE with an applied rate.
 
-        Any kind qualifies; the row must be in USD and carry both a ``usd_amount``
-        and an ``fx_rate``. Ordered newest-first by ``occurred_on`` (``created_at``
-        as a stable tiebreak) and limited to one (ADR-060).
+        Only ``invoice``-kind rows qualify — the insight is "latest invoice", so a
+        USD expense (e.g. a fee paid in dollars) must not surface here (it would
+        read as a positive invoice, ADR-060). The row must be in USD and carry both
+        a ``usd_amount`` and an ``fx_rate``. Ordered newest-first by ``occurred_on``
+        (``created_at`` as a stable tiebreak) and limited to one.
         """
         statement = (
             select(TransactionRecord)
             .where(
+                TransactionRecord.kind == Kind.INVOICE.value,
                 TransactionRecord.currency == Currency.USD.value,
                 TransactionRecord.usd_amount.is_not(None),
                 TransactionRecord.fx_rate.is_not(None),

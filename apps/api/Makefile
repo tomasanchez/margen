@@ -30,8 +30,8 @@ test: ## Executes the offline test tiers (unit + e2e)
 	uv run pytest -m "not integration"
 
 .PHONY: integration
-integration: ## Executes the PostgreSQL integration tier (requires TEST_DATABASE_URL / Docker)
-	uv run pytest -m integration
+integration: ## Runs the integration tier against the disposable test DB (docker compose --profile test up -d db-test)
+	TEST_DATABASE_URL="$${TEST_DATABASE_URL:-postgresql+asyncpg://margen-api:margen-api@localhost:5433/margen-api-test}" uv run pytest -m integration
 
 .PHONY: adr-check
 adr-check: ## Validates the architecture decision registry
@@ -44,6 +44,10 @@ adr-context: ## Prints active architecture guidance for agents
 .PHONY: migrate
 migrate: ## Applies relational database migrations
 	uv run alembic upgrade head
+
+.PHONY: run
+run: migrate ## Applies migrations then starts the API on port 8000
+	uv run python -m margen_api.main
 
 .PHONY: cover
 cover: ## Executes the offline tiers (unit + e2e) with the coverage gate

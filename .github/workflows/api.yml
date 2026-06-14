@@ -68,16 +68,18 @@ jobs:
         env:
           POSTGRES_USER: margen-api
           POSTGRES_PASSWORD: margen-api
-          POSTGRES_DB: margen-api
+          # A dedicated test database — the integration tier creates + DROPS the
+          # schema, and the conftest guard refuses any DB name without "test".
+          POSTGRES_DB: margen-api-test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U margen-api -d margen-api"
+          --health-cmd "pg_isready -U margen-api -d margen-api-test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
     env:
-      TEST_DATABASE_URL: postgresql+asyncpg://margen-api:margen-api@localhost:5432/margen-api
+      TEST_DATABASE_URL: postgresql+asyncpg://margen-api:margen-api@localhost:5432/margen-api-test
     steps:
       - uses: actions/checkout@v5
       - name: Install uv
@@ -90,5 +92,10 @@ jobs:
         run: uv run alembic upgrade head
         env:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+      # The real-decode guard (tests/integration/test_invoice_parser_real.py)
+      # exercises pyzbar against a generated QR PDF, which needs the native zbar
+      # shared library (#26). The fast tiers mock this boundary; only here is it real.
+      - name: Install native zbar (QR decode)
+        run: sudo apt-get update && sudo apt-get install -y libzbar0
       - name: Run the PostgreSQL integration tier
         run: make integration

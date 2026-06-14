@@ -7,6 +7,7 @@ from types import TracebackType
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.monotributo_repository import SqlAlchemyMonotributoSnapshotRepository
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
 from margen_api.adapters.settings_repository import SqlAlchemySettingsRepository
@@ -30,6 +31,7 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
         self.transactions = SqlAlchemyTransactionRepository(self.session)
         self.monotributo_snapshots = SqlAlchemyMonotributoSnapshotRepository(self.session)
         self.settings = SqlAlchemySettingsRepository(self.session)
+        self.documents = SqlAlchemyDocumentStore(self.session)
         return self
 
     async def __aexit__(
@@ -46,6 +48,18 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
         """Persist tracked aggregate changes and commit the transaction."""
         try:
             await self.session.commit()
+        except IntegrityError as error:
+            raise IntegrityConflict from error
+
+    async def flush(self) -> None:
+        """Flush pending inserts so a dependent side record's FK resolves (ADR-070).
+
+        SQLAlchemy does not order inserts across the transaction and its invoice
+        document (no relationship() between them), so the transaction is flushed
+        first to satisfy the document's foreign key.
+        """
+        try:
+            await self.session.flush()
         except IntegrityError as error:
             raise IntegrityConflict from error
 
