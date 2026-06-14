@@ -15,12 +15,32 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from margen_api.adapters.models.base import Base
 
 
+def _database_name(url: str) -> str:
+    """Extract the database name from a SQLAlchemy URL (path after the last '/')."""
+    return url.rsplit("/", 1)[-1].split("?", 1)[0]
+
+
 @pytest.fixture(name="integration_database_url")
 def fixture_integration_database_url() -> str:
-    """Return the configured integration database URL or skip the tier."""
+    """Return the configured integration database URL or skip the tier.
+
+    SAFETY GUARD: the integration fixtures create AND DROP the entire schema
+    around every test, so they must never point at a real database. We refuse any
+    ``TEST_DATABASE_URL`` whose database name does not contain ``test`` — a hard
+    error (not a skip), so a misconfigured run fails loudly *before* any DDL runs
+    rather than silently wiping a dev/prod database.
+    """
     url = os.environ.get("TEST_DATABASE_URL")
     if not url:
         pytest.skip("TEST_DATABASE_URL is not set; skipping the PostgreSQL integration tier")
+    database = _database_name(url)
+    if "test" not in database.lower():
+        raise RuntimeError(
+            f"Refusing to run the destructive integration tier against database {database!r}: "
+            "it creates and DROPS all tables. Point TEST_DATABASE_URL at a dedicated test "
+            "database whose name contains 'test' (e.g. margen-api-test on port 5433 — "
+            "`docker compose --profile test up -d db-test`)."
+        )
     return url
 
 
