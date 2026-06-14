@@ -15,13 +15,19 @@
  * SUGGESTED MEP + official rates from dolarapi.com in parallel. The user picks
  * the source via an explicit selector — MEP / Official / Manual: picking a
  * suggested source pre-fills its value and sets `fxRateType = 'MEP' | 'official'`;
- * typing a value (or picking Manual) sets `fxRateType = 'manual'`. The rate is
- * REQUIRED before a USD transaction can be saved (revisits ADR-031 for the UI).
- * If both fetches fail, the user must enter a rate manually — never a silent guess.
+ * typing a value (or picking Manual) sets `fxRateType = 'manual'`. The initial
+ * source defaults to the user's configured FX default (settings
+ * `fxDefaultRateType`, ADR-057), falling back to MEP when settings haven't
+ * loaded; if that source's rate is unavailable it falls back to the other. The
+ * rate is REQUIRED before a USD transaction can be saved (revisits ADR-031 for
+ * the UI). If both fetches fail, the user must enter a rate manually — never a
+ * silent guess.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchSuggestedRates } from '../../api/fxClient'
+import { useSettings } from '../settings/queries'
+import type { FxDefaultRateType } from '../../api/settingsClient'
 import type {
   Bank,
   Category,
@@ -238,6 +244,13 @@ export function useAddEditFormState(
   const mode = isEditPrefill(prefill) ? 'edit' : 'add'
   const editId = typeof prefill?.id === 'string' ? prefill.id : undefined
 
+  // The configured FX default source (ADR-044/045/057) pre-selects the USD
+  // source on a fresh add. Read non-blockingly: if settings are still loading
+  // (or failed), fall back to MEP so the form never waits on settings.
+  const settingsQuery = useSettings()
+  const fxDefaultRateType: FxDefaultRateType =
+    settingsQuery.data?.fxDefaultRateType ?? 'MEP'
+
   const [type, setType] = useState<TxType>(prefill?.type ?? 'expense')
   const [countsTowardMonotributo, setCountsTowardMonotributo] =
     useState<boolean>(prefill?.kind === 'invoice')
@@ -272,13 +285,14 @@ export function useAddEditFormState(
 
   // The explicit FX source the user selected (ADR-044 update). Defaults to the
   // prefill's stored source on an edit (preserved until the rate is edited),
-  // else MEP — the form will fall back to official if MEP is unavailable.
+  // else the configured FX default (ADR-057) — the form falls back to the other
+  // suggested source if the chosen one is unavailable.
   const seededFxSource: FxSource =
     prefill?.fxRateType === 'official'
       ? 'official'
       : prefill?.fxRateType === 'manual'
         ? 'manual'
-        : 'MEP'
+        : fxDefaultRateType
   const [fxSource, setFxSourceRaw] = useState<FxSource>(seededFxSource)
 
   // Whether the user has touched the rate field (an explicit manual override).
@@ -334,10 +348,21 @@ export function useAddEditFormState(
     return Number.isFinite(parsed) && parsed > 0 ? parsed : Number.NaN
   }, [rateText])
 
+  // Keep the configured FX default in a ref so the stable `fetchSuggestion`
+  // callback (empty deps, fed to a one-shot effect) reads the latest value
+  // without changing identity and re-triggering the effect (ADR-057). Synced in
+  // an effect (never written during render) so settings arriving late are
+  // reflected the next time a suggestion is applied.
+  const fxDefaultRef = useRef<FxDefaultRateType>(fxDefaultRateType)
+  useEffect(() => {
+    fxDefaultRef.current = fxDefaultRateType
+  }, [fxDefaultRateType])
+
   // Fetch BOTH suggested rates in parallel and pre-fill the active non-manual
   // source when they land. Only pre-fills when the user has not already typed a
   // rate, so a refresh never clobbers an edit. `applyDefault` (true on the first
-  // auto-fetch) picks MEP, falling back to official when MEP is unavailable.
+  // auto-fetch) picks the configured default source, falling back to the other
+  // when the configured one is unavailable.
   const fetchToken = useRef(0)
   const fetchSuggestion = useCallback(
     async (applyDefault: boolean) => {
@@ -357,8 +382,16 @@ export function useAddEditFormState(
       setRateEdited((edited) => {
         if (edited) return edited
         if (applyDefault) {
-          // First fetch: pick the default source (MEP, falling back to official).
-          const next: FxSource = mep !== null ? 'MEP' : 'official'
+          // First fetch: pick the configured default source (ADR-057), falling
+          // back to the other suggested source when the configured one is null.
+          const preferred = fxDefaultRef.current
+          const preferredValue = preferred === 'MEP' ? mep : official
+          const next: FxSource =
+            preferredValue !== null
+              ? preferred
+              : mep !== null
+                ? 'MEP'
+                : 'official'
           const value = next === 'MEP' ? mep : official
           setFxSourceRaw(next)
           if (value !== null) setRateTextRaw(String(value))

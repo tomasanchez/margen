@@ -14,6 +14,7 @@ import Switch from '@mui/material/Switch'
 import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import { useMediaQuery, useTheme } from '@mui/material'
+import { useNavigate } from '@tanstack/react-router'
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded'
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined'
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined'
@@ -48,22 +49,24 @@ function AccountIdentity() {
 }
 
 /**
- * The interactive account rows (theme switch + inert Settings/Sign out
- * placeholders). The row element is parameterized via `Row` so the desktop
+ * The interactive account rows (theme switch + Settings navigation + inert Sign
+ * out placeholder). The row element is parameterized via `Row` so the desktop
  * surface uses `MenuItem` (proper Menu keyboard semantics) while the mobile
  * Drawer uses `ListItemButton` — `MenuItem` requires a `MenuList` parent and
  * throws "MenuListContext is missing" if rendered in the Drawer. State is
- * conveyed by icon + Switch, never by color alone (ADR-019); Settings and Sign
- * out are inert because settings and auth are non-goals for the prototype
- * (ADR-012).
+ * conveyed by icon + Switch, never by color alone (ADR-019); Settings now
+ * navigates to the `/settings` route (ADR-057), while Sign out stays inert
+ * because auth is still a non-goal for the prototype (ADR-012).
  */
 function AccountActions({
   isDark,
   onToggleTheme,
+  onOpenSettings,
   Row,
 }: {
   isDark: boolean
   onToggleTheme: () => void
+  onOpenSettings: () => void
   Row: ElementType
 }) {
   return (
@@ -93,8 +96,8 @@ function AccountActions({
 
       <Divider />
 
-      {/* Inert placeholder — settings are a non-goal for the prototype (ADR-012). */}
-      <Row disabled title="Settings — coming soon" sx={{ py: { xs: 1.75, md: 1 } }}>
+      {/* Navigates to the /settings route (ADR-057). */}
+      <Row onClick={onOpenSettings} sx={{ py: { xs: 1.75, md: 1 } }}>
         <ListItemIcon>
           <SettingsOutlinedIcon fontSize="small" />
         </ListItemIcon>
@@ -139,6 +142,7 @@ function AccountActions({
 export function AccountMenu() {
   const { mode, toggle } = useColorMode()
   const theme = useTheme()
+  const navigate = useNavigate()
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
 
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
@@ -156,6 +160,11 @@ export function AccountMenu() {
   const handleClose = () => {
     setAnchorEl(null)
     setDrawerOpen(false)
+  }
+  // Close the account surface first, then navigate to the Settings route.
+  const handleOpenSettings = () => {
+    handleClose()
+    void navigate({ to: '/settings' })
   }
 
   const isDark = mode === 'dark'
@@ -225,7 +234,12 @@ export function AccountMenu() {
 
         <Divider />
 
-        <AccountActions isDark={isDark} onToggleTheme={toggle} Row={MenuItem} />
+        <AccountActions
+          isDark={isDark}
+          onToggleTheme={toggle}
+          onOpenSettings={handleOpenSettings}
+          Row={MenuItem}
+        />
       </Menu>
 
       {/* Mobile (xs–sm): full-screen right drawer (iOS-style). */}
@@ -304,6 +318,7 @@ export function AccountMenu() {
             <AccountActions
               isDark={isDark}
               onToggleTheme={toggle}
+              onOpenSettings={handleOpenSettings}
               Row={ListItemButton}
             />
           </List>

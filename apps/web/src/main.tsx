@@ -7,6 +7,7 @@ import { StyledEngineProvider } from '@mui/material/styles'
 import { RouterProvider } from '@tanstack/react-router'
 import './index.css'
 import { ColorModeProvider } from './theme/colorMode.tsx'
+import { DisplayCurrencyProvider } from './features/settings/displayCurrency.tsx'
 import { queryClient } from './queryClient.ts'
 import { router } from './router.tsx'
 
@@ -20,7 +21,9 @@ createRoot(document.getElementById('root')!).render(
       <QueryClientProvider client={queryClient}>
         <ColorModeProvider>
           <CssBaseline />
-          <RouterProvider router={router} />
+          <DisplayCurrencyProvider>
+            <RouterProvider router={router} />
+          </DisplayCurrencyProvider>
         </ColorModeProvider>
       </QueryClientProvider>
     </StyledEngineProvider>

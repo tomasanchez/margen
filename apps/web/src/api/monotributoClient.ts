@@ -2,9 +2,10 @@
  * Real Monotributo API client + DTO adapter (ADR-046, ADR-049, ADR-052).
  *
  * This is the single boundary between the backend's `/monotributo` REST contract
- * (`GET /api/v1/monotributo`, `PATCH /api/v1/monotributo/config`, a `{ data }`
- * envelope, camelCase field names, Decimal-string money, four-band status,
- * ISO dates) and the frontend's existing Monotributo card shapes. The MeterHero,
+ * (`GET /api/v1/monotributo`, a `{ data }` envelope, camelCase field names,
+ * Decimal-string money, four-band status, ISO dates) and the frontend's existing
+ * Monotributo card shapes. The category WRITE path moved to `PATCH /settings`
+ * (ADR-054/057), so this client is read-only now. The MeterHero,
  * CategoryLadder, ProjectionBreakdown, InvoiceDrilldown and ScaleTable keep
  * speaking the prototype shape unchanged; every contract difference (envelope
  * unwrap, Decimal-string → number, `percentUsed` → `ratio`, `limit` →
@@ -14,7 +15,7 @@
  * Mirrors {@link summariesClient} / {@link transactionsClient} (ADR-033/043):
  * `apiUrl()` for the versioned URL, `ensureOk` throwing a status-carrying error
  * on non-2xx so TanStack Query treats it as a failure and the page can show the
- * calm error state (ADR-037) and surface a 422 inline on the category control.
+ * calm error state (ADR-037).
  */
 
 import { apiUrl } from '../config'
@@ -87,12 +88,6 @@ export interface MonotributoSnapshotDto {
   previous: MonotributoStandingDto | null
   scale: MonotributoScaleRowDto[]
   invoices: MonotributoInvoiceDto[]
-}
-
-/** The `data` payload of `PATCH /monotributo/config`. */
-export interface MonotributoConfigDto {
-  currentCategory: string
-  activityType: string
 }
 
 /** An API error that carries the HTTP status so callers can branch on it. */
@@ -254,8 +249,6 @@ export function deriveComparison(
   }
 }
 
-const JSON_HEADERS = { 'Content-Type': 'application/json' } as const
-
 /**
  * GET the Monotributo snapshot (trailing-12-month standing + prior window +
  * scale + included invoices), unwrap the `{ data }` envelope, and adapt it to
@@ -272,36 +265,9 @@ export async function fetchMonotributo(): Promise<MonotributoSnapshot> {
 }
 
 /**
- * PATCH the configured Monotributo category (and optionally the activity type).
- * Returns the updated config. Throws {@link MonotributoApiError} on a non-2xx
- * response — notably a 422 for an unknown category letter, which the page
- * surfaces as a calm inline message (ADR-049).
+ * The Monotributo API client, grouped for ergonomic import. Read-only since the
+ * category write path moved to `PATCH /settings` (ADR-054/057).
  */
-export async function updateMonotributoCategory(
-  currentCategory: string,
-  activityType?: string,
-): Promise<{ currentCategory: string; activityType: string }> {
-  const body: { currentCategory: string; activityType?: string } = {
-    currentCategory,
-  }
-  if (activityType !== undefined) body.activityType = activityType
-
-  const response = await fetch(apiUrl('/monotributo/config'), {
-    method: 'PATCH',
-    headers: JSON_HEADERS,
-    body: JSON.stringify(body),
-  })
-  await ensureOk(response)
-  const envelope =
-    (await response.json()) as ResponseEnvelope<MonotributoConfigDto>
-  return {
-    currentCategory: envelope.data.currentCategory,
-    activityType: envelope.data.activityType,
-  }
-}
-
-/** The Monotributo API client, grouped for ergonomic import. */
 export const monotributoClient = {
   fetchMonotributo,
-  updateMonotributoCategory,
 } as const

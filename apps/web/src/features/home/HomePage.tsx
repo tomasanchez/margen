@@ -29,6 +29,7 @@ import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { visuallyHidden } from '@mui/utils'
 import { ErrorState } from '../../components/ErrorState'
+import { useDisplayCurrency } from '../settings/displayCurrencyContext'
 import { useInsights, useMonotributo, useSummary } from './queries'
 import { useTransactions } from '../transactions/queries'
 import { useViewingMonth } from '../../components/monthContext'
@@ -60,6 +61,10 @@ export function HomePage() {
   const monotributoQuery = useMonotributo()
   const insightsQuery = useInsights()
   const transactionsQuery = useTransactions()
+
+  // Calm note when USD is preferred but the live rate couldn't be fetched, so
+  // the cards + summaries fall back to ARS (ADR-056/037). Null otherwise.
+  const { fallbackNote } = useDisplayCurrency()
 
   // The selected viewing month (top-bar navigator), shared via context (ADR-040).
   const { viewingMonth } = useViewingMonth()
@@ -157,6 +162,16 @@ export function HomePage() {
         previousMonthLabel={previousMonthLabel}
         loading={transactionsQuery.isPending || monotributoQuery.isPending}
       />
+
+      {fallbackNote ? (
+        <Typography
+          role="status"
+          sx={{ fontSize: 12.5, mt: { xs: -0.5, md: -1.5 }, mb: { xs: 2, md: 2.5 } }}
+          color="text.secondary"
+        >
+          {fallbackNote}
+        </Typography>
+      ) : null}
 
       <Box
         sx={{
