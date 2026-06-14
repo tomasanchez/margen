@@ -45,6 +45,10 @@ adr-context: ## Prints active architecture guidance for agents
 migrate: ## Applies relational database migrations
 	uv run alembic upgrade head
 
+.PHONY: run
+run: migrate ## Applies migrations then starts the API on port 8000
+	uv run python -m margen_api.main
+
 .PHONY: cover
 cover: ## Executes the offline tiers (unit + e2e) with the coverage gate
 	uv run pytest -m "not integration" --cov src/margen_api --cov-fail-under=100 --junitxml reports/xunit.xml \
