@@ -90,5 +90,10 @@ jobs:
         run: uv run alembic upgrade head
         env:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+      # The real-decode guard (tests/integration/test_invoice_parser_real.py)
+      # exercises pyzbar against a generated QR PDF, which needs the native zbar
+      # shared library (#26). The fast tiers mock this boundary; only here is it real.
+      - name: Install native zbar (QR decode)
+        run: sudo apt-get update && sudo apt-get install -y libzbar0
       - name: Run the PostgreSQL integration tier
         run: make integration

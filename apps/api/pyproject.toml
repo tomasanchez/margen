@@ -40,6 +40,7 @@ dev = [
     # The offline test tier always uses in-memory async SQLite, regardless of
     # the runtime database, so aiosqlite is a dev dependency even for Postgres.
     "aiosqlite>=0.20.0",
+    "qrcode[pil]>=8.2",
 ]
 
 [build-system]
