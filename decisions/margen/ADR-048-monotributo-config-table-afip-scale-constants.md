@@ -43,7 +43,8 @@ One small config table plus its Alembic migration and a minimal write path land 
 ## Status History
 
 - 2026-06-14: accepted
-- 2026-06-14: superseded by ADR-054
+- 2026-06-14: superseded by ADR-054 (config table → app_settings)
+- 2026-06-14: scale-constant aspect superseded by ADR-067 (single current-only constant → versioned effective-dated registry)
 
 ## Notes
 

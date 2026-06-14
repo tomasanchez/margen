@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import pytest
 
-from margen_api.domain.models.monotributo_scale import MONOTRIBUTO_SCALE, get_ceiling
+from margen_api.domain.models.monotributo_scale import current_scale, get_ceiling
 from margen_api.service_layer.monotributo import (
     DEFAULT_ACTIVITY_TYPE,
     DEFAULT_CATEGORY,
@@ -166,7 +166,7 @@ class TestProject:
 
         # THEN — the fraction floor (0.25) equals the low-confidence threshold, so a
         # degenerate window lands exactly on the boundary: a valid category, no blow-up.
-        assert category in {row.letter for row in MONOTRIBUTO_SCALE}
+        assert category in {row.letter for row in current_scale().categories}
         assert note
 
 
@@ -325,10 +325,11 @@ class TestScaleEntries:
         entries = scale_entries()
 
         # THEN
+        first = current_scale().categories[0]
         assert [entry.letter for entry in entries] == list("ABCDEFGHIJK")
-        assert entries[0].annual_ceiling == MONOTRIBUTO_SCALE[0].annual_ceiling
-        assert entries[0].cuota_servicios == MONOTRIBUTO_SCALE[0].cuota_servicios
-        assert entries[0].cuota_bienes == MONOTRIBUTO_SCALE[0].cuota_bienes
+        assert entries[0].annual_ceiling == first.annual_ceiling
+        assert entries[0].cuota_servicios == first.cuota_servicios
+        assert entries[0].cuota_bienes == first.cuota_bienes
 
 
 class TestBuildSnapshot:

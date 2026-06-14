@@ -14,7 +14,7 @@ from datetime import date
 from decimal import Decimal
 
 from margen_api.domain.models.monotributo_scale import (
-    MONOTRIBUTO_SCALE,
+    current_scale,
     get_ceiling,
     smallest_category_for,
 )
@@ -164,7 +164,10 @@ def project(used: Decimal, *, window_start: date, reference: date) -> tuple[str,
     """
     fraction = _elapsed_fraction(window_start, reference)
     annualized = used / fraction
-    projected_category = smallest_category_for(annualized)
+    # Resolve the projected band against the scale vintage in effect for this
+    # standing's reference date (ADR-067): the live calc uses today's (current)
+    # scale, a backfilled past period uses that period's vintage.
+    projected_category = smallest_category_for(annualized, as_of=reference)
     note = "Estimate assuming you keep up your current pace."
     if fraction < _LOW_CONFIDENCE_FRACTION or used == _ZERO:
         note = "Rough estimate — there isn't much data yet, so this may change a lot."
@@ -194,7 +197,10 @@ def build_standing(
         The assembled standing with ``remaining`` (``ceiling - used``),
         ``percent_used``, status band and projection filled in.
     """
-    ceiling = get_ceiling(category)
+    # Use the ceiling from the scale vintage in effect for this standing's
+    # reference date (ADR-067): live standings (reference≈today) get the current
+    # scale, ADR-052 backfilled past periods get the period's historical scale.
+    ceiling = get_ceiling(category, as_of=reference)
     percent = _percent_used(used, ceiling)
     band = status_band(percent)
     projected_category, projection_note = project(used, window_start=window_start, reference=reference)
@@ -214,7 +220,10 @@ def build_standing(
 
 
 def scale_entries() -> list[MonotributoScaleEntry]:
-    """Return the A-K reference scale as read-model entries (ADR-048)."""
+    """Return the current A-K reference scale as read-model entries (ADR-048, ADR-067).
+
+    The page shows the current scale, so this returns the latest vintage's rows.
+    """
     return [
         MonotributoScaleEntry(
             letter=row.letter,
@@ -222,7 +231,7 @@ def scale_entries() -> list[MonotributoScaleEntry]:
             cuota_servicios=row.cuota_servicios,
             cuota_bienes=row.cuota_bienes,
         )
-        for row in MONOTRIBUTO_SCALE
+        for row in current_scale().categories
     ]
 
 
