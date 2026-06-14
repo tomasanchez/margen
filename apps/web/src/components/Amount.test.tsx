@@ -63,3 +63,16 @@ test('shows the MEP source when the rate came from the confirmed suggestion', ()
   )
   expect(screen.getByText('USD 500 · MEP 1.245')).toBeInTheDocument()
 })
+
+test('shows the official source when the rate came from the official dollar', () => {
+  renderAmount(
+    <Amount
+      value={522500}
+      type="income"
+      fxUsd={500}
+      fxRate={1045}
+      fxSource="official"
+    />,
+  )
+  expect(screen.getByText('USD 500 · official 1.045')).toBeInTheDocument()
+})

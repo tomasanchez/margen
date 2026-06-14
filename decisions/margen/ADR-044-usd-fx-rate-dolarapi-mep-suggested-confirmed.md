@@ -43,3 +43,14 @@ Revisits ADR-031: the UI now requires a rate before saving a USD transaction; th
 
 - 2026-06-14: proposed
 - 2026-06-14: accepted
+
+> **Update (2026-06-14): Official dollar offered alongside MEP.** The frontend now
+> also fetches the official rate (`GET https://dolarapi.com/v1/dolares/oficial`,
+> same shape, `venta` side) and offers it as a second selectable suggestion. The
+> Add/Edit form exposes an explicit rate-source selector (MEP / Official / Manual):
+> picking MEP or Official pre-fills that suggested value and persists
+> `fx_rate_type = 'MEP'` or `'official'`; typing a value switches the source to
+> `manual`. This uses the `official` enum member already added above (still no
+> migration) and supersedes the earlier rate-equals-suggestion heuristic with an
+> explicit user choice. The unavailable-API fallback (required manual entry, no
+> silent guess) and `amount` recompute are unchanged.

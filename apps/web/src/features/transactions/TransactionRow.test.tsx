@@ -49,6 +49,11 @@ test('a USD row with a manual rate shows the "manual" source', () => {
   expect(screen.getByText('USD 500 · manual 1.300')).toBeInTheDocument()
 })
 
+test('a USD row from the official dollar shows the "official" source', () => {
+  renderRow({ ...baseUsd, rate: 1045, amountNum: 522500, fxRateType: 'official' })
+  expect(screen.getByText('USD 500 · official 1.045')).toBeInTheDocument()
+})
+
 test('an ARS row shows no FX badge or subline', () => {
   renderRow({
     ...baseUsd,

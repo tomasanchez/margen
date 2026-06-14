@@ -136,15 +136,17 @@ export function formatPercent(
 }
 
 /**
- * Human label for an FX rate source (ADR-044/045). `MEP` reads as "MEP";
- * everything else reads as "manual" — the UI only distinguishes the confirmed
- * suggestion from a user-entered value (`official`/`configured_default` are
- * future backend stubs and fall through to "manual" until they ship).
+ * Human label for an FX rate source (ADR-044/045). `MEP` reads as "MEP",
+ * `official` reads as "official", and everything else (`manual`,
+ * `configured_default`, or unknown) reads as "manual" — so a USD row always
+ * declares which dollar it used.
  */
 export function fxSourceLabel(
   source: FxRateType | null | undefined,
 ): string {
-  return source === 'MEP' ? 'MEP' : 'manual'
+  if (source === 'MEP') return 'MEP'
+  if (source === 'official') return 'official'
+  return 'manual'
 }
 
 /**

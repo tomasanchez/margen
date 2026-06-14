@@ -11,15 +11,17 @@
  * `amountNum = round(usd * rate, 2)`; for ARS, `amountNum` is the entered value.
  *
  * USD FX (ADR-044/045): the rate is no longer a hardcoded default. When USD is
- * selected (and on open for a USD edit without a stored rate) the form fetches a
- * SUGGESTED MEP rate from dolarapi.com and pre-fills it; the user confirms it
- * (`fxRateType = 'MEP'`) or edits it (`fxRateType = 'manual'`). The rate is
+ * selected (and on open for a USD edit without a stored rate) the form fetches
+ * SUGGESTED MEP + official rates from dolarapi.com in parallel. The user picks
+ * the source via an explicit selector — MEP / Official / Manual: picking a
+ * suggested source pre-fills its value and sets `fxRateType = 'MEP' | 'official'`;
+ * typing a value (or picking Manual) sets `fxRateType = 'manual'`. The rate is
  * REQUIRED before a USD transaction can be saved (revisits ADR-031 for the UI).
- * If the fetch fails, the user must enter a rate manually — never a silent guess.
+ * If both fetches fail, the user must enter a rate manually — never a silent guess.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchSuggestedMepRate } from '../../api/fxClient'
+import { fetchSuggestedRates } from '../../api/fxClient'
 import type {
   Bank,
   Category,
@@ -134,8 +136,24 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
-/** Loading status of the suggested-rate fetch (ADR-045 affordances). */
+/**
+ * Loading status of the suggested-rate fetch (ADR-045 affordances). `suggested`
+ * means at least one of the two rates (MEP / official) came back; `failed` means
+ * both were null (require manual entry).
+ */
 export type RateSuggestionStatus = 'idle' | 'loading' | 'suggested' | 'failed'
+
+/**
+ * Explicit FX rate source the user selected (ADR-044 update). Maps 1:1 to the
+ * persisted `FxRateType` ('MEP' | 'official' | 'manual').
+ */
+export type FxSource = 'MEP' | 'official' | 'manual'
+
+/** The two suggested values fetched from dolarapi.com (null until fetched / on failure). */
+export interface SuggestedRateValues {
+  readonly MEP: number | null
+  readonly official: number | null
+}
 
 export interface AddEditFormState {
   /** Edit mode if an id was prefilled; otherwise add mode. */
@@ -163,11 +181,21 @@ export interface AddEditFormState {
   /** Raw rate string (kept so the field can be cleared mid-edit). */
   readonly rateText: string
   setRateText: (next: string) => void
-  /** Source of the current rate: `MEP` (confirmed suggestion) or `manual`. */
+  /** Source of the current rate: `MEP` / `official` (suggested) or `manual`. */
   readonly fxRateType: FxRateType
+  /** Explicit user-selected FX source; drives `fxRateType` 1:1 (ADR-044 update). */
+  readonly fxSource: FxSource
+  /**
+   * Pick the FX source. Selecting `MEP`/`official` pre-fills that suggested
+   * value (when available); selecting `manual` keeps the current rate text but
+   * marks it user-owned.
+   */
+  setFxSource: (next: FxSource) => void
+  /** Both suggested values so the UI can label and enable/disable each option. */
+  readonly suggestedRates: SuggestedRateValues
   /** Status of the suggested-rate fetch (drives the loading/refresh/fail hint). */
   readonly rateSuggestionStatus: RateSuggestionStatus
-  /** Re-fetch the suggested MEP rate (refresh affordance, ADR-045). */
+  /** Re-fetch both suggested rates and re-apply the current non-manual source. */
   refreshSuggestedRate: () => void
 
   readonly category: Category
@@ -234,26 +262,55 @@ export function useAddEditFormState(
     typeof prefill?.rate === 'number' ? String(prefill.rate) : '',
   )
 
-  // The numeric value of the suggested MEP rate once fetched (null until then /
-  // on failure). Compared against the current rate to decide MEP vs manual.
-  const [suggestedRate, setSuggestedRate] = useState<number | null>(null)
+  // Both suggested values once fetched (null until then / on failure).
+  const [suggestedRates, setSuggestedRates] = useState<SuggestedRateValues>({
+    MEP: null,
+    official: null,
+  })
   const [rateSuggestionStatus, setRateSuggestionStatus] =
     useState<RateSuggestionStatus>('idle')
+
+  // The explicit FX source the user selected (ADR-044 update). Defaults to the
+  // prefill's stored source on an edit (preserved until the rate is edited),
+  // else MEP — the form will fall back to official if MEP is unavailable.
+  const seededFxSource: FxSource =
+    prefill?.fxRateType === 'official'
+      ? 'official'
+      : prefill?.fxRateType === 'manual'
+        ? 'manual'
+        : 'MEP'
+  const [fxSource, setFxSourceRaw] = useState<FxSource>(seededFxSource)
 
   // Whether the user has touched the rate field (an explicit manual override).
   // Editing an existing row's stored rate also counts as manual.
   const [rateEdited, setRateEdited] = useState<boolean>(false)
 
-  // An existing USD edit that already has a stored source. We treat a stored
-  // rate as the baseline: if the user does not touch it, keep its source; the
-  // moment they edit it, it becomes manual.
-  const seededFxRateType: FxRateType | undefined = prefill?.fxRateType
-
   const setRateText = useCallback((next: string) => {
     setRateTextRaw(next)
-    // Any user edit marks the rate as manually set (ADR-044).
+    // Typing a rate always flips the source to manual (ADR-044 update): the
+    // entered value is user-owned, no longer a suggested MEP/official figure.
     setRateEdited(true)
+    setFxSourceRaw('manual')
   }, [])
+
+  // Pick a source explicitly. MEP/official pre-fill that suggested value (when
+  // available) and clear the "edited" flag so it counts as a confirmed
+  // suggestion; manual keeps the current text but marks it user-owned.
+  const setFxSource = useCallback(
+    (next: FxSource) => {
+      setFxSourceRaw(next)
+      if (next === 'manual') {
+        setRateEdited(true)
+        return
+      }
+      const value = suggestedRates[next]
+      if (value !== null) {
+        setRateTextRaw(String(value))
+        setRateEdited(false)
+      }
+    },
+    [suggestedRates],
+  )
 
   const [category, setCategory] = useState<Category>(
     prefill?.category && prefill.category !== 'Income'
@@ -277,31 +334,51 @@ export function useAddEditFormState(
     return Number.isFinite(parsed) && parsed > 0 ? parsed : Number.NaN
   }, [rateText])
 
-  // Fetch a suggested MEP rate and pre-fill it when it lands. Only pre-fills when
-  // the user has not already typed a rate, so a refresh never clobbers an edit.
+  // Fetch BOTH suggested rates in parallel and pre-fill the active non-manual
+  // source when they land. Only pre-fills when the user has not already typed a
+  // rate, so a refresh never clobbers an edit. `applyDefault` (true on the first
+  // auto-fetch) picks MEP, falling back to official when MEP is unavailable.
   const fetchToken = useRef(0)
-  const fetchSuggestion = useCallback(async () => {
-    const token = ++fetchToken.current
-    setRateSuggestionStatus('loading')
-    const fetched = await fetchSuggestedMepRate()
-    // Ignore a stale response if a newer fetch (or unmount) superseded it.
-    if (token !== fetchToken.current) return
-    if (fetched === null) {
-      setSuggestedRate(null)
-      setRateSuggestionStatus('failed')
-      return
-    }
-    setSuggestedRate(fetched)
-    setRateSuggestionStatus('suggested')
-    // Pre-fill only if the user hasn't entered/edited a rate yet (ADR-045).
-    setRateEdited((edited) => {
-      if (!edited) setRateTextRaw(String(fetched))
-      return edited
-    })
-  }, [])
+  const fetchSuggestion = useCallback(
+    async (applyDefault: boolean) => {
+      const token = ++fetchToken.current
+      setRateSuggestionStatus('loading')
+      const { mep, official } = await fetchSuggestedRates()
+      // Ignore a stale response if a newer fetch (or unmount) superseded it.
+      if (token !== fetchToken.current) return
+      setSuggestedRates({ MEP: mep, official })
+      if (mep === null && official === null) {
+        // Both failed → require manual entry, no silent default (ADR-044/045).
+        setRateSuggestionStatus('failed')
+        return
+      }
+      setRateSuggestionStatus('suggested')
+      // Pre-fill only if the user hasn't entered/edited a rate yet (ADR-045).
+      setRateEdited((edited) => {
+        if (edited) return edited
+        if (applyDefault) {
+          // First fetch: pick the default source (MEP, falling back to official).
+          const next: FxSource = mep !== null ? 'MEP' : 'official'
+          const value = next === 'MEP' ? mep : official
+          setFxSourceRaw(next)
+          if (value !== null) setRateTextRaw(String(value))
+        } else {
+          // Refresh: re-apply the currently selected non-manual source's value.
+          setFxSourceRaw((source) => {
+            if (source === 'manual') return source
+            const value = source === 'MEP' ? mep : official
+            if (value !== null) setRateTextRaw(String(value))
+            return source
+          })
+        }
+        return edited
+      })
+    },
+    [],
+  )
 
   // On switching to USD (or opening a USD entry without a stored rate), fetch
-  // the suggestion. This is a one-shot external adapter call (ADR-044), not the
+  // the suggestions. This is a one-shot external adapter call (ADR-044), not the
   // app's own server state, so a focused effect is appropriate here.
   useEffect(() => {
     if (currency !== 'USD') return
@@ -309,12 +386,12 @@ export function useAddEditFormState(
     if (rateEdited) return
     if (typeof prefill?.rate === 'number') return
     if (rateSuggestionStatus !== 'idle') return
-    // Fetching a suggested rate from dolarapi.com is a legitimate effect: it
+    // Fetching suggested rates from dolarapi.com is a legitimate effect: it
     // synchronizes the form with an external system (ADR-044). The loading
     // setState it triggers is the sanctioned "subscribe/fetch" case, not a
     // render-cascade, so the rule is scoped-off for this trigger only.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void fetchSuggestion()
+    void fetchSuggestion(true)
   }, [
     currency,
     rateEdited,
@@ -324,29 +401,18 @@ export function useAddEditFormState(
   ])
 
   const refreshSuggestedRate = useCallback(() => {
-    // A manual refresh re-fetches and re-suggests, clearing the "edited" flag so
-    // the fresh value pre-fills (the user explicitly asked for the suggestion).
-    setRateEdited(false)
-    void fetchSuggestion()
-  }, [fetchSuggestion])
+    // A manual refresh re-fetches both rates and re-applies the current
+    // non-manual source's fresh value, clearing the "edited" flag so it pre-fills
+    // (the user explicitly asked for the suggestion). If the source is manual,
+    // the value is kept and only the suggested option labels refresh.
+    setRateEdited((edited) => (fxSource === 'manual' ? edited : false))
+    void fetchSuggestion(false)
+  }, [fetchSuggestion, fxSource])
 
   const usdRateMissing = currency === 'USD' && !Number.isFinite(rate)
 
-  // Source resolution (ADR-044): an untouched stored source is kept; a confirmed
-  // suggestion (rate equals the fetched value, unedited) is MEP; anything the
-  // user entered/edited is manual.
-  const fxRateType: FxRateType = useMemo(() => {
-    if (!rateEdited && seededFxRateType !== undefined) return seededFxRateType
-    if (
-      !rateEdited &&
-      suggestedRate !== null &&
-      Number.isFinite(rate) &&
-      rate === suggestedRate
-    ) {
-      return 'MEP'
-    }
-    return 'manual'
-  }, [rateEdited, seededFxRateType, suggestedRate, rate])
+  // The persisted source maps 1:1 from the explicit selection (ADR-044 update).
+  const fxRateType: FxRateType = fxSource
 
   const amountArs = useMemo(() => {
     if (!Number.isFinite(amount) || amount <= 0) return Number.NaN
@@ -425,6 +491,9 @@ export function useAddEditFormState(
     rateText,
     setRateText,
     fxRateType,
+    fxSource,
+    setFxSource,
+    suggestedRates,
     rateSuggestionStatus,
     refreshSuggestedRate,
     category,
