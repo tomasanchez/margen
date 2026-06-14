@@ -509,10 +509,10 @@ class _FakePage:
         """Return the page's canned text."""
         return self._text
 
-    def get_pixmap(self, *, matrix: object) -> SimpleNamespace:
-        """Return a tiny canned pixmap (the matrix is accepted but ignored)."""
-        del matrix
-        return SimpleNamespace(samples=b"\x00", width=1, height=1, n=1)
+    def get_pixmap(self, *, matrix: object, colorspace: object) -> SimpleNamespace:
+        """Return a tiny canned grayscale pixmap (matrix/colorspace accepted, ignored)."""
+        del matrix, colorspace
+        return SimpleNamespace(samples=b"\x00", width=1, height=1)
 
 
 def _fake_fitz_open(pages: list[_FakePage]):
@@ -554,31 +554,24 @@ class TestNativeBoundary:
         WHEN the QR payloads are decoded
         THEN each symbol's UTF-8 data is returned
         """
-        # GIVEN — fitz yields one page; its Matrix is a no-op stand-in.
+        # GIVEN — fitz yields one page; Matrix + csGRAY are no-op stand-ins.
         pages = [_FakePage("ignored")]
-        fake_fitz = SimpleNamespace(open=_fake_fitz_open(pages), Matrix=lambda _x, _y: object())
+        fake_fitz = SimpleNamespace(open=_fake_fitz_open(pages), Matrix=lambda _x, _y: object(), csGRAY=object())
         monkeypatch.setattr(invoice_parser, "fitz", fake_fitz)
 
+        # pyzbar receives the (pixels, width, height) grayscale tuple; the fake
+        # ignores it and returns canned symbols.
+        decoded_images: list[object] = []
         symbols = [SimpleNamespace(data=b"first"), SimpleNamespace(data=b"second")]
-        monkeypatch.setattr(invoice_parser, "pyzbar", SimpleNamespace(decode=lambda _image: symbols))
+        monkeypatch.setattr(
+            invoice_parser,
+            "pyzbar",
+            SimpleNamespace(decode=lambda image: (decoded_images.append(image), symbols)[1]),
+        )
 
         # WHEN
         payloads = decode_qr_payloads(b"%PDF-fake")
 
-        # THEN
+        # THEN — each symbol's UTF-8 data is returned, and pyzbar got a 3-tuple.
         assert payloads == ["first", "second"]
-
-    def test_image_wrapper_exposes_the_buffer_protocol(self):
-        """
-        GIVEN raw pixel bytes and dimensions
-        WHEN the internal image wrapper is built
-        THEN it exposes the width/height and the array-interface zbar reads
-        """
-        # WHEN
-        image: Any = invoice_parser._Image(b"\x00\x01\x02", width=1, height=1, channels=3)
-
-        # THEN
-        assert image.width == 1
-        assert image.height == 1
-        assert image.__array_interface__["shape"] == (1, 1, 3)
-        assert image.__array_interface__["typestr"] == "|u1"
+        assert decoded_images == [(b"\x00", 1, 1)]

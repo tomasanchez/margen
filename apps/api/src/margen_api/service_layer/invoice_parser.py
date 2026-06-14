@@ -110,32 +110,14 @@ def decode_qr_payloads(pdf_bytes: bytes) -> list[str]:
     payloads: list[str] = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
         for page in document:
-            # Render at 2x to give zbar a denser image for reliable decoding.
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-            image = _Image(pixmap.samples, pixmap.width, pixmap.height, pixmap.n)
+            # Render at 2x GRAYSCALE: pyzbar's no-NumPy/PIL path accepts a
+            # (pixels, width, height) tuple of 8-bpp luminance bytes, which a
+            # csGRAY pixmap's `samples` (one byte per pixel) provides directly.
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), colorspace=fitz.csGRAY)
+            image = (pixmap.samples, pixmap.width, pixmap.height)
             for symbol in pyzbar.decode(image):
                 payloads.append(symbol.data.decode("utf-8", errors="replace"))
     return payloads
-
-
-class _Image:
-    """A minimal duck-typed image pyzbar can decode from raw pixel bytes.
-
-    ``pyzbar.decode`` accepts any object exposing ``width``, ``height`` and a raw
-    ``__array_interface__`` (the NumPy/Pillow buffer protocol). Wrapping the
-    PyMuPDF pixmap this way avoids a hard dependency on Pillow or NumPy just to
-    hand pixels to ``zbar``.
-    """
-
-    def __init__(self, samples: bytes, width: int, height: int, channels: int) -> None:
-        self.width = width
-        self.height = height
-        self.__array_interface__ = {
-            "version": 3,
-            "data": samples,
-            "shape": (height, width, channels),
-            "typestr": "|u1",
-        }
 
 
 # --------------------------------------------------------------------------- #
