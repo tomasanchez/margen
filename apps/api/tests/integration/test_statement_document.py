@@ -13,13 +13,15 @@ shared parent row.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
 from margen_api.adapters.statement_store import SqlAlchemyStatementStore
 from margen_api.adapters.unit_of_work import SqlAlchemyUnitOfWork
@@ -27,8 +29,10 @@ from margen_api.domain.commands.statement import (
     ImportStatement,
     StatementDocumentPayload,
     StatementLineInput,
+    StatementLineResolution,
 )
-from margen_api.domain.models.value_objects import Currency
+from margen_api.domain.models.transaction import build_transaction
+from margen_api.domain.models.value_objects import Currency, Kind
 from margen_api.service_layer.handlers import import_statement
 
 pytestmark = pytest.mark.integration
@@ -202,11 +206,11 @@ class TestImportStatementAtomic:
         result = await import_statement(command, SqlAlchemyUnitOfWork(session_factory))
 
         # THEN — the document and both transactions persisted and link back.
-        assert len(result.transaction_ids) == 2
+        assert len(result.created_transaction_ids) == 2
         async with session_factory() as session:
             stored = await SqlAlchemyStatementStore(session).get(result.statement_document_id)
             repository = SqlAlchemyTransactionRepository(session)
-            transactions = [await repository.get(transaction_id) for transaction_id in result.transaction_ids]
+            transactions = [await repository.get(transaction_id) for transaction_id in result.created_transaction_ids]
 
         assert stored is not None
         assert stored.pdf_bytes == pdf_bytes
@@ -217,3 +221,86 @@ class TestImportStatementAtomic:
             "MERPAGO*PASSLINE",
             "Express Av Cordoba 3721",
         }
+
+
+class TestImportStatementMerge:
+    """A merge line enriches an existing manual expense in place against real PostgreSQL.
+
+    Guards the per-line reconciliation merge path (ADR-085) against a real database:
+    the existing row keeps its identity, gains the statement document link and card,
+    fills an empty category, and NO duplicate row is created.
+    """
+
+    async def test_merge_enriches_existing_manual_expense_without_duplicating(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a manual EXPENSE persisted through the real repository (no card, no category)
+        WHEN import_statement runs a merge line targeting it over the real unit of work
+        THEN the existing row is enriched in place (statement document linked, card set,
+             category filled) and no duplicate row exists
+        """
+        # GIVEN — a manual expense with an empty category and no payment method.
+        now = datetime(2026, 5, 8, tzinfo=UTC)
+        manual = build_transaction(
+            transaction_id=uuid4(),
+            created_at=now,
+            updated_at=now,
+            occurred_on=date(2026, 5, 8),
+            name="Express Cordoba dinner",
+            kind=Kind.EXPENSE,
+            amount=Decimal("10180.00"),
+            currency=Currency.ARS,
+        )
+        async with session_factory() as session:
+            repository = SqlAlchemyTransactionRepository(session)
+            repository.add(manual)
+            await session.commit()
+
+        pdf_bytes = b"%PDF-1.4 merge statement"
+        command = ImportStatement(
+            document=StatementDocumentPayload(
+                pdf_bytes=pdf_bytes,
+                content_type="application/pdf",
+                byte_size=len(pdf_bytes),
+                bank_name="Galicia",
+                network="VISA",
+                card_last4="5771",
+                issuer_cuit="30-50000173-5",
+                statement_number="VI00000000069436867",
+            ),
+            lines=[
+                StatementLineInput(
+                    occurred_on=date(2026, 5, 8),
+                    name="Express Av Cordoba 3721",
+                    amount=Decimal("10180.00"),
+                    currency=Currency.ARS,
+                    category="Food",
+                    payment_method="Galicia VISA ·5771",
+                    resolution=StatementLineResolution.MERGE,
+                    match_transaction_id=manual.id,
+                ),
+            ],
+        )
+
+        # WHEN
+        result = await import_statement(command, SqlAlchemyUnitOfWork(session_factory))
+
+        # THEN — one merge, no creation.
+        assert result.merged_transaction_ids == [manual.id]
+        assert result.created_transaction_ids == []
+
+        # THEN — the existing row was enriched in place; no duplicate exists.
+        async with session_factory() as session:
+            enriched = await SqlAlchemyTransactionRepository(session).get(manual.id)
+            row_count = await session.scalar(select(func.count()).select_from(TransactionRecord))
+
+        assert enriched is not None
+        assert enriched.id == manual.id  # same identity, not a new row.
+        assert enriched.statement_document_id == result.statement_document_id  # document linked.
+        assert enriched.payment_method == "Galicia VISA ·5771"  # card set from the line.
+        assert enriched.category == "Food"  # filled because it was empty.
+        assert enriched.amount == Decimal("10180.00")  # user's manual amount preserved.
+
+        # THEN — exactly one transaction row exists: the merge did not create a duplicate.
+        assert row_count == 1

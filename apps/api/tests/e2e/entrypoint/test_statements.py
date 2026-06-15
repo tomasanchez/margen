@@ -201,6 +201,60 @@ def _import_body(*, pdf_base64: str, lines: list[dict] | None = None) -> dict:
     }
 
 
+async def _create_manual_expense(
+    client: httpx.AsyncClient,
+    *,
+    name: str,
+    amount: str,
+    occurred_on: str,
+    category: str | None = None,
+    bank: str | None = None,
+    currency: str = "ARS",
+) -> str:
+    """Create a manual EXPENSE through the real POST /transactions and return its id.
+
+    A manual expense (no statement document) is exactly the reconciliation candidate
+    the matcher flags at parse time (ADR-084).
+    """
+    body: dict = {
+        "occurredOn": occurred_on,
+        "name": name,
+        "kind": "expense",
+        "amountNum": amount,
+        "currency": currency,
+    }
+    if category is not None:
+        body["category"] = category
+    if bank is not None:
+        body["bank"] = bank
+    response = await client.post(TRANSACTIONS, json=body)
+    assert response.status_code == status.HTTP_201_CREATED
+    return response.json()["data"]["id"]
+
+
+def _line(
+    *,
+    occurred_on: str,
+    name: str,
+    amount: str,
+    resolution: str | None = None,
+    match_transaction_id: str | None = None,
+    category: str | None = None,
+    bank: str | None = None,
+) -> dict:
+    """Build a single import-request line, with the optional reconciliation choice."""
+    line: dict = {"occurredOn": occurred_on, "name": name, "amount": amount, "currency": "ARS"}
+    if category is not None:
+        line["category"] = category
+    if bank is not None:
+        line["bank"] = bank
+    if resolution is not None:
+        line["resolution"] = resolution
+    if match_transaction_id is not None:
+        line["matchTransactionId"] = match_transaction_id
+    return line
+
+
 class TestParseStatement:
     """POST /statements/parse runs the real parser+endpoint and returns the prefill."""
 
@@ -429,9 +483,11 @@ class TestImportStatement:
         assert response.status_code == status.HTTP_201_CREATED
         data = response.json()["data"]
         assert data["createdCount"] == 3
-        assert len(data["transactionIds"]) == 3
+        assert data["mergedCount"] == 0
+        assert data["mergedTransactionIds"] == []
+        assert len(data["createdTransactionIds"]) == 3
         # the returned ids are valid UUIDs.
-        for transaction_id in data["transactionIds"]:
+        for transaction_id in data["createdTransactionIds"]:
             UUID(transaction_id)
         statement_document_id = data["statementDocumentId"]
         UUID(statement_document_id)
@@ -501,6 +557,320 @@ class TestImportStatement:
         # nothing was created.
         listed = (await test_client.get(TRANSACTIONS)).json()["data"]
         assert listed == []
+
+
+class TestParseReconciliation:
+    """POST /statements/parse flags likely existing manual expenses per line (ADR-084, ADR-085)."""
+
+    async def test_attaches_match_to_a_matching_manual_expense(
+        self, test_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        """
+        GIVEN a manual expense matching one statement line (amount, ~name, date in window)
+        WHEN the statement is parsed
+        THEN that line carries a non-null match with the seeded transactionId, while a
+             line with no matching manual expense has match: null
+        """
+        # GIVEN — a manual expense matching the "Express Av Cordoba 3721" line
+        # (amount 10180.00, date 2026-05-08, similar name, no statement document).
+        transaction_id = await _create_manual_expense(
+            test_client,
+            name="Express Cordoba dinner",
+            amount="10180.00",
+            occurred_on="2026-05-07",
+        )
+        _mock_extract_text(monkeypatch, _GALICIA_VISA_TEXT)
+
+        # WHEN
+        data = (await test_client.post(f"{STATEMENTS}/parse", files=_pdf_upload())).json()["data"]
+
+        # THEN — the Express line is flagged with the seeded candidate.
+        express = next(line for line in data["lines"] if line["name"] == "Express Av Cordoba 3721")
+        assert express["match"] is not None
+        assert express["match"]["transactionId"] == transaction_id
+        assert express["match"]["name"] == "Express Cordoba dinner"
+        assert express["match"]["amount"] == "10180.00"
+
+        # THEN — an unrelated line is not flagged.
+        sube = next(line for line in data["lines"] if line["name"] == "SUBE VIAJES - BUSES")
+        assert sube["match"] is None
+
+    async def test_already_imported_expense_is_not_offered_as_candidate(
+        self, test_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        """
+        GIVEN an expense already linked to a statement document (via a prior import)
+        WHEN the statement is parsed again
+        THEN the imported row is NOT offered as a reconciliation candidate (ADR-084)
+        """
+        # GIVEN — import once, which creates EXPENSE rows carrying a statement_document_id.
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        imported = await test_client.post(f"{STATEMENTS}/import", json=_import_body(pdf_base64=encoded))
+        assert imported.status_code == status.HTTP_201_CREATED
+        _mock_extract_text(monkeypatch, _GALICIA_VISA_TEXT)
+
+        # WHEN — parse the same statement; the just-imported rows match every line on
+        # amount/date/name, so only the manual-expense filter keeps them out.
+        data = (await test_client.post(f"{STATEMENTS}/parse", files=_pdf_upload())).json()["data"]
+
+        # THEN — no line is flagged: the only same-amount rows are already imported.
+        assert all(line["match"] is None for line in data["lines"])
+
+
+class TestImportResolution:
+    """POST /statements/import resolves each confirmed line import / merge / keep_both (ADR-085)."""
+
+    async def test_merge_enriches_the_existing_expense_without_duplicating(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a manual expense and an import line resolving to merge against it
+        WHEN the statement is imported
+        THEN mergedCount is 1, createdCount excludes it, no duplicate row is created,
+             and the existing row gains the card and category from the statement line
+        """
+        # GIVEN — a manual expense with NO bank and NO category to enrich.
+        match_id = await _create_manual_expense(
+            test_client,
+            name="Express Cordoba dinner",
+            amount="10180.00",
+            occurred_on="2026-05-08",
+        )
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        body = _import_body(
+            pdf_base64=encoded,
+            lines=[
+                _line(
+                    occurred_on="2026-05-08",
+                    name="Express Av Cordoba 3721",
+                    amount="10180.00",
+                    category="Food",
+                    bank="Galicia VISA ·5771",
+                    resolution="merge",
+                    match_transaction_id=match_id,
+                )
+            ],
+        )
+
+        # WHEN
+        response = await test_client.post(f"{STATEMENTS}/import", json=body)
+
+        # THEN — one merge, no creation.
+        assert response.status_code == status.HTTP_201_CREATED
+        data = response.json()["data"]
+        assert data["mergedCount"] == 1
+        assert data["createdCount"] == 0
+        assert data["mergedTransactionIds"] == [match_id]
+        assert data["createdTransactionIds"] == []
+
+        # THEN — no duplicate: still exactly one row with that name, enriched in place.
+        listed = (await test_client.get(TRANSACTIONS)).json()["data"]
+        rows = [row for row in listed if row["name"] == "Express Cordoba dinner"]
+        assert len(rows) == 1
+        enriched = rows[0]
+        assert enriched["id"] == match_id  # same identity, not a new row.
+        assert enriched["bank"] == "Galicia VISA ·5771"  # card set from the statement line.
+        assert enriched["category"] == "Food"  # filled because it was empty.
+
+    async def test_merge_links_the_statement_document_so_a_reparse_no_longer_flags_it(
+        self, test_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        """
+        GIVEN a manual expense merged into a statement import
+        WHEN the same statement is parsed again
+        THEN the merged row is now an imported row and is no longer offered as a candidate
+             (proving the merge linked it to the statement document — ADR-084, ADR-085)
+        """
+        # GIVEN
+        match_id = await _create_manual_expense(
+            test_client,
+            name="Express Cordoba dinner",
+            amount="10180.00",
+            occurred_on="2026-05-08",
+        )
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        merged = await test_client.post(
+            f"{STATEMENTS}/import",
+            json=_import_body(
+                pdf_base64=encoded,
+                lines=[
+                    _line(
+                        occurred_on="2026-05-08",
+                        name="Express Av Cordoba 3721",
+                        amount="10180.00",
+                        bank="Galicia VISA ·5771",
+                        resolution="merge",
+                        match_transaction_id=match_id,
+                    )
+                ],
+            ),
+        )
+        assert merged.status_code == status.HTTP_201_CREATED
+        _mock_extract_text(monkeypatch, _GALICIA_VISA_TEXT)
+
+        # WHEN — re-parse the statement.
+        data = (await test_client.post(f"{STATEMENTS}/parse", files=_pdf_upload())).json()["data"]
+
+        # THEN — the merged row links the document now, so it is no longer a candidate.
+        express = next(line for line in data["lines"] if line["name"] == "Express Av Cordoba 3721")
+        assert express["match"] is None
+
+    async def test_keep_both_creates_a_new_row_and_leaves_the_existing_one(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a manual expense and an import line resolving to keep_both
+        WHEN the statement is imported
+        THEN a NEW transaction is created and the existing one remains (two rows)
+        """
+        # GIVEN
+        match_id = await _create_manual_expense(
+            test_client,
+            name="Express Cordoba dinner",
+            amount="10180.00",
+            occurred_on="2026-05-08",
+        )
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        body = _import_body(
+            pdf_base64=encoded,
+            lines=[
+                _line(
+                    occurred_on="2026-05-08",
+                    name="Express Av Cordoba 3721",
+                    amount="10180.00",
+                    bank="Galicia VISA ·5771",
+                    resolution="keep_both",
+                )
+            ],
+        )
+
+        # WHEN
+        response = await test_client.post(f"{STATEMENTS}/import", json=body)
+
+        # THEN — a new row created, none merged.
+        assert response.status_code == status.HTTP_201_CREATED
+        data = response.json()["data"]
+        assert data["createdCount"] == 1
+        assert data["mergedCount"] == 0
+
+        # THEN — both the manual row and the new imported row exist.
+        listed = (await test_client.get(TRANSACTIONS)).json()["data"]
+        ids = {row["id"] for row in listed}
+        assert match_id in ids  # the manual expense survived untouched.
+        assert data["createdTransactionIds"][0] in ids  # the new statement row.
+        assert len([row for row in listed if row["amountNum"] == "10180.00"]) == 2
+
+    async def test_merge_without_match_id_returns_422(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an import line resolving to merge but omitting matchTransactionId
+        WHEN the statement is imported
+        THEN boundary validation returns 422 (ADR-085) and nothing is created
+        """
+        # GIVEN
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        body = _import_body(
+            pdf_base64=encoded,
+            lines=[
+                _line(occurred_on="2026-05-08", name="Express Av Cordoba 3721", amount="10180.00", resolution="merge")
+            ],
+        )
+
+        # WHEN
+        response = await test_client.post(f"{STATEMENTS}/import", json=body)
+
+        # THEN
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert (await test_client.get(TRANSACTIONS)).json()["data"] == []
+
+    async def test_merge_with_absent_match_id_returns_409(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an import line resolving to merge against a random/absent transaction id
+        WHEN the statement is imported
+        THEN it returns 409 (the merge target does not exist — ADR-085)
+        """
+        # GIVEN
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        body = _import_body(
+            pdf_base64=encoded,
+            lines=[
+                _line(
+                    occurred_on="2026-05-08",
+                    name="Express Av Cordoba 3721",
+                    amount="10180.00",
+                    resolution="merge",
+                    match_transaction_id=str(uuid4()),
+                )
+            ],
+        )
+
+        # WHEN
+        response = await test_client.post(f"{STATEMENTS}/import", json=body)
+
+        # THEN
+        assert response.status_code == status.HTTP_409_CONFLICT
+
+    async def test_mixed_batch_resolves_each_line_and_persists_atomically(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN one import, one merge and one keep_both line in a single request
+        WHEN the statement is imported
+        THEN the counts split correctly and every resolution is persisted
+        """
+        # GIVEN — a manual expense to merge into, plus a manual expense to keep beside.
+        merge_id = await _create_manual_expense(
+            test_client,
+            name="Express Cordoba dinner",
+            amount="10180.00",
+            occurred_on="2026-05-08",
+        )
+        keep_id = await _create_manual_expense(
+            test_client,
+            name="MERPAGO PASSLINE",
+            amount="3641.66",
+            occurred_on="2026-03-20",
+        )
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        body = _import_body(
+            pdf_base64=encoded,
+            lines=[
+                # plain import (no match) — a new row.
+                _line(occurred_on="2026-05-14", name="SUBE VIAJES - BUSES", amount="700.00", bank="Galicia VISA ·5771"),
+                # merge — enriches the existing manual expense.
+                _line(
+                    occurred_on="2026-05-08",
+                    name="Express Av Cordoba 3721",
+                    amount="10180.00",
+                    bank="Galicia VISA ·5771",
+                    resolution="merge",
+                    match_transaction_id=merge_id,
+                ),
+                # keep_both — a new row alongside the existing manual expense.
+                _line(
+                    occurred_on="2026-03-20",
+                    name="MERPAGO*PASSLINE",
+                    amount="3641.66",
+                    bank="Galicia VISA ·5771",
+                    resolution="keep_both",
+                ),
+            ],
+        )
+
+        # WHEN
+        response = await test_client.post(f"{STATEMENTS}/import", json=body)
+
+        # THEN — counts split: two created (import + keep_both), one merged.
+        assert response.status_code == status.HTTP_201_CREATED
+        data = response.json()["data"]
+        assert data["createdCount"] == 2
+        assert data["mergedCount"] == 1
+        assert data["mergedTransactionIds"] == [merge_id]
+
+        # THEN — atomic persistence: both manual rows survive, two new rows exist
+        # (2 seeded + 2 created = 4 total), the merged one enriched in place.
+        listed = (await test_client.get(TRANSACTIONS)).json()["data"]
+        assert len(listed) == 4
+        ids = {row["id"] for row in listed}
+        assert merge_id in ids
+        assert keep_id in ids
+        for created_id in data["createdTransactionIds"]:
+            assert created_id in ids
+        merged_row = next(row for row in listed if row["id"] == merge_id)
+        assert merged_row["bank"] == "Galicia VISA ·5771"
 
 
 class TestDownloadStatementDocument:
