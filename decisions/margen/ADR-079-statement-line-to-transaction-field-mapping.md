@@ -22,7 +22,7 @@ Each included statement line maps to a `Transaction` as follows:
 | Statement field | Transaction field | Notes |
 |---|---|---|
 | Line PESOS amount | `amount` | Decimal, positive (ADR-025) |
-| Line date | `occurred_on` | Purchase date, not due date |
+| Line date | `occurred_on` | **Superseded by ADR-089**: now the statement pay/due date; the purchase date is preserved in `notes` and used for reconciliation matching |
 | Merchant / reference text | `name` | As printed on statement |
 | Issuer + network + last4 | `payment_method` | e.g. "Galicia VISA ·5771" |
 | Keyword→category guess | `category` | Default Other/null; editable in review UI |
