@@ -210,9 +210,10 @@ class TestImportStatementAtomic:
 
         assert stored is not None
         assert stored.pdf_bytes == pdf_bytes
-        assert all(transaction is not None for transaction in transactions)
-        assert all(transaction.statement_document_id == result.statement_document_id for transaction in transactions)
-        assert {transaction.name for transaction in transactions} == {
+        loaded = [transaction for transaction in transactions if transaction is not None]
+        assert len(loaded) == 2
+        assert all(transaction.statement_document_id == result.statement_document_id for transaction in loaded)
+        assert {transaction.name for transaction in loaded} == {
             "MERPAGO*PASSLINE",
             "Express Av Cordoba 3721",
         }

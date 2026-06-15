@@ -36,6 +36,7 @@ export type Category =
   | 'Subscriptions'
   | 'Health'
   | 'Shopping'
+  | 'Entertainment'
   | 'Services'
   | 'Taxes'
   | 'Fee'

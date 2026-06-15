@@ -106,6 +106,7 @@ KNOWN_CATEGORIES: frozenset[str] = frozenset(
         "Subscriptions",
         "Health",
         "Shopping",
+        "Entertainment",
         "Services",
         "Taxes",
         "Other",

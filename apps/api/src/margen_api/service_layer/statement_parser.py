@@ -187,7 +187,9 @@ def _parse_d_mon_y(value: str) -> date | None:
 # Ordered keyword → category map (ADR-079). The first keyword found (case-insensitive)
 # in the merchant text wins; kept deliberately small and obvious. Default is None.
 _CATEGORY_KEYWORDS: tuple[tuple[str, str], ...] = (
-    ("merpago", "Entertainment"),
+    # "passline" (event ticketing) → Entertainment. Bare "merpago" (Mercado Pago,
+    # a payment processor) is deliberately NOT mapped — it is too ambiguous to
+    # categorize; such a charge stays uncategorized for the user to set at review.
     ("passline", "Entertainment"),
     ("giesso", "Shopping"),
     ("cardon", "Shopping"),
