@@ -200,6 +200,7 @@ export function AddEditForm({
     setMoreOpen(false)
   }
 
+  const nameInputId = useId()
   const amountInputId = useId()
   const rateInputId = useId()
   const dateInputId = useId()
@@ -483,6 +484,21 @@ export function AddEditForm({
           ) : null}
         </Box>
       ) : null}
+
+      {/* Optional merchant/client name (ADR-088). When filled it becomes the
+          transaction's `name` and the reconciliation match key (ADR-085); blank
+          is valid and falls back to the category-derived label. A parsed invoice
+          / the Monotributo cuota autofill populate it, still editable here. */}
+      <TextField
+        id={nameInputId}
+        label="Name"
+        value={form.name}
+        onChange={(e) => form.setName(e.target.value)}
+        placeholder="e.g. Sushiclub (optional)"
+        size="small"
+        fullWidth
+        sx={{ mb: 2.5 }}
+      />
 
       {/* Amount. */}
       <SectionLabel>Amount</SectionLabel>

@@ -506,6 +506,59 @@ describe('Add flow — a save failure keeps the form open', () => {
   })
 })
 
+describe('Add flow — optional Name/merchant field (ADR-088)', () => {
+  test('typing a Name sends it as the transaction name in the create payload', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    await user.type(form.getByLabelText('Name'), 'Sushiclub')
+    await user.type(form.getByLabelText(/^Amount in /), '12000')
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    const [input] = createMock.mock.calls[0]
+    expect(input.name).toBe('Sushiclub')
+  })
+
+  test('leaving Name blank falls back to the category-derived label', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    // Pick a non-default category so the fallback is observable.
+    await user.click(form.getByRole('button', { name: 'Transport' }))
+    await user.type(form.getByLabelText(/^Amount in /), '8000')
+    // Name left untouched (empty).
+    expect(form.getByLabelText('Name')).toHaveValue('')
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    const [input] = createMock.mock.calls[0]
+    expect(input.name).toBe('Transport')
+  })
+
+  test('editing a transaction shows its current name in the field and keeps it on save', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { dialog } = await openAddDialog({
+      id: 'edit-name-1',
+      name: 'Sushiclub',
+      type: 'expense',
+      kind: 'expense',
+      currency: 'ARS',
+      category: 'Food',
+      bank: 'Transfer',
+      amountNum: 12000,
+      occurredOn: '2026-01-20',
+      dispDate: 'Jan 20',
+    })
+    const form = within(dialog)
+
+    // The field reflects the existing name on edit.
+    expect(form.getByLabelText('Name')).toHaveValue('Sushiclub')
+  })
+})
+
 describe('Date picker (ADR-041)', () => {
   test('shows a date input defaulting to today with max=today', async () => {
     const { dialog } = await openAddDialog()

@@ -170,6 +170,19 @@ describe('In-form upload — a successful parse autofills the invoice fields', (
     expect(parseInvoiceMock.mock.calls[0][0]).toBeInstanceOf(File)
   })
 
+  test('the parsed client name populates the editable Name field (ADR-088)', async () => {
+    parseInvoiceMock.mockResolvedValueOnce(arsParse)
+    const { user, dialog, fileInput } = await openIncomeForm()
+    const form = within(dialog)
+
+    await user.upload(fileInput, pdfFile())
+
+    // The extracted client name lands in the Name field, still editable.
+    await waitFor(() =>
+      expect(form.getByLabelText('Name')).toHaveValue('Atlas Co.'),
+    )
+  })
+
   test('confirming the autofilled form calls create WITH the document payload', async () => {
     parseInvoiceMock.mockResolvedValueOnce(arsParse)
     createMock.mockResolvedValueOnce({})

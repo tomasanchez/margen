@@ -223,6 +223,16 @@ export interface AddEditFormState {
   /** Short display label derived from `occurredOn`, e.g. "Jun 13". */
   readonly dispDate: string
 
+  /**
+   * Optional merchant/client name for the transaction (ADR-088). When non-blank
+   * it is the saved `name` — and so the reconciliation match key (ADR-085); when
+   * blank, `buildInput` falls back to the category-derived label. Edits seed it
+   * from the row's current name; a parsed invoice / the Monotributo cuota autofill
+   * populate it (still editable). Distinct from `notes`.
+   */
+  readonly name: string
+  setName: (next: string) => void
+
   readonly notes: string
   setNotes: (next: string) => void
 
@@ -387,19 +397,21 @@ export function useAddEditFormState(
       : DEFAULT_CATEGORY,
   )
   const [bank, setBank] = useState<Bank>(prefill?.bank ?? DEFAULT_BANK)
+  // Optional merchant/client name (ADR-088). Seeded from the row's current name
+  // on edit, blank on add. Typed/auto-filled input wins in `buildInput`; blank
+  // falls back to the category-derived label. This field subsumes the old
+  // `importedName` — invoice parse + Monotributo autofills now write here.
+  const [name, setName] = useState<string>(prefill?.name ?? '')
   const [notes, setNotes] = useState<string>('')
 
   // In-form ARCA invoice upload (ADR-072). The parse autofills the fields above
   // via `applyParsedInvoice`; the base64 `document` is stashed here so saving
-  // attaches the PDF, and `duplicate` drives the calm non-blocking warning. A
-  // parse also supplies the invoice name, kept here so `buildInput` uses it.
+  // attaches the PDF, and `duplicate` drives the calm non-blocking warning. The
+  // parse's client name is written into the editable `name` field (ADR-088).
   const [importedDocument, setImportedDocument] = useState<
     InvoiceDocumentPayload | null
   >(prefill?.document ?? null)
   const [duplicate, setDuplicate] = useState<boolean>(false)
-  const [importedName, setImportedName] = useState<string | null>(
-    prefill?.name ?? null,
-  )
   // The uploaded PDF's file name, surfaced in the attached-file row so the user
   // sees which file they picked (issue #26). Set when a parse succeeds; cleared
   // on unattach/reset. Seeded null — a prefill carries no original file name.
@@ -525,7 +537,9 @@ export function useAddEditFormState(
     setDuplicate(parsed.duplicate)
     setImportedDocument(parsed.document)
     if (fileName) setAttachedFileName(fileName)
-    if (parsed.name) setImportedName(parsed.name)
+    // Surface the parsed client name in the editable Name field (ADR-088); a
+    // parse without a name clears it so the field reflects the import.
+    setName(parsed.name ?? '')
     if (parsed.amount !== undefined) setAmountText(String(parsed.amount))
     if (parsed.occurredOn) setOccurredOn(parsed.occurredOn)
 
@@ -562,8 +576,9 @@ export function useAddEditFormState(
     setImportedDocument(null)
     setAttachedFileName(null)
     setDuplicate(false)
-    setImportedName(prefill?.name ?? null)
-  }, [prefill?.name])
+    // The Name field is part of the autofilled values the user reviews, so an
+    // unattach keeps it (parity with amount/date/category) — not reset (ADR-088).
+  }, [])
 
   // Autofill the expense path with the monthly Monotributo cuota. The cuota is an
   // ARS amount, so we set ARS and clear any FX state (rate/source/suggestions) so
@@ -579,7 +594,7 @@ export function useAddEditFormState(
       setSuggestedRates({ MEP: null, official: null })
       setRateSuggestionStatus('idle')
       setCategory('Taxes')
-      setImportedName(categoryLabel)
+      setName(categoryLabel)
     },
     [],
   )
@@ -599,12 +614,12 @@ export function useAddEditFormState(
     setRateSuggestionStatus('idle')
     setCategory(DEFAULT_CATEGORY)
     setBank(DEFAULT_BANK)
+    setName('')
     setNotes('')
     setOccurredOn(maxOccurredOn)
     setImportedDocument(null)
     setAttachedFileName(null)
     setDuplicate(false)
-    setImportedName(null)
   }, [maxOccurredOn])
 
   const usdRateMissing = currency === 'USD' && !Number.isFinite(rate)
@@ -636,7 +651,10 @@ export function useAddEditFormState(
           : 'income'
 
     const base: NewTransactionInput = {
-      name: importedName ?? prefill?.name ?? deriveName(type, kind, category),
+      // The typed/auto-filled Name wins (ADR-088); a blank field falls back to
+      // the category-derived label exactly as before. This becomes the row's
+      // `name`, which the reconciliation matcher reads (ADR-085).
+      name: name.trim() || deriveName(type, kind, category),
       type,
       kind,
       currency,
@@ -708,6 +726,8 @@ export function useAddEditFormState(
     setOccurredOn,
     maxOccurredOn,
     dispDate,
+    name,
+    setName,
     notes,
     setNotes,
     amountArs,
