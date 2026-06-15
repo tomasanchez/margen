@@ -173,7 +173,8 @@ def _import_body(*, pdf_base64: str, lines: list[dict] | None = None) -> dict:
         if lines is not None
         else [
             {
-                "occurredOn": "2026-03-20",
+                "occurredOn": "2026-06-19",  # the statement pay date the expense counts on (ADR-089).
+                "purchaseDate": "2026-03-20",  # the original FECHA, folded into notes.
                 "name": "MERPAGO*PASSLINE",
                 "amount": "3641.66",
                 "currency": "ARS",
@@ -182,7 +183,8 @@ def _import_body(*, pdf_base64: str, lines: list[dict] | None = None) -> dict:
                 "cuota": "03/03",
             },
             {
-                "occurredOn": "2026-05-08",
+                "occurredOn": "2026-06-19",
+                "purchaseDate": "2026-05-08",
                 "name": "Express Av Cordoba 3721",
                 "amount": "10180.00",
                 "currency": "ARS",
@@ -190,7 +192,8 @@ def _import_body(*, pdf_base64: str, lines: list[dict] | None = None) -> dict:
                 "bank": "Galicia VISA ·5771",
             },
             {
-                "occurredOn": "2026-05-14",
+                "occurredOn": "2026-06-19",
+                "purchaseDate": "2026-05-14",
                 "name": "SUBE VIAJES - BUSES",
                 "amount": "700.00",
                 "currency": "ARS",
@@ -306,6 +309,13 @@ class TestParseStatement:
         assert merpago["category"] == "Entertainment"
         assert merpago["lineKind"] == "purchase"
         assert merpago["include"] is True
+        # occurredOn is the statement due date; purchaseDate is the original FECHA (ADR-089).
+        assert merpago["occurredOn"] == "2026-06-19"
+        assert merpago["purchaseDate"] == "2026-03-20"
+        # AND — every parsed line shares the statement pay date but keeps its own FECHA.
+        assert {line["occurredOn"] for line in data["lines"]} == {"2026-06-19"}
+        express_line = next(line for line in data["lines"] if line["name"] == "Express Av Cordoba 3721")
+        assert express_line["purchaseDate"] == "2026-05-08"
         # An ARS line leaves the USD/fx optionals null (the None-optional branch).
         assert merpago["usdAmount"] is None
         assert merpago["fxRate"] is None
@@ -509,28 +519,48 @@ class TestImportStatement:
         assert imported["MERPAGO*PASSLINE"]["amountNum"] == "3641.66"  # money aliased to 'amountNum'.
         assert imported["SUBE VIAJES - BUSES"]["amountNum"] == "700.00"
 
+        # THEN — the expense counts on the statement pay date, not the FECHA (ADR-089).
+        assert imported["MERPAGO*PASSLINE"]["occurredOn"] == "2026-06-19"
+        assert imported["Express Av Cordoba 3721"]["occurredOn"] == "2026-06-19"
+        # AND — the original purchase date is preserved in notes; a cuota line adds it too.
+        assert imported["MERPAGO*PASSLINE"]["notes"] == "Compra 20-03-26 · Cuota 03/03"
+        assert imported["Express Av Cordoba 3721"]["notes"] == "Compra 08-05-26"
+
         # THEN — the document is reachable through the shared statement document id.
         download = await test_client.get(f"{STATEMENTS}/{statement_document_id}/document")
         assert download.status_code == status.HTTP_200_OK
         assert download.content == _PDF_BYTES
 
-    async def test_import_folds_cuota_into_notes(self, test_client: httpx.AsyncClient):
+    @pytest.mark.parametrize(
+        ("line_extra", "expected_notes"),
+        [
+            # purchase date + cuota → both parts joined by the middot (ADR-089).
+            ({"purchaseDate": "2026-03-20", "cuota": "3/3"}, "Compra 20-03-26 · Cuota 3/3"),
+            # purchase date only → just the "Compra" part.
+            ({"purchaseDate": "2026-03-20"}, "Compra 20-03-26"),
+            # cuota only (no purchase date) → just the "Cuota" part (ADR-079).
+            ({"cuota": "3/3"}, "Cuota 3/3"),
+        ],
+    )
+    async def test_import_composes_notes_from_purchase_date_and_cuota(
+        self, test_client: httpx.AsyncClient, line_extra: dict, expected_notes: str
+    ):
         """
-        GIVEN an imported line carrying a cuota marker and no explicit note
+        GIVEN an imported line carrying a purchase date and/or a cuota and no explicit note
         WHEN the import endpoint is posted
-        THEN the cuota is folded into the transaction notes as "Cuota 3/3" (ADR-079)
+        THEN the system note is composed as "Compra dd-mm-yy · Cuota n/m" (ADR-089)
         """
-        # GIVEN — a single line with a cuota and no notes.
+        # GIVEN — a single line with the composing fields and no explicit notes.
         encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
         body = _import_body(
             pdf_base64=encoded,
             lines=[
                 {
-                    "occurredOn": "2026-03-20",
+                    "occurredOn": "2026-06-19",
                     "name": "MERPAGO*PASSLINE",
                     "amount": "3641.66",
                     "currency": "ARS",
-                    "cuota": "3/3",
+                    **line_extra,
                 }
             ],
         )
@@ -541,7 +571,38 @@ class TestImportStatement:
         # THEN
         listed = (await test_client.get(TRANSACTIONS)).json()["data"]
         row = next(line for line in listed if line["name"] == "MERPAGO*PASSLINE")
-        assert row["notes"] == "Cuota 3/3"
+        assert row["notes"] == expected_notes
+
+    async def test_explicit_note_is_preserved_over_the_composed_one(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an imported line carrying an explicit note alongside a purchase date and cuota
+        WHEN the import endpoint is posted
+        THEN the user's explicit note is preserved verbatim, not the composed one (ADR-089)
+        """
+        # GIVEN — an explicit note plus the fields that would otherwise compose one.
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        body = _import_body(
+            pdf_base64=encoded,
+            lines=[
+                {
+                    "occurredOn": "2026-06-19",
+                    "purchaseDate": "2026-03-20",
+                    "cuota": "3/3",
+                    "name": "MERPAGO*PASSLINE",
+                    "amount": "3641.66",
+                    "currency": "ARS",
+                    "notes": "Regalo de cumpleaños",
+                }
+            ],
+        )
+
+        # WHEN
+        await test_client.post(f"{STATEMENTS}/import", json=body)
+
+        # THEN — the explicit note wins; the composed "Compra …" is not applied.
+        listed = (await test_client.get(TRANSACTIONS)).json()["data"]
+        row = next(line for line in listed if line["name"] == "MERPAGO*PASSLINE")
+        assert row["notes"] == "Regalo de cumpleaños"
 
     async def test_malformed_base64_returns_422(self, test_client: httpx.AsyncClient):
         """
@@ -571,8 +632,10 @@ class TestParseReconciliation:
         THEN that line carries a non-null match with the seeded transactionId, while a
              line with no matching manual expense has match: null
         """
-        # GIVEN — a manual expense matching the "Express Av Cordoba 3721" line
-        # (amount 10180.00, date 2026-05-08, similar name, no statement document).
+        # GIVEN — a manual expense matching the "Express Av Cordoba 3721" line: amount
+        # 10180.00, similar name, dated 2026-05-07 — within ±3 days of the line's
+        # PURCHASE date (FECHA 2026-05-08), NOT its pay date (2026-06-19). The matcher
+        # keys the date window on purchase_date (ADR-089), so this must still flag.
         transaction_id = await _create_manual_expense(
             test_client,
             name="Express Cordoba dinner",

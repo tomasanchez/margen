@@ -33,11 +33,19 @@ def _line(
     name: str = "Express Av Cordoba 3721",
     amount: str = "10180.00",
     occurred_on: date = _BASE_DATE,
+    purchase_date: date | None = None,
     currency: Currency = Currency.ARS,
 ) -> StatementLineDraft:
-    """Build a plain statement line draft for the matcher."""
+    """Build a plain statement line draft for the matcher.
+
+    The matcher's date window is on the purchase date (ADR-089). By default
+    ``purchase_date`` mirrors ``occurred_on`` so the existing scenarios drive on the
+    intended date; pass ``purchase_date`` explicitly to decouple the FECHA from the
+    statement pay date and prove which one the window keys on.
+    """
     return StatementLineDraft(
         occurred_on=occurred_on,
+        purchase_date=purchase_date if purchase_date is not None else occurred_on,
         name=name,
         amount=Decimal(amount),
         currency=currency,
@@ -323,6 +331,52 @@ class TestMatchLines:
         # THEN — both matched, to distinct candidates.
         assert set(matches) == {0, 1}
         assert {matches[0].transaction_id, matches[1].transaction_id} == {"tx-a", "tx-b"}
+
+    def test_window_keys_on_purchase_date_not_pay_date(self):
+        """
+        GIVEN a line whose pay date (occurred_on) is far from the candidate but whose
+              purchase date (FECHA) is inside the ±N-day window
+        WHEN match_lines runs
+        THEN it matches — the window keys on purchase_date, not occurred_on (ADR-089)
+        """
+        # GIVEN — the candidate (a manual expense) sits on the FECHA; the line's
+        # occurred_on is the statement pay date, weeks later and well outside the window.
+        from datetime import timedelta
+
+        line = _line(
+            occurred_on=_BASE_DATE + timedelta(days=40),  # the statement pay date, far away.
+            purchase_date=_BASE_DATE + timedelta(days=1),  # the FECHA, inside the window.
+        )
+        candidates = [_candidate(occurred_on=_BASE_DATE)]
+
+        # WHEN
+        matches = match_lines([line], candidates)
+
+        # THEN — matched on the purchase date despite the far pay date.
+        assert matches[0].transaction_id == "tx-1"
+
+    def test_pay_date_inside_window_does_not_match_when_purchase_date_is_outside(self):
+        """
+        GIVEN a line whose pay date (occurred_on) is near the candidate but whose
+              purchase date (FECHA) is outside the ±N-day window
+        WHEN match_lines runs
+        THEN no match is produced — the near pay date is ignored (ADR-089)
+        """
+        # GIVEN — the line's occurred_on lands on the candidate date, but its FECHA is
+        # a day past the window, so the pay-date proximity must NOT rescue the match.
+        from datetime import timedelta
+
+        line = _line(
+            occurred_on=_BASE_DATE,  # the statement pay date, on the candidate.
+            purchase_date=_BASE_DATE + timedelta(days=WINDOW_DAYS + 1),  # the FECHA, out of window.
+        )
+        candidates = [_candidate(occurred_on=_BASE_DATE)]
+
+        # WHEN
+        matches = match_lines([line], candidates)
+
+        # THEN — the out-of-window purchase date governs, so nothing matches.
+        assert matches == {}
 
     @pytest.mark.parametrize("window", [0, 5])
     def test_window_days_override_is_honored(self, window: int):

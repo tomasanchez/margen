@@ -190,17 +190,36 @@ class TestGaliciaVisaParserFullFixture:
         """
         GIVEN the parsed statement
         WHEN the MERPAGO purchase is read
-        THEN its date, ARS amount, cuota marker and guessed category are mapped
+        THEN its pay date (occurred_on), original FECHA (purchase_date), ARS amount,
+             cuota marker and guessed category are mapped (ADR-089)
         """
-        # THEN
+        # THEN — occurred_on is the statement due date; purchase_date is the line's FECHA.
         line = _by_name(parsed, "MERPAGO*PASSLINE")
         assert line is not None
-        assert line.occurred_on == date(2026, 3, 20)
+        assert line.occurred_on == date(2026, 6, 19)  # the fixture's due date (ADR-089).
+        assert line.purchase_date == date(2026, 3, 20)  # the line's own FECHA.
         assert line.amount == Decimal("3641.66")
         assert line.currency is Currency.ARS
         assert line.cuota == "03/03"
         assert line.category == "Entertainment"
         assert line.line_kind is LineKind.PURCHASE
+
+    def test_every_line_occurred_on_is_the_due_date(self, parsed: ParsedStatement):
+        """
+        GIVEN the parsed statement carrying a parseable due date
+        WHEN each line's occurred_on is read
+        THEN every line counts on the statement due date, decoupled from its FECHA (ADR-089)
+        """
+        # THEN — the due date is the 4th period token (19-Jun-26); every line shares it.
+        assert parsed.period_due == date(2026, 6, 19)
+        assert [line.occurred_on for line in parsed.lines] == [date(2026, 6, 19)] * len(parsed.lines)
+        # AND — the per-line FECHA stays distinct from the shared pay date.
+        express = _by_name(parsed, "Express Av Cordoba 3721")
+        assert express is not None
+        assert express.purchase_date == date(2026, 5, 8)
+        sube = _by_name(parsed, "SUBE VIAJES - BUSES")
+        assert sube is not None
+        assert sube.purchase_date == date(2026, 5, 14)
 
     def test_maps_the_food_and_transport_purchases(self, parsed: ParsedStatement):
         """
@@ -315,7 +334,7 @@ class TestDateAndCuotaParsing:
         """
         GIVEN a statement whose purchase row carries a DD-MM-YY date cell
         WHEN it is parsed
-        THEN the purchase date is read as a 20YY date
+        THEN the purchase date is read as a 20YY date on purchase_date (ADR-089)
         """
         # GIVEN — a minimal detail section with one purchase.
         text = _minimal_detail(["08-05-26", "K", "Some Shop ", "001", "1.000,00", " "])
@@ -323,8 +342,8 @@ class TestDateAndCuotaParsing:
         # WHEN
         parsed = GaliciaVisaParser().parse(text)
 
-        # THEN
-        assert parsed.lines[0].occurred_on == date(2026, 5, 8)
+        # THEN — the FECHA is read onto purchase_date.
+        assert parsed.lines[0].purchase_date == date(2026, 5, 8)
 
     def test_parses_dd_mon_yy_period_close_and_due(self):
         """
@@ -354,6 +373,68 @@ class TestDateAndCuotaParsing:
         # THEN
         assert parsed.period_close is None
         assert parsed.period_due is None
+
+
+class TestNoneDueDateFallback:
+    """When the statement carries no parseable due date, occurred_on falls back to FECHA (ADR-089)."""
+
+    def test_purchase_line_falls_back_to_its_own_purchase_date(self):
+        """
+        GIVEN a fingerprinting Galicia text WITHOUT the six-token period run
+        WHEN it is parsed (so period_due is None)
+        THEN the purchase line's occurred_on falls back to its own FECHA, equal to
+             purchase_date (the None-pay-date branch — ADR-089)
+        """
+        # GIVEN — _minimal_detail carries no header period block, so period_due is None.
+        text = _minimal_detail(["08-05-26", "K", "Some Shop ", "001", "1.000,00"])
+
+        # WHEN
+        parsed = GaliciaVisaParser().parse(text)
+
+        # THEN — no due date parsed, so occurred_on == purchase_date for the line.
+        assert parsed.period_due is None
+        line = parsed.lines[0]
+        assert line.purchase_date == date(2026, 5, 8)
+        assert line.occurred_on == date(2026, 5, 8)
+        assert line.occurred_on == line.purchase_date
+
+    def test_fee_line_falls_back_to_its_own_row_date(self):
+        """
+        GIVEN a Galicia text WITHOUT the six-token period run carrying an un-waived fee
+        WHEN it is parsed (so period_due is None)
+        THEN the emitted FEE line's occurred_on falls back to that fee row's own date
+             (the None-pay-date fee branch — ADR-089)
+        """
+        # GIVEN — a fingerprinting fee section with no header period block.
+        text = "\n".join(
+            [
+                "Tarjeta Crédito VISA",
+                "CUIT Banco: 30-50000173-5",
+                "Resumen N° VI123",
+                "DETALLE DEL CONSUMO  ",
+                "08-05-26",
+                "Shop ",
+                "001",
+                "1.000,00",
+                "TARJETA 5771 Total Consumos de JUAN PEREZ ",
+                "1.000,00",
+                "11-06-26",
+                "COM MANT CTA Y RENO ",
+                "25.206,00",
+                "TOTAL A PAGAR",
+                "26.206,00",
+            ]
+        )
+
+        # WHEN
+        parsed = GaliciaVisaParser().parse(text)
+
+        # THEN — no due date, so the fee's occurred_on falls back to its own row date.
+        assert parsed.period_due is None
+        fees = [line for line in parsed.lines if line.line_kind is LineKind.FEE]
+        assert len(fees) == 1
+        assert fees[0].occurred_on == date(2026, 6, 11)
+        assert fees[0].purchase_date == date(2026, 6, 11)
 
 
 class TestUsdLineMapping:
