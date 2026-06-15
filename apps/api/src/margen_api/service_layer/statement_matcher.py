@@ -11,8 +11,9 @@ A statement line matches a candidate when all three hold (ADR-085):
 
 1. **Amount is exact** — ARS amounts match to the cent (exact :class:`~decimal.Decimal`).
 2. **Date is within ±N days** — ``occurred_on`` falls within :data:`WINDOW_DAYS`.
-3. **Names are fuzzily similar** — :func:`names_similar` (shared significant token,
-   containment, or a similarity ratio above a threshold).
+3. **Names are fuzzily similar** — :func:`names_similar` (same leading brand token,
+   one name a prefix of the other, or a high typo-tolerance ratio — never a merely
+   shared generic word).
 
 Assignment is **greedy 1:1**: a candidate is claimed by at most one line; ties are
 resolved by nearest date, then smallest line index (ADR-085).
@@ -32,12 +33,18 @@ from margen_api.service_layer.statement_parser_read_models import StatementLineD
 # The ±N-day window the date condition tolerates; a configurable default (ADR-085).
 WINDOW_DAYS = 3
 
-# Minimum normalized SequenceMatcher ratio that counts as "fuzzily similar".
-_SIMILARITY_THRESHOLD = 0.5
+# Minimum SequenceMatcher ratio for the typo-tolerance fallback. Deliberately high
+# so two different brands that merely share a generic word ("Fabric Sushi" vs
+# "Sushiclub") never match — only a near-identical misspelling clears this bar.
+_SIMILARITY_THRESHOLD = 0.85
 
-# A token must be at least this many characters AND not purely numeric to count as
-# "significant" for token overlap — drops noise like "de", "sa", "srl", "5771".
+# A leading "brand" token must be at least this many characters to anchor a match,
+# so generic short connectors ("el", "de", "la") never anchor one.
 _MIN_TOKEN_LENGTH = 4
+
+# A whole-string prefix must be at least this long to count, so a 1-2 char label
+# does not prefix-match everything.
+_MIN_PREFIX_LENGTH = 3
 
 # Non-alphanumeric runs collapse to a single space during normalization.
 _NON_ALNUM = re.compile(r"[^0-9a-z]+")
@@ -89,20 +96,21 @@ def _normalize(text: str) -> str:
     return _NON_ALNUM.sub(" ", lowered).strip()
 
 
-def _significant_tokens(normalized: str) -> set[str]:
-    """Return the significant tokens of a normalized string (PURE).
+def _leading_token(normalized: str) -> str | None:
+    """Return the leading "brand" token of a normalized string, when distinctive (PURE).
 
-    A token is significant when it is at least :data:`_MIN_TOKEN_LENGTH` characters
-    and not purely numeric, so short connectors and bare card/voucher numbers do not
-    create spurious overlaps.
+    Merchant statement lines lead with the brand (e.g. ``"sushiclub recoleta"``), so
+    the first token anchors a match — but only when it is at least
+    :data:`_MIN_TOKEN_LENGTH` characters, so generic connectors ("el", "de") do not.
 
     Args:
-        normalized: A string already run through :func:`_normalize`.
+        normalized: A non-empty string already run through :func:`_normalize`.
 
     Returns:
-        The set of significant tokens (possibly empty).
+        The first token when it is distinctive enough, else ``None``.
     """
-    return {token for token in normalized.split() if len(token) >= _MIN_TOKEN_LENGTH and not token.isdigit()}
+    head = normalized.split(maxsplit=1)[0]
+    return head if len(head) >= _MIN_TOKEN_LENGTH else None
 
 
 def names_similar(a: str, b: str) -> bool:
@@ -111,11 +119,15 @@ def names_similar(a: str, b: str) -> bool:
     Both inputs are normalized (casefold, accent/punctuation strip, whitespace
     collapse), then judged similar when ANY of:
 
-    * they share at least one significant token (e.g. ``"sushi"`` in both
-      ``"Sushi dinner"`` and ``"SUSHI RECOLETA-SUSHI REC"``), OR
-    * one normalized string contains the other (a labeled prefix/superset), OR
-    * the :class:`difflib.SequenceMatcher` ratio is at least the threshold (~0.5).
+    * they share the same leading "brand" token (merchant lines lead with it, e.g.
+      ``"sushiclub"`` in both ``"Sushiclub"`` and ``"Sushiclub Recoleta"``), OR
+    * one normalized string is a prefix of the other (``"Sushi"`` starts
+      ``"Sushiclub"``; ``"Sushiclub"`` starts ``"Sushiclub Recoleta"``), OR
+    * the :class:`difflib.SequenceMatcher` ratio clears a high threshold — typo
+      tolerance for the same brand misspelled.
 
+    It deliberately does NOT match on a merely shared generic word, so
+    ``"Fabric Sushi"`` and ``"Kawaii Sushi"`` do NOT match ``"Sushiclub"`` (ADR-085).
     Two empty/whitespace normalizations are never similar.
 
     Args:
@@ -130,12 +142,19 @@ def names_similar(a: str, b: str) -> bool:
     if not norm_a or not norm_b:
         return False
 
-    if _significant_tokens(norm_a) & _significant_tokens(norm_b):
+    # 1) Same leading brand token (the distinctive word merchant lines lead with).
+    lead_a = _leading_token(norm_a)
+    if lead_a is not None and lead_a == _leading_token(norm_b):
         return True
 
-    if norm_a in norm_b or norm_b in norm_a:
+    # 2) One name is a prefix of the other ("Sushi" ⊂ "Sushiclub" ⊂ "Sushiclub
+    #    Recoleta"); a too-short prefix is ignored.
+    shorter, longer = sorted((norm_a, norm_b), key=len)
+    if len(shorter) >= _MIN_PREFIX_LENGTH and longer.startswith(shorter):
         return True
 
+    # 3) Typo tolerance: a high ratio catches the same brand misspelled, while the
+    #    high bar keeps different brands sharing a generic word apart.
     return SequenceMatcher(None, norm_a, norm_b).ratio() >= _SIMILARITY_THRESHOLD
 
 

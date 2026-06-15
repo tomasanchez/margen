@@ -23,7 +23,7 @@ A statement line matches an existing transaction when **all three** conditions h
 
 1. **Amount is exact** — ARS amounts match to the cent.
 2. **Date is within ±N days** — `occurred_on` of the candidate falls within a configurable window (default N ≈ 3) of the statement line's date.
-3. **Names are fuzzily similar** — normalized token-overlap or similarity ratio exceeds a threshold; tolerant of the manual label differing from the merchant text (e.g., "Sushi dinner" ≈ "SUSHI RECOLETA").
+3. **Names are similar by leading brand** — after normalization (casefold, accent/punctuation strip), names match when they share the same **leading "brand" token** (merchant lines lead with it: "Sushiclub Recoleta" ≈ "Sushiclub"; "Sushi dinner" ≈ "SUSHI RECOLETA"), OR one normalized name is a **prefix** of the other ("Sushi" ⊂ "Sushiclub"), OR a **high** SequenceMatcher ratio (~0.85) catches the same brand misspelled. It deliberately does **not** match on a merely shared *generic* word, so "Fabric Sushi" / "Kawaii Sushi" do **not** match "Sushiclub". (Refined from the original token-overlap rule, which over-matched on generic words like "sushi".)
 
 Candidate pool: only **manual** expenses — `kind=expense` with `statement_document_id IS NULL` — so already-imported statement rows are never re-matched. Assignment is **greedy 1:1**: a candidate can be claimed by at most one statement line; when two lines could match the same candidate, the one with the nearest date wins. The candidate set is fetched once per parse over the date window spanning all lines in the statement; the matching logic itself is a pure function with no I/O.
 

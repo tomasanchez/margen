@@ -70,14 +70,32 @@ def _candidate(
 class TestNamesSimilar:
     """names_similar judges two labels the same expense by token / containment / ratio."""
 
-    def test_shared_significant_token_matches(self):
+    def test_shared_leading_brand_token_matches(self):
         """
-        GIVEN two labels sharing one significant token
+        GIVEN two labels that lead with the same brand token
         WHEN names_similar compares them
-        THEN they are similar (the token-overlap branch)
+        THEN they are similar (the leading-token branch)
         """
-        # WHEN / THEN — "sushi" is shared and significant.
+        # WHEN / THEN — both lead with "sushi" (the brand position on a merchant line).
         assert names_similar("Sushi dinner", "SUSHI RECOLETA-SUSHI REC") is True
+
+    @pytest.mark.parametrize(
+        ("statement_name", "expected"),
+        [
+            ("Sushiclub Recoleta", True),  # same leading brand token.
+            ("Sushi", True),  # prefix of "sushiclub".
+            ("Fabric Sushi", False),  # only the generic word "sushi" is shared.
+            ("Kawaii Sushi", False),  # only the generic word "sushi" is shared.
+        ],
+    )
+    def test_brand_prefix_examples(self, statement_name: str, expected: bool):
+        """
+        GIVEN a manual label "Sushiclub" and various statement merchant labels
+        WHEN names_similar compares them
+        THEN only the same-brand / prefix cases match, not a shared generic word
+        """
+        # WHEN / THEN
+        assert names_similar("Sushiclub", statement_name) is expected
 
     def test_accent_case_and_punctuation_insensitive(self):
         """
@@ -88,15 +106,24 @@ class TestNamesSimilar:
         # WHEN / THEN
         assert names_similar("Almacén López", "almacen lopez!!!") is True
 
-    def test_containment_matches(self):
+    def test_prefix_matches(self):
         """
-        GIVEN one normalized label fully contained in the other
+        GIVEN one normalized label that is a prefix of the other
         WHEN names_similar compares them
-        THEN they are similar (the containment branch) even without a shared whole token
+        THEN they are similar (the prefix branch) even without an equal leading token
         """
-        # WHEN / THEN — no shared whole token ("uber" != "ubereats"), but one normalized
-        # label contains the other, so the containment branch flags them similar.
+        # WHEN / THEN — leading tokens differ ("uber" != "ubereats"), but "uber" is a
+        # prefix of "ubereats", so the prefix branch flags them similar.
         assert names_similar("Ubereats", "Uber") is True
+
+    def test_too_short_prefix_does_not_match(self):
+        """
+        GIVEN a label too short to anchor a leading token or a prefix
+        WHEN names_similar compares it to a longer label it starts
+        THEN it is NOT similar (the prefix floor rejects a 2-char overlap)
+        """
+        # WHEN / THEN — "ab" has no 4+ leading token and is below the prefix floor.
+        assert names_similar("Ab", "Abcdef") is False
 
     def test_unrelated_names_do_not_match(self):
         """
@@ -125,14 +152,15 @@ class TestNamesSimilar:
         # WHEN / THEN
         assert names_similar("---", "Anything") is False
 
-    def test_high_ratio_without_shared_token_matches(self):
+    def test_high_ratio_typo_matches(self):
         """
-        GIVEN two near-identical labels with no 4+ char shared token but a high ratio
+        GIVEN the same brand with a transposed-letter typo (no equal token, no prefix)
         WHEN names_similar compares them
-        THEN the difflib-ratio branch makes them similar
+        THEN the high-ratio fallback makes them similar
         """
-        # WHEN / THEN — a one-character typo; ratio well above the threshold.
-        assert names_similar("netfix", "netflx") is True
+        # WHEN / THEN — "sushiclbu" is "sushiclub" with the last two letters swapped;
+        # the ratio (~0.89) clears the high threshold while different brands do not.
+        assert names_similar("Sushiclub", "Sushiclbu") is True
 
 
 class TestMatchLines:
