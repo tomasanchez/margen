@@ -110,10 +110,13 @@ const okParse: StatementParse = {
     cardLast4: '5771',
     statementNumber: 'A-1000',
   },
+  // Every line is dated on the statement pay date (ADR-089); the original purchase
+  // date is preserved per line in `purchaseDate`.
   lines: [
     {
       id: '0',
-      occurredOn: '2026-05-02',
+      occurredOn: '2026-06-19',
+      purchaseDate: '2026-05-02',
       name: 'Carrefour',
       amount: 45000,
       currency: 'ARS',
@@ -123,7 +126,8 @@ const okParse: StatementParse = {
     },
     {
       id: '1',
-      occurredOn: '2026-05-10',
+      occurredOn: '2026-06-19',
+      purchaseDate: '2026-05-10',
       name: 'Netflix',
       amount: 8000,
       currency: 'ARS',
@@ -134,7 +138,8 @@ const okParse: StatementParse = {
     },
     {
       id: '2',
-      occurredOn: '2026-05-20',
+      occurredOn: '2026-06-19',
+      purchaseDate: '2026-05-20',
       name: 'Card fee',
       amount: 3000,
       currency: 'ARS',
@@ -215,6 +220,25 @@ describe('Import statement — a successful parse renders the review table', () 
     expect(parseStatementMock).toHaveBeenCalledTimes(1)
     expect(parseStatementMock.mock.calls[0][0]).toBeInstanceOf(File)
   })
+
+  test('each row shows both the paid (statement) date and the original purchase date', async () => {
+    parseStatementMock.mockResolvedValueOnce(okParse)
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile())
+    await screen.findByText('Galicia VISA ·5771')
+
+    // The line is dated on the statement pay date (ADR-089); all three lines share it.
+    expect(screen.getAllByText('paid Jun 19')).toHaveLength(3)
+    // The original purchase date is shown per row beneath the pay date.
+    expect(screen.getByText('bought May 02')).toBeInTheDocument()
+    expect(screen.getByText('bought May 10')).toBeInTheDocument()
+    expect(screen.getByText('bought May 20')).toBeInTheDocument()
+    // A calm header note explains the two-date model.
+    expect(
+      screen.getByText(/dated when the card is paid/i),
+    ).toBeInTheDocument()
+  })
 })
 
 describe('Import statement — only the included lines are sent on import', () => {
@@ -247,6 +271,10 @@ describe('Import statement — only the included lines are sent on import', () =
     expect(payload.lines[0].bank).toBe('Galicia VISA ·5771')
     // Money is re-encoded as a Decimal string at the boundary.
     expect(payload.lines[0].amount).toBe('45000')
+    // occurredOn stays the statement pay date; the original purchase date is echoed
+    // back so the backend composes the purchase note (ADR-089).
+    expect(payload.lines[0].occurredOn).toBe('2026-06-19')
+    expect(payload.lines[0].purchaseDate).toBe('2026-05-02')
     // An unflagged kept line resolves as a plain import (no merge target).
     expect(payload.lines[0].resolution).toBe('import')
     expect(payload.lines[0].matchTransactionId).toBeUndefined()

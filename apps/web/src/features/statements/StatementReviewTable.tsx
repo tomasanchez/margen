@@ -259,6 +259,62 @@ function ResolutionControl({
   )
 }
 
+/**
+ * The line's two dates (ADR-089). Since a CC line is now dated on the statement
+ * pay date while the original purchase date is preserved separately, show both:
+ * a primary "paid {date}" with a calm secondary "bought {date}" caption. When the
+ * purchase date is absent or equal to the pay date (shouldn't normally happen for a
+ * CC line, but be safe), collapse to a single plain date.
+ */
+function LineDates({
+  occurredOn,
+  purchaseDate,
+}: {
+  occurredOn: string
+  purchaseDate?: string
+}) {
+  const paidDisp = isoToDispDateLike(occurredOn)
+  const showBoth = purchaseDate !== undefined && purchaseDate !== occurredOn
+
+  if (!showBoth) {
+    return (
+      <Typography
+        component="span"
+        sx={{ fontFamily: monoFontFamily, fontSize: 12.5, color: 'text.primary' }}
+      >
+        {paidDisp}
+      </Typography>
+    )
+  }
+
+  return (
+    <Box sx={{ minWidth: 0 }}>
+      <Typography
+        component="span"
+        sx={{
+          display: 'block',
+          fontFamily: monoFontFamily,
+          fontSize: 12.5,
+          color: 'text.primary',
+        }}
+      >
+        {`paid ${paidDisp}`}
+      </Typography>
+      <Typography
+        component="span"
+        sx={{
+          display: 'block',
+          fontFamily: monoFontFamily,
+          fontSize: 11,
+          color: 'text.secondary',
+        }}
+      >
+        {`bought ${isoToDispDateLike(purchaseDate)}`}
+      </Typography>
+    </Box>
+  )
+}
+
 /** A single editable line row (+ an expandable compare row when flagged). */
 function LineRow({
   line,
@@ -301,8 +357,11 @@ function LineRow({
           },
         }}
       >
-        <TableCell sx={{ whiteSpace: 'nowrap', fontFamily: monoFontFamily, fontSize: 12.5 }}>
-          {isoToDispDateLike(line.occurredOn)}
+        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+          <LineDates
+            occurredOn={line.occurredOn}
+            purchaseDate={line.purchaseDate}
+          />
         </TableCell>
         <TableCell sx={{ minWidth: 200 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
@@ -608,6 +667,13 @@ export function StatementReviewTable({
           if this is intentional.
         </Alert>
       ) : null}
+
+      {/* A calm note explaining the two-date model (ADR-089/037). */}
+      <Typography
+        sx={{ mb: 1, fontSize: 12, color: 'text.secondary' }}
+      >
+        Lines are dated when the card is paid; the original purchase date is shown per row.
+      </Typography>
 
       {/* The editable line table. */}
       <TableContainer

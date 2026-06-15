@@ -62,7 +62,10 @@ interface StatementMatchDto {
 
 /** A single parsed statement line as serialized by the backend (camelCase). */
 interface StatementLineDto {
+  /** The statement pay/due date — same for every line of a statement (ADR-089). */
   occurredOn: string
+  /** The original purchase FECHA preserved for display + reconciliation (ADR-089). */
+  purchaseDate?: string | null
   name: string
   amount: string
   currency: string
@@ -161,7 +164,19 @@ export interface StatementMatch {
 export interface StatementLine {
   /** Stable index-based id for table rows (the backend lines are positional). */
   id: string
+  /**
+   * The statement pay/due date — the same for every line of a statement (ADR-089).
+   * This is what the line is dated/grouped on; the original purchase date lives in
+   * {@link purchaseDate}.
+   */
   occurredOn: string
+  /**
+   * The original purchase FECHA (ISO `YYYY-MM-DD`), preserved per line (ADR-089).
+   * Shown alongside the pay date ("bought … · paid …") and echoed back on import so
+   * the backend can compose the "Compra dd-mm-yy · Cuota n/m" note. Absent on lines
+   * the parser couldn't attribute a purchase date to.
+   */
+  purchaseDate?: string
   name: string
   amount: number
   currency: Currency
@@ -224,7 +239,14 @@ export type StatementLineResolution = 'import' | 'merge' | 'keep_both'
 
 /** One line sent on import (camelCase; money as Decimal strings — ADR-025). */
 export interface StatementLineRequest {
+  /** The statement pay/due date this line is dated on (ADR-089). */
   occurredOn: string
+  /**
+   * The original purchase FECHA (ISO `YYYY-MM-DD`) echoed back from the parse so the
+   * backend composes the "Compra dd-mm-yy · Cuota n/m" note (ADR-089). Omitted when the
+   * parsed line carried no purchase date.
+   */
+  purchaseDate?: string
   name: string
   amount: string
   currency: Currency
@@ -362,6 +384,7 @@ function adaptLine(dto: StatementLineDto, index: number): StatementLine {
   return {
     id: String(index),
     occurredOn: dto.occurredOn,
+    ...(nonEmpty(dto.purchaseDate) ? { purchaseDate: dto.purchaseDate as string } : {}),
     name: dto.name,
     amount: parseMoney(dto.amount) ?? 0,
     currency: asCurrency(dto.currency),

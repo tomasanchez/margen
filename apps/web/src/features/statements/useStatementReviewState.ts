@@ -91,6 +91,8 @@ function toLineRequest(
   const resolution = lineResolution(line)
   return {
     occurredOn: line.occurredOn,
+    // Echo the original purchase date so the backend composes the purchase note (ADR-089).
+    ...(line.purchaseDate ? { purchaseDate: line.purchaseDate } : {}),
     name: line.name,
     amount: toDecimalString(line.amount),
     currency: line.currency,
