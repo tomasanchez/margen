@@ -15,16 +15,19 @@ import base64
 import binascii
 from datetime import date, datetime
 from decimal import Decimal
+from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from margen_api.domain.commands.statement import (
     ImportStatement,
     StatementDocumentPayload,
     StatementLineInput,
+    StatementLineResolution,
 )
 from margen_api.domain.models.value_objects import Currency, FxRateType
 from margen_api.entrypoint.schemas import CamelCaseModel
+from margen_api.service_layer.statement_matcher import ReconCandidate
 from margen_api.service_layer.statement_parser_read_models import (
     LineKind,
     ParsedStatement,
@@ -42,6 +45,17 @@ class InvalidDocumentBase64Error(ValueError):
 
     def __init__(self) -> None:
         super().__init__("pdfBase64 is not valid base64.")
+
+
+class MergeRequiresMatchError(ValueError):
+    """Raised when a ``merge`` import line omits its ``matchTransactionId`` (ADR-085).
+
+    A :class:`ValueError` subclass so Pydantic surfaces it as a ``422`` at the
+    boundary; the message lives on the class to keep the raise site terse.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("matchTransactionId is required when resolution is 'merge'.")
 
 
 # --------------------------------------------------------------------------- #
@@ -71,11 +85,42 @@ class StatementNaturalKeyResponse(CamelCaseModel):
         )
 
 
+class StatementLineMatchResponse(CamelCaseModel):
+    """A likely existing manual expense flagged for a statement line (ADR-084, ADR-085).
+
+    Present on a parse-response line only when the matcher reconciled it against an
+    existing manual expense (kind expense, ``statement_document_id`` is null). Carries
+    just what the review UI needs to highlight and compare the candidate; money is
+    ``Decimal`` (ADR-025). ``null`` when the line was not matched.
+    """
+
+    transaction_id: str = Field(description="The matched existing transaction identity.")
+    name: str = Field(description="The user's manual label for the matched expense.")
+    occurred_on: date = Field(description="The date the user recorded the matched expense on.")
+    amount: Decimal = Field(description="The matched expense's positive ARS-equivalent amount.")
+    category: str | None = Field(default=None, description="The matched expense's category, or null.")
+    payment_method: str | None = Field(default=None, description="The matched expense's bank / card label, or null.")
+
+    @classmethod
+    def from_candidate(cls, candidate: ReconCandidate) -> StatementLineMatchResponse:
+        """Build the match response from a reconciliation candidate (ADR-085)."""
+        return cls(
+            transaction_id=str(candidate.transaction_id),
+            name=candidate.name,
+            occurred_on=candidate.occurred_on,
+            amount=candidate.amount,
+            category=candidate.category,
+            payment_method=candidate.payment_method,
+        )
+
+
 class StatementLineResponse(CamelCaseModel):
     """One editable line draft the review UI renders and the user confirms (ADR-080).
 
     Mirrors a :class:`StatementLineDraft`; money is ``Decimal`` (ADR-025). The
-    ``include`` flag drives the per-row checkbox in the review table.
+    ``include`` flag drives the per-row checkbox in the review table. ``match`` carries
+    a likely existing manual expense when one was reconciled (ADR-084, ADR-085), else
+    ``null``.
     """
 
     occurred_on: date = Field(description="The purchase date as printed (not the due date).")
@@ -89,10 +134,18 @@ class StatementLineResponse(CamelCaseModel):
     cuota: str | None = Field(default=None, description="Installment marker such as '3/3', else null.")
     line_kind: LineKind = Field(description="Internal classification: 'purchase' or 'fee'.")
     include: bool = Field(description="Whether the line is selected for import (default true).")
+    match: StatementLineMatchResponse | None = Field(
+        default=None,
+        description="A likely existing manual expense flagged for this line, or null (ADR-085).",
+    )
 
     @classmethod
-    def from_draft(cls, draft: StatementLineDraft) -> StatementLineResponse:
-        """Build the response from a parsed line draft."""
+    def from_draft(
+        cls,
+        draft: StatementLineDraft,
+        match: ReconCandidate | None = None,
+    ) -> StatementLineResponse:
+        """Build the response from a parsed line draft and an optional match (ADR-085)."""
         return cls(
             occurred_on=draft.occurred_on,
             name=draft.name,
@@ -105,6 +158,7 @@ class StatementLineResponse(CamelCaseModel):
             cuota=draft.cuota,
             line_kind=draft.line_kind,
             include=draft.include,
+            match=StatementLineMatchResponse.from_candidate(match) if match is not None else None,
         )
 
 
@@ -190,6 +244,7 @@ class StatementParseResponse(CamelCaseModel):
         pdf_bytes: bytes,
         *,
         duplicate: bool,
+        matches: dict[int, ReconCandidate] | None = None,
     ) -> StatementParseResponse:
         """Build the response from a parse result, the PDF bytes, and the dedupe flag.
 
@@ -197,12 +252,16 @@ class StatementParseResponse(CamelCaseModel):
             parsed: The structured parse result from the parser service.
             pdf_bytes: The uploaded PDF bytes (echoed back as base64 for import).
             duplicate: Whether a stored document already matches the natural key.
+            matches: Per-line-index reconciliation matches against existing manual
+                expenses (ADR-085); a line index absent from the map is unmatched and
+                serializes ``match: null``. ``None`` when no matching was run.
 
         Returns:
             The camelCase boundary representation. When the PDF is unsupported the
             ``document`` is omitted (nothing to import); otherwise the document
             payload and line drafts are populated.
         """
+        matched = matches or {}
         natural_key = (
             StatementNaturalKeyResponse.from_natural_key(parsed.natural_key) if parsed.natural_key is not None else None
         )
@@ -224,7 +283,9 @@ class StatementParseResponse(CamelCaseModel):
             period_due=parsed.period_due,
             total_amount=parsed.total_amount,
             natural_key=natural_key,
-            lines=[StatementLineResponse.from_draft(line) for line in parsed.lines],
+            lines=[
+                StatementLineResponse.from_draft(line, matched.get(index)) for index, line in enumerate(parsed.lines)
+            ],
             document=document,
         )
 
@@ -286,11 +347,13 @@ class StatementDocumentRequest(CamelCaseModel):
 
 
 class StatementLineRequest(CamelCaseModel):
-    """One user-confirmed line on ``POST /statements/import`` (ADR-078, ADR-079).
+    """One user-confirmed line on ``POST /statements/import`` (ADR-078, ADR-079, ADR-085).
 
-    Mirrors the create contract's expense fields. The installment ``cuota`` marker
-    is folded into ``notes`` as ``"Cuota 3/3"`` (ADR-079) by :meth:`to_input` when
-    no explicit note is supplied. Money is ``Decimal`` (ADR-025).
+    Mirrors the create contract's expense fields plus the per-line reconciliation
+    choice (ADR-085). The installment ``cuota`` marker is folded into ``notes`` as
+    ``"Cuota 3/3"`` (ADR-079) by :meth:`to_input` when no explicit note is supplied.
+    A ``merge`` resolution must carry ``matchTransactionId`` (validated here → 422).
+    Money is ``Decimal`` (ADR-025).
     """
 
     occurred_on: date = Field(description="The purchase date (ISO 8601).")
@@ -310,12 +373,28 @@ class StatementLineRequest(CamelCaseModel):
     )
     notes: str | None = Field(default=None, description="Free-form note, distinct from name.")
     cuota: str | None = Field(default=None, description="Installment marker such as '3/3'; folded into notes.")
+    resolution: StatementLineResolution = Field(
+        default=StatementLineResolution.IMPORT,
+        description="Per-line reconciliation: 'import' (default), 'merge', or 'keep_both' (ADR-085).",
+    )
+    match_transaction_id: UUID | None = Field(
+        default=None,
+        description="Existing transaction to enrich; required when resolution is 'merge' (ADR-085).",
+    )
+
+    @model_validator(mode="after")
+    def _require_match_for_merge(self) -> StatementLineRequest:
+        """Enforce that a ``merge`` resolution carries a ``matchTransactionId`` (ADR-085)."""
+        if self.resolution == StatementLineResolution.MERGE and self.match_transaction_id is None:
+            raise MergeRequiresMatchError
+        return self
 
     def to_input(self) -> StatementLineInput:
         """Translate the request line into a :class:`StatementLineInput`.
 
         Folds the installment ``cuota`` marker into ``notes`` as ``"Cuota 3/3"``
-        when present and no explicit note is supplied (ADR-079).
+        when present and no explicit note is supplied (ADR-079), and carries the
+        per-line reconciliation choice through (ADR-085).
         """
         notes = self.notes
         if notes is None and self.cuota is not None:
@@ -332,6 +411,8 @@ class StatementLineRequest(CamelCaseModel):
             category=self.category,
             payment_method=self.payment_method,
             notes=notes,
+            resolution=self.resolution,
+            match_transaction_id=self.match_transaction_id,
         )
 
 
@@ -362,12 +443,16 @@ class StatementImportRequest(CamelCaseModel):
 
 
 class StatementImportResponse(CamelCaseModel):
-    """The result of a successful import (ADR-078).
+    """The result of a successful import (ADR-078, ADR-085).
 
-    Carries the created transaction count and ids plus the shared
+    Carries the created and merged transaction counts and ids plus the shared
     ``statementDocumentId`` so the client can deep-link to the stored PDF.
+    ``mergedCount`` / ``mergedTransactionIds`` surface the per-line reconciliation
+    merges (ADR-085); they are empty when no line resolved to ``merge``.
     """
 
     statement_document_id: str = Field(description="The stored statement document identity.")
-    created_count: int = Field(description="The number of transactions created.")
-    transaction_ids: list[str] = Field(description="The created transaction identities, in line order.")
+    created_count: int = Field(description="The number of new EXPENSE transactions created.")
+    merged_count: int = Field(description="The number of existing transactions enriched via merge (ADR-085).")
+    created_transaction_ids: list[str] = Field(description="The created transaction identities, in line order.")
+    merged_transaction_ids: list[str] = Field(description="The merged transaction identities, in line order.")

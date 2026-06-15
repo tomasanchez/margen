@@ -16,6 +16,8 @@ from margen_api.domain.commands.statement import (
     ImportStatement,
     StatementDocumentPayload,
     StatementImportResult,
+    StatementLineInput,
+    StatementLineResolution,
 )
 from margen_api.domain.commands.transaction import (
     CreateTransaction,
@@ -23,7 +25,7 @@ from margen_api.domain.commands.transaction import (
     TransactionDocumentPayload,
     UpdateTransaction,
 )
-from margen_api.domain.models.exceptions import TransactionNotFoundError
+from margen_api.domain.models.exceptions import MergeTargetNotFoundError, TransactionNotFoundError
 from margen_api.domain.models.transaction import Transaction, build_transaction
 from margen_api.domain.models.value_objects import Kind
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
@@ -134,16 +136,22 @@ async def _save_invoice_document(
 
 
 async def import_statement(command: ImportStatement, uow: AbstractUnitOfWork) -> StatementImportResult:
-    """Import a confirmed credit-card statement as EXPENSE transactions (ADR-078).
+    """Import a confirmed credit-card statement, resolving each line (ADR-078, ADR-085).
 
     Within a single unit of work (ADR-078): saves the statement ``document`` once
-    through the ``StatementStore`` port (which flushes and returns the new id),
-    then builds one EXPENSE transaction per confirmed line — each linked to the
-    document via ``statement_document_id`` — through the domain factory so
-    invariants run (ADR-031), and commits atomically. The handler injects each
-    transaction's UUID identity and ``created_at``/``updated_at`` timestamps so the
-    domain stays clock- and UUID-free (ADR-026). Every imported line is an EXPENSE
-    that never counts toward Monotributo (ADR-079).
+    through the ``StatementStore`` port (which flushes and returns the new id), then
+    resolves each confirmed line per its ``resolution`` (ADR-085) and commits
+    atomically:
+
+    * ``IMPORT`` / ``KEEP_BOTH`` — build a new EXPENSE transaction linked to the
+      document via ``statement_document_id`` through the domain factory so invariants
+      run (ADR-031). The handler injects each transaction's UUID identity and
+      ``created_at``/``updated_at`` timestamps so the domain stays clock- and
+      UUID-free (ADR-026). Every created line is an EXPENSE that never counts toward
+      Monotributo (ADR-079).
+    * ``MERGE`` — load the existing transaction named by ``match_transaction_id`` and
+      enrich it in place (ADR-085), preserving the user's manual entry; no new row is
+      created.
 
     Args:
         command: The validated import request carrying the document and lines.
@@ -151,36 +159,130 @@ async def import_statement(command: ImportStatement, uow: AbstractUnitOfWork) ->
             repository.
 
     Returns:
-        The :class:`StatementImportResult` with the shared statement document id and
-        the created transaction ids, in line order.
+        The :class:`StatementImportResult` with the shared statement document id, the
+        created transaction ids, and the merged transaction ids — each in line order.
+
+    Raises:
+        MergeTargetNotFoundError: When a ``MERGE`` line's ``match_transaction_id``
+            matches no stored transaction (ADR-085).
     """
     now = datetime.now(UTC)
     async with uow:
         document_id = await _save_statement_document(uow, command.document)
         created: list[UUID] = []
+        merged: list[UUID] = []
         for line in command.lines:
-            transaction = build_transaction(
-                transaction_id=uuid4(),
-                created_at=now,
-                updated_at=now,
-                occurred_on=line.occurred_on,
-                name=line.name,
-                kind=Kind.EXPENSE,
-                amount=line.amount,
-                currency=line.currency,
-                usd_amount=line.usd_amount,
-                fx_rate=line.fx_rate,
-                fx_rate_type=line.fx_rate_type,
-                fx_rate_as_of=line.fx_rate_as_of,
-                category=line.category,
-                payment_method=line.payment_method,
-                notes=line.notes,
-                statement_document_id=document_id,
-            )
-            uow.transactions.add(transaction)
-            created.append(transaction.id)
+            if line.resolution is StatementLineResolution.MERGE:
+                merged.append(await _merge_statement_line(uow, line, document_id, now))
+            else:
+                created.append(_create_statement_line(uow, line, document_id, now))
         await uow.commit()
-    return StatementImportResult(statement_document_id=document_id, transaction_ids=created)
+    return StatementImportResult(
+        statement_document_id=document_id,
+        created_transaction_ids=created,
+        merged_transaction_ids=merged,
+    )
+
+
+def _create_statement_line(
+    uow: AbstractUnitOfWork,
+    line: StatementLineInput,
+    document_id: UUID,
+    now: datetime,
+) -> UUID:
+    """Build and stage a new EXPENSE transaction for an ``IMPORT``/``KEEP_BOTH`` line.
+
+    Builds the aggregate through the domain factory so invariants run (ADR-031),
+    injecting a generated identity and the shared ``now`` timestamps (ADR-026), and
+    links it to the saved statement document.
+
+    Args:
+        uow: The unit of work whose repository stages the new aggregate.
+        line: The confirmed import line to create.
+        document_id: The saved statement document the new expense links to.
+        now: The shared creation/update timestamp for the import batch.
+
+    Returns:
+        The generated identity of the staged transaction.
+    """
+    transaction = build_transaction(
+        transaction_id=uuid4(),
+        created_at=now,
+        updated_at=now,
+        occurred_on=line.occurred_on,
+        name=line.name,
+        kind=Kind.EXPENSE,
+        amount=line.amount,
+        currency=line.currency,
+        usd_amount=line.usd_amount,
+        fx_rate=line.fx_rate,
+        fx_rate_type=line.fx_rate_type,
+        fx_rate_as_of=line.fx_rate_as_of,
+        category=line.category,
+        payment_method=line.payment_method,
+        notes=line.notes,
+        statement_document_id=document_id,
+    )
+    uow.transactions.add(transaction)
+    return transaction.id
+
+
+async def _merge_statement_line(
+    uow: AbstractUnitOfWork,
+    line: StatementLineInput,
+    document_id: UUID,
+    now: datetime,
+) -> UUID:
+    """Enrich an existing manual expense from a ``MERGE`` line in place (ADR-085).
+
+    The user's manual entry is the source of truth, so ``name``, ``amount``,
+    ``occurred_on``, ``currency`` and any existing ``notes`` are preserved. The merge
+    only adds statement-derived facts: it links the statement document, sets the
+    statement card as ``payment_method``, fills ``category`` ONLY when the existing
+    one is empty, and writes the line's cuota-derived ``notes`` ONLY when the existing
+    notes are empty. The aggregate is rebuilt through the domain so invariants re-run
+    while ``id`` and ``created_at`` are preserved and ``updated_at`` is refreshed
+    (ADR-026, ADR-031), then persisted.
+
+    Args:
+        uow: The unit of work providing the transaction repository.
+        line: The confirmed ``MERGE`` line carrying the statement-derived enrichment.
+        document_id: The saved statement document to link the enriched expense to.
+        now: The shared timestamp the enriched aggregate's ``updated_at`` takes.
+
+    Returns:
+        The identity of the enriched transaction.
+
+    Raises:
+        MergeTargetNotFoundError: When ``line.match_transaction_id`` matches no row.
+    """
+    match_id = line.match_transaction_id
+    existing = await uow.transactions.get(match_id) if match_id is not None else None
+    if existing is None:
+        raise MergeTargetNotFoundError(match_id)
+
+    enriched = build_transaction(
+        transaction_id=existing.id,
+        created_at=existing.created_at,
+        updated_at=now,
+        occurred_on=existing.occurred_on,
+        name=existing.name,
+        kind=existing.kind,
+        amount=existing.amount,
+        currency=existing.currency,
+        usd_amount=existing.usd_amount,
+        fx_rate=existing.fx_rate,
+        fx_rate_type=existing.fx_rate_type,
+        fx_rate_as_of=existing.fx_rate_as_of,
+        category=existing.category if existing.category else line.category,
+        payment_method=line.payment_method,
+        notes=existing.notes if existing.notes else line.notes,
+        recurring=existing.recurring,
+        counts_toward_monotributo=existing.counts_toward_monotributo,
+        statement_document_id=document_id,
+    )
+    await uow.transactions.persist(enriched)
+    return enriched.id
 
 
 async def _save_statement_document(

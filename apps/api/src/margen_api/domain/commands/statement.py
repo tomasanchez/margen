@@ -14,12 +14,32 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import Field
 
 from margen_api.domain.messages import Command, Message
 from margen_api.domain.models.value_objects import Currency, FxRateType
+
+
+class StatementLineResolution(StrEnum):
+    """How an import line is reconciled against an existing manual expense (ADR-085).
+
+    A flagged line is resolved per-line at review time (ADR-084). The default is
+    ``IMPORT`` (no match, or the user just wants a new row).
+
+    Attributes:
+        IMPORT: No match found — create a new EXPENSE linked to the statement document.
+        MERGE: Match accepted — do NOT create; enrich the existing transaction named
+            by ``match_transaction_id`` instead (ADR-085).
+        KEEP_BOTH: Match found but the charges are genuinely separate — create a new
+            EXPENSE and leave the existing transaction unchanged (ADR-085).
+    """
+
+    IMPORT = "import"
+    MERGE = "merge"
+    KEEP_BOTH = "keep_both"
 
 
 class StatementDocumentPayload(Message):
@@ -82,6 +102,10 @@ class StatementLineInput(Message):
         payment_method: The composed bank/network/last4 label (e.g.
             ``"Galicia VISA ·5771"``).
         notes: Free-form note, e.g. the installment marker ``"Cuota 3/3"`` (ADR-079).
+        resolution: The per-line reconciliation choice (ADR-085); defaults to
+            ``IMPORT``.
+        match_transaction_id: The existing manual expense to enrich when
+            ``resolution`` is ``MERGE``; ``None`` otherwise (ADR-085).
     """
 
     occurred_on: date
@@ -95,6 +119,8 @@ class StatementLineInput(Message):
     category: str | None = None
     payment_method: str | None = None
     notes: str | None = None
+    resolution: StatementLineResolution = StatementLineResolution.IMPORT
+    match_transaction_id: UUID | None = None
 
 
 class ImportStatement(Command):
@@ -122,8 +148,12 @@ class StatementImportResult:
 
     Attributes:
         statement_document_id: The stored statement document identity.
-        transaction_ids: The created transaction identities, in line order.
+        created_transaction_ids: The newly created EXPENSE transaction identities
+            (``IMPORT`` / ``KEEP_BOTH`` lines), in line order.
+        merged_transaction_ids: The existing transaction identities enriched in place
+            (``MERGE`` lines), in line order (ADR-085).
     """
 
     statement_document_id: UUID
-    transaction_ids: list[UUID]
+    created_transaction_ids: list[UUID]
+    merged_transaction_ids: list[UUID]

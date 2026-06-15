@@ -22,6 +22,7 @@ than surfacing an error.
 
 from __future__ import annotations
 
+import datetime
 import logging
 from uuid import UUID
 
@@ -29,7 +30,9 @@ from fastapi import APIRouter, HTTPException, UploadFile, status
 from fastapi.responses import Response
 
 from margen_api.domain.commands.statement import StatementImportResult
-from margen_api.entrypoint.dependencies import Bus, StatementReader
+from margen_api.domain.models.exceptions import MergeTargetNotFoundError
+from margen_api.domain.models.value_objects import Currency, Kind
+from margen_api.entrypoint.dependencies import Bus, StatementReader, TransactionReader
 from margen_api.entrypoint.schemas import ResponseModel
 from margen_api.entrypoint.statements_schemas import (
     InvalidDocumentBase64Error,
@@ -37,8 +40,11 @@ from margen_api.entrypoint.statements_schemas import (
     StatementImportResponse,
     StatementParseResponse,
 )
+from margen_api.service_layer.read_models import TransactionReadModel
+from margen_api.service_layer.reader import AbstractTransactionReader
+from margen_api.service_layer.statement_matcher import WINDOW_DAYS, ReconCandidate, match_lines
 from margen_api.service_layer.statement_parser import parse_statement
-from margen_api.service_layer.statement_parser_read_models import StatementNaturalKey
+from margen_api.service_layer.statement_parser_read_models import ParsedStatement, StatementNaturalKey
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +105,60 @@ def _dedupe_key(natural_key: StatementNaturalKey | None) -> dict[str, str | None
     }
 
 
+def _is_manual_expense(transaction: TransactionReadModel) -> bool:
+    """Return whether a transaction is a manual-expense reconciliation candidate (ADR-084).
+
+    A candidate is an expense the user entered by hand — kind ``expense`` and not yet
+    linked to any statement document — so already-imported statement rows are never
+    re-matched (ADR-084).
+    """
+    return transaction.kind is Kind.EXPENSE and transaction.statement_document_id is None
+
+
+async def _candidate_pool(
+    parsed: ParsedStatement,
+    transactions: AbstractTransactionReader,
+) -> list[ReconCandidate]:
+    """Fetch the manual-expense candidates within the statement's date window (ADR-085).
+
+    Reads existing transactions through the query reader, keeps only manual expenses
+    (kind expense, ``statement_document_id`` null) whose ``occurred_on`` falls within
+    ``[min(line date) - WINDOW_DAYS, max(line date) + WINDOW_DAYS]`` spanning all
+    parsed lines, and projects them into pure :class:`ReconCandidate` records for the
+    matcher. Returns an empty list when the statement has no lines.
+
+    Args:
+        parsed: The parse result whose lines define the date window.
+        transactions: The query-side reader for existing transactions.
+
+    Returns:
+        The manual-expense candidate records within the window.
+    """
+    if not parsed.lines:
+        return []
+
+    window = datetime.timedelta(days=WINDOW_DAYS)
+    line_dates = [line.occurred_on for line in parsed.lines]
+    lower = min(line_dates) - window
+    upper = max(line_dates) + window
+
+    return [
+        ReconCandidate(
+            transaction_id=transaction.id,
+            occurred_on=transaction.occurred_on,
+            name=transaction.name,
+            amount=transaction.amount,
+            currency=transaction.currency.value,
+            category=transaction.category,
+            payment_method=transaction.payment_method,
+        )
+        for transaction in await transactions.list_transactions()
+        if _is_manual_expense(transaction)
+        and transaction.currency is Currency.ARS
+        and lower <= transaction.occurred_on <= upper
+    ]
+
+
 @router.post(
     "/parse",
     name="Parse statement",
@@ -108,15 +168,17 @@ def _dedupe_key(natural_key: StatementNaturalKey | None) -> dict[str, str | None
 async def parse_statement_upload(
     file: UploadFile,
     statements: StatementReader,
+    transactions: TransactionReader,
 ) -> ResponseModel[StatementParseResponse]:
     """Parse an uploaded CC statement PDF into editable line drafts, statelessly (ADR-078).
 
     Validates the upload (PDF-only, size-capped — ADR-081), runs the bank parser
-    registry (ADR-076), and returns the detected bank identity, the editable line
-    drafts, the document payload to echo back on import, the computed natural key,
-    and an advisory ``duplicate`` flag — with no persistence. An unsupported issuer
-    returns ``200`` with ``status=unsupported`` and no lines so the UI offers a calm
-    manual fallback (ADR-080).
+    registry (ADR-076), reconciles each parsed line against the user's existing manual
+    expenses (ADR-084, ADR-085), and returns the detected bank identity, the editable
+    line drafts (each carrying a ``match`` when one was flagged), the document payload
+    to echo back on import, the computed natural key, and an advisory ``duplicate``
+    flag — with no persistence. An unsupported issuer returns ``200`` with
+    ``status=unsupported`` and no lines so the UI offers a calm manual fallback (ADR-080).
     """
     content = await file.read()
     _validate_pdf_upload(file, content)
@@ -128,7 +190,10 @@ async def parse_statement_upload(
     if lookup is not None:
         duplicate = await statements.exists_by_natural_key(**lookup)
 
-    return ResponseModel(data=StatementParseResponse.from_parsed(parsed, content, duplicate=duplicate))
+    candidates = await _candidate_pool(parsed, transactions)
+    matches = match_lines(parsed.lines, candidates)
+
+    return ResponseModel(data=StatementParseResponse.from_parsed(parsed, content, duplicate=duplicate, matches=matches))
 
 
 @router.post(
@@ -141,26 +206,36 @@ async def import_statement_endpoint(
     body: StatementImportRequest,
     bus: Bus,
 ) -> ResponseModel[StatementImportResponse]:
-    """Import the confirmed statement lines as EXPENSE transactions (ADR-078).
+    """Import the confirmed statement lines, resolving each per-line (ADR-078, ADR-085).
 
     Decodes the echoed-back document payload and dispatches an ``ImportStatement``
-    command, which saves the statement document once and bulk-creates one EXPENSE
-    transaction per confirmed line in a single unit of work (ADR-078). Returns the
-    created count, the transaction ids, and the shared ``statementDocumentId``. A
-    malformed ``pdfBase64`` yields ``422`` (ADR-078).
+    command, which saves the statement document once then resolves each confirmed
+    line in a single unit of work (ADR-078): ``import``/``keep_both`` create a new
+    EXPENSE while ``merge`` enriches the existing transaction (ADR-085). Returns the
+    created and merged counts and ids and the shared ``statementDocumentId``. A
+    malformed ``pdfBase64`` yields ``422``; a ``merge`` pointing at a missing
+    transaction yields ``409`` (ADR-078, ADR-085).
     """
     try:
         command = body.to_command()
     except InvalidDocumentBase64Error as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
 
-    result: StatementImportResult = await bus.handle(command)
+    try:
+        result: StatementImportResult = await bus.handle(command)
+    except MergeTargetNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Merge target transaction {error.transaction_id} not found.",
+        ) from error
 
     return ResponseModel(
         data=StatementImportResponse(
             statement_document_id=str(result.statement_document_id),
-            created_count=len(result.transaction_ids),
-            transaction_ids=[str(transaction_id) for transaction_id in result.transaction_ids],
+            created_count=len(result.created_transaction_ids),
+            merged_count=len(result.merged_transaction_ids),
+            created_transaction_ids=[str(tx_id) for tx_id in result.created_transaction_ids],
+            merged_transaction_ids=[str(tx_id) for tx_id in result.merged_transaction_ids],
         )
     )
 

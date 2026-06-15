@@ -1,0 +1,192 @@
+"""Pure per-line reconciliation matcher for statement import (ADR-084, ADR-085).
+
+At parse time each statement line is tested against the user's existing manual
+expenses to flag likely duplicates (ADR-084). This module holds the heuristic as
+PURE, fully unit-testable functions with NO I/O — no session, no HTTP, no clock
+(ADR-085). The caller fetches the candidate pool through a reader and feeds plain
+:class:`ReconCandidate` records in; the matcher returns line-index -> candidate
+assignments.
+
+A statement line matches a candidate when all three hold (ADR-085):
+
+1. **Amount is exact** — ARS amounts match to the cent (exact :class:`~decimal.Decimal`).
+2. **Date is within ±N days** — ``occurred_on`` falls within :data:`WINDOW_DAYS`.
+3. **Names are fuzzily similar** — :func:`names_similar` (shared significant token,
+   containment, or a similarity ratio above a threshold).
+
+Assignment is **greedy 1:1**: a candidate is claimed by at most one line; ties are
+resolved by nearest date, then smallest line index (ADR-085).
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+from difflib import SequenceMatcher
+
+from margen_api.service_layer.statement_parser_read_models import StatementLineDraft
+
+# The ±N-day window the date condition tolerates; a configurable default (ADR-085).
+WINDOW_DAYS = 3
+
+# Minimum normalized SequenceMatcher ratio that counts as "fuzzily similar".
+_SIMILARITY_THRESHOLD = 0.5
+
+# A token must be at least this many characters AND not purely numeric to count as
+# "significant" for token overlap — drops noise like "de", "sa", "srl", "5771".
+_MIN_TOKEN_LENGTH = 4
+
+# Non-alphanumeric runs collapse to a single space during normalization.
+_NON_ALNUM = re.compile(r"[^0-9a-z]+")
+
+
+@dataclass(frozen=True, slots=True)
+class ReconCandidate:
+    """A manual-expense candidate a statement line may reconcile against (ADR-085).
+
+    A lightweight, immutable projection of an existing manual expense — ``kind`` is
+    expense and ``statement_document_id`` is ``None`` (ADR-084) — carrying only what
+    the matcher needs and the review UI shows. Built by the caller from a read model;
+    the matcher never touches persistence. Money is ``Decimal`` (ADR-025).
+
+    Attributes:
+        transaction_id: The existing transaction's stable identity.
+        occurred_on: The date the user recorded the expense on.
+        name: The user's manual label (source of truth for the merge — ADR-085).
+        amount: Positive ARS-equivalent magnitude.
+        currency: ``ARS`` or ``USD`` (only exact-ARS amounts can match — ADR-085).
+        category: The user's category, or ``None`` when uncategorized.
+        payment_method: The user's bank / card / channel label, or ``None``.
+    """
+
+    transaction_id: object
+    occurred_on: date
+    name: str
+    amount: Decimal
+    currency: str
+    category: str | None
+    payment_method: str | None
+
+
+def _normalize(text: str) -> str:
+    """Normalize a label for comparison: casefold, strip accents/punctuation (PURE).
+
+    Decomposes accents (``á`` -> ``a``), lowercases, replaces every non-alphanumeric
+    run with a single space, and collapses surrounding whitespace.
+
+    Args:
+        text: The raw merchant / label text.
+
+    Returns:
+        The normalized, space-separated lowercase token string (may be empty).
+    """
+    decomposed = unicodedata.normalize("NFKD", text)
+    stripped = "".join(char for char in decomposed if not unicodedata.combining(char))
+    lowered = stripped.casefold()
+    return _NON_ALNUM.sub(" ", lowered).strip()
+
+
+def _significant_tokens(normalized: str) -> set[str]:
+    """Return the significant tokens of a normalized string (PURE).
+
+    A token is significant when it is at least :data:`_MIN_TOKEN_LENGTH` characters
+    and not purely numeric, so short connectors and bare card/voucher numbers do not
+    create spurious overlaps.
+
+    Args:
+        normalized: A string already run through :func:`_normalize`.
+
+    Returns:
+        The set of significant tokens (possibly empty).
+    """
+    return {token for token in normalized.split() if len(token) >= _MIN_TOKEN_LENGTH and not token.isdigit()}
+
+
+def names_similar(a: str, b: str) -> bool:
+    """Return whether two labels are fuzzily similar enough to be the same (PURE).
+
+    Both inputs are normalized (casefold, accent/punctuation strip, whitespace
+    collapse), then judged similar when ANY of:
+
+    * they share at least one significant token (e.g. ``"sushi"`` in both
+      ``"Sushi dinner"`` and ``"SUSHI RECOLETA-SUSHI REC"``), OR
+    * one normalized string contains the other (a labeled prefix/superset), OR
+    * the :class:`difflib.SequenceMatcher` ratio is at least the threshold (~0.5).
+
+    Two empty/whitespace normalizations are never similar.
+
+    Args:
+        a: One label (e.g. the statement merchant text).
+        b: The other label (e.g. the user's manual name).
+
+    Returns:
+        ``True`` when the labels are similar enough to flag as the same expense.
+    """
+    norm_a = _normalize(a)
+    norm_b = _normalize(b)
+    if not norm_a or not norm_b:
+        return False
+
+    if _significant_tokens(norm_a) & _significant_tokens(norm_b):
+        return True
+
+    if norm_a in norm_b or norm_b in norm_a:
+        return True
+
+    return SequenceMatcher(None, norm_a, norm_b).ratio() >= _SIMILARITY_THRESHOLD
+
+
+def _is_candidate_for(line: StatementLineDraft, candidate: ReconCandidate, *, window_days: int) -> bool:
+    """Return whether a candidate satisfies all three match conditions for a line."""
+    return (
+        line.amount == candidate.amount
+        and abs((line.occurred_on - candidate.occurred_on).days) <= window_days
+        and names_similar(line.name, candidate.name)
+    )
+
+
+def match_lines(
+    lines: list[StatementLineDraft],
+    candidates: list[ReconCandidate],
+    *,
+    window_days: int = WINDOW_DAYS,
+) -> dict[int, ReconCandidate]:
+    """Assign each statement line its best matching manual-expense candidate (PURE).
+
+    For every line, the eligible candidates are those satisfying all three
+    conditions (exact ARS amount, date within ``window_days``, fuzzily similar name —
+    ADR-085). Assignment is **greedy 1:1**: a candidate is claimed by at most one
+    line. Contention is resolved deterministically — lines are processed by smallest
+    index, and each line takes the still-unclaimed eligible candidate nearest in date
+    (the smallest line index already wins by processing order). Lines with no eligible
+    unclaimed candidate are omitted from the result.
+
+    Args:
+        lines: The parsed statement line drafts, in display order.
+        candidates: The manual-expense candidate pool (kind expense,
+            ``statement_document_id`` is ``None`` — ADR-084).
+        window_days: The ±N-day date tolerance (defaults to :data:`WINDOW_DAYS`).
+
+    Returns:
+        A mapping of matched line index to the claimed :class:`ReconCandidate`;
+        unmatched line indices are absent.
+    """
+    matches: dict[int, ReconCandidate] = {}
+    claimed: set[object] = set()
+
+    for index, line in enumerate(lines):
+        eligible = [
+            candidate
+            for candidate in candidates
+            if candidate.transaction_id not in claimed and _is_candidate_for(line, candidate, window_days=window_days)
+        ]
+        if not eligible:
+            continue
+        best = min(eligible, key=lambda candidate: abs((line.occurred_on - candidate.occurred_on).days))
+        matches[index] = best
+        claimed.add(best.transaction_id)
+
+    return matches
