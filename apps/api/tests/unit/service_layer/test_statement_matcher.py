@@ -68,16 +68,34 @@ def _candidate(
 
 
 class TestNamesSimilar:
-    """names_similar judges two labels the same expense by token / containment / ratio."""
+    """names_similar judges two labels the same expense by shared word / prefix / ratio."""
 
-    def test_shared_leading_brand_token_matches(self):
+    def test_shared_significant_word_matches(self):
         """
-        GIVEN two labels that lead with the same brand token
+        GIVEN two labels that share a significant word
         WHEN names_similar compares them
-        THEN they are similar (the leading-token branch)
+        THEN they are similar (the shared-word branch)
         """
-        # WHEN / THEN — both lead with "sushi" (the brand position on a merchant line).
+        # WHEN / THEN — both contain "sushi".
         assert names_similar("Sushi dinner", "SUSHI RECOLETA-SUSHI REC") is True
+
+    @pytest.mark.parametrize(
+        ("a", "b"),
+        [
+            ("Sushi Hatsu", "Hatsu"),  # brand at the END is matched (lenient).
+            ("Sushi Hatsu", "Sushi Pop"),  # only generic "sushi" shared — accepted
+            ("Kawaii Sushi", "Fabric Sushi"),  # over-flag (amount+date gate; 1-click dismiss).
+        ],
+    )
+    def test_lenient_shared_word_in_any_position(self, a: str, b: str):
+        """
+        GIVEN labels sharing a significant word anywhere in the name
+        WHEN names_similar compares them
+        THEN they are similar (lenient — recall over precision, ADR-085)
+        """
+        # WHEN / THEN — a shared 4+ word in any position is enough; amount+date still
+        # gate every candidate and the user reviews each flag.
+        assert names_similar(a, b) is True
 
     @pytest.mark.parametrize(
         ("statement_name", "expected"),
