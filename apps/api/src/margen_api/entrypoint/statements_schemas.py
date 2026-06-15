@@ -36,8 +36,37 @@ from margen_api.service_layer.statement_parser_read_models import (
     StatementNaturalKey,
 )
 
-# Installment marker note prefix written to a transaction's ``notes`` (ADR-079).
+# Installment marker note suffix written to a transaction's ``notes`` (ADR-079).
 _CUOTA_NOTE_PREFIX = "Cuota "
+
+# Purchase-date note prefix written to a transaction's ``notes`` so the original FECHA
+# is preserved even though ``occurred_on`` now carries the statement pay date (ADR-089).
+_PURCHASE_NOTE_PREFIX = "Compra "
+
+# Middot separating the composed "Compra dd-mm-yy · Cuota n/m" note parts (ADR-089).
+_NOTE_SEPARATOR = " · "
+
+
+def _compose_statement_note(purchase_date: date | None, cuota: str | None) -> str | None:
+    """Compose a statement line's system note from purchase date + cuota (ADR-089).
+
+    Renders ``"Compra dd-mm-yy"`` (the original FECHA in the statement's printed
+    style) and appends ``" · Cuota n/m"`` only when an installment marker is present.
+    Returns ``None`` when neither part is available so an empty note is never written.
+
+    Args:
+        purchase_date: The original purchase date, or ``None`` when unknown.
+        cuota: The installment marker such as ``"03/03"``, or ``None``.
+
+    Returns:
+        The composed note, or ``None`` when there is nothing to compose.
+    """
+    parts: list[str] = []
+    if purchase_date is not None:
+        parts.append(f"{_PURCHASE_NOTE_PREFIX}{purchase_date.strftime('%d-%m-%y')}")
+    if cuota is not None:
+        parts.append(f"{_CUOTA_NOTE_PREFIX}{cuota}")
+    return _NOTE_SEPARATOR.join(parts) if parts else None
 
 
 class InvalidDocumentBase64Error(ValueError):
@@ -120,10 +149,12 @@ class StatementLineResponse(CamelCaseModel):
     Mirrors a :class:`StatementLineDraft`; money is ``Decimal`` (ADR-025). The
     ``include`` flag drives the per-row checkbox in the review table. ``match`` carries
     a likely existing manual expense when one was reconciled (ADR-084, ADR-085), else
-    ``null``.
+    ``null``. ``occurredOn`` is the statement pay/due date and ``purchaseDate`` the
+    original FECHA (ADR-089).
     """
 
-    occurred_on: date = Field(description="The purchase date as printed (not the due date).")
+    occurred_on: date = Field(description="The statement pay/due date the expense counts on (ADR-089).")
+    purchase_date: date = Field(description="The original purchase date as printed (the line's FECHA).")
     name: str = Field(description="The merchant / reference text as printed.")
     amount: Decimal = Field(description="Positive ARS (PESOS) amount.")
     currency: Currency = Field(description="'ARS' or 'USD'.")
@@ -148,6 +179,7 @@ class StatementLineResponse(CamelCaseModel):
         """Build the response from a parsed line draft and an optional match (ADR-085)."""
         return cls(
             occurred_on=draft.occurred_on,
+            purchase_date=draft.purchase_date,
             name=draft.name,
             amount=draft.amount,
             currency=draft.currency,
@@ -350,13 +382,19 @@ class StatementLineRequest(CamelCaseModel):
     """One user-confirmed line on ``POST /statements/import`` (ADR-078, ADR-079, ADR-085).
 
     Mirrors the create contract's expense fields plus the per-line reconciliation
-    choice (ADR-085). The installment ``cuota`` marker is folded into ``notes`` as
-    ``"Cuota 3/3"`` (ADR-079) by :meth:`to_input` when no explicit note is supplied.
-    A ``merge`` resolution must carry ``matchTransactionId`` (validated here → 422).
-    Money is ``Decimal`` (ADR-025).
+    choice (ADR-085). ``occurredOn`` is the statement pay/due date the expense counts
+    on; ``purchaseDate`` carries the original FECHA back from parse (ADR-089). The
+    system note is composed from the purchase date and the installment ``cuota``
+    marker as ``"Compra dd-mm-yy · Cuota 3/3"`` (ADR-089) by :meth:`to_input` when no
+    explicit note is supplied. A ``merge`` resolution must carry ``matchTransactionId``
+    (validated here → 422). Money is ``Decimal`` (ADR-025).
     """
 
-    occurred_on: date = Field(description="The purchase date (ISO 8601).")
+    occurred_on: date = Field(description="The statement pay/due date the expense counts on (ISO 8601, ADR-089).")
+    purchase_date: date | None = Field(
+        default=None,
+        description="The original purchase date (FECHA), echoed from parse; folded into notes (ADR-089).",
+    )
     name: str = Field(min_length=1, description="The merchant / reference label.")
     amount: Decimal = Field(gt=Decimal(0), description="Positive ARS-equivalent magnitude.")
     currency: Currency = Field(default=Currency.ARS, description="'ARS' or 'USD'.")
@@ -392,13 +430,15 @@ class StatementLineRequest(CamelCaseModel):
     def to_input(self) -> StatementLineInput:
         """Translate the request line into a :class:`StatementLineInput`.
 
-        Folds the installment ``cuota`` marker into ``notes`` as ``"Cuota 3/3"``
-        when present and no explicit note is supplied (ADR-079), and carries the
+        When no explicit note is supplied, composes the system note from the original
+        purchase date and the installment ``cuota`` marker as
+        ``"Compra dd-mm-yy · Cuota 3/3"`` (ADR-089; the ``· Cuota n/m`` part only when
+        a cuota exists). An explicit user note is preserved verbatim. Carries the
         per-line reconciliation choice through (ADR-085).
         """
         notes = self.notes
-        if notes is None and self.cuota is not None:
-            notes = f"{_CUOTA_NOTE_PREFIX}{self.cuota}"
+        if notes is None:
+            notes = _compose_statement_note(self.purchase_date, self.cuota)
         return StatementLineInput(
             occurred_on=self.occurred_on,
             name=self.name,

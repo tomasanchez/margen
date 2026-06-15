@@ -91,7 +91,8 @@ class StatementLineInput(Message):
     them. Money is ``Decimal`` (ADR-025).
 
     Attributes:
-        occurred_on: The purchase date (not the due date).
+        occurred_on: The statement pay/due date the expense counts on (ADR-089); the
+            original purchase date is preserved in ``notes``.
         name: The merchant / reference label.
         amount: Positive ARS-equivalent magnitude.
         currency: ``ARS`` or ``USD``.

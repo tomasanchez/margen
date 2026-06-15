@@ -123,9 +123,12 @@ async def _candidate_pool(
 
     Reads existing transactions through the query reader, keeps only manual expenses
     (kind expense, ``statement_document_id`` null) whose ``occurred_on`` falls within
-    ``[min(line date) - WINDOW_DAYS, max(line date) + WINDOW_DAYS]`` spanning all
-    parsed lines, and projects them into pure :class:`ReconCandidate` records for the
-    matcher. Returns an empty list when the statement has no lines.
+    ``[min(line purchase date) - WINDOW_DAYS, max(line purchase date) + WINDOW_DAYS]``
+    spanning all parsed lines, and projects them into pure :class:`ReconCandidate`
+    records for the matcher. The window is built on each line's **purchase date**
+    (FECHA) — the date the user would have logged the manual expense — to mirror the
+    matcher's date condition (ADR-089). Returns an empty list when the statement has
+    no lines.
 
     Args:
         parsed: The parse result whose lines define the date window.
@@ -138,7 +141,7 @@ async def _candidate_pool(
         return []
 
     window = datetime.timedelta(days=WINDOW_DAYS)
-    line_dates = [line.occurred_on for line in parsed.lines]
+    line_dates = [line.purchase_date for line in parsed.lines]
     lower = min(line_dates) - window
     upper = max(line_dates) + window
 

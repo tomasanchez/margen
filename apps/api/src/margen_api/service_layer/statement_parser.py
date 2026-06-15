@@ -327,7 +327,10 @@ class GaliciaVisaParser(StatementParser):
         payment_method = self._payment_method(card_last4)
 
         tokens = [raw.strip() for raw in text.splitlines()]
-        lines = self._line_items(tokens) + self._fee_lines(tokens)
+        # ADR-089: every line's occurred_on is the statement pay/due date. When the
+        # statement carries no parseable due date, each line falls back to its own
+        # purchase date so a line is never lost or left with a None occurred_on.
+        lines = self._line_items(tokens, period_due) + self._fee_lines(tokens, period_due)
 
         natural_key = StatementNaturalKey(
             issuer_cuit=_GALICIA_CUIT,
@@ -414,18 +417,20 @@ class GaliciaVisaParser(StatementParser):
         )
         return tokens[start + 1 : end]
 
-    def _line_items(self, tokens: list[str]) -> list[StatementLineDraft]:
-        """Parse the DETALLE DEL CONSUMO purchase rows into drafts (ADR-079).
+    def _line_items(self, tokens: list[str], pay_date: date | None) -> list[StatementLineDraft]:
+        """Parse the DETALLE DEL CONSUMO purchase rows into drafts (ADR-079, ADR-089).
 
         Within the detail section, each purchase is a run of standalone cells —
         ``DD-MM-YY`` / ``* | K`` / merchant / ``NN/NN`` (optional) / comprobante /
         pesos / dolares (optional) — that a flat regex cannot see (the bug fixed
-        here). Rows are grouped on the leading date cell and classified by cell.
+        here). Rows are grouped on the leading date cell and classified by cell. Each
+        draft's ``occurred_on`` is the statement ``pay_date`` (ADR-089); ``pay_date``
+        of ``None`` falls back to the row's own purchase date.
         """
         detail = self._section(tokens, self._DETAIL_HEADER, self._CONSUMO_TOTAL_PREFIX)
         drafts: list[StatementLineDraft] = []
         for group in self._row_groups(detail):
-            draft = self._build_purchase(group)
+            draft = self._build_purchase(group, pay_date)
             if draft is not None:
                 drafts.append(draft)
         return drafts
@@ -451,11 +456,17 @@ class GaliciaVisaParser(StatementParser):
             groups.append(current)
         return groups
 
-    def _build_purchase(self, group: list[str]) -> StatementLineDraft | None:
-        """Build one purchase draft from a grouped row of standalone cells."""
-        occurred_on = _parse_dmy(group[0])
-        if occurred_on is None:
+    def _build_purchase(self, group: list[str], pay_date: date | None) -> StatementLineDraft | None:
+        """Build one purchase draft from a grouped row of standalone cells (ADR-089).
+
+        The row's leading date cell is the original purchase date (``purchase_date``);
+        ``occurred_on`` is the statement ``pay_date`` (the due date the charge is
+        debited), falling back to ``purchase_date`` when no pay date was parsed.
+        """
+        purchase_date = _parse_dmy(group[0])
+        if purchase_date is None:
             return None
+        occurred_on = pay_date if pay_date is not None else purchase_date
 
         cells = group[1:]
         if cells and self._MARKER_TOKEN.match(cells[0]):
@@ -480,6 +491,7 @@ class GaliciaVisaParser(StatementParser):
             usd = _parse_ar_decimal(money[1])
             return StatementLineDraft(
                 occurred_on=occurred_on,
+                purchase_date=purchase_date,
                 name=name,
                 amount=abs(pesos),
                 currency=Currency.USD,
@@ -493,6 +505,7 @@ class GaliciaVisaParser(StatementParser):
 
         return StatementLineDraft(
             occurred_on=occurred_on,
+            purchase_date=purchase_date,
             name=name,
             amount=abs(pesos),
             currency=Currency.ARS,
@@ -530,15 +543,18 @@ class GaliciaVisaParser(StatementParser):
         upper = label.upper()
         return upper.startswith(("COM ", "BONI ", "INT ", "IVA ", "SEGURO", "IMPUESTO"))
 
-    def _fee_lines(self, tokens: list[str]) -> list[StatementLineDraft]:
-        """Parse and net the bank fee/waiver rows into drafts (ADR-079).
+    def _fee_lines(self, tokens: list[str], pay_date: date | None) -> list[StatementLineDraft]:
+        """Parse and net the bank fee/waiver rows into drafts (ADR-079, ADR-089).
 
         Fees sit between the consumo total and ``TOTAL A PAGAR`` as date / label /
         amount cell runs, split across a page break (the COM charge on one page, its
         BONI waiver on the next). For each date cell the next fee-label cell and the
         following money cell are paired (skipping page chrome), then summed per
         normalised label root. A FEE draft is emitted only when the netted sum is
-        positive; a fully-waived fee (sum == 0) produces no line.
+        positive; a fully-waived fee (sum == 0) produces no line. Each draft's
+        ``occurred_on`` is the statement ``pay_date`` (ADR-089) and its
+        ``purchase_date`` is the fee row's own date; ``pay_date`` of ``None`` falls
+        back to that row date.
         """
         region = self._section(tokens, self._CONSUMO_TOTAL_PREFIX, self._GRAND_TOTAL)
         sums: dict[str, Decimal] = {}
@@ -570,7 +586,8 @@ class GaliciaVisaParser(StatementParser):
 
         return [
             StatementLineDraft(
-                occurred_on=dates[root],
+                occurred_on=pay_date if pay_date is not None else dates[root],
+                purchase_date=dates[root],
                 name=labels[root],
                 amount=net,
                 currency=Currency.ARS,

@@ -10,7 +10,10 @@ assignments.
 A statement line matches a candidate when all three hold (ADR-085):
 
 1. **Amount is exact** — ARS amounts match to the cent (exact :class:`~decimal.Decimal`).
-2. **Date is within ±N days** — ``occurred_on`` falls within :data:`WINDOW_DAYS`.
+2. **Date is within ±N days** — the line's ``purchase_date`` (the FECHA, when the
+   user would have logged the manual expense) falls within :data:`WINDOW_DAYS` of the
+   candidate's ``occurred_on``. The line's ``occurred_on`` (now the statement pay date)
+   is NOT used for matching (ADR-089).
 3. **Names are fuzzily similar** — :func:`names_similar` (share a significant word in
    ANY position, one name a prefix of the other, or a high typo-tolerance ratio).
    The bar is intentionally lenient: amount-exact + date-window already gate every
@@ -160,10 +163,15 @@ def names_similar(a: str, b: str) -> bool:
 
 
 def _is_candidate_for(line: StatementLineDraft, candidate: ReconCandidate, *, window_days: int) -> bool:
-    """Return whether a candidate satisfies all three match conditions for a line."""
+    """Return whether a candidate satisfies all three match conditions for a line.
+
+    The date window compares the line's **purchase date** against the candidate's
+    ``occurred_on`` — a manual expense is logged at purchase time, not on the
+    statement pay date the line now carries in ``occurred_on`` (ADR-089).
+    """
     return (
         line.amount == candidate.amount
-        and abs((line.occurred_on - candidate.occurred_on).days) <= window_days
+        and abs((line.purchase_date - candidate.occurred_on).days) <= window_days
         and names_similar(line.name, candidate.name)
     )
 
@@ -205,7 +213,7 @@ def match_lines(
         ]
         if not eligible:
             continue
-        best = min(eligible, key=lambda candidate: abs((line.occurred_on - candidate.occurred_on).days))
+        best = min(eligible, key=lambda candidate: abs((line.purchase_date - candidate.occurred_on).days))
         matches[index] = best
         claimed.add(best.transaction_id)
 
