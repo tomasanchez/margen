@@ -181,11 +181,12 @@ export function ImportStatement() {
             <CheckCircleRoundedIcon fontSize="small" />
           </Box>
           <Typography component="h2" sx={{ fontSize: 16, fontWeight: 600 }}>
-            Imported {phase.result.createdCount}{' '}
-            {phase.result.createdCount === 1 ? 'expense' : 'expenses'}
+            {confirmationHeading(phase.result)}
           </Typography>
           <Typography sx={{ fontSize: 13.5, color: 'text.secondary', maxWidth: 360 }}>
-            They've been added to your transactions.
+            {phase.result.mergedCount > 0
+              ? "They've been added to your transactions; matched charges were merged into the ones you already had."
+              : "They've been added to your transactions."}
           </Typography>
           <Stack direction="row" spacing={1.25} sx={{ mt: 0.75 }}>
             <Button
@@ -336,6 +337,23 @@ export function ImportStatement() {
       {hiddenPicker}
     </Box>
   )
+}
+
+/**
+ * Build the success-confirmation heading from the split import result (ADR-086).
+ * Reflects created expenses + any transactions enriched by a merge, e.g.
+ * "Imported 3 expenses, merged 1 into existing transactions".
+ */
+function confirmationHeading(result: StatementImportResult): string {
+  const { createdCount, mergedCount } = result
+  const createdLabel = `Imported ${createdCount} ${
+    createdCount === 1 ? 'expense' : 'expenses'
+  }`
+  if (mergedCount === 0) return createdLabel
+  const mergedLabel = `merged ${mergedCount} into existing ${
+    mergedCount === 1 ? 'transaction' : 'transactions'
+  }`
+  return `${createdLabel}, ${mergedLabel}`
 }
 
 /** Visually-hidden style for off-screen live-region text (mirrors @mui/utils). */

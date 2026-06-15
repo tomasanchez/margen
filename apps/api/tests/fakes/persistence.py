@@ -519,6 +519,7 @@ def _project(transaction: Transaction) -> TransactionReadModel:
         notes=transaction.notes,
         recurring=transaction.recurring,
         counts_toward_monotributo=transaction.counts_toward_monotributo,
+        statement_document_id=transaction.statement_document_id,
         created_at=transaction.created_at,
         updated_at=transaction.updated_at,
     )

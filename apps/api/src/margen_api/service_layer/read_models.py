@@ -38,6 +38,10 @@ class TransactionReadModel:
         notes: Free-form optional note, distinct from ``name`` (ADR-024).
         recurring: Whether the movement repeats.
         counts_toward_monotributo: Monotributo counting hint.
+        statement_document_id: Link to the source statement document for an imported
+            credit-card expense, else ``None`` for a manually-entered transaction.
+            Lets query paths distinguish manual expenses (the reconciliation candidate
+            pool — ADR-084) from already-imported statement rows.
         created_at: Server-managed creation timestamp.
         updated_at: Server-managed last-update timestamp.
     """
@@ -58,5 +62,6 @@ class TransactionReadModel:
     notes: str | None
     recurring: bool
     counts_toward_monotributo: bool
+    statement_document_id: UUID | None
     created_at: datetime
     updated_at: datetime

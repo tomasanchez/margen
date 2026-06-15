@@ -59,3 +59,17 @@ class TransactionNotFoundError(TransactionError):
     def __init__(self, transaction_id: object) -> None:
         self.transaction_id = transaction_id
         super().__init__(f"transaction not found: {transaction_id!r}")
+
+
+class MergeTargetNotFoundError(TransactionError):
+    """Raised when a ``MERGE`` import line points at a missing transaction (ADR-085).
+
+    The import handler raises this when a per-line ``merge`` resolution names a
+    ``match_transaction_id`` that no longer exists, so the boundary can translate it
+    into a ``409`` (the referenced manual expense was concurrently deleted). The
+    carried ``transaction_id`` lets the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, transaction_id: object) -> None:
+        self.transaction_id = transaction_id
+        super().__init__(f"merge target transaction not found: {transaction_id!r}")

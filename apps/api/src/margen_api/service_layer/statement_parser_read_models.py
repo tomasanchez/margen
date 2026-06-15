@@ -83,7 +83,13 @@ class StatementLineDraft:
     review UI / boundary may toggle ``include`` and edit fields.
 
     Attributes:
-        occurred_on: The purchase date as printed (not the due date).
+        occurred_on: The statement pay/due date — the date the charge is debited and
+            the date the imported expense counts on (ADR-089). Falls back to the
+            line's own ``purchase_date`` when the statement carries no parseable due
+            date.
+        purchase_date: The original purchase date as printed (the line's FECHA). Kept
+            distinct from ``occurred_on`` so reconciliation can match on it and the
+            import can preserve it in the transaction notes (ADR-089).
         name: The merchant / reference text as printed on the statement.
         amount: Positive ARS (PESOS) amount.
         currency: ``ARS`` or ``USD``.
@@ -99,6 +105,7 @@ class StatementLineDraft:
     """
 
     occurred_on: date
+    purchase_date: date
     name: str
     amount: Decimal
     currency: Currency

@@ -47,9 +47,25 @@ export interface StatementNaturalKey {
   statementNumber: string | null
 }
 
+/**
+ * The matched existing transaction a parsed line likely duplicates (ADR-084/085),
+ * as serialized by the backend (camelCase, money as Decimal strings).
+ */
+interface StatementMatchDto {
+  transactionId: string
+  name: string
+  occurredOn: string
+  amount: string
+  category?: string | null
+  paymentMethod?: string | null
+}
+
 /** A single parsed statement line as serialized by the backend (camelCase). */
 interface StatementLineDto {
+  /** The statement pay/due date — same for every line of a statement (ADR-089). */
   occurredOn: string
+  /** The original purchase FECHA preserved for display + reconciliation (ADR-089). */
+  purchaseDate?: string | null
   name: string
   amount: string
   currency: string
@@ -60,6 +76,8 @@ interface StatementLineDto {
   cuota?: string | null
   lineKind: StatementLineKind
   include: boolean
+  /** Present when this line likely duplicates an existing manual transaction. */
+  match?: StatementMatchDto | null
 }
 
 /**
@@ -123,6 +141,22 @@ interface StatementParseDto {
 }
 
 /**
+ * The matched existing transaction a parsed line likely duplicates (ADR-084/085),
+ * adapted for the review table. Money is parsed to a number; `category`/
+ * `paymentMethod` are the existing transaction's values (null → undefined) shown
+ * in the inline match context + the side-by-side compare.
+ */
+export interface StatementMatch {
+  /** Id of the existing transaction to enrich when the user merges (ADR-085). */
+  transactionId: string
+  name: string
+  occurredOn: string
+  amount: number
+  category?: string
+  paymentMethod?: string
+}
+
+/**
  * One adapted line draft the review table consumes (ADR-080). Money is parsed to
  * numbers; `currency`/`fxRateType` are narrowed to the prototype unions. `include`
  * seeds the per-row keep/exclude toggle; `category` seeds the editable selector.
@@ -130,7 +164,19 @@ interface StatementParseDto {
 export interface StatementLine {
   /** Stable index-based id for table rows (the backend lines are positional). */
   id: string
+  /**
+   * The statement pay/due date — the same for every line of a statement (ADR-089).
+   * This is what the line is dated/grouped on; the original purchase date lives in
+   * {@link purchaseDate}.
+   */
   occurredOn: string
+  /**
+   * The original purchase FECHA (ISO `YYYY-MM-DD`), preserved per line (ADR-089).
+   * Shown alongside the pay date ("bought … · paid …") and echoed back on import so
+   * the backend can compose the "Compra dd-mm-yy · Cuota n/m" note. Absent on lines
+   * the parser couldn't attribute a purchase date to.
+   */
+  purchaseDate?: string
   name: string
   amount: number
   currency: Currency
@@ -143,6 +189,12 @@ export interface StatementLine {
   lineKind: StatementLineKind
   /** Default keep/exclude state from the parser (fees may default excluded). */
   include: boolean
+  /**
+   * Present when this line likely duplicates an existing manual transaction
+   * (ADR-084). Flagged rows get the "Possible duplicate" treatment + a per-row
+   * Merge / Keep both resolution; absent means a normal (unflagged) line.
+   */
+  match?: StatementMatch
 }
 
 /**
@@ -176,9 +228,25 @@ export interface StatementParse {
   document: StatementDocumentPayload
 }
 
+/**
+ * How a kept line resolves on import (ADR-085):
+ *   - `import`    — no match; create a new expense (the default for unflagged lines).
+ *   - `merge`     — flagged, kept as the same expense; enrich the existing
+ *                   transaction (`matchTransactionId` REQUIRED).
+ *   - `keep_both` — flagged but kept anyway; create a new, separate expense.
+ */
+export type StatementLineResolution = 'import' | 'merge' | 'keep_both'
+
 /** One line sent on import (camelCase; money as Decimal strings — ADR-025). */
 export interface StatementLineRequest {
+  /** The statement pay/due date this line is dated on (ADR-089). */
   occurredOn: string
+  /**
+   * The original purchase FECHA (ISO `YYYY-MM-DD`) echoed back from the parse so the
+   * backend composes the "Compra dd-mm-yy · Cuota n/m" note (ADR-089). Omitted when the
+   * parsed line carried no purchase date.
+   */
+  purchaseDate?: string
   name: string
   amount: string
   currency: Currency
@@ -190,6 +258,10 @@ export interface StatementLineRequest {
   bank?: string
   cuota?: string
   notes?: string
+  /** How this line resolves on import (ADR-085); defaults to `import`. */
+  resolution: StatementLineResolution
+  /** The existing transaction to enrich; REQUIRED when `resolution === 'merge'`. */
+  matchTransactionId?: string
 }
 
 /** The document echoed back on import (Decimal money as strings — ADR-078). */
@@ -201,11 +273,17 @@ export interface StatementImportRequest {
   lines: StatementLineRequest[]
 }
 
-/** The 201 result of a successful import (ADR-078). */
+/**
+ * The 201 result of a successful import (ADR-078, ADR-085). Splits the outcome
+ * into freshly-created expenses (`import`/`keep_both`) and existing transactions
+ * enriched by a merge — so the confirmation can read "N created, M merged".
+ */
 export interface StatementImportResult {
   statementDocumentId: string
   createdCount: number
-  transactionIds: string[]
+  mergedCount: number
+  createdTransactionIds: string[]
+  mergedTransactionIds: string[]
 }
 
 /** An API error that carries the HTTP status so callers can branch on it. */
@@ -282,14 +360,31 @@ function nonEmpty(value: string | null | undefined): string | undefined {
   return value ? value : undefined
 }
 
+/** Adapt the backend match DTO to the table-ready {@link StatementMatch} (or undefined). */
+function adaptMatch(dto: StatementMatchDto | null | undefined): StatementMatch | undefined {
+  if (dto === null || dto === undefined) return undefined
+  return {
+    transactionId: dto.transactionId,
+    name: dto.name,
+    occurredOn: dto.occurredOn,
+    amount: parseMoney(dto.amount) ?? 0,
+    ...(nonEmpty(dto.category) ? { category: dto.category as string } : {}),
+    ...(nonEmpty(dto.paymentMethod)
+      ? { paymentMethod: dto.paymentMethod as string }
+      : {}),
+  }
+}
+
 /** Adapt one backend line DTO to the table-ready {@link StatementLine}. */
 function adaptLine(dto: StatementLineDto, index: number): StatementLine {
   const usdAmount = parseMoney(dto.usdAmount)
   const fxRate = parseMoney(dto.fxRate)
   const fxRateType = asFxRateType(dto.fxRateType)
+  const match = adaptMatch(dto.match)
   return {
     id: String(index),
     occurredOn: dto.occurredOn,
+    ...(nonEmpty(dto.purchaseDate) ? { purchaseDate: dto.purchaseDate as string } : {}),
     name: dto.name,
     amount: parseMoney(dto.amount) ?? 0,
     currency: asCurrency(dto.currency),
@@ -300,6 +395,7 @@ function adaptLine(dto: StatementLineDto, index: number): StatementLine {
     ...(nonEmpty(dto.cuota) ? { cuota: dto.cuota as string } : {}),
     lineKind: dto.lineKind,
     include: dto.include,
+    ...(match !== undefined ? { match } : {}),
   }
 }
 
@@ -405,9 +501,11 @@ export async function parseStatement(file: File): Promise<StatementParse> {
 const JSON_HEADERS = { 'Content-Type': 'application/json' } as const
 
 /**
- * Import the reviewed selection to `POST /statements/import` (ADR-078). The body
- * echoes the document payload and carries ONLY the lines the user kept; the
- * backend creates one expense per line and returns the created ids.
+ * Import the reviewed selection to `POST /statements/import` (ADR-078, ADR-085).
+ * The body echoes the document payload and carries ONLY the lines the user kept,
+ * each with its `resolution` (and `matchTransactionId` for merges). The backend
+ * creates one expense per `import`/`keep_both` line, enriches the existing
+ * transaction for each `merge`, and returns the split created/merged ids.
  */
 export async function importStatement(
   payload: StatementImportRequest,

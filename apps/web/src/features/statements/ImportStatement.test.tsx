@@ -14,7 +14,12 @@
  *   - an `unsupported`/`unparseable` result shows the calm fallback message and
  *     the picker stays usable;
  *   - importing calls the client with ONLY the included lines, the document echo,
- *     and the card payment method carried as each line's `bank`.
+ *     and the card payment method carried as each line's `bank`;
+ *   - a flagged (reconciler) line renders the "Possible duplicate" chip + the
+ *     matched transaction inline, defaults to Merge (sending `resolution: 'merge'`
+ *     + `matchTransactionId`), can switch to Keep both (`resolution: 'keep_both'`),
+ *     drives the "N new · M merged" summary, and never re-matches an unflagged
+ *     line (which still sends `resolution: 'import'`).
  *
  * The statements HTTP client is mocked (no network); `useNavigate` is mocked so
  * the page renders standalone via renderWithProviders (no router needed).
@@ -26,6 +31,7 @@ import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../test/renderWithProviders'
 import {
   StatementsApiError,
+  type StatementImportResult,
   type StatementParse,
 } from '../../api/statementsClient'
 import { ImportStatement } from './ImportStatement'
@@ -104,10 +110,13 @@ const okParse: StatementParse = {
     cardLast4: '5771',
     statementNumber: 'A-1000',
   },
+  // Every line is dated on the statement pay date (ADR-089); the original purchase
+  // date is preserved per line in `purchaseDate`.
   lines: [
     {
       id: '0',
-      occurredOn: '2026-05-02',
+      occurredOn: '2026-06-19',
+      purchaseDate: '2026-05-02',
       name: 'Carrefour',
       amount: 45000,
       currency: 'ARS',
@@ -117,7 +126,8 @@ const okParse: StatementParse = {
     },
     {
       id: '1',
-      occurredOn: '2026-05-10',
+      occurredOn: '2026-06-19',
+      purchaseDate: '2026-05-10',
       name: 'Netflix',
       amount: 8000,
       currency: 'ARS',
@@ -128,7 +138,8 @@ const okParse: StatementParse = {
     },
     {
       id: '2',
-      occurredOn: '2026-05-20',
+      occurredOn: '2026-06-19',
+      purchaseDate: '2026-05-20',
       name: 'Card fee',
       amount: 3000,
       currency: 'ARS',
@@ -138,6 +149,44 @@ const okParse: StatementParse = {
     },
   ],
   document: documentPayload,
+}
+
+/**
+ * A parse where one line (Netflix) likely duplicates an existing manual
+ * transaction (ADR-084) — the reconciler path. The matched transaction differs
+ * in name/date to exercise the inline match context + compare.
+ */
+const flaggedParse: StatementParse = {
+  ...okParse,
+  lines: [
+    okParse.lines[0],
+    {
+      ...okParse.lines[1],
+      match: {
+        transactionId: 'tx-existing-1',
+        name: 'Netflix monthly',
+        occurredOn: '2026-05-09',
+        amount: 8000,
+        category: 'Subscriptions',
+        paymentMethod: 'Galicia VISA ·5771',
+      },
+    },
+    okParse.lines[2],
+  ],
+}
+
+/** Build an import result in the new split-count shape (created vs merged). */
+function importResult(
+  overrides: Partial<StatementImportResult> = {},
+): StatementImportResult {
+  return {
+    statementDocumentId: 'doc-1',
+    createdCount: 0,
+    mergedCount: 0,
+    createdTransactionIds: [],
+    mergedTransactionIds: [],
+    ...overrides,
+  }
 }
 
 /** Render the page and return a userEvent session + the hidden PDF file input. */
@@ -171,16 +220,31 @@ describe('Import statement — a successful parse renders the review table', () 
     expect(parseStatementMock).toHaveBeenCalledTimes(1)
     expect(parseStatementMock.mock.calls[0][0]).toBeInstanceOf(File)
   })
+
+  test('each row shows both the paid (statement) date and the original purchase date', async () => {
+    parseStatementMock.mockResolvedValueOnce(okParse)
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile())
+    await screen.findByText('Galicia VISA ·5771')
+
+    // The line is dated on the statement pay date (ADR-089); all three lines share it.
+    expect(screen.getAllByText('paid Jun 19')).toHaveLength(3)
+    // The original purchase date is shown per row beneath the pay date.
+    expect(screen.getByText('bought May 02')).toBeInTheDocument()
+    expect(screen.getByText('bought May 10')).toBeInTheDocument()
+    expect(screen.getByText('bought May 20')).toBeInTheDocument()
+    // A calm header note explains the two-date model.
+    expect(
+      screen.getByText(/dated when the card is paid/i),
+    ).toBeInTheDocument()
+  })
 })
 
 describe('Import statement — only the included lines are sent on import', () => {
   test('toggling a row off excludes it from the import payload', async () => {
     parseStatementMock.mockResolvedValueOnce(okParse)
-    importStatementMock.mockResolvedValueOnce({
-      statementDocumentId: 'doc-1',
-      createdCount: 1,
-      transactionIds: ['t1'],
-    })
+    importStatementMock.mockResolvedValueOnce(importResult({ createdCount: 1 }))
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
@@ -207,17 +271,20 @@ describe('Import statement — only the included lines are sent on import', () =
     expect(payload.lines[0].bank).toBe('Galicia VISA ·5771')
     // Money is re-encoded as a Decimal string at the boundary.
     expect(payload.lines[0].amount).toBe('45000')
+    // occurredOn stays the statement pay date; the original purchase date is echoed
+    // back so the backend composes the purchase note (ADR-089).
+    expect(payload.lines[0].occurredOn).toBe('2026-06-19')
+    expect(payload.lines[0].purchaseDate).toBe('2026-05-02')
+    // An unflagged kept line resolves as a plain import (no merge target).
+    expect(payload.lines[0].resolution).toBe('import')
+    expect(payload.lines[0].matchTransactionId).toBeUndefined()
     // The document echo is sent verbatim.
     expect(payload.document).toEqual(documentPayload)
   })
 
   test('editing a category is carried into the import payload', async () => {
     parseStatementMock.mockResolvedValueOnce(okParse)
-    importStatementMock.mockResolvedValueOnce({
-      statementDocumentId: 'doc-1',
-      createdCount: 2,
-      transactionIds: ['t1', 't2'],
-    })
+    importStatementMock.mockResolvedValueOnce(importResult({ createdCount: 2 }))
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
@@ -319,11 +386,7 @@ describe('Import statement — calm fallback keeps the screen usable', () => {
 describe('Import statement — success shows a calm confirmation', () => {
   test('a successful import shows the imported-count confirmation', async () => {
     parseStatementMock.mockResolvedValueOnce(okParse)
-    importStatementMock.mockResolvedValueOnce({
-      statementDocumentId: 'doc-1',
-      createdCount: 2,
-      transactionIds: ['t1', 't2'],
-    })
+    importStatementMock.mockResolvedValueOnce(importResult({ createdCount: 2 }))
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
@@ -336,6 +399,122 @@ describe('Import statement — success shows a calm confirmation', () => {
     ).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: 'Import another' }),
+    ).toBeInTheDocument()
+  })
+})
+
+describe('Import statement — reconciler flags likely duplicates', () => {
+  test('a flagged line renders the duplicate chip + the matched transaction inline', async () => {
+    parseStatementMock.mockResolvedValueOnce(flaggedParse)
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile())
+    await screen.findByText('Galicia VISA ·5771')
+
+    // The non-color cue: a "Possible duplicate" chip on the flagged row (ADR-019/086).
+    expect(screen.getByText('Possible duplicate')).toBeInTheDocument()
+    // The matched existing transaction is shown inline (name · date · amount),
+    // using the app's shared date + money formatters (en-US short date, es-AR
+    // grouped ARS), so it never drifts from how transactions read elsewhere.
+    expect(
+      screen.getByText('↔ "Netflix monthly" · May 09 · ARS 8.000'),
+    ).toBeInTheDocument()
+  })
+
+  test('default resolution is Merge; the payload sends resolution + matchTransactionId', async () => {
+    parseStatementMock.mockResolvedValueOnce(flaggedParse)
+    importStatementMock.mockResolvedValueOnce(
+      importResult({ createdCount: 1, mergedCount: 1 }),
+    )
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile())
+    await screen.findByText('Galicia VISA ·5771')
+
+    // Merge is pre-selected for the flagged row (ADR-086).
+    expect(
+      screen.getByRole('button', {
+        name: /Merge Netflix into the existing transaction/i,
+      }),
+    ).toHaveAttribute('aria-pressed', 'true')
+
+    // The CTA reads "Import N · merge M" when a merge is pending.
+    await user.click(screen.getByRole('button', { name: 'Import 1 · merge 1' }))
+
+    await waitFor(() => expect(importStatementMock).toHaveBeenCalledTimes(1))
+    const [payload] = importStatementMock.mock.calls[0]
+    const netflix = payload.lines.find(
+      (l: { name: string }) => l.name === 'Netflix',
+    )
+    expect(netflix.resolution).toBe('merge')
+    expect(netflix.matchTransactionId).toBe('tx-existing-1')
+    // The unflagged Carrefour line still imports as new.
+    const carrefour = payload.lines.find(
+      (l: { name: string }) => l.name === 'Carrefour',
+    )
+    expect(carrefour.resolution).toBe('import')
+    expect(carrefour.matchTransactionId).toBeUndefined()
+  })
+
+  test('switching a flagged row to Keep both sends resolution: keep_both (no merge target)', async () => {
+    parseStatementMock.mockResolvedValueOnce(flaggedParse)
+    importStatementMock.mockResolvedValueOnce(importResult({ createdCount: 2 }))
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile())
+    await screen.findByText('Galicia VISA ·5771')
+
+    // Switch Netflix to Keep both.
+    await user.click(
+      screen.getByRole('button', {
+        name: /Keep both — import Netflix as a separate expense/i,
+      }),
+    )
+
+    // With no merge pending the CTA reverts to "Import 2 expenses".
+    await user.click(screen.getByRole('button', { name: 'Import 2 expenses' }))
+
+    await waitFor(() => expect(importStatementMock).toHaveBeenCalledTimes(1))
+    const [payload] = importStatementMock.mock.calls[0]
+    const netflix = payload.lines.find(
+      (l: { name: string }) => l.name === 'Netflix',
+    )
+    expect(netflix.resolution).toBe('keep_both')
+    expect(netflix.matchTransactionId).toBeUndefined()
+  })
+
+  test('the footer summary splits the kept lines into new vs merged', async () => {
+    parseStatementMock.mockResolvedValueOnce(flaggedParse)
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile())
+    await screen.findByText('Galicia VISA ·5771')
+
+    // Carrefour (new) + Netflix (merge by default); the fee defaults excluded.
+    expect(screen.getByText('1 new · 1 merged')).toBeInTheDocument()
+  })
+
+  test('a successful import with merges shows the created + merged confirmation', async () => {
+    parseStatementMock.mockResolvedValueOnce(flaggedParse)
+    importStatementMock.mockResolvedValueOnce(
+      importResult({
+        createdCount: 1,
+        mergedCount: 1,
+        createdTransactionIds: ['t-new'],
+        mergedTransactionIds: ['tx-existing-1'],
+      }),
+    )
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile())
+    await screen.findByText('Galicia VISA ·5771')
+
+    await user.click(screen.getByRole('button', { name: 'Import 1 · merge 1' }))
+
+    expect(
+      await screen.findByRole('heading', {
+        name: 'Imported 1 expense, merged 1 into existing transaction',
+      }),
     ).toBeInTheDocument()
   })
 })
