@@ -11,6 +11,7 @@ from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.monotributo_repository import AbstractMonotributoSnapshotRepository
 from margen_api.service_layer.repository import AbstractTransactionRepository
 from margen_api.service_layer.settings_repository import AbstractSettingsRepository
+from margen_api.service_layer.statement_store import AbstractStatementStore
 
 
 class IntegrityConflict(RuntimeError):
@@ -32,12 +33,15 @@ class AbstractUnitOfWork(ABC):
             the update-settings handler (ADR-054).
         documents: Storage port for the original invoice PDF and its import
             metadata, written by the create-with-attachment handler (ADR-071).
+        statements: Storage port for the original statement PDF and its import
+            metadata, written by the import-statement handler (ADR-077, ADR-078).
     """
 
     transactions: AbstractTransactionRepository
     monotributo_snapshots: AbstractMonotributoSnapshotRepository
     settings: AbstractSettingsRepository
     documents: AbstractDocumentStore
+    statements: AbstractStatementStore
 
     async def __aenter__(self) -> AbstractUnitOfWork:
         """Enter the transaction boundary."""

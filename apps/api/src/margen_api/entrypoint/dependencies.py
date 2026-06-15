@@ -21,6 +21,7 @@ from margen_api.adapters.queries import (
     SqlAlchemySummaryReader,
     SqlAlchemyTransactionReader,
 )
+from margen_api.adapters.statement_store import SqlAlchemyStatementStore
 from margen_api.bootstrap import ApplicationContainer
 from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
@@ -28,6 +29,7 @@ from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.monotributo_reader import AbstractMonotributoReader
 from margen_api.service_layer.reader import AbstractTransactionReader
 from margen_api.service_layer.settings_reader import AbstractSettingsReader
+from margen_api.service_layer.statement_store import AbstractStatementStore
 from margen_api.service_layer.summary_reader import AbstractSummaryReader
 from margen_api.settings.api_settings import ApplicationSettings
 
@@ -210,3 +212,22 @@ async def get_document_store(container: Container) -> AsyncIterator[AbstractDocu
 
 
 DocumentReader = Annotated[AbstractDocumentStore, Depends(get_document_store)]
+
+
+async def get_statement_store(container: Container) -> AsyncIterator[AbstractStatementStore]:
+    """Yield a read-only statement document store over a request-scoped session (ADR-077).
+
+    The parse endpoint uses ``exists_by_natural_key`` for the advisory dedupe flag
+    and the download endpoint uses ``get`` to stream the stored PDF; both are
+    query-only paths that bypass the unit of work by design (ADR-028). The session
+    opened here is closed when the request finishes. Statement *writes* go through
+    the import handler's unit of work instead, keeping this dependency read-only.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemyStatementStore(session)
+    finally:
+        await session.close()
+
+
+StatementReader = Annotated[AbstractStatementStore, Depends(get_statement_store)]

@@ -53,6 +53,10 @@ class Transaction:
         recurring: Whether the movement repeats.
         counts_toward_monotributo: Only meaningful for income / invoice; forced
             ``False`` for expense (ADR-027, ADR-031).
+        statement_document_id: Optional link back to the source statement document
+            for an imported credit-card expense (ADR-077). A plain carried field,
+            not a domain invariant — the aggregate stays lean (ADR-028); ``None``
+            for manually-entered transactions.
         created_at: Server-managed creation timestamp.
         updated_at: Server-managed last-update timestamp.
     """
@@ -72,6 +76,7 @@ class Transaction:
     notes: str | None = None
     recurring: bool = False
     counts_toward_monotributo: bool = False
+    statement_document_id: UUID | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -145,6 +150,7 @@ def build_transaction(
     notes: str | None = None,
     recurring: bool = False,
     counts_toward_monotributo: bool = False,
+    statement_document_id: UUID | None = None,
     transaction_id: UUID | None = None,
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
@@ -171,6 +177,8 @@ def build_transaction(
         notes: Optional free-form note.
         recurring: Whether the movement repeats.
         counts_toward_monotributo: Monotributo counting hint (income / invoice only).
+        statement_document_id: Optional link to the source statement document for
+            an imported credit-card expense (ADR-077); ``None`` otherwise.
         transaction_id: Optional identity; generated when omitted.
         created_at: Optional creation timestamp; defaults to now (UTC).
         updated_at: Optional update timestamp; defaults to now (UTC).
@@ -202,6 +210,7 @@ def build_transaction(
         notes=notes,
         recurring=recurring,
         counts_toward_monotributo=counts_toward_monotributo,
+        statement_document_id=statement_document_id,
         created_at=created_at if created_at is not None else now,
         updated_at=updated_at if updated_at is not None else now,
     )

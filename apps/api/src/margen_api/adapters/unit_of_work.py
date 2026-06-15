@@ -11,6 +11,7 @@ from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.monotributo_repository import SqlAlchemyMonotributoSnapshotRepository
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
 from margen_api.adapters.settings_repository import SqlAlchemySettingsRepository
+from margen_api.adapters.statement_store import SqlAlchemyStatementStore
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork, IntegrityConflict
 
 
@@ -32,6 +33,7 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
         self.monotributo_snapshots = SqlAlchemyMonotributoSnapshotRepository(self.session)
         self.settings = SqlAlchemySettingsRepository(self.session)
         self.documents = SqlAlchemyDocumentStore(self.session)
+        self.statements = SqlAlchemyStatementStore(self.session)
         return self
 
     async def __aexit__(

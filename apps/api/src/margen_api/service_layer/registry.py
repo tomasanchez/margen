@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
 from margen_api.domain.commands.settings import UpdateSettings
+from margen_api.domain.commands.statement import ImportStatement
 from margen_api.domain.commands.transaction import (
     CreateTransaction,
     DeleteTransaction,
@@ -18,6 +19,7 @@ from margen_api.domain.commands.transaction import (
 from margen_api.service_layer.handlers import (
     create_transaction,
     delete_transaction,
+    import_statement,
     update_transaction,
 )
 from margen_api.service_layer.messagebus import CommandHandler, EventHandler
@@ -28,6 +30,7 @@ COMMAND_HANDLERS: dict[type, CommandHandler] = {
     CreateTransaction: create_transaction,
     UpdateTransaction: update_transaction,
     DeleteTransaction: delete_transaction,
+    ImportStatement: import_statement,
     CaptureMonotributoSnapshot: capture_monotributo_snapshot,
     UpdateSettings: update_settings,
 }

@@ -18,6 +18,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    ForeignKey,
     Index,
     Numeric,
     String,
@@ -71,6 +72,11 @@ class TransactionRecord(Base):
         Boolean(),
         nullable=False,
         server_default=false(),
+    )
+    statement_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("statement_document.id", ondelete="SET NULL"),
+        nullable=True,
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
