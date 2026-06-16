@@ -666,7 +666,7 @@ class _SantanderBaseParser(StatementParser, ABC):
 
     # Argentine money: thousands dots + decimal comma, optional leading sign.
     _MONEY_RE = re.compile(r"-?\d{1,3}(?:\.\d{3})*,\d{2}")
-    # Purchase row: optional "DD MonthName" purchase date, 1–2-digit + 4–6-digit
+    # Purchase row: optional "DD MonthName" purchase date, 1-2-digit + 4-6-digit
     # comprobante pair, * or K marker, description (non-greedy), optional cuota,
     # ARS amount (trailing "-" = negative), optional USD amount.
     _TX_LINE = re.compile(
@@ -780,7 +780,7 @@ class _SantanderBaseParser(StatementParser, ABC):
         )
         return _parse_ar_decimal(m.group(1)) if m else None
 
-    def _parse_purchases(
+    def _parse_purchases(  # noqa: C901
         self,
         lines: list[str],
         period_year: int,
@@ -816,6 +816,8 @@ class _SantanderBaseParser(StatementParser, ABC):
                 purchase_date = pay_date
 
             occurred_on = pay_date if pay_date is not None else purchase_date
+            if occurred_on is None or purchase_date is None:
+                continue
 
             pesos = _parse_ar_decimal(pesos_s)
             if pesos is None:
@@ -943,17 +945,13 @@ class SantanderVisaParser(_SantanderBaseParser):
         checking for the absence of the double-space ``AMERICAN  EXPRESS`` header.
         """
         lowered = text.lower()
-        return (
-            "30 50000845 4" in text
-            and "visa" in lowered
-            and "american  express" not in lowered
-        )
+        return "30 50000845 4" in text and "visa" in lowered and "american  express" not in lowered
 
 
 # Module-level registry of bank parsers. New banks are additive (ADR-076).
 BANK_PARSERS: list[StatementParser] = [
     GaliciaVisaParser(),
-    SantanderAmexParser(),   # checked before VISA — AMEX statements also mention "visa"
+    SantanderAmexParser(),  # checked before VISA — AMEX statements also mention "visa"
     SantanderVisaParser(),
 ]
 

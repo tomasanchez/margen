@@ -35,7 +35,7 @@ def fixture_integration_database_url() -> str:
         pytest.skip("TEST_DATABASE_URL is not set; skipping the PostgreSQL integration tier")
     database = _database_name(url)
     if "test" not in database.lower():
-        raise RuntimeError(
+        raise RuntimeError(  # noqa: TRY003
             f"Refusing to run the destructive integration tier against database {database!r}: "
             "it creates and DROPS all tables. Point TEST_DATABASE_URL at a dedicated test "
             "database whose name contains 'test' (e.g. margen-api-test on port 5433 — "

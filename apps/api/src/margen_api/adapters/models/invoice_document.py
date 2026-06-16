@@ -31,14 +31,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from margen_api.adapters.models.base import Base
 
 # Portable JSON column type: real ``JSONB`` on PostgreSQL (the production target,
 # ADR-018) and generic ``JSON`` on other dialects so the offline SQLite test tier
 # (ADR-019/032) can create the schema without a Postgres-only DDL type.
 _JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
-from sqlalchemy.orm import Mapped, mapped_column
-
-from margen_api.adapters.models.base import Base
 
 
 class InvoiceDocumentRecord(Base):

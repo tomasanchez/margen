@@ -162,7 +162,7 @@ def decode_qr_payloads(pdf_bytes: bytes) -> list[str]:
         The decoded QR string payloads across all pages (possibly empty).
     """
     if pyzbar is None:  # pragma: no cover - zbar is present at runtime; mocked in fast tests
-        raise RuntimeError("the native zbar library is required to decode invoice QR codes")
+        raise RuntimeError("the native zbar library is required to decode invoice QR codes")  # noqa: TRY003
     payloads: list[str] = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
         for page in document:
