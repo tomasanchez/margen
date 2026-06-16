@@ -40,6 +40,26 @@ log = logging.getLogger(__name__)
 # Galicia bank (issuer) CUIT — the primary Galicia VISA fingerprint marker (ADR-076).
 _GALICIA_CUIT = "30-50000173-5"
 
+# Santander bank (issuer) CUIT for AMEX statements (ADR-076).
+_SANTANDER_CUIT = "30-50000845-4"
+
+# Full Spanish month names as printed in Santander AMEX statements (long form, no accents).
+_MONTHS_ES_FULL: dict[str, int] = {
+    "enero": 1,
+    "febrero": 2,
+    "marzo": 3,
+    "abril": 4,
+    "mayo": 5,
+    "junio": 6,
+    "julio": 7,
+    "agosto": 8,
+    "septiembre": 9,
+    "setiembre": 9,
+    "octubre": 10,
+    "noviembre": 11,
+    "diciembre": 12,
+}
+
 # Middot used to compose the payment-method label "Galicia VISA ·5771" (ADR-079).
 _MIDDOT = "·"
 
@@ -629,8 +649,311 @@ class GaliciaVisaParser(StatementParser):
         return upper
 
 
+class _SantanderBaseParser(StatementParser, ABC):
+    """Shared parsing logic for all Santander Río credit-card statement variants.
+
+    Both AMEX and VISA statements from Santander Río use the same fixed-width
+    columnar text layout: a ``DD MonthName`` purchase date, a two-part comprobante,
+    a ``*`` or ``K`` marker, a free-text description, an optional cuota tag, and
+    trailing ARS (and optionally USD) amounts. The ``___`` separator marks the start
+    of real purchases; ``Tarjeta NNNN Total Consumos`` ends them. Fee rows (e.g.
+    IMPUESTO DE SELLOS) appear after that marker with a ``DD MonthName DD`` date
+    prefix and a ``$`` separator.
+
+    Concrete subclasses supply :meth:`fingerprint`, :meth:`_network`, and
+    :meth:`_payment_prefix` only; all parsing logic lives here (ADR-076).
+    """
+
+    # Argentine money: thousands dots + decimal comma, optional leading sign.
+    _MONEY_RE = re.compile(r"-?\d{1,3}(?:\.\d{3})*,\d{2}")
+    # Purchase row: optional "DD MonthName" purchase date, 1-2-digit + 4-6-digit
+    # comprobante pair, * or K marker, description (non-greedy), optional cuota,
+    # ARS amount (trailing "-" = negative), optional USD amount.
+    _TX_LINE = re.compile(
+        r"^"
+        r"(?:(\d{2})\s+([A-Za-z]{3,})\s+)?"  # optional purchase date: day monthname
+        r"\s*\d{1,2}\s+\d{4,6}\s+[*K]\s+"  # comprobante pair + * or K marker
+        r"(.+?)"  # raw description (non-greedy)
+        r"(?:\s+C\.(\d{2}/\d{2}))?"  # optional cuota "C.03/06"
+        r"\s+(\d{1,3}(?:\.\d{3})*,\d{2})-?"  # ARS amount
+        r"(?:\s+(\d{1,3}(?:\.\d{3})*,\d{2}))?"  # optional USD amount
+        r"\s*$",
+    )
+    # Fee row: "DD MonthName   DD   FEE NAME   $   amount". The required date prefix
+    # prevents false matches from the financial-disclosure text on later pages.
+    _FEE_LINE = re.compile(
+        r"^\s*\d{2}\s+[A-Za-z]{3,}\s+\d{2}\s+"  # date prefix: DD MonthName DD
+        r"([^$\d]+?)"  # fee name (no $ or digits)
+        r"\$\s+"  # dollar-sign separator
+        r"(\d{1,3}(?:\.\d{3})*,\d{2})\s*$",  # ARS amount
+    )
+    # Header metadata regexes.
+    _CIERRE_RE = re.compile(r"CIERRE\s+(\d+)\s+([A-Za-z]{3})\s+(\d{2})", re.IGNORECASE)
+    _VENC_RE = re.compile(r"VENCIMIENTO\s+(\d+)\s+([A-Za-z]{3})\s+(\d{2})", re.IGNORECASE)
+    # Section boundary markers.
+    _SEP_RE = re.compile(r"_{20,}")  # long underscore separator before real transactions.
+    _TOTAL_MARKER = re.compile(r"Tarjeta\s+\d{4}\s+Total\s+Consumos", re.IGNORECASE)
+    # Rows that must never become transactions.
+    _SKIP_MARKERS = ("SU PAGO", "SALDO ANTERIOR", "SALDO ACTUAL")
+
+    @property
+    @abstractmethod
+    def _network(self) -> str:
+        """Network brand returned in ParsedStatement (e.g. 'VISA', 'AMEX')."""
+
+    @property
+    @abstractmethod
+    def _payment_prefix(self) -> str:
+        """Payment method label prefix (e.g. 'Santander VISA')."""
+
+    def parse(self, text: str) -> ParsedStatement:
+        """Extract statement metadata and line drafts (ADR-079)."""
+        statement_number = self._extract_statement_no(text)
+        card_last4 = self._extract_card_last4(text)
+        period_close = self._extract_period_date(self._CIERRE_RE, text)
+        period_due = self._extract_period_date(self._VENC_RE, text)
+        total_amount = self._extract_total(text)
+        suffix = f" {_MIDDOT}{card_last4}" if card_last4 else ""
+        payment_method = f"{self._payment_prefix}{suffix}"
+
+        period_year = period_close.year if period_close is not None else 2000
+        lines_text = text.splitlines()
+        purchases = self._parse_purchases(lines_text, period_year, period_due)
+        fees = self._parse_fees(lines_text, period_due)
+
+        natural_key = StatementNaturalKey(
+            issuer_cuit=_SANTANDER_CUIT,
+            card_last4=card_last4,
+            statement_number=statement_number,
+        )
+        all_lines = purchases + fees
+        status = ParseStatus.OK if all_lines else ParseStatus.UNPARSEABLE
+        return ParsedStatement(
+            status=status,
+            extracted_text=text,
+            bank_name="Santander",
+            network=self._network,
+            card_last4=card_last4,
+            payment_method=payment_method,
+            statement_number=statement_number,
+            issuer_cuit=_SANTANDER_CUIT,
+            period_close=period_close,
+            period_due=period_due,
+            total_amount=total_amount,
+            natural_key=natural_key,
+            lines=all_lines,
+        )
+
+    @staticmethod
+    def _extract_statement_no(text: str) -> str | None:
+        # PyMuPDF extracts table header labels and values in separate blocks, so
+        # "Resumen Nro." and "N319" are not adjacent — match the standalone value line.
+        m = re.search(r"(?m)^\s*(N\d{3,5})\s*$", text)
+        return m.group(1).strip() if m else None
+
+    @staticmethod
+    def _extract_card_last4(text: str) -> str | None:
+        m = re.search(r"Tarjeta\s+(\d{4})\s+Total\s+Consumos", text, re.IGNORECASE)
+        return m.group(1) if m else None
+
+    @staticmethod
+    def _extract_period_date(pattern: re.Pattern[str], text: str) -> date | None:
+        """Parse a ``DD MonAbb YY`` header date (e.g. ``28 May 26``) into a date."""
+        m = pattern.search(text)
+        if m is None:
+            return None
+        day_s, month_s, year_s = m.groups()
+        month = _MONTHS_ES.get(month_s.lower())
+        if month is None:
+            return None
+        try:
+            return date(2000 + int(year_s), month, int(day_s))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _extract_total(text: str) -> Decimal | None:
+        m = re.search(
+            r"Tarjeta\s+\d{4}\s+Total\s+Consumos[^\n]*?(\d{1,3}(?:\.\d{3})*,\d{2})",
+            text,
+            re.IGNORECASE,
+        )
+        return _parse_ar_decimal(m.group(1)) if m else None
+
+    def _parse_purchases(  # noqa: C901
+        self,
+        lines: list[str],
+        period_year: int,
+        pay_date: date | None,
+    ) -> list[StatementLineDraft]:
+        """Parse purchase rows from the ``___``-delimited transaction section."""
+        in_tx = False
+        current_month: int | None = None
+        drafts: list[StatementLineDraft] = []
+
+        for line in lines:
+            stripped = line.strip()
+            if not in_tx:
+                if self._SEP_RE.search(stripped):
+                    in_tx = True
+                continue
+            if self._TOTAL_MARKER.search(stripped):
+                break
+            m = self._TX_LINE.match(line)
+            if m is None:
+                continue
+            day_s, month_s, raw_desc, cuota, pesos_s, usd_s = m.groups()
+
+            if day_s and month_s:
+                mn = _MONTHS_ES_FULL.get(month_s.lower())
+                if mn:
+                    current_month = mn
+                try:
+                    purchase_date: date | None = date(period_year, current_month or 1, int(day_s))
+                except (ValueError, TypeError):
+                    purchase_date = pay_date
+            else:
+                purchase_date = pay_date
+
+            occurred_on = pay_date if pay_date is not None else purchase_date
+            if occurred_on is None or purchase_date is None:
+                continue
+
+            pesos = _parse_ar_decimal(pesos_s)
+            if pesos is None:  # pragma: no cover - _TX_LINE pre-filter guarantees a parseable amount
+                continue
+
+            name = self._clean_description(raw_desc or "")
+            if not name or any(skip in name.upper() for skip in self._SKIP_MARKERS):
+                continue
+
+            if usd_s:
+                usd = _parse_ar_decimal(usd_s)
+                draft = StatementLineDraft(
+                    occurred_on=occurred_on,
+                    purchase_date=purchase_date,
+                    name=name,
+                    amount=abs(pesos),
+                    currency=Currency.USD,
+                    line_kind=LineKind.PURCHASE,
+                    usd_amount=abs(usd) if usd is not None else None,
+                    fx_rate=None,
+                    fx_rate_type=None,
+                    category=guess_category(name),
+                    cuota=cuota,
+                )
+            else:
+                draft = StatementLineDraft(
+                    occurred_on=occurred_on,
+                    purchase_date=purchase_date,
+                    name=name,
+                    amount=abs(pesos),
+                    currency=Currency.ARS,
+                    line_kind=LineKind.PURCHASE,
+                    category=guess_category(name),
+                    cuota=cuota,
+                )
+            drafts.append(draft)
+        return drafts
+
+    def _parse_fees(
+        self,
+        lines: list[str],
+        pay_date: date | None,
+    ) -> list[StatementLineDraft]:
+        """Parse fee rows (e.g. IMPUESTO DE SELLOS) from the post-total section."""
+        in_fee = False
+        drafts: list[StatementLineDraft] = []
+
+        for line in lines:
+            stripped = line.strip()
+            if self._TOTAL_MARKER.search(stripped):
+                in_fee = True
+                continue
+            if not in_fee or pay_date is None:
+                continue
+            m = self._FEE_LINE.match(line)
+            if m is None:
+                continue
+            name = " ".join(m.group(1).split())
+            amount = _parse_ar_decimal(m.group(2))
+            if not name or amount is None or amount <= Decimal("0"):
+                continue
+            drafts.append(
+                StatementLineDraft(
+                    occurred_on=pay_date,
+                    purchase_date=pay_date,
+                    name=name,
+                    amount=abs(amount),
+                    currency=Currency.ARS,
+                    line_kind=LineKind.FEE,
+                    category=None,
+                    cuota=None,
+                )
+            )
+        return drafts
+
+    @staticmethod
+    def _clean_description(raw: str) -> str:
+        """Strip leading reference codes and trailing reference numbers from a description."""
+        # "648640*DF FESTIVAL" → "DF FESTIVAL"
+        cleaned = re.sub(r"^\d+\*", "", raw.strip())
+        # Trailing long digit runs (reference/invoice numbers ≥7 digits)
+        cleaned = re.sub(r"\s+\d{7,}\s*$", "", cleaned.strip())
+        return " ".join(cleaned.split())
+
+
+class SantanderAmexParser(_SantanderBaseParser):
+    """Santander AMEX statement parser — fingerprints on AMEX branding (ADR-076)."""
+
+    @property
+    def _network(self) -> str:
+        return "AMEX"
+
+    @property
+    def _payment_prefix(self) -> str:
+        return "Santander AMEX"
+
+    def fingerprint(self, text: str) -> bool:
+        """Detect a Santander AMEX statement by CUIT and AMEX header (ADR-076).
+
+        The AMEX header prints ``AMERICAN  EXPRESS`` with two spaces; VISA legal text
+        uses a single space — double-space is the reliable discriminator.
+        """
+        return "30 50000845 4" in text and "american  express" in text.lower()
+
+
+class SantanderVisaParser(_SantanderBaseParser):
+    """Santander VISA statement parser — fingerprints on VISA branding (ADR-076).
+
+    Checked after :class:`SantanderAmexParser` in the registry so AMEX statements
+    (which also mention VISA in their legal text) are never misclassified.
+    """
+
+    @property
+    def _network(self) -> str:
+        return "VISA"
+
+    @property
+    def _payment_prefix(self) -> str:
+        return "Santander VISA"
+
+    def fingerprint(self, text: str) -> bool:
+        """Detect a Santander VISA statement by CUIT and VISA branding (ADR-076).
+
+        Excludes AMEX statements (which also reference VISA in their legal text) by
+        checking for the absence of the double-space ``AMERICAN  EXPRESS`` header.
+        """
+        lowered = text.lower()
+        return "30 50000845 4" in text and "visa" in lowered and "american  express" not in lowered
+
+
 # Module-level registry of bank parsers. New banks are additive (ADR-076).
-BANK_PARSERS: list[StatementParser] = [GaliciaVisaParser()]
+BANK_PARSERS: list[StatementParser] = [
+    GaliciaVisaParser(),
+    SantanderAmexParser(),  # checked before VISA — AMEX statements also mention "visa"
+    SantanderVisaParser(),
+]
 
 
 def parse_statement(pdf_bytes: bytes) -> ParsedStatement:
