@@ -29,6 +29,8 @@ from margen_api.service_layer import statement_parser
 from margen_api.service_layer.statement_parser import (
     BANK_PARSERS,
     GaliciaVisaParser,
+    SantanderAmexParser,
+    SantanderVisaParser,
     _parse_ar_decimal,
     _parse_d_mon_y,
     _parse_dmy,
@@ -1010,6 +1012,493 @@ def _fake_fitz_open(pages: list[_FakePage]):
         yield pages
 
     return _open
+
+
+# --------------------------------------------------------------------------- #
+# SANITIZED Santander fixtures (ADR-081). The Santander layout is a fixed-width #
+# columnar text stream (not Galicia's one-cell-per-line), so each transaction   #
+# is a single flat line. The ``___`` separator opens the purchase section and   #
+# ``Tarjeta NNNN Total Consumos`` closes it; fee rows follow that marker.        #
+# --------------------------------------------------------------------------- #
+
+_SANTANDER_AMEX_TEXT = """\
+N319
+30 50000845 4
+AMERICAN  EXPRESS
+CIERRE 28 May 26
+VENCIMIENTO 10 Jun 26
+____________________________
+15 Mayo 1 1234 * 648640*MERCADO LIBRE C.01/12 1.000,00
+10 Mayo 2 5678 * APPLE STORE 2.000,00 100,00
+Tarjeta 5678 Total Consumos 3.000,00
+10 Jun 26 IMPUESTO SELLOS $ 500,00
+"""
+
+_SANTANDER_VISA_TEXT = """\
+N456
+30 50000845 4
+VISA
+CIERRE 15 May 26
+VENCIMIENTO 01 Jun 26
+____________________________
+15 Mayo 1 1234 * SUSHI CLUB 1.500,00
+Tarjeta 5678 Total Consumos 1.500,00
+"""
+
+
+def _santander_amex_detail(cells: list[str]) -> str:
+    """Build a minimal fingerprinting Santander AMEX text wrapping the given lines.
+
+    The fingerprint markers (issuer CUIT + double-space AMEX header) and the
+    ``___`` purchase-section opener precede the supplied transaction lines, with a
+    CIERRE/VENCIMIENTO header so a period year and pay date are available. A
+    ``Tarjeta NNNN Total Consumos`` terminator closes the section after the lines.
+    """
+    return "\n".join(
+        [
+            "N319",
+            "30 50000845 4",
+            "AMERICAN  EXPRESS",
+            "CIERRE 28 May 26",
+            "VENCIMIENTO 10 Jun 26",
+            "____________________________",
+            *cells,
+            "Tarjeta 5678 Total Consumos 3.000,00",
+        ]
+    )
+
+
+class TestSantanderAmexParserFullFixture:
+    """The Santander AMEX parser reads the full sanitized statement end to end."""
+
+    @pytest.fixture(name="parsed")
+    def fixture_parsed(self) -> ParsedStatement:
+        """Parse the canonical sanitized Santander AMEX text once for the class."""
+        return SantanderAmexParser().parse(_SANTANDER_AMEX_TEXT)
+
+    def test_extracts_statement_metadata(self, parsed: ParsedStatement):
+        """
+        GIVEN the canonical sanitized Santander AMEX statement text
+        WHEN it is parsed
+        THEN every statement-level field is extracted with its expected value
+        """
+        # THEN
+        assert parsed.status is ParseStatus.OK
+        assert parsed.bank_name == "Santander"
+        assert parsed.network == "AMEX"
+        assert parsed.card_last4 == "5678"
+        assert parsed.payment_method == "Santander AMEX ·5678"  # middot label.
+        assert parsed.statement_number == "N319"
+        assert parsed.issuer_cuit == "30-50000845-4"
+        assert parsed.period_close == date(2026, 5, 28)
+        assert parsed.period_due == date(2026, 6, 10)
+        assert parsed.total_amount == Decimal("3000.00")
+
+    def test_derives_the_natural_key(self, parsed: ParsedStatement):
+        """
+        GIVEN the parsed statement
+        WHEN its natural key is read
+        THEN it carries the issuer CUIT, card last-4 and statement number
+        """
+        # THEN
+        assert parsed.natural_key is not None
+        assert parsed.natural_key.issuer_cuit == "30-50000845-4"
+        assert parsed.natural_key.card_last4 == "5678"
+        assert parsed.natural_key.statement_number == "N319"
+
+    def test_extracts_the_two_purchase_lines(self, parsed: ParsedStatement):
+        """
+        GIVEN the parsed statement
+        WHEN the purchase lines are read
+        THEN exactly the two transaction rows are present (the fee row is a FEE,
+             not a PURCHASE)
+        """
+        # THEN
+        purchases = [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE]
+        assert len(purchases) == 2
+        assert {line.name for line in purchases} == {"MERCADO LIBRE", "APPLE STORE"}
+
+    def test_maps_the_first_purchase_with_cuota_and_cleaned_name(self, parsed: ParsedStatement):
+        """
+        GIVEN the parsed statement
+        WHEN the MERCADO LIBRE purchase is read
+        THEN its leading reference code is stripped, the cuota is captured, the pay
+             date (occurred_on) is the due date and the purchase_date is its own date
+        """
+        # THEN — "648640*MERCADO LIBRE" cleaned to "MERCADO LIBRE"; cuota "01/12".
+        line = _by_name(parsed, "MERCADO LIBRE")
+        assert line is not None
+        assert line.occurred_on == date(2026, 6, 10)  # the statement due date (ADR-089).
+        assert line.purchase_date == date(2026, 5, 15)  # the line's own date.
+        assert line.amount == Decimal("1000.00")
+        assert line.currency is Currency.ARS
+        assert line.cuota == "01/12"
+        assert line.line_kind is LineKind.PURCHASE
+
+    def test_maps_the_usd_purchase_line(self, parsed: ParsedStatement):
+        """
+        GIVEN a purchase row carrying both an ARS and a USD amount
+        WHEN it is parsed
+        THEN currency is USD, amount is the ARS column and usd_amount the USD column
+        """
+        # THEN
+        line = _by_name(parsed, "APPLE STORE")
+        assert line is not None
+        assert line.currency is Currency.USD
+        assert line.amount == Decimal("2000.00")
+        assert line.usd_amount == Decimal("100.00")
+        assert line.fx_rate is None
+        assert line.fx_rate_type is None
+
+    def test_maps_the_fee_line(self, parsed: ParsedStatement):
+        """
+        GIVEN the post-total IMPUESTO SELLOS fee row
+        WHEN the statement is parsed
+        THEN one FEE line is emitted with its name, amount and pay date
+        """
+        # THEN
+        fees = [line for line in parsed.lines if line.line_kind is LineKind.FEE]
+        assert len(fees) == 1
+        assert fees[0].name == "IMPUESTO SELLOS"
+        assert fees[0].amount == Decimal("500.00")
+        assert fees[0].occurred_on == date(2026, 6, 10)
+        assert fees[0].purchase_date == date(2026, 6, 10)
+        assert fees[0].currency is Currency.ARS
+        assert fees[0].category is None
+
+
+class TestSantanderVisaParser:
+    """The Santander VISA parser shares the base layout but reports VISA branding."""
+
+    @pytest.fixture(name="parsed")
+    def fixture_parsed(self) -> ParsedStatement:
+        """Parse the minimal sanitized Santander VISA text once for the class."""
+        return SantanderVisaParser().parse(_SANTANDER_VISA_TEXT)
+
+    def test_reports_visa_network_and_payment_method(self, parsed: ParsedStatement):
+        """
+        GIVEN a Santander VISA statement
+        WHEN it is parsed
+        THEN the network is VISA and the payment method uses the VISA prefix
+        """
+        # THEN
+        assert parsed.status is ParseStatus.OK
+        assert parsed.bank_name == "Santander"
+        assert parsed.network == "VISA"
+        assert parsed.payment_method == "Santander VISA ·5678"
+        assert parsed.statement_number == "N456"
+        assert parsed.period_close == date(2026, 5, 15)
+        assert parsed.period_due == date(2026, 6, 1)
+
+    def test_parses_its_single_purchase(self, parsed: ParsedStatement):
+        """
+        GIVEN the VISA statement's one transaction row
+        WHEN it is parsed
+        THEN the purchase is mapped with its category guessed
+        """
+        # THEN
+        line = _by_name(parsed, "SUSHI CLUB")
+        assert line is not None
+        assert line.amount == Decimal("1500.00")
+        assert line.category == "Food"
+        assert line.line_kind is LineKind.PURCHASE
+
+    def test_visa_fingerprint_rejects_amex_text(self):
+        """
+        GIVEN the AMEX fixture (which mentions VISA only in legal text)
+        WHEN the VISA fingerprint runs
+        THEN it does NOT match (the double-space AMEX header excludes it)
+        """
+        # THEN
+        assert SantanderVisaParser().fingerprint(_SANTANDER_AMEX_TEXT) is False
+
+
+class TestSantanderExtractPeriodDate:
+    """_extract_period_date parses a DD MonAbb YY header date defensively."""
+
+    def test_no_match_returns_none(self):
+        """GIVEN text with no CIERRE token WHEN parsed THEN None comes back."""
+        assert SantanderAmexParser._extract_period_date(SantanderAmexParser._CIERRE_RE, "no header here") is None
+
+    def test_unknown_month_returns_none(self):
+        """
+        GIVEN a CIERRE date with an unknown month abbreviation
+        WHEN parsed
+        THEN None comes back (the month map lookup fails)
+        """
+        assert SantanderAmexParser._extract_period_date(SantanderAmexParser._CIERRE_RE, "CIERRE 28 Zzz 26") is None
+
+    def test_impossible_calendar_date_returns_none(self):
+        """
+        GIVEN a CIERRE date naming an impossible day
+        WHEN parsed
+        THEN the ValueError is swallowed into None
+        """
+        assert SantanderAmexParser._extract_period_date(SantanderAmexParser._CIERRE_RE, "CIERRE 32 May 26") is None
+
+
+class TestSantanderPurchaseEdgeCases:
+    """Defensive branches in the Santander purchase row parser."""
+
+    def test_dateless_line_with_no_pay_date_is_skipped(self):
+        """
+        GIVEN a transaction line with no DD MonthName prefix and a statement with
+              no VENCIMIENTO (so pay_date is None)
+        WHEN it is parsed
+        THEN the line is skipped (occurred_on and purchase_date are both None)
+        """
+        # GIVEN — no VENCIMIENTO header so pay_date is None, and the line omits its
+        # own date prefix, so the row has no date at all.
+        text = "\n".join(
+            [
+                "N319",
+                "30 50000845 4",
+                "AMERICAN  EXPRESS",
+                "____________________________",
+                "1 1234 * SOME SHOP 1.000,00",
+                "Tarjeta 5678 Total Consumos 1.000,00",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderAmexParser().parse(text)
+
+        # THEN — the guard drops the dateless, pay-date-less line.
+        assert parsed.period_due is None
+        assert [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE] == []
+
+    def test_impossible_date_prefix_falls_back_to_pay_date(self):
+        """
+        GIVEN a transaction whose date prefix names an impossible day
+        WHEN it is parsed
+        THEN the purchase_date falls back to the statement pay date
+        """
+        # GIVEN — "32 Mayo" is no calendar date; pay date is the VENCIMIENTO.
+        text = _santander_amex_detail(["32 Mayo 1 1234 * SOME SHOP 1.000,00"])
+
+        # WHEN
+        parsed = SantanderAmexParser().parse(text)
+
+        # THEN — the construction ValueError makes purchase_date fall back to pay date.
+        line = _by_name(parsed, "SOME SHOP")
+        assert line is not None
+        assert line.purchase_date == date(2026, 6, 10)
+        assert line.occurred_on == date(2026, 6, 10)
+
+    def test_unknown_month_uses_current_month_fallback(self):
+        """
+        GIVEN a transaction whose date prefix names an unknown month
+        WHEN it is parsed
+        THEN current_month is unchanged (defaults to 1) and the date still builds
+        """
+        # GIVEN — "15 Zzz" has an unknown month, so current_month stays None → 1.
+        text = _santander_amex_detail(["15 Zzz 1 1234 * SOME SHOP 1.000,00"])
+
+        # WHEN
+        parsed = SantanderAmexParser().parse(text)
+
+        # THEN — month falls back to January of the period year.
+        line = _by_name(parsed, "SOME SHOP")
+        assert line is not None
+        assert line.purchase_date == date(2026, 1, 15)
+
+    def test_non_matching_line_in_section_is_ignored(self):
+        """
+        GIVEN a junk line inside the purchase section that matches no TX shape
+        WHEN it is parsed
+        THEN it is skipped and the following real purchase still parses
+        """
+        # GIVEN — a free-text line that does not match _TX_LINE precedes the real row.
+        text = _santander_amex_detail(
+            [
+                "this line is not a transaction at all",
+                "15 Mayo 1 1234 * SOME SHOP 1.000,00",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderAmexParser().parse(text)
+
+        # THEN — the junk line is ignored; the real purchase survives.
+        purchases = [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE]
+        assert len(purchases) == 1
+        assert purchases[0].name == "SOME SHOP"
+
+    def test_section_without_total_marker_runs_to_end_of_lines(self):
+        """
+        GIVEN a purchase section that is never closed by a Total Consumos marker
+        WHEN it is parsed
+        THEN the loop exhausts the lines and still emits the purchases it found
+        """
+        # GIVEN — no "Tarjeta NNNN Total Consumos" terminator after the row.
+        text = "\n".join(
+            [
+                "N319",
+                "30 50000845 4",
+                "AMERICAN  EXPRESS",
+                "CIERRE 28 May 26",
+                "VENCIMIENTO 10 Jun 26",
+                "____________________________",
+                "15 Mayo 1 1234 * SOME SHOP 1.000,00",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderAmexParser().parse(text)
+
+        # THEN — the row parsed even though the section never hit a terminator.
+        purchases = [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE]
+        assert len(purchases) == 1
+        assert purchases[0].name == "SOME SHOP"
+
+    def test_skip_marker_line_is_dropped(self):
+        """
+        GIVEN a transaction row whose description carries a skip marker
+        WHEN it is parsed
+        THEN it never becomes a purchase line (payments must not be recorded)
+        """
+        # GIVEN — a SU PAGO row inside the purchase section.
+        text = _santander_amex_detail(["15 Mayo 1 1234 * SU PAGO EN PESOS 1.000,00"])
+
+        # WHEN
+        parsed = SantanderAmexParser().parse(text)
+
+        # THEN
+        assert [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE] == []
+
+    def test_clean_description_strips_leading_code_and_trailing_reference(self):
+        """
+        GIVEN a description with a leading "digits*" code AND a trailing 7+-digit run
+        WHEN _clean_description runs
+        THEN both reference artefacts are stripped, leaving the merchant text
+        """
+        # GIVEN / WHEN / THEN
+        cleaned = SantanderAmexParser._clean_description("648640*MERCADO LIBRE 12345678")
+        assert cleaned == "MERCADO LIBRE"
+
+
+class TestSantanderFeeEdgeCases:
+    """Defensive branches in the Santander fee row parser."""
+
+    def test_no_vencimiento_skips_the_whole_fee_section(self):
+        """
+        GIVEN a statement with no VENCIMIENTO (pay_date is None) carrying a fee row
+        WHEN it is parsed
+        THEN the fee section is skipped entirely (fees need a pay date)
+        """
+        # GIVEN — no VENCIMIENTO header, plus a well-formed fee line after the total.
+        text = "\n".join(
+            [
+                "N319",
+                "30 50000845 4",
+                "AMERICAN  EXPRESS",
+                "CIERRE 28 May 26",
+                "____________________________",
+                "15 Mayo 1 1234 * SOME SHOP 1.000,00",
+                "Tarjeta 5678 Total Consumos 1.000,00",
+                "10 Jun 26 IMPUESTO SELLOS $ 500,00",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderAmexParser().parse(text)
+
+        # THEN — pay date is None, so no fee line is emitted.
+        assert parsed.period_due is None
+        assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
+
+    def test_non_matching_line_after_total_is_ignored(self):
+        """
+        GIVEN a line after the total marker that matches no fee shape
+        WHEN it is parsed
+        THEN it is skipped and the following real fee row still parses
+        """
+        # GIVEN — a free-text line (no $ separator) precedes a real fee row.
+        text = "\n".join(
+            [
+                "N319",
+                "30 50000845 4",
+                "AMERICAN  EXPRESS",
+                "CIERRE 28 May 26",
+                "VENCIMIENTO 10 Jun 26",
+                "____________________________",
+                "15 Mayo 1 1234 * SOME SHOP 1.000,00",
+                "Tarjeta 5678 Total Consumos 1.000,00",
+                "some trailing legal disclosure text",
+                "10 Jun 26 IMPUESTO SELLOS $ 500,00",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderAmexParser().parse(text)
+
+        # THEN — the disclosure line is ignored; the real fee survives.
+        fees = [line for line in parsed.lines if line.line_kind is LineKind.FEE]
+        assert len(fees) == 1
+        assert fees[0].name == "IMPUESTO SELLOS"
+
+    def test_zero_amount_fee_is_skipped(self):
+        """
+        GIVEN a fee row whose amount is zero
+        WHEN it is parsed
+        THEN no FEE line is emitted (non-positive fees are dropped)
+        """
+        # GIVEN — a fee line with a 0,00 amount after the total marker.
+        text = "\n".join(
+            [
+                "N319",
+                "30 50000845 4",
+                "AMERICAN  EXPRESS",
+                "CIERRE 28 May 26",
+                "VENCIMIENTO 10 Jun 26",
+                "____________________________",
+                "15 Mayo 1 1234 * SOME SHOP 1.000,00",
+                "Tarjeta 5678 Total Consumos 1.000,00",
+                "10 Jun 26 IMPUESTO SELLOS $ 0,00",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderAmexParser().parse(text)
+
+        # THEN
+        assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
+
+
+class TestSantanderFingerprints:
+    """The Santander fingerprints discriminate AMEX from VISA on the header spacing."""
+
+    def test_amex_requires_double_space_header(self):
+        """
+        GIVEN AMEX text using a single-space "AMERICAN EXPRESS" header
+        WHEN the AMEX fingerprint runs
+        THEN it does NOT match (the double space is the discriminator)
+        """
+        # THEN — double-space matches, single-space does not.
+        assert SantanderAmexParser().fingerprint(_SANTANDER_AMEX_TEXT) is True
+        single_space = _SANTANDER_AMEX_TEXT.replace("AMERICAN  EXPRESS", "AMERICAN EXPRESS")
+        assert SantanderAmexParser().fingerprint(single_space) is False
+
+    def test_visa_matches_only_without_amex_header(self):
+        """
+        GIVEN VISA text without the double-space AMEX header
+        WHEN the VISA fingerprint runs
+        THEN it matches, but text carrying the AMEX header is excluded
+        """
+        # THEN
+        assert SantanderVisaParser().fingerprint(_SANTANDER_VISA_TEXT) is True
+        with_amex = _SANTANDER_VISA_TEXT + "\nAMERICAN  EXPRESS"
+        assert SantanderVisaParser().fingerprint(with_amex) is False
+
+    def test_registry_contains_both_santander_parsers(self):
+        """
+        GIVEN the module-level BANK_PARSERS registry
+        WHEN it is inspected
+        THEN it carries both Santander parsers (AMEX before VISA)
+        """
+        # THEN
+        assert any(isinstance(parser, SantanderAmexParser) for parser in BANK_PARSERS)
+        assert any(isinstance(parser, SantanderVisaParser) for parser in BANK_PARSERS)
 
 
 def _minimal_detail(cells: list[str]) -> str:

@@ -820,7 +820,7 @@ class _SantanderBaseParser(StatementParser, ABC):
                 continue
 
             pesos = _parse_ar_decimal(pesos_s)
-            if pesos is None:
+            if pesos is None:  # pragma: no cover - _TX_LINE pre-filter guarantees a parseable amount
                 continue
 
             name = self._clean_description(raw_desc or "")
