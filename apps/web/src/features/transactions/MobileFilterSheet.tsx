@@ -1,12 +1,16 @@
 /**
  * Mobile filter bottom-sheet (ADR-017: the reusable bottom-anchored Drawer).
  *
- * Opened from the mobile "Filters" button, it presents currency / month /
- * category / bank / amount as chip groups (the same shared filter state as the
- * desktop bar), plus a "Clear all" link when anything is active and a primary
+ * Opened from the mobile "Filters" button, it presents currency / category /
+ * bank / amount as chip groups (the same shared filter state as the desktop
+ * bar), plus a "Clear all" link when anything is active and a primary
  * "Show N transactions" apply button that simply closes the sheet — filtering is
  * live, so the count updates as chips toggle. MUI Drawer traps and restores
  * focus, satisfying the keyboard/focus requirements of ADR-019.
+ *
+ * Month is NOT in this sheet: the Transactions page owns a dedicated month
+ * picker (MonthPicker) as the single source of truth for month (ADR-040), so a
+ * competing chip group here would diverge from it.
  */
 
 import Box from '@mui/material/Box'
@@ -16,12 +20,11 @@ import Drawer from '@mui/material/Drawer'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { BANKS, CATEGORIES } from '../../mock/seed'
-import type { Bank, Category, MonthName, Transaction } from '../../mock/types'
+import type { Bank, Category } from '../../mock/types'
 import {
   AMOUNT_RANGES,
   CURRENCY_OPTIONS,
   hasActiveFilters,
-  presentMonths,
   type AmountRange,
   type CurrencyFilter,
   type TransactionFilters,
@@ -84,8 +87,6 @@ interface MobileFilterSheetProps {
   onClose: () => void
   filters: TransactionFilters
   controls: FilterControls
-  /** The unfiltered list (drives the present-month chips). */
-  allTransactions: readonly Transaction[]
   /** Count of currently-matching rows, shown on the apply button. */
   resultCount: number
 }
@@ -96,10 +97,8 @@ export function MobileFilterSheet({
   onClose,
   filters,
   controls,
-  allTransactions,
   resultCount,
 }: MobileFilterSheetProps) {
-  const months = presentMonths(allTransactions)
   const showClear = hasActiveFilters(filters)
 
   return (
@@ -166,22 +165,6 @@ export function MobileFilterSheet({
             onClick={() =>
               controls.setCurrency(option.id as CurrencyFilter)
             }
-          />
-        ))}
-      </ChipSection>
-
-      <ChipSection title="Month">
-        <FilterChip
-          label="All"
-          selected={filters.month === 'all'}
-          onClick={() => controls.setMonth('all')}
-        />
-        {months.map((month: MonthName) => (
-          <FilterChip
-            key={month}
-            label={month}
-            selected={filters.month === month}
-            onClick={() => controls.setMonth(month)}
           />
         ))}
       </ChipSection>

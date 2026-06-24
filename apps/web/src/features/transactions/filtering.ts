@@ -20,6 +20,8 @@ import type {
   MonthName,
   Transaction,
 } from '../../mock/types'
+import { ALL_MONTHS, type MonthSelection } from '../../components/months'
+import { occurredInMonth } from '../home/homeMetrics'
 
 /** Type segment options (concept: All / Expenses / Income / Invoices). */
 export type TypeFilter = 'all' | 'expense' | 'income' | 'invoice'
@@ -27,8 +29,16 @@ export type TypeFilter = 'all' | 'expense' | 'income' | 'invoice'
 /** Currency segment options. */
 export type CurrencyFilter = 'all' | Currency
 
-/** Month filter — `all` or one of the months present in the data. */
-export type MonthFilter = 'all' | MonthName
+/**
+ * Month filter for the Transactions page (ADR-040: the ledger owns its own
+ * per-screen month, independent of the global Home navigator). Either a
+ * specific year+month {@link ViewingMonth} or the `'all'` ("All time")
+ * sentinel. Matching is year-aware against the transaction's `occurredOn` ISO
+ * date (the same approach Home uses via `occurredInMonth`), NOT the bare
+ * `t.month` name — so the same calendar month in different years is never
+ * conflated.
+ */
+export type MonthFilter = MonthSelection
 
 /** Amount-range bucket ids (ARS-equivalent magnitude). */
 export type AmountRange = 'any' | 'lt10' | '10_100' | '100_1m' | 'gt1m'
@@ -86,12 +96,18 @@ export interface TransactionFilters {
   amount: AmountRange
 }
 
-/** The neutral starting point — nothing filtered. */
+/**
+ * The neutral starting point — nothing filtered (month is "All time").
+ *
+ * NOTE: the page seeds its month to the CURRENT month on first load (the
+ * defaulting lives in {@link useTransactionFilters}); this neutral default is
+ * what "Clear filters" resets to, so clearing widens to all time.
+ */
 export const DEFAULT_FILTERS: TransactionFilters = {
   q: '',
   type: 'all',
   currency: 'all',
-  month: 'all',
+  month: ALL_MONTHS,
   categories: [],
   banks: [],
   amount: 'any',
@@ -103,7 +119,7 @@ export function hasActiveFilters(f: TransactionFilters): boolean {
     f.q.trim().length > 0 ||
     f.type !== 'all' ||
     f.currency !== 'all' ||
-    f.month !== 'all' ||
+    f.month !== ALL_MONTHS ||
     f.categories.length > 0 ||
     f.banks.length > 0 ||
     f.amount !== 'any'
@@ -118,7 +134,7 @@ export function hasActiveFilters(f: TransactionFilters): boolean {
 export function activeFilterCount(f: TransactionFilters): number {
   return (
     (f.currency !== 'all' ? 1 : 0) +
-    (f.month !== 'all' ? 1 : 0) +
+    (f.month !== ALL_MONTHS ? 1 : 0) +
     f.categories.length +
     f.banks.length +
     (f.amount !== 'any' ? 1 : 0)
@@ -158,7 +174,11 @@ function matchesFilters(t: Transaction, f: TransactionFilters): boolean {
   if (f.type === 'income' && t.kind !== 'income') return false
   if (f.type === 'invoice' && t.kind !== 'invoice') return false
   if (f.currency !== 'all' && t.currency !== f.currency) return false
-  if (f.month !== 'all' && t.month !== f.month) return false
+  // Year-aware month match against the ISO `occurredOn` (ADR-040), reusing the
+  // exact parse Home uses — never the bare `t.month` name. `'all'` = All time.
+  if (f.month !== ALL_MONTHS && !occurredInMonth(t.occurredOn, f.month)) {
+    return false
+  }
   if (f.categories.length && !f.categories.includes(t.category)) return false
   if (f.banks.length && !f.banks.includes(t.bank)) return false
   if (!amountInRange(f.amount, t.amountNum)) return false

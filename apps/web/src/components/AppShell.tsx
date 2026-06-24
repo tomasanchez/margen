@@ -387,6 +387,13 @@ function AppShellBody() {
 
   const { viewingMonth, setViewingMonth } = useViewingMonth()
 
+  // The global month switcher drives the Home dashboard only (ADR-040: the
+  // Transactions ledger owns its OWN per-screen month picker). Gate both
+  // switcher presentations to the Home route so they never appear elsewhere.
+  const isHome = useRouterState({
+    select: (s) => s.location.pathname === '/',
+  })
+
   const navigate = useNavigate()
   const [olderHintOpen, setOlderHintOpen] = useState(false)
 
@@ -435,15 +442,19 @@ function AppShellBody() {
             <BrandMark />
           </Box>
 
-          {/* Desktop (md+): centered inline month stepper. */}
-          <Box sx={{ display: { xs: 'none', md: 'flex' }, justifyContent: 'center' }}>
-            <MonthSwitcher
-              variant="stepper"
-              value={viewingMonth}
-              onChange={setViewingMonth}
-              onNavigateOlder={handleNavigateOlder}
-            />
-          </Box>
+          {/* Desktop (md+): centered inline month stepper — Home only (ADR-040). */}
+          {isHome ? (
+            <Box
+              sx={{ display: { xs: 'none', md: 'flex' }, justifyContent: 'center' }}
+            >
+              <MonthSwitcher
+                variant="stepper"
+                value={viewingMonth}
+                onChange={setViewingMonth}
+                onNavigateOlder={handleNavigateOlder}
+              />
+            </Box>
+          ) : null}
 
           {/* Right cluster. Desktop: just the avatar. Mobile (xs–sm): a floating
               circular calendar button (compact month picker) + the avatar, both
@@ -457,14 +468,17 @@ function AppShellBody() {
               gap: 1,
             }}
           >
-            <Box sx={{ display: { xs: 'flex', md: 'none' } }}>
-              <MonthSwitcher
-                variant="compact"
-                value={viewingMonth}
-                onChange={setViewingMonth}
-                onNavigateOlder={handleNavigateOlder}
-              />
-            </Box>
+            {/* Mobile compact month picker — Home only (ADR-040). */}
+            {isHome ? (
+              <Box sx={{ display: { xs: 'flex', md: 'none' } }}>
+                <MonthSwitcher
+                  variant="compact"
+                  value={viewingMonth}
+                  onChange={setViewingMonth}
+                  onNavigateOlder={handleNavigateOlder}
+                />
+              </Box>
+            ) : null}
             <AccountMenu />
           </Box>
         </Toolbar>

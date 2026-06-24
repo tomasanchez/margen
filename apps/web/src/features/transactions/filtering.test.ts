@@ -81,11 +81,19 @@ describe('filterTransactions', () => {
     )
     expect(usd.rows.every((t) => t.currency === 'USD')).toBe(true)
 
+    // Year-aware month filter (ADR-040): the fixtures are 2026, so May 2026
+    // matches; the same month in another year would not.
     const may = filterTransactions(
       SEED_TRANSACTIONS,
-      withFilters({ month: 'May' }),
+      withFilters({ month: { year: 2026, month: 4 } }),
     )
     expect(may.groups.map((g) => g.month)).toEqual(['May'])
+
+    const mayOtherYear = filterTransactions(
+      SEED_TRANSACTIONS,
+      withFilters({ month: { year: 2025, month: 4 } }),
+    )
+    expect(mayOtherYear.filteredCount).toBe(0)
 
     const food = filterTransactions(
       SEED_TRANSACTIONS,

@@ -40,6 +40,7 @@ import {
   DESKTOP_GRID_COLUMNS,
 } from './TransactionRow'
 import { FilterBar } from './FilterBar'
+import { MonthPicker } from './MonthPicker'
 import { MobileFilterSheet } from './MobileFilterSheet'
 import { useTransactionFilters } from './useTransactionFilters'
 import {
@@ -371,6 +372,16 @@ export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}
               },
             }}
           />
+          {/* Month picker on its own full-width row (the ledger's own
+              per-screen month, independent of the Home navigator — ADR-040). */}
+          <Box sx={{ mb: 1.5 }}>
+            <MonthPicker
+              value={filters.month}
+              onChange={controls.setMonth}
+              occurredOns={allTransactions.map((t) => t.occurredOn)}
+              fullWidth
+            />
+          </Box>
           <Stack direction="row" spacing={1} sx={{ alignItems: 'stretch' }}>
             <ToggleButtonGroup
               exclusive
@@ -480,7 +491,6 @@ export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}
         onClose={() => setSheetOpen(false)}
         filters={filters}
         controls={controls}
-        allTransactions={allTransactions}
         resultCount={result.filteredCount}
       />
         </>

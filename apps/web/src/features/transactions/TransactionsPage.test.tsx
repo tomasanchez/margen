@@ -57,6 +57,18 @@ async function waitForRows() {
   return screen.findAllByText('Coto supermarket')
 }
 
+/**
+ * Switch the page's month picker to "All time" so the full multi-month fixture
+ * is in view. The page defaults its month to the CURRENT month (ADR-040), so
+ * tests that assert across all months widen the scope first; this keeps them
+ * date-independent regardless of the run date.
+ */
+async function selectAllTime(user: ReturnType<typeof userEvent.setup>) {
+  const trigger = screen.getAllByRole('button', { name: /^Month:/ })[0]
+  await user.click(trigger)
+  await user.click(await screen.findByRole('menuitem', { name: /All time/ }))
+}
+
 /** Read the "<n> shown" count out of the header summary line. */
 function shownCount(): number {
   const node = screen.getByText('shown', { exact: false })
@@ -71,6 +83,7 @@ describe('TransactionsPage filtering', () => {
     renderWithProviders(<TransactionsPage />, { withAddProvider: true })
 
     await waitForRows()
+    await selectAllTime(user)
     expect(shownCount()).toBe(19)
 
     const search = screen.getAllByRole('searchbox')[0]
@@ -87,6 +100,7 @@ describe('TransactionsPage filtering', () => {
     renderWithProviders(<TransactionsPage />, { withAddProvider: true })
 
     await waitForRows()
+    await selectAllTime(user)
     expect(shownCount()).toBe(19)
 
     const invoiceToggle = screen.getAllByRole('button', { name: 'Invoices' })[0]
@@ -128,6 +142,7 @@ describe('TransactionsPage delete', () => {
     renderWithProviders(<TransactionsPage />, { withAddProvider: true })
 
     await waitForRows()
+    await selectAllTime(user)
     expect(shownCount()).toBe(19)
 
     const search = screen.getAllByRole('searchbox')[0]
