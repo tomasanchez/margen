@@ -42,6 +42,7 @@ import {
   type TransactionFilters,
   type TypeFilter,
 } from './filtering'
+import { MonthPicker } from './MonthPicker'
 import type { FilterControls } from './useTransactionFilters'
 
 /** Shared sx for the segmented ToggleButtonGroups (pill segments, gold active). */
@@ -323,6 +324,12 @@ export function FilterBar({
             </ToggleButton>
           ))}
         </ToggleButtonGroup>
+
+        <MonthPicker
+          value={filters.month}
+          onChange={controls.setMonth}
+          occurredOns={allTransactions.map((t) => t.occurredOn)}
+        />
 
         <MultiSelectMenu<Category>
           buttonLabel="Category"

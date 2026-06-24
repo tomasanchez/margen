@@ -2,8 +2,11 @@
 API Settings
 """
 
-from pydantic import BaseModel, EmailStr, HttpUrl
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import json
+from typing import Annotated
+
+from pydantic import BaseModel, EmailStr, HttpUrl, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from margen_api.version import __version__
 
@@ -51,6 +54,10 @@ class ApplicationSettings(BaseSettings):
         * FASTAPI_DOCS_URL
         * FASTAPI_BACKEND_CORS_ORIGINS
         * FASTAPI_MONOTRIBUTO_CAPTURE_TOKEN
+        * FASTAPI_SUPABASE_URL
+        * FASTAPI_SUPABASE_JWKS_URL
+        * FASTAPI_SUPABASE_JWT_ISSUER
+        * FASTAPI_SUPABASE_JWT_AUDIENCE
 
     Attributes:
         DEBUG (bool): FastAPI logging level. You should disable this for
@@ -67,6 +74,19 @@ class ApplicationSettings(BaseSettings):
             guards ``POST /api/v1/monotributo/capture`` (ADR-064). ``None`` (the
             default) disables the endpoint — it fails closed with ``503`` until
             a machine-to-machine secret is configured.
+        SUPABASE_URL (str | None): Base URL of the Supabase Cloud project (ADR-091),
+            e.g. ``https://<ref>.supabase.co``. ``None`` (the default) leaves
+            Supabase-backed auth unconfigured; a JWKS auth dependency (ADR-092)
+            consumes this in a later task.
+        SUPABASE_JWKS_URL (str | None): JWKS endpoint exposing Supabase's
+            asymmetric signing keys (ADR-092), e.g.
+            ``https://<ref>.supabase.co/auth/v1/.well-known/jwks.json``. Used to
+            verify user JWTs without a shared secret.
+        SUPABASE_JWT_ISSUER (str | None): Expected ``iss`` claim of Supabase
+            tokens, e.g. ``https://<ref>.supabase.co/auth/v1``.
+        SUPABASE_JWT_AUDIENCE (str): Expected ``aud`` claim of Supabase tokens.
+            Defaults to ``"authenticated"`` (Supabase's audience for signed-in
+            users).
 
     Resources:
         1. https://docs.pydantic.dev/latest/usage/pydantic_settings/
@@ -81,11 +101,44 @@ class ApplicationSettings(BaseSettings):
     )
     VERSION: str = __version__
     DOCS_URL: str = "/docs"
-    BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+    BACKEND_CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
     MONOTRIBUTO_CAPTURE_TOKEN: str | None = None
+    SUPABASE_URL: str | None = None
+    SUPABASE_JWKS_URL: str | None = None
+    SUPABASE_JWT_ISSUER: str | None = None
+    SUPABASE_JWT_AUDIENCE: str = "authenticated"
 
     # All your additional application configuration should go either here or in
     # separate file in this submodule.
+
+    @field_validator("BACKEND_CORS_ORIGINS", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, value: object) -> object:
+        """Accept either a JSON array or a comma-separated string for CORS origins.
+
+        ``pydantic-settings`` JSON-decodes list fields read from the environment,
+        but dotenv parsers (e.g. ``uv run --env-file .env``) strip the embedded
+        double quotes from ``["http://localhost:5173"]``, leaving an unparseable
+        ``[http://localhost:5173]``. Accepting a bare comma-separated string keeps
+        the env-driven CORS contract (ADR-006/ADR-007) robust under dotenv.
+
+        Args:
+            value: The raw field value — a list (default/programmatic case) or a
+                string sourced from the environment.
+
+        Returns:
+            The value unchanged when it is a list, the JSON-decoded list when the
+            string looks like a JSON array, or the comma-separated tokens split
+            into a trimmed, non-empty list otherwise.
+        """
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.startswith("["):
+                return json.loads(stripped)
+            return [origin.strip() for origin in stripped.split(",") if origin.strip()]
+        return value
 
     model_config = SettingsConfigDict(
         case_sensitive=True,

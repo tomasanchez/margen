@@ -11,7 +11,9 @@
  * All money goes through <Amount>/format; the row never inlines number styling.
  */
 
+import { useCallback } from 'react'
 import Box from '@mui/material/Box'
+import CircularProgress from '@mui/material/CircularProgress'
 import IconButton from '@mui/material/IconButton'
 import Stack from '@mui/material/Stack'
 import Tooltip from '@mui/material/Tooltip'
@@ -24,53 +26,109 @@ import { FxBadge } from '../../components/FxBadge'
 import { formatDispDate } from '../../lib/format'
 import { monoFontFamily } from '../../theme'
 import type { Transaction } from '../../mock/types'
-import { documentUrl } from '../../api/invoicesClient'
+import { fetchInvoiceDocument } from '../../api/invoicesClient'
+import { useDocumentOpener } from '../../api/useDocumentOpener'
 import { categoryDotColor } from './presentation'
 
 /**
- * Compact attachment badge/link for an imported invoice (ADR-072). Imported
- * ARCA invoices are persisted with `kind === 'invoice'`, so we surface a small
- * "PDF" chip that opens the stored document (GET /invoices/{id}/document) in a
- * new tab. It carries an icon + text label (not color alone, ADR-019) and stops
- * the click from triggering the row's edit affordance.
+ * Compact attachment control for an imported invoice (ADR-072). Imported ARCA
+ * invoices are persisted with `kind === 'invoice'`, so we surface a small "PDF"
+ * chip that opens the stored document in a new tab.
+ *
+ * Every API route now requires a Supabase bearer token (ADR-092), so this can no
+ * longer be a plain `<a href>` (a bare GET sends no token and 401s). It is an
+ * accessible button that fetches the bytes through {@link fetchInvoiceDocument}
+ * (authed), opens a short-lived object URL, then revokes it (the PDF is sensitive
+ * PII — ADR-073). It shows a calm inline spinner while fetching and a calm error
+ * tooltip on failure (ADR-037), carries an icon + text label (not color alone —
+ * ADR-019), and stops the click from triggering the row's edit affordance.
  */
 function InvoiceAttachmentBadge({ transaction }: { transaction: Transaction }) {
+  const fetchBlob = useCallback(
+    () => fetchInvoiceDocument(transaction.id),
+    [transaction.id],
+  )
+  const { open, loading, error } = useDocumentOpener(fetchBlob)
+
   if (transaction.kind !== 'invoice') return null
+
+  const label = `Open invoice PDF for ${transaction.name}`
+
   return (
-    <Tooltip title="Open invoice PDF">
-      <Box
-        component="a"
-        href={documentUrl(transaction.id)}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={(event) => event.stopPropagation()}
-        aria-label={`Open invoice PDF for ${transaction.name}`}
-        sx={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 0.25,
-          flex: 'none',
-          fontSize: 10,
-          lineHeight: 1.6,
-          px: 0.625,
-          borderRadius: '5px',
-          border: '1px solid var(--mg-border-2)',
-          color: 'text.secondary',
-          bgcolor: 'var(--mg-raised)',
-          textDecoration: 'none',
-          whiteSpace: 'nowrap',
-          '&:hover': { color: 'primary.main', borderColor: 'primary.main' },
-          '&:focus-visible': {
-            outline: '2px solid',
-            outlineColor: 'primary.main',
-            outlineOffset: 2,
-          },
-        }}
-      >
-        <AttachFileIcon sx={{ fontSize: 11 }} aria-hidden />
-        PDF
-      </Box>
-    </Tooltip>
+    <Box
+      sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}
+    >
+      <Tooltip title={error ?? 'Open invoice PDF'}>
+        <Box
+          component="button"
+          type="button"
+          disabled={loading}
+          aria-label={label}
+          aria-busy={loading || undefined}
+          onClick={(event) => {
+            event.stopPropagation()
+            open()
+          }}
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 0.375,
+            flex: 'none',
+            fontSize: 10,
+            lineHeight: 1.6,
+            px: 0.625,
+            py: 0,
+            borderRadius: '5px',
+            border: '1px solid',
+            borderColor: error ? 'error.main' : 'var(--mg-border-2)',
+            color: error ? 'error.main' : 'text.secondary',
+            bgcolor: 'var(--mg-raised)',
+            font: 'inherit',
+            cursor: loading ? 'default' : 'pointer',
+            whiteSpace: 'nowrap',
+            '&:hover': {
+              color: error ? 'error.main' : 'primary.main',
+              borderColor: error ? 'error.main' : 'primary.main',
+            },
+            '&:focus-visible': {
+              outline: '2px solid',
+              outlineColor: 'primary.main',
+              outlineOffset: 2,
+            },
+            '&:disabled': { cursor: 'default' },
+          }}
+        >
+          {loading ? (
+            <CircularProgress
+              size={9}
+              thickness={6}
+              color="inherit"
+              aria-hidden
+            />
+          ) : (
+            <AttachFileIcon sx={{ fontSize: 11 }} aria-hidden />
+          )}
+          PDF
+        </Box>
+      </Tooltip>
+      {/* Calm, polite error surfaced as text (not color alone — ADR-019/037).
+          aria-live announces it to screen readers; it is always in the DOM so
+          mouse, keyboard, and AT users all get the failure without hovering. */}
+      {error ? (
+        <Typography
+          role="alert"
+          component="span"
+          sx={{
+            fontSize: 10,
+            lineHeight: 1.6,
+            color: 'error.main',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {error}
+        </Typography>
+      ) : null}
+    </Box>
   )
 }
 

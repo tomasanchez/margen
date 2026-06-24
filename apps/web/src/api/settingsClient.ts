@@ -18,6 +18,7 @@
  */
 
 import { apiUrl } from '../config'
+import { authedFetch } from './http'
 
 /** The backend `{ data: T }` response envelope (ADR-030). */
 interface ResponseEnvelope<T> {
@@ -80,7 +81,7 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' } as const
  * {@link SettingsApiError} on a non-2xx response.
  */
 export async function fetchSettings(): Promise<Settings> {
-  const response = await fetch(apiUrl('/settings'), {
+  const response = await authedFetch(apiUrl('/settings'), {
     headers: { Accept: 'application/json' },
   })
   await ensureOk(response)
@@ -95,7 +96,7 @@ export async function fetchSettings(): Promise<Settings> {
  * calm inline message (ADR-057).
  */
 export async function updateSettings(patch: SettingsPatch): Promise<Settings> {
-  const response = await fetch(apiUrl('/settings'), {
+  const response = await authedFetch(apiUrl('/settings'), {
     method: 'PATCH',
     headers: JSON_HEADERS,
     body: JSON.stringify(patch),

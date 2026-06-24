@@ -10,6 +10,7 @@
 
 import { useMemo, useReducer } from 'react'
 import type { Bank, Category } from '../../mock/types'
+import { ALL_MONTHS, currentViewingMonth } from '../../components/months'
 import {
   DEFAULT_FILTERS,
   type AmountRange,
@@ -98,10 +99,22 @@ export function useTransactionFilters(
   const [filters, dispatch] = useReducer(
     filtersReducer,
     undefined,
-    (): TransactionFilters =>
-      initialCategories && initialCategories.length > 0
-        ? { ...DEFAULT_FILTERS, categories: [...initialCategories] }
-        : DEFAULT_FILTERS,
+    (): TransactionFilters => {
+      // A category drilldown (ADR-062) should reveal the FULL history for that
+      // category, so it opens at "All time" rather than the current month.
+      if (initialCategories && initialCategories.length > 0) {
+        return {
+          ...DEFAULT_FILTERS,
+          month: ALL_MONTHS,
+          categories: [...initialCategories],
+        }
+      }
+      // Otherwise default the per-screen month to the CURRENT month on first
+      // load (the ledger owns its own month, independent of the Home navigator
+      // — ADR-040). "All time" and other months are reachable via the picker;
+      // "Clear filters" widens back to all time (DEFAULT_FILTERS).
+      return { ...DEFAULT_FILTERS, month: currentViewingMonth() }
+    },
   )
 
   const controls = useMemo<FilterControls>(

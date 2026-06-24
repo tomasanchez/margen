@@ -1,0 +1,71 @@
+# Render Blueprint for the Margen API (FastAPI backend, apps/api).
+#
+# Free Docker-based deployment. The frontend is hosted separately on Cloudflare
+# Pages and Supabase Cloud provides DB + Auth (ADR-091). This Blueprint defines
+# only the API web service. See DEPLOY.md for the full dashboard walkthrough and
+# the cross-wiring order between Render, Cloudflare Pages, and Supabase.
+#
+# Apply via the Render dashboard: New + > Blueprint > pick this repo. Render reads
+# this file, builds the Docker image, and prompts for every `sync: false` secret.
+
+services:
+  - type: web
+    name: margen-api
+    runtime: docker
+    plan: free
+    # Pick a region close to the Supabase project to keep DB latency low.
+    region: oregon
+
+    # Deploys are driven exclusively by the GitHub Actions deploy job, which curls
+    # this service's Deploy Hook AFTER lint + coverage + integration pass on a push
+    # to main (.github/workflows/api.yml). Disable Render's NATIVE push-deploy so the
+    # two triggers don't double-fire and so untested commits never auto-deploy. The
+    # only deploy path is the post-CI hook. See DEPLOY.md "Deployment & CI/CD".
+    autoDeploy: false
+
+    # Build the API image from its subdirectory. rootDir scopes the build context
+    # and dockerContext/dockerfilePath are resolved relative to rootDir.
+    rootDir: apps/api
+    dockerfilePath: Dockerfile
+    dockerContext: .
+
+    # Readiness probe runs SELECT 1 against Postgres (ADR-006). Render treats a
+    # non-200 as unhealthy and will not route traffic until it passes.
+    healthCheckPath: /readiness
+
+    # The app binds the port Render injects as $PORT (UvicornSettings reads the
+    # unprefixed PORT, falling back to 8000). No per-host code change needed.
+    envVars:
+      # --- Secrets: set in the Render dashboard, never committed (ADR-007/093) ---
+
+      # Supabase Cloud managed Postgres, SESSION pooler (port 5432) + asyncpg
+      # (ADR-091). Format:
+      # postgresql+asyncpg://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+      - key: DATABASE_URL
+        sync: false
+
+      # Supabase project base URL, e.g. https://<ref>.supabase.co (ADR-092).
+      - key: FASTAPI_SUPABASE_URL
+        sync: false
+
+      # JWKS endpoint exposing the project's asymmetric signing keys (ADR-092).
+      # e.g. https://<ref>.supabase.co/auth/v1/.well-known/jwks.json
+      - key: FASTAPI_SUPABASE_JWKS_URL
+        sync: false
+
+      # Expected token issuer (iss claim), e.g. https://<ref>.supabase.co/auth/v1
+      - key: FASTAPI_SUPABASE_JWT_ISSUER
+        sync: false
+
+      # Machine-to-machine bearer token for the scheduled Monotributo capture
+      # (ADR-064). Must match the cron's MONOTRIBUTO_CAPTURE_TOKEN. Empty = the
+      # capture endpoint is disabled (503).
+      - key: FASTAPI_MONOTRIBUTO_CAPTURE_TOKEN
+        sync: false
+
+      # Comma-separated allowed CORS origins (ADR-006). Set this to the Cloudflare
+      # Pages origin AFTER the frontend is deployed (e.g. https://margen.pages.dev).
+      # No quotes/brackets, no wildcard. Marked sync:false because the value is
+      # only known after the Pages deploy — see the cross-wiring order in DEPLOY.md.
+      - key: FASTAPI_BACKEND_CORS_ORIGINS
+        sync: false

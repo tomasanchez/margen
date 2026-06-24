@@ -15,6 +15,7 @@
  */
 
 import { apiUrl } from '../config'
+import { authedFetch } from './http'
 import type { Category, CategorySpend, TrendPoint } from '../mock/types'
 
 /** The backend `{ data: T }` response envelope (ADR-030). */
@@ -170,7 +171,7 @@ export function adaptSummary(dto: SummaryDto): Summary {
  * a non-2xx response.
  */
 export async function fetchSummary(month: string): Promise<Summary> {
-  const response = await fetch(
+  const response = await authedFetch(
     apiUrl(`/summaries?month=${encodeURIComponent(month)}`),
     { headers: { Accept: 'application/json' } },
   )

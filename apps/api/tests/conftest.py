@@ -2,16 +2,38 @@
 Pytest Fixtures.
 """
 
-from collections.abc import AsyncIterator
+import sys
+from collections.abc import AsyncIterator, Callable, Iterator
+from typing import Any
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.functions import Function
 
+from margen_api import asgi
 from margen_api.asgi import get_application
 from margen_api.bootstrap import ApplicationContainer, bootstrap
+from margen_api.entrypoint.dependencies import AuthUserModel, require_auth_user
 from margen_api.settings.database_settings import DatabaseSettings
+
+# A canned authenticated user the e2e tier authenticates as. The coverage gate
+# is hermetic (ADR-032): no live Supabase, no minted JWTs. Per ADR-098, e2e tests
+# swap the Supabase JWT guard for this stub via ``app.dependency_overrides`` so
+# every gated route resolves an identity without a real token. ADR-095 gates
+# only this iteration (a valid user is required), so the stub id is never used to
+# filter rows yet.
+STUB_AUTH_USER = AuthUserModel(id="stub-user-id", email="stub@example.com", claims={"sub": "stub-user-id"})
+
+
+def _override_auth(app: FastAPI) -> None:
+    """Install the stub-user auth override on ``app`` (ADR-098).
+
+    Swaps ``require_auth_user`` for a callable returning :data:`STUB_AUTH_USER`
+    so the JWKS-verify guard never runs in the hermetic e2e tier.
+    """
+    app.dependency_overrides[require_auth_user] = lambda: STUB_AUTH_USER
 
 
 @compiles(Function, "sqlite")
@@ -34,6 +56,52 @@ def _compile_generic_function_on_sqlite(element, compiler, **kwargs):  # type: i
             "substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))"
         )
     return compiler.visit_function(element, **kwargs)
+
+
+@pytest.fixture(autouse=True)
+def fixture_stub_auth(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Authenticate every e2e app as the stub user by default (ADR-098).
+
+    Every e2e module builds its own FastAPI app via ``get_application(...)`` and
+    overrides its own ports on that instance. To install the auth override on the
+    SAME app instance each test drives — without editing every module — this
+    autouse fixture wraps ``get_application`` so each app it returns has the
+    stub-user override pre-installed, and republishes the wrapper into every test
+    module namespace that imported the name directly (``from margen_api.asgi
+    import get_application``).
+
+    A test that needs the REAL guard (the 401-without-token path) clears the
+    override on its own app after building it; see ``test_auth.py``.
+    """
+    original = asgi.get_application
+
+    def wrapped(*args: Any, **kwargs: Any) -> FastAPI:
+        app = original(*args, **kwargs)
+        _override_auth(app)
+        return app
+
+    monkeypatch.setattr(asgi, "get_application", wrapped)
+    # Test modules bind ``get_application`` by name at import time, so patching the
+    # source module alone is not enough; rebind the name wherever it was imported.
+    for module in list(sys.modules.values()):
+        if getattr(module, "get_application", None) is original:
+            monkeypatch.setattr(module, "get_application", wrapped)
+    yield
+
+
+@pytest.fixture(name="without_auth_override")
+def fixture_without_auth_override() -> Callable[[FastAPI], None]:
+    """Return a helper that removes the stub-auth override from an app (ADR-098).
+
+    Lets a focused test exercise the REAL ``require_auth_user`` guard (e.g. the
+    401-without-token path) on an app that the autouse fixture would otherwise
+    have authenticated.
+    """
+
+    def remove(app: FastAPI) -> None:
+        app.dependency_overrides.pop(require_auth_user, None)
+
+    return remove
 
 
 @pytest.fixture(name="container")

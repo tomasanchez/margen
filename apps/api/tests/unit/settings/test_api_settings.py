@@ -59,3 +59,81 @@ class TestAPISettings:
 
         assert settings.BACKEND_CORS_ORIGINS
         assert "*" not in settings.BACKEND_CORS_ORIGINS
+
+    def test_cors_origins_parse_single_comma_separated_value(self, monkeypatch: pytest.MonkeyPatch):
+        """
+        GIVEN a bare (unquoted) CORS origin in the environment
+        WHEN the settings are loaded under a dotenv-style value
+        THEN the origin is parsed into a single-item list
+        """
+        # GIVEN
+        monkeypatch.setenv("FASTAPI_BACKEND_CORS_ORIGINS", "http://localhost:5173")
+
+        # WHEN
+        settings = ApplicationSettings()
+
+        # THEN
+        assert settings.BACKEND_CORS_ORIGINS == ["http://localhost:5173"]
+
+    def test_cors_origins_parse_multiple_comma_separated_values_with_spaces(self, monkeypatch: pytest.MonkeyPatch):
+        """
+        GIVEN multiple comma-separated origins with surrounding whitespace and empties
+        WHEN the settings are loaded
+        THEN each origin is trimmed and empty tokens are dropped
+        """
+        # GIVEN
+        monkeypatch.setenv(
+            "FASTAPI_BACKEND_CORS_ORIGINS",
+            " http://localhost:5173 , https://app.example.com , ",
+        )
+
+        # WHEN
+        settings = ApplicationSettings()
+
+        # THEN
+        assert settings.BACKEND_CORS_ORIGINS == [
+            "http://localhost:5173",
+            "https://app.example.com",
+        ]
+
+    def test_cors_origins_parse_json_array_string_back_compat(self, monkeypatch: pytest.MonkeyPatch):
+        """
+        GIVEN a JSON-array string (the historical format)
+        WHEN the settings are loaded
+        THEN the array is JSON-decoded into a list (back-compatibility preserved)
+        """
+        # GIVEN
+        monkeypatch.setenv(
+            "FASTAPI_BACKEND_CORS_ORIGINS",
+            '["http://localhost:5173", "https://app.example.com"]',
+        )
+
+        # WHEN
+        settings = ApplicationSettings()
+
+        # THEN
+        assert settings.BACKEND_CORS_ORIGINS == [
+            "http://localhost:5173",
+            "https://app.example.com",
+        ]
+
+    def test_cors_origins_accept_list_unchanged(self):
+        """
+        GIVEN a list passed programmatically
+        WHEN the settings are constructed
+        THEN the list is used unchanged
+        """
+        # GIVEN / WHEN
+        settings = ApplicationSettings(BACKEND_CORS_ORIGINS=["https://app.example.com"])
+
+        # THEN
+        assert settings.BACKEND_CORS_ORIGINS == ["https://app.example.com"]
+
+    def test_cors_origins_non_str_non_list_passes_through(self):
+        """
+        GIVEN a value that is neither a list nor a string
+        WHEN the validator runs
+        THEN it is returned unchanged for pydantic to reject downstream
+        """
+        # GIVEN / WHEN / THEN
+        assert ApplicationSettings._parse_cors_origins(123) == 123

@@ -9,7 +9,7 @@ license = "MIT"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.34.0",
-    "pydantic-settings>=2.9.0",
+    "pydantic-settings>=2.14.2",
     "pydantic[email]>=2.11.0",
     "sqlalchemy[asyncio]>=2.0.41",
     "alembic>=1.16.2",
@@ -25,6 +25,8 @@ dependencies = [
     # parse endpoint (POST /invoices/parse, ADR-070). FastAPI eagerly verifies
     # this is installed when an UploadFile parameter is declared.
     "python-multipart>=0.0.18",
+    "pyjwt[crypto]>=2.13.0",
+    "asyncer>=0.0.17",
 ]
 
 [dependency-groups]

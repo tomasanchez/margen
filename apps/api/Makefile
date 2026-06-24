@@ -45,9 +45,18 @@ adr-context: ## Prints active architecture guidance for agents
 migrate: ## Applies relational database migrations
 	uv run alembic upgrade head
 
+ENV_FILE ?= .env
+LOCAL_DATABASE_URL ?= postgresql+asyncpg://margen-api:margen-api@localhost:5432/margen-api
+
 .PHONY: run
-run: migrate ## Applies migrations then starts the API on port 8000
-	uv run python -m margen_api.main
+run: ## Migrates + starts the API against Supabase on port 8000 (loads $(ENV_FILE))
+	uv run --env-file $(ENV_FILE) alembic upgrade head && \
+	uv run --env-file $(ENV_FILE) python -m margen_api.main
+
+.PHONY: run-local
+run-local: ## Migrates + starts the API against the local docker DB (Supabase auth still loaded from $(ENV_FILE))
+	DATABASE_URL="$(LOCAL_DATABASE_URL)" uv run --env-file $(ENV_FILE) alembic upgrade head && \
+	DATABASE_URL="$(LOCAL_DATABASE_URL)" uv run --env-file $(ENV_FILE) python -m margen_api.main
 
 .PHONY: cover
 cover: ## Executes the offline tiers (unit + e2e) with the coverage gate

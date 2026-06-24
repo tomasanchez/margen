@@ -21,7 +21,12 @@ from datetime import UTC, date, datetime
 from fastapi import APIRouter, Depends, status
 
 from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
-from margen_api.entrypoint.dependencies import Bus, MonotributoReader, require_capture_token
+from margen_api.entrypoint.dependencies import (
+    Bus,
+    MonotributoReader,
+    require_auth_user,
+    require_capture_token,
+)
 from margen_api.entrypoint.monotributo_schemas import (
     MonotributoCaptureResponse,
     MonotributoSnapshotResponse,
@@ -41,6 +46,7 @@ def _today() -> date:
     name="Monotributo standing",
     status_code=status.HTTP_200_OK,
     response_model=ResponseModel[MonotributoSnapshotResponse],
+    dependencies=[Depends(require_auth_user)],
 )
 async def monotributo_snapshot(
     reader: MonotributoReader,
@@ -54,6 +60,11 @@ async def monotributo_snapshot(
     invoice drilldown. It then records the current-period snapshot (and backfills
     missing months on first read) by dispatching ``CaptureMonotributoSnapshot``
     through the bus — the reader stays read-only.
+
+    Guarded per-route by ``require_auth_user`` (ADR-092): this human-facing read
+    requires a valid Supabase user JWT. It is gated on the route rather than at
+    router-include level so the sibling ``POST /capture`` machine endpoint keeps
+    ONLY its static-token guard (ADR-064) and is never double-guarded.
     """
     reference = _today()
     snapshot = await reader.snapshot(reference)

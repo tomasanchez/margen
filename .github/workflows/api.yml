@@ -1,6 +1,14 @@
-# Margen API CI (FastAPI backend, apps/api).
+# Margen API CI/CD (FastAPI backend, apps/api).
 # Workflow-level path filter: GitHub Actions `paths:` is per-workflow, not per-job,
-# so this file only runs when apps/api or this workflow itself changes.
+# so this file only runs when apps/api, the deploy config, or this workflow changes.
+#
+# The deploy job lives in THIS file (not a separate workflow) on purpose: a job
+# `needs:` dependency can only reference jobs in the same workflow. The alternative
+# (a standalone deploy workflow keyed on `workflow_run`) runs the deploy logic from
+# the DEFAULT branch's copy and gates on the whole prior run rather than specific
+# jobs — more indirection for no benefit here. Co-locating keeps the gate explicit:
+# deploy `needs: [build, integration]`, so a red lint/coverage/integration run can
+# never trigger a Render deploy. See ADR-099 (Render deploy target) and ADR-010.
 
 name: API
 
@@ -10,14 +18,29 @@ on:
     paths:
       - 'apps/api/**'
       - '.github/workflows/api.yml'
+      # Deploy config: a render.yaml/DEPLOY.md change should re-run CI and (on main)
+      # re-fire the deploy hook so the live service picks up Blueprint changes.
+      - 'render.yaml'
+      - 'DEPLOY.md'
   pull_request:
     branches: [ '**' ]
     paths:
       - 'apps/api/**'
       - '.github/workflows/api.yml'
+      - 'render.yaml'
+      - 'DEPLOY.md'
 
 permissions:
   contents: read
+
+# One in-flight run per branch. Overlapping pushes to the same ref queue rather
+# than running concurrently, so two near-simultaneous pushes to main can't both
+# fire the Render deploy hook and stack redundant rebuilds. `cancel-in-progress:
+# false` lets the active run (which may already be mid-deploy) finish instead of
+# being killed; the newer push waits and then deploys the latest commit.
+concurrency:
+  group: api-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   # Install, lint/type-check, ADR registry check, coverage gate, image build.
@@ -99,3 +122,54 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libzbar0
       - name: Run the PostgreSQL integration tier
         run: make integration
+
+  # Deploy to Render by triggering its Deploy Hook — ONLY after build (lint +
+  # coverage) AND integration both pass, and ONLY on a push to the default branch.
+  # `needs: [build, integration]` is the gate: if either fails, this job is skipped
+  # and no deploy fires, so broken code never reaches the live service.
+  #
+  # render.yaml sets `autoDeploy: false`, so Render does NOT redeploy on its own
+  # native git push — this hook is the single deploy trigger.
+  #
+  # Inert without access: the Deploy Hook URL is a repo secret. Forks/contributors
+  # without it hit the no-op skip path (mirrors keep-alive.yml / monotributo-capture.yml)
+  # so CI still passes green for them. See ADR-099.
+  deploy:
+    name: Deploy (Render hook)
+    runs-on: ubuntu-latest
+    needs: [ build, integration ]
+    # Push-to-main only. PRs run build+integration but never deploy.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # No checkout / repo contents needed — this job only makes one outbound call.
+    permissions: {}
+    steps:
+      # `secrets` can't be referenced in a step-level `if:`, so map the hook URL
+      # into env and emit a `configured` output. The URL embeds a key and is never
+      # echoed — only checked for emptiness.
+      - name: Check configuration
+        id: check
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -n "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # No-op path: inert until the Render service exists and the secret is set.
+      - name: Skip (not configured)
+        if: steps.check.outputs.configured != 'true'
+        run: |
+          echo "Render deploy hook not configured (set the RENDER_DEPLOY_HOOK_URL repo secret to the service's Deploy Hook URL); skipping deploy."
+
+      # Fire the Deploy Hook. `-f` makes curl exit non-zero on any HTTP error so a
+      # failed trigger fails the job (and surfaces in the run). The URL is passed via
+      # env, never interpolated onto the command line where it could be logged.
+      - name: Trigger Render deploy
+        if: steps.check.outputs.configured == 'true'
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+          echo "Render deploy triggered."

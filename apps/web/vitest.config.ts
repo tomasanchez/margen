@@ -14,6 +14,14 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // Dummy Supabase credentials so the client singleton (src/lib/supabase.ts)
+    // instantiates under test/CI, where no real `.env` is present (it is
+    // gitignored). `createClient` throws on an empty URL; tests mock the actual
+    // auth/network behavior, so any syntactically-valid placeholder works.
+    env: {
+      VITE_SUPABASE_URL: 'http://localhost:54321',
+      VITE_SUPABASE_ANON_KEY: 'test-anon-key',
+    },
     setupFiles: ['./src/test/setup.ts'],
     css: false,
     server: {

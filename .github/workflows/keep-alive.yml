@@ -1,0 +1,61 @@
+# Keep-alive ping for the free-tier deployment.
+#
+# Render free web services sleep after 15 minutes of inactivity (cold start on
+# the next request); Supabase free projects pause after 7 days of inactivity.
+# This workflow curls the API readiness endpoint on a weekly cadence. /readiness
+# runs SELECT 1 against Postgres (ADR-006), so a single ping exercises BOTH the
+# Render web process AND the Supabase database — keeping each from going idle.
+#
+# Inert until configured: it reads the API base URL from a repo variable and
+# skips when unset, so it is safe to merge ahead of the deploy (mirrors the
+# Monotributo capture cron, ADR-065).
+
+name: Keep alive
+
+on:
+  # Twice a week (Mon + Thu, 06:00 UTC). Comfortably inside Supabase's 7-day
+  # pause window with margin for a missed/failed run. Render's 15-min sleep is
+  # not fully prevented by a weekly ping — that's expected and acceptable on the
+  # free tier (DEPLOY.md documents the cold-start caveat); the goal here is to
+  # keep the project from being paused, not to eliminate cold starts.
+  schedule:
+    - cron: '0 6 * * 1,4'
+  # Manual trigger for testing without waiting for the cron.
+  workflow_dispatch:
+
+# Outbound call only; no repo contents are read or written.
+permissions: {}
+
+jobs:
+  ping:
+    name: Ping readiness
+    runs-on: ubuntu-latest
+    steps:
+      # `vars` can be referenced in a step `if:`, but mapping into env keeps the
+      # guard and the request consistent and avoids interpolation surprises.
+      - name: Check configuration
+        id: check
+        env:
+          KEEPALIVE_API_BASE_URL: ${{ vars.KEEPALIVE_API_BASE_URL }}
+        run: |
+          if [ -n "$KEEPALIVE_API_BASE_URL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # No-op path: inert until the API is deployed and the variable is set.
+      - name: Skip (not configured)
+        if: steps.check.outputs.configured != 'true'
+        run: |
+          echo "Keep-alive not configured (set the KEEPALIVE_API_BASE_URL repo variable to the Render base URL); skipping."
+
+      # One unauthenticated GET to the readiness probe. `-f` makes curl exit
+      # non-zero on any HTTP error so a broken deploy surfaces as a failed run.
+      # `--max-time` allows for a Render cold start (free tier can take ~50s).
+      - name: GET readiness
+        if: steps.check.outputs.configured == 'true'
+        env:
+          KEEPALIVE_API_BASE_URL: ${{ vars.KEEPALIVE_API_BASE_URL }}
+        run: |
+          curl -fsS --max-time 90 "$KEEPALIVE_API_BASE_URL/readiness"

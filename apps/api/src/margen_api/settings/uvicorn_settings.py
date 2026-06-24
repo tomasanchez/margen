@@ -4,7 +4,7 @@ Uvicorn settings
 
 from ipaddress import ip_address
 
-from pydantic import IPvAnyAddress
+from pydantic import AliasChoices, Field, IPvAnyAddress
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,7 +17,7 @@ class UvicornSettings(BaseSettings):
 
     Environment variables:
         * UVICORN_HOST
-        * UVICORN_PORT
+        * UVICORN_PORT (or the unprefixed ``PORT``, see below)
         * UVICORN_LOG_LEVEL
         * UVICORN_RELOAD
 
@@ -32,7 +32,12 @@ class UvicornSettings(BaseSettings):
     """
 
     HOST: IPvAnyAddress = ip_address("127.0.0.1")
-    PORT: int = 8000
+    # Honor both ``UVICORN_PORT`` (project default, ADR-006) and the unprefixed
+    # ``PORT`` that platform-as-a-service hosts inject (Render, Heroku, Cloud Run
+    # all set ``$PORT``). ``UVICORN_PORT`` is checked first so an explicit project
+    # override still wins; ``PORT`` lets the app bind the host-assigned port with
+    # no per-host code change. Falls back to 8000 when neither is set.
+    PORT: int = Field(default=8000, validation_alias=AliasChoices("UVICORN_PORT", "PORT"))
     LOG_LEVEL: str = "info"
     RELOAD: bool = False
 

@@ -6,12 +6,14 @@
  * "which dollar". An ARS row shows no FX subline.
  */
 
-import { expect, test } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { ThemeProvider } from '@mui/material/styles'
 import { darkTheme } from '../../theme'
 import { TransactionRow } from './TransactionRow'
 import type { Transaction } from '../../mock/types'
+import * as invoicesClient from '../../api/invoicesClient'
 
 const baseUsd: Transaction = {
   id: 'usd-1',
@@ -79,31 +81,97 @@ test('an ARS row shows no FX badge or subline', () => {
   expect(screen.queryByText(/· (MEP|manual)/)).not.toBeInTheDocument()
 })
 
-// Invoice attachment badge (ADR-072): a kind === 'invoice' row surfaces a "PDF"
-// link to the stored document; non-invoice rows do not.
-test('an invoice row renders the PDF attachment badge linking to the document URL', () => {
-  renderRow({ ...baseUsd, kind: 'invoice' })
-
-  const badge = screen.getByRole('link', {
-    name: 'Open invoice PDF for Invoice · Atlas Co.',
+// Invoice attachment badge (ADR-072, ADR-092): a kind === 'invoice' row surfaces
+// an accessible "PDF" button that fetches the stored document WITH the bearer
+// token (the routes are auth-gated, so a plain <a href> would 401) and opens the
+// blob in a new tab; non-invoice rows do not.
+describe('invoice attachment badge', () => {
+  beforeEach(() => {
+    vi.spyOn(invoicesClient, 'fetchInvoiceDocument')
+    vi.stubGlobal('open', vi.fn(() => ({}) as Window))
+    // jsdom does not implement the object-URL APIs.
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:mock-url'),
+      revokeObjectURL: vi.fn(),
+    })
   })
-  // Links to GET /invoices/{id}/document and opens in a new tab safely.
-  expect(badge).toHaveAttribute(
-    'href',
-    expect.stringContaining('/api/v1/invoices/usd-1/document'),
-  )
-  expect(badge).toHaveAttribute('target', '_blank')
-  expect(badge).toHaveAttribute('rel', expect.stringContaining('noopener'))
-  // Carries a text label, not color alone (ADR-019).
-  expect(badge).toHaveTextContent('PDF')
-})
-
-test('a non-invoice row renders no attachment badge', () => {
-  renderRow({
-    ...baseUsd,
-    type: 'expense',
-    kind: 'expense',
-    category: 'Food',
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
-  expect(screen.queryByRole('link', { name: /Open invoice PDF/i })).toBeNull()
+
+  test('renders an accessible PDF button (not a plain link)', () => {
+    renderRow({ ...baseUsd, kind: 'invoice' })
+
+    const badge = screen.getByRole('button', {
+      name: 'Open invoice PDF for Invoice · Atlas Co.',
+    })
+    // It is a button, not an <a href> (the authed fetch attaches the token).
+    expect(badge.tagName).toBe('BUTTON')
+    expect(screen.queryByRole('link', { name: /Open invoice PDF/i })).toBeNull()
+    // Carries a text label, not color alone (ADR-019).
+    expect(badge).toHaveTextContent('PDF')
+  })
+
+  test('clicking fetches the document via the authed client and opens the blob', async () => {
+    const user = userEvent.setup()
+    vi.mocked(invoicesClient.fetchInvoiceDocument).mockResolvedValueOnce(
+      new Blob(['%PDF-1.7'], { type: 'application/pdf' }),
+    )
+    renderRow({ ...baseUsd, kind: 'invoice' })
+
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Open invoice PDF for Invoice · Atlas Co.',
+      }),
+    )
+
+    // The authed client fetcher ran for THIS transaction id.
+    await waitFor(() =>
+      expect(invoicesClient.fetchInvoiceDocument).toHaveBeenCalledWith('usd-1'),
+    )
+    // The blob became a short-lived object URL, opened in a new tab.
+    await waitFor(() =>
+      expect(URL.createObjectURL).toHaveBeenCalledTimes(1),
+    )
+    expect(window.open).toHaveBeenCalledWith(
+      'blob:mock-url',
+      '_blank',
+      'noopener,noreferrer',
+    )
+  })
+
+  test('a failed fetch shows a calm error (no crash) and does not open a tab', async () => {
+    const user = userEvent.setup()
+    vi.mocked(invoicesClient.fetchInvoiceDocument).mockRejectedValueOnce(
+      new invoicesClient.InvoicesApiError(401, 'Your session expired.'),
+    )
+    renderRow({ ...baseUsd, kind: 'invoice' })
+
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Open invoice PDF for Invoice · Atlas Co.',
+      }),
+    )
+
+    // The calm error surfaces (here via the tooltip title) and no tab opened.
+    await waitFor(() =>
+      expect(screen.getByText('Your session expired.')).toBeInTheDocument(),
+    )
+    expect(window.open).not.toHaveBeenCalled()
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+  })
+
+  test('a non-invoice row renders no attachment badge', () => {
+    renderRow({
+      ...baseUsd,
+      type: 'expense',
+      kind: 'expense',
+      category: 'Food',
+    })
+    expect(
+      screen.queryByRole('button', { name: /Open invoice PDF/i }),
+    ).toBeNull()
+  })
 })

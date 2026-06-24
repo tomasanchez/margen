@@ -145,3 +145,51 @@ export function boundedMonthsWindow(now: Date = new Date()): ViewingMonth[] {
     MONTH_NAVIGATOR_FLOOR_OFFSET + 1,
   )
 }
+
+/**
+ * Sentinel for "no month scope" — the Transactions page's month filter is
+ * either a specific {@link ViewingMonth} or this `'all'` ("All time") escape
+ * hatch that shows every transaction regardless of year+month. The global Home
+ * navigator (ADR-040/041) is always bounded to a real month, so it never uses
+ * this; only the per-screen Transactions picker does.
+ */
+export const ALL_MONTHS = 'all' as const
+
+/** Either a specific viewing month or the "All time" sentinel. */
+export type MonthSelection = ViewingMonth | typeof ALL_MONTHS
+
+/**
+ * Newest-first month options for the Transactions month picker (ADR-040: the
+ * ledger keeps its OWN per-screen month, NOT the Home navigator's 6-month
+ * floor). Spans every month that actually has data — from the latest down to
+ * the earliest `occurredOn` present — so the user can reach any historical
+ * month; the "All time" sentinel is the catch-all. Falls back to the current
+ * month when the list is empty, so the default selection always has an option.
+ */
+export function monthsWithData(
+  occurredOns: readonly string[],
+  now: Date = new Date(),
+): ViewingMonth[] {
+  const seen = new Set<number>()
+  let min = Number.POSITIVE_INFINITY
+  let max = Number.NEGATIVE_INFINITY
+  for (const iso of occurredOns) {
+    const year = Number.parseInt(iso.slice(0, 4), 10)
+    const month = Number.parseInt(iso.slice(5, 7), 10) - 1
+    if (Number.isNaN(year) || Number.isNaN(month)) continue
+    const ord = year * 12 + month
+    seen.add(ord)
+    if (ord < min) min = ord
+    if (ord > max) max = ord
+  }
+
+  if (seen.size === 0) return [currentViewingMonth(now)]
+
+  // Span the full contiguous range (newest first) so months with no rows are
+  // still reachable between two that do — a calm, complete picker.
+  const months: ViewingMonth[] = []
+  for (let ord = max; ord >= min; ord -= 1) {
+    months.push({ year: Math.floor(ord / 12), month: ((ord % 12) + 12) % 12 })
+  }
+  return months
+}

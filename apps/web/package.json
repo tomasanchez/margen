@@ -19,6 +19,7 @@
     "@mui/icons-material": "^9.1.1",
     "@mui/material": "^9.1.1",
     "@mui/utils": "^9.1.1",
+    "@supabase/supabase-js": "^2.108.2",
     "@tailwindcss/vite": "^4.3.1",
     "@tanstack/react-query": "^5.101.0",
     "@tanstack/react-router": "^1.170.15",
@@ -28,7 +29,8 @@
   },
   "pnpm": {
     "overrides": {
-      "esbuild": "^0.28.1"
+      "esbuild": "^0.28.1",
+      "undici": "^7.28.0"
     }
   },
   "devDependencies": {
