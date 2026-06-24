@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   InvoicesApiError,
   documentUrl,
+  fetchInvoiceDocument,
   fileToBase64,
   parseInvoice,
 } from './invoicesClient'
@@ -64,6 +65,49 @@ describe('documentUrl', () => {
     expect(documentUrl('tx-abc-123')).toContain(
       '/api/v1/invoices/tx-abc-123/document',
     )
+  })
+})
+
+describe('fetchInvoiceDocument', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  test('GETs the auth-gated document path and returns the PDF blob', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response('%PDF-1.7', {
+        status: 200,
+        headers: { 'Content-Type': 'application/pdf' },
+      }),
+    )
+
+    const blob = await fetchInvoiceDocument('tx-abc-123')
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/v1/invoices/tx-abc-123/document')
+    // A GET (no method override defaults to GET) carrying the bearer token via
+    // authedFetch — the routes are auth-gated (ADR-092), so a plain <a> 401s.
+    expect(init?.method ?? 'GET').toBe('GET')
+    // The bytes are returned as a Blob (cross-realm: assert by shape, not
+    // `instanceof`, since undici's Blob differs from the test realm's).
+    expect(typeof blob.arrayBuffer).toBe('function')
+    expect(blob.type).toBe('application/pdf')
+    expect(await blob.text()).toBe('%PDF-1.7')
+  })
+
+  test('a non-2xx response throws an InvoicesApiError carrying the status', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('', { status: 401 }))
+    await expect(fetchInvoiceDocument('tx-1')).rejects.toBeInstanceOf(
+      InvoicesApiError,
+    )
+
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('', { status: 404 }))
+    await expect(fetchInvoiceDocument('tx-1')).rejects.toMatchObject({
+      status: 404,
+    })
   })
 })
 

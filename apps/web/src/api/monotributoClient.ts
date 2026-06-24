@@ -19,6 +19,7 @@
  */
 
 import { apiUrl } from '../config'
+import { authedFetch } from './http'
 import type {
   MonotributoComparison,
   MonotributoInvoice,
@@ -255,7 +256,7 @@ export function deriveComparison(
  * the page shapes. Throws {@link MonotributoApiError} on a non-2xx response.
  */
 export async function fetchMonotributo(): Promise<MonotributoSnapshot> {
-  const response = await fetch(apiUrl('/monotributo'), {
+  const response = await authedFetch(apiUrl('/monotributo'), {
     headers: { Accept: 'application/json' },
   })
   await ensureOk(response)

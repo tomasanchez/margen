@@ -8,10 +8,13 @@ injection rather than module-level globals.
 import hmac
 from collections.abc import AsyncIterator
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Any
 
+import jwt
+from asyncer import asyncify
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, ConfigDict
 
 from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.queries import (
@@ -103,6 +106,128 @@ async def require_capture_token(
 
 
 CaptureToken = Annotated[None, Depends(require_capture_token)]
+
+
+class AuthUserModel(BaseModel):
+    """An authenticated end user resolved from a verified Supabase JWT (ADR-092).
+
+    This is a boundary value object, not a domain aggregate: it carries the
+    identity claims the application needs from a token that has already passed
+    signature, issuer, audience, and expiry verification. The raw claims are
+    preserved so downstream handlers can read additional fields without
+    re-parsing the token.
+
+    Attributes:
+        id: The subject (``sub``) claim — the Supabase user id.
+        email: The ``email`` claim when present, otherwise ``None``.
+        claims: The full set of verified claims, kept for downstream use.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    email: str | None = None
+    claims: dict[str, Any]
+
+
+# HTTP Bearer scheme parser for Supabase user JWTs. ``auto_error=False`` lets the
+# guard answer 401 itself for a missing/malformed header (not the parser's 403),
+# matching the capture-token semantics and the fail-closed contract of ADR-092.
+_user_bearer = HTTPBearer(auto_error=False, scheme_name="SupabaseJWT")
+
+# Supabase signs user tokens with EC P-256 keys. Pin the algorithm allow-list to
+# ES256 so a token cannot smuggle in a weaker/asymmetric-confusion algorithm.
+_SUPABASE_JWT_ALGORITHMS = ["ES256"]
+
+_INVALID_TOKEN_DETAIL = "Invalid or missing authentication token."  # noqa: S105 — error detail, not a secret
+
+
+@lru_cache
+def _get_jwks_client(jwks_url: str) -> jwt.PyJWKClient:
+    """Return a process-cached ``PyJWKClient`` for ``jwks_url`` (ADR-092).
+
+    ``PyJWKClient`` fetches the JWKS once and caches the signing keys in memory,
+    so verification does not hit the network on every request. Caching the client
+    itself (keyed by URL) keeps that key cache alive across requests rather than
+    rebuilding it each call.
+    """
+    return jwt.PyJWKClient(jwks_url)
+
+
+async def require_auth_user(
+    settings: Settings,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_user_bearer)],
+) -> AuthUserModel:
+    """Authenticate a request bearing a Supabase user JWT (ADR-092).
+
+    User-facing routes are protected by asymmetric verification against
+    Supabase's JWKS endpoint — no shared secret. The signing key is fetched from
+    the cached JWKS and the token's signature, issuer, audience, and expiry are
+    all verified before any claim is trusted.
+
+    The guard fails closed:
+
+    * When ``SUPABASE_JWKS_URL`` or ``SUPABASE_JWT_ISSUER`` is unset (``None``),
+      auth is treated as not configured and answers ``503`` — you cannot verify
+      against an absent JWKS/issuer.
+    * Otherwise an ``Authorization: Bearer <jwt>`` header is required. A missing,
+      malformed, expired, wrong-issuer, wrong-audience, or bad-signature token
+      answers ``401`` with a constant, non-leaky detail.
+
+    The JWKS fetch inside ``PyJWKClient`` is blocking I/O, so it is offloaded to a
+    worker thread with :func:`asyncer.asyncify` to avoid blocking the event loop.
+
+    Args:
+        settings: The API settings carrying the Supabase JWKS URL, issuer, and
+            audience.
+        credentials: Parsed bearer credentials, or ``None`` when the
+            ``Authorization`` header is absent or not a ``Bearer`` scheme.
+
+    Returns:
+        AuthUserModel: The authenticated user resolved from the verified claims.
+
+    Raises:
+        HTTPException: ``503`` when Supabase auth is not configured; ``401`` when
+            the token is missing or fails verification for any reason.
+    """
+    jwks_url = settings.SUPABASE_JWKS_URL
+    issuer = settings.SUPABASE_JWT_ISSUER
+    if not jwks_url or not issuer:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication is not configured.",
+        )
+
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_INVALID_TOKEN_DETAIL,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = credentials.credentials
+    jwks_client = _get_jwks_client(jwks_url)
+    try:
+        signing_key = await asyncify(jwks_client.get_signing_key_from_jwt)(token)
+        claims = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=_SUPABASE_JWT_ALGORITHMS,
+            audience=settings.SUPABASE_JWT_AUDIENCE,
+            issuer=issuer,
+            options={"require": ["exp", "sub"]},
+        )
+    except (jwt.InvalidTokenError, jwt.PyJWKClientError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_INVALID_TOKEN_DETAIL,
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from error
+
+    return AuthUserModel(id=claims["sub"], email=claims.get("email"), claims=claims)
+
+
+AuthUser = Annotated[AuthUserModel, Depends(require_auth_user)]
 
 
 def get_bus(container: Container) -> MessageBus:

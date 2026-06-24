@@ -38,6 +38,11 @@ class MonotributoSnapshotRecord(Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
+    # Forward-compat ownership column (ADR-094): nullable, unused, no enforcement
+    # yet. No ForeignKey -- auth users live in Supabase's ``auth.users`` schema and
+    # the hermetic SQLite e2e tier has no such table, so a cross-schema FK would
+    # break both migrations and tests. The deferred backfill (ADR-090) sets this.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     period_start: Mapped[datetime.date] = mapped_column(Date(), nullable=False)
     period_end: Mapped[datetime.date] = mapped_column(Date(), nullable=False)
     category: Mapped[str] = mapped_column(String(2), nullable=False)

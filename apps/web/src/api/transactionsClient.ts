@@ -15,6 +15,7 @@
  */
 
 import { apiUrl } from '../config'
+import { authedFetch } from './http'
 import type {
   Bank,
   Category,
@@ -270,7 +271,7 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' } as const
 
 /** GET all transactions (newest-first), adapted to the frontend shape. */
 async function list(): Promise<Transaction[]> {
-  const response = await fetch(apiUrl('/transactions'), {
+  const response = await authedFetch(apiUrl('/transactions'), {
     headers: { Accept: 'application/json' },
   })
   await ensureOk(response)
@@ -280,7 +281,7 @@ async function list(): Promise<Transaction[]> {
 
 /** POST a new transaction; returns the persisted, adapted row. */
 async function create(input: NewTransactionInput): Promise<Transaction> {
-  const response = await fetch(apiUrl('/transactions'), {
+  const response = await authedFetch(apiUrl('/transactions'), {
     method: 'POST',
     headers: JSON_HEADERS,
     body: JSON.stringify(toCreateBody(input)),
@@ -295,7 +296,7 @@ async function update(
   id: string,
   patch: TransactionUpdateInput,
 ): Promise<Transaction> {
-  const response = await fetch(apiUrl(`/transactions/${id}`), {
+  const response = await authedFetch(apiUrl(`/transactions/${id}`), {
     method: 'PATCH',
     headers: JSON_HEADERS,
     body: JSON.stringify(toPatchBody(patch)),
@@ -307,7 +308,7 @@ async function update(
 
 /** DELETE a transaction by UUID (204, no body). */
 async function remove(id: string): Promise<void> {
-  const response = await fetch(apiUrl(`/transactions/${id}`), {
+  const response = await authedFetch(apiUrl(`/transactions/${id}`), {
     method: 'DELETE',
   })
   await ensureOk(response)

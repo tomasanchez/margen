@@ -16,6 +16,7 @@
  */
 
 import { apiUrl } from '../config'
+import { authedFetch } from './http'
 import type { Category, FxRateType } from '../mock/types'
 
 /** The backend `{ data: T }` response envelope (ADR-030). */
@@ -203,7 +204,7 @@ export function adaptInsights(dto: MonthlyInsightsDto): MonthlyInsights {
  * {@link InsightsApiError} on a non-2xx response.
  */
 export async function fetchInsights(month: string): Promise<MonthlyInsights> {
-  const response = await fetch(
+  const response = await authedFetch(
     apiUrl(`/insights?month=${encodeURIComponent(month)}`),
     { headers: { Accept: 'application/json' } },
   )

@@ -22,7 +22,11 @@
  */
 
 import { apiUrl } from '../config'
+import { authedFetch } from './http'
 import type { Currency, FxRateType } from '../mock/types'
+
+/** The PDF MIME type the document endpoints serve (ADR-072). */
+const _PDF_CONTENT_TYPE = 'application/pdf'
 
 /** The backend `{ data: T }` response envelope (ADR-030). */
 interface ResponseEnvelope<T> {
@@ -299,7 +303,7 @@ export async function parseInvoice(file: File): Promise<InvoiceParse> {
   // Read the bytes (for the create payload) and upload (for parsing) together.
   const [pdfBase64, response] = await Promise.all([
     fileToBase64(file),
-    fetch(apiUrl('/invoices/parse'), {
+    authedFetch(apiUrl('/invoices/parse'), {
       method: 'POST',
       headers: { Accept: 'application/json' },
       body: form,
@@ -313,15 +317,48 @@ export async function parseInvoice(file: File): Promise<InvoiceParse> {
 
 /**
  * The view/download URL for a transaction's stored invoice PDF (ADR-072).
- * `GET /invoices/{transactionId}/document` streams the PDF inline; the
- * attachment badge opens it in a new tab.
+ * `GET /invoices/{transactionId}/document` streams the PDF inline.
+ *
+ * NOTE: every API route now requires `Authorization: Bearer <token>` (ADR-092),
+ * so this URL can no longer be used directly as an `<a href>` (a plain GET sends
+ * no token and 401s). It remains the single place the path is assembled; the UI
+ * fetches the bytes through {@link fetchInvoiceDocument} (authed) instead.
  */
 export function documentUrl(transactionId: string): string {
   return apiUrl(`/invoices/${transactionId}/document`)
+}
+
+/**
+ * Fetch a transaction's stored invoice PDF as a {@link Blob}, authenticated.
+ *
+ * `GET /invoices/{transactionId}/document` is behind the Supabase bearer guard
+ * (ADR-092), so we go through {@link authedFetch} — a plain `<a href>` GET cannot
+ * attach the token and would 401. The caller turns the Blob into a short-lived
+ * object URL, opens/downloads it, then revokes the URL (the bytes are sensitive
+ * PII — ADR-073 — so they never become a persistent, shareable link). Throws
+ * {@link InvoicesApiError} carrying the HTTP status on any non-2xx response.
+ *
+ * @param transactionId The invoice transaction whose PDF to fetch.
+ * @returns The PDF bytes as a Blob (its `type` reflects the backend content type).
+ */
+export async function fetchInvoiceDocument(
+  transactionId: string,
+): Promise<Blob> {
+  const response = await authedFetch(documentUrl(transactionId), {
+    headers: { Accept: _PDF_CONTENT_TYPE },
+  })
+  if (!response.ok) {
+    throw new InvoicesApiError(
+      response.status,
+      "Couldn't open the invoice PDF. Please try again.",
+    )
+  }
+  return response.blob()
 }
 
 /** The invoices API client, grouped for ergonomic import. */
 export const invoicesClient = {
   parseInvoice,
   documentUrl,
+  fetchInvoiceDocument,
 } as const

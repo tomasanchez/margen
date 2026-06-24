@@ -20,14 +20,55 @@ import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined'
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined'
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import LogoutOutlinedIcon from '@mui/icons-material/LogoutOutlined'
+import type { User } from '@supabase/supabase-js'
 import { useColorMode } from '../theme/colorModeContext'
-import { MOCK_USER } from '../mock/user'
+import { useAuth } from '../auth/useAuth'
+
+/**
+ * Derive the display identity from the live Supabase user (ADR-096).
+ *
+ * Name comes from `user_metadata.full_name`/`name` (set by OAuth providers like
+ * Google), falling back to the email local-part and finally a neutral label.
+ * Initials are computed from the resolved name; the avatar image, if any, comes
+ * from `user_metadata.avatar_url`/`picture`. Email falls back to an empty
+ * string so the caption simply collapses rather than showing a placeholder.
+ */
+interface DisplayIdentity {
+  name: string
+  email: string
+  initials: string
+  avatarUrl: string | null
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function computeInitials(name: string): string {
+  const parts = name.split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+function deriveIdentity(user: User | null): DisplayIdentity {
+  const meta = (user?.user_metadata ?? {}) as Record<string, unknown>
+  const email = user?.email ?? ''
+  const name =
+    asString(meta.full_name) ??
+    asString(meta.name) ??
+    (email ? email.split('@')[0] : undefined) ??
+    'Your account'
+  const avatarUrl =
+    asString(meta.avatar_url) ?? asString(meta.picture) ?? null
+  return { name, email, initials: computeInitials(name), avatarUrl }
+}
 
 /**
  * Identity header (name + email). Shared by the desktop Menu and the mobile
  * Drawer so the two account surfaces never drift.
  */
-function AccountIdentity() {
+function AccountIdentity({ identity }: { identity: DisplayIdentity }) {
   return (
     <Box>
       <Typography
@@ -35,15 +76,17 @@ function AccountIdentity() {
         sx={{ fontWeight: 600, lineHeight: 1.3 }}
         color="text.primary"
       >
-        {MOCK_USER.name}
+        {identity.name}
       </Typography>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ display: 'block', lineHeight: 1.3 }}
-      >
-        {MOCK_USER.email}
-      </Typography>
+      {identity.email ? (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: 'block', lineHeight: 1.3 }}
+        >
+          {identity.email}
+        </Typography>
+      ) : null}
     </Box>
   )
 }
@@ -55,18 +98,20 @@ function AccountIdentity() {
  * Drawer uses `ListItemButton` — `MenuItem` requires a `MenuList` parent and
  * throws "MenuListContext is missing" if rendered in the Drawer. State is
  * conveyed by icon + Switch, never by color alone (ADR-019); Settings now
- * navigates to the `/settings` route (ADR-057), while Sign out stays inert
- * because auth is still a non-goal for the prototype (ADR-012).
+ * navigates to the `/settings` route (ADR-057), and Sign out now ends the real
+ * Supabase session and returns to `/login` (ADR-096).
  */
 function AccountActions({
   isDark,
   onToggleTheme,
   onOpenSettings,
+  onSignOut,
   Row,
 }: {
   isDark: boolean
   onToggleTheme: () => void
   onOpenSettings: () => void
+  onSignOut: () => void
   Row: ElementType
 }) {
   return (
@@ -104,13 +149,13 @@ function AccountActions({
         <ListItemText primary="Settings" />
       </Row>
 
-      {/* Inert placeholder — auth (sign out) is a non-goal (ADR-012). */}
+      {/* Ends the real Supabase session, then returns to /login (ADR-096). */}
       <Row
-        disabled
-        title="Sign out — coming soon"
+        onClick={onSignOut}
         sx={{
           py: { xs: 1.75, md: 1 },
-          '&.Mui-disabled': { color: 'error.main', opacity: 0.5 },
+          color: 'error.main',
+          '& .MuiListItemText-primary': { fontWeight: 600 },
         }}
       >
         <ListItemIcon sx={{ color: 'inherit' }}>
@@ -141,9 +186,12 @@ function AccountActions({
  */
 export function AccountMenu() {
   const { mode, toggle } = useColorMode()
+  const { user, signOut } = useAuth()
   const theme = useTheme()
   const navigate = useNavigate()
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
+
+  const identity = deriveIdentity(user)
 
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -165,6 +213,16 @@ export function AccountMenu() {
   const handleOpenSettings = () => {
     handleClose()
     void navigate({ to: '/settings' })
+  }
+  // Close the surface, end the Supabase session, then return to /login. The
+  // SIGNED_OUT event also invalidates the router guards (ADR-096), so the
+  // navigate is the explicit, immediate path back to the public route.
+  const handleSignOut = () => {
+    handleClose()
+    void (async () => {
+      await signOut()
+      await navigate({ to: '/login' })
+    })()
   }
 
   const isDark = mode === 'dark'
@@ -189,6 +247,9 @@ export function AccountMenu() {
           }}
         >
           <Avatar
+            {...(identity.avatarUrl
+              ? { src: identity.avatarUrl, alt: identity.name }
+              : {})}
             sx={{
               width: 34,
               height: 34,
@@ -198,7 +259,7 @@ export function AccountMenu() {
               fontWeight: 600,
             }}
           >
-            {MOCK_USER.initials}
+            {identity.initials}
           </Avatar>
         </IconButton>
       </Tooltip>
@@ -229,7 +290,7 @@ export function AccountMenu() {
         }}
       >
         <Box sx={{ px: 2, py: 1.25 }}>
-          <AccountIdentity />
+          <AccountIdentity identity={identity} />
         </Box>
 
         <Divider />
@@ -238,6 +299,7 @@ export function AccountMenu() {
           isDark={isDark}
           onToggleTheme={toggle}
           onOpenSettings={handleOpenSettings}
+          onSignOut={handleSignOut}
           Row={MenuItem}
         />
       </Menu>
@@ -300,7 +362,7 @@ export function AccountMenu() {
 
           {/* Identity block. */}
           <Box sx={{ px: 2.5, py: 2.5 }}>
-            <AccountIdentity />
+            <AccountIdentity identity={identity} />
           </Box>
 
           <Divider />
@@ -319,6 +381,7 @@ export function AccountMenu() {
               isDark={isDark}
               onToggleTheme={toggle}
               onOpenSettings={handleOpenSettings}
+              onSignOut={handleSignOut}
               Row={ListItemButton}
             />
           </List>

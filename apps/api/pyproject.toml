@@ -25,6 +25,8 @@ dependencies = [
     # parse endpoint (POST /invoices/parse, ADR-070). FastAPI eagerly verifies
     # this is installed when an UploadFile parameter is declared.
     "python-multipart>=0.0.18",
+    "pyjwt[crypto]>=2.13.0",
+    "asyncer>=0.0.17",
 ]
 
 [dependency-groups]

@@ -27,6 +27,11 @@ Use PostgreSQL with asyncpg (the template default). Run Postgres locally via the
 
 Local dev requires Docker running Postgres before `make migrate` and before the readiness probe passes. This dependency must be documented in the README dev steps. See ADR-006 for how the readiness probe is surfaced to the frontend. See ADR-007 for the env var that carries the database_url.
 
+> **Note added 2026-06-23**: The Docker-Compose self-hosted Postgres **hosting choice**
+> in this ADR is partially superseded by **ADR-091**. The decision to use PostgreSQL +
+> asyncpg + Alembic + SQLAlchemy is retained unchanged; only the runtime hosting moves
+> to Supabase Cloud managed Postgres.
+
 ## Status History
 
 - 2026-06-13: proposed

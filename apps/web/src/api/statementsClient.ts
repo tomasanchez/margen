@@ -22,6 +22,7 @@
  */
 
 import { apiUrl } from '../config'
+import { authedFetch } from './http'
 import { fileToBase64 } from './invoicesClient'
 import type { Currency, FxRateType } from '../mock/types'
 
@@ -486,7 +487,7 @@ export async function parseStatement(file: File): Promise<StatementParse> {
   // Read the bytes (for the import echo) and upload (for parsing) together.
   const [pdfBase64, response] = await Promise.all([
     fileToBase64(file),
-    fetch(apiUrl('/statements/parse'), {
+    authedFetch(apiUrl('/statements/parse'), {
       method: 'POST',
       headers: { Accept: 'application/json' },
       body: form,
@@ -510,7 +511,7 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' } as const
 export async function importStatement(
   payload: StatementImportRequest,
 ): Promise<StatementImportResult> {
-  const response = await fetch(apiUrl('/statements/import'), {
+  const response = await authedFetch(apiUrl('/statements/import'), {
     method: 'POST',
     headers: { ...JSON_HEADERS, Accept: 'application/json' },
     body: JSON.stringify(payload),
@@ -524,9 +525,46 @@ export async function importStatement(
 /**
  * The view/download URL for a stored statement PDF (ADR-078).
  * `GET /statements/{statementDocumentId}/document` streams the PDF inline.
+ *
+ * NOTE: every API route now requires `Authorization: Bearer <token>` (ADR-092),
+ * so this URL can no longer be used directly as an `<a href>` (a plain GET sends
+ * no token and 401s). It remains the single place the path is assembled; the UI
+ * fetches the bytes through {@link fetchStatementDocument} (authed) instead.
  */
 export function statementDocumentUrl(statementDocumentId: string): string {
   return apiUrl(`/statements/${statementDocumentId}/document`)
+}
+
+/** The PDF MIME type the document endpoints serve (ADR-078). */
+const _PDF_CONTENT_TYPE = 'application/pdf'
+
+/**
+ * Fetch a stored statement PDF as a {@link Blob}, authenticated.
+ *
+ * `GET /statements/{statementDocumentId}/document` is behind the Supabase bearer
+ * guard (ADR-092), so we go through {@link authedFetch} — a plain `<a href>` GET
+ * cannot attach the token and would 401. The caller turns the Blob into a
+ * short-lived object URL, opens/downloads it, then revokes the URL (the bytes are
+ * sensitive PII — ADR-081 — so they never become a persistent, shareable link).
+ * Throws {@link StatementsApiError} carrying the HTTP status on any non-2xx.
+ *
+ * @param statementDocumentId The stored statement document whose PDF to fetch.
+ * @returns The PDF bytes as a Blob (its `type` reflects the backend content type).
+ */
+export async function fetchStatementDocument(
+  statementDocumentId: string,
+): Promise<Blob> {
+  const response = await authedFetch(
+    statementDocumentUrl(statementDocumentId),
+    { headers: { Accept: _PDF_CONTENT_TYPE } },
+  )
+  if (!response.ok) {
+    throw new StatementsApiError(
+      response.status,
+      "Couldn't open the statement PDF. Please try again.",
+    )
+  }
+  return response.blob()
 }
 
 /** The statements API client, grouped for ergonomic import. */
@@ -534,4 +572,5 @@ export const statementsClient = {
   parseStatement,
   importStatement,
   statementDocumentUrl,
+  fetchStatementDocument,
 } as const

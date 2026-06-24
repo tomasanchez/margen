@@ -58,6 +58,11 @@ class StatementDocumentRecord(Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
+    # Forward-compat ownership column (ADR-094): nullable, unused, no enforcement
+    # yet. No ForeignKey -- auth users live in Supabase's ``auth.users`` schema and
+    # the hermetic SQLite e2e tier has no such table, so a cross-schema FK would
+    # break both migrations and tests. The deferred backfill (ADR-090) sets this.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     pdf_bytes: Mapped[bytes] = mapped_column(LargeBinary(), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     byte_size: Mapped[int] = mapped_column(Integer(), nullable=False)
