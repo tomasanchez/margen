@@ -1,0 +1,5 @@
+# Cloudflare Pages SPA fallback for TanStack Router client-side routing.
+# Any path that isn't a real static asset is served index.html with a 200 so
+# deep links (e.g. /transactions, /monotributo) load the app instead of 404ing.
+# Files in public/ are copied verbatim into the Vite dist/ output.
+/*  /index.html  200
