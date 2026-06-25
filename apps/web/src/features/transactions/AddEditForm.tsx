@@ -16,6 +16,7 @@
 
 import { useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from '@tanstack/react-router'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -123,9 +124,21 @@ export function AddEditForm({
   titleId,
 }: AddEditFormProps) {
   const { t } = useTranslation('transactions')
+  // The "Import statement" affordance reuses the shell namespace's existing label
+  // (it mirrors the desktop sidebar button); the rest of the form is `transactions`.
+  const { t: tShell } = useTranslation('shell')
+  const navigate = useNavigate()
   const genericParseError = t('form.upload.parseError')
   const form = useAddEditFormState(prefill)
   const [moreOpen, setMoreOpen] = useState(false)
+
+  // Mobile-reachable entry to the routed statement-import flow (ADR-017): the
+  // sidebar button is desktop-only, so surface the SAME destination here in the
+  // Add flow (present on every viewport). Navigate, then close this dialog/sheet.
+  const handleImportStatement = () => {
+    void navigate({ to: '/import-statement' })
+    onCancel()
+  }
 
   // Monotributo cuota shortcut (expense path only): load the user's monthly tax
   // as a plain ARS expense, autofilled from their configured category. The cuota
@@ -332,6 +345,31 @@ export function AddEditForm({
           <CloseRoundedIcon fontSize="small" />
         </IconButton>
       </Box>
+
+      {/* Mobile-reachable entry to the routed statement-import flow (ADR-017).
+          The desktop sidebar's "Import statement" button is hidden on mobile, so
+          this low-key sibling in the Add flow surfaces the same destination on
+          every viewport. It navigates and closes this dialog/sheet; it reuses the
+          shell label so the wording matches the sidebar (ADR-019: native Button,
+          keyboard-operable, descriptive accessible name). */}
+      <Button
+        type="button"
+        variant="outlined"
+        color="secondary"
+        fullWidth
+        onClick={handleImportStatement}
+        startIcon={<UploadFileIcon fontSize="small" />}
+        sx={{
+          mb: 2.5,
+          py: 1.1,
+          fontWeight: 600,
+          textTransform: 'none',
+          color: 'text.secondary',
+          borderColor: 'var(--mg-border-2)',
+        }}
+      >
+        {tShell('actions.importStatement')}
+      </Button>
 
       {/* Calm, non-blocking duplicate warning for an imported invoice (ADR-072).
           The user can still review and save; the create path is not blocked. */}
