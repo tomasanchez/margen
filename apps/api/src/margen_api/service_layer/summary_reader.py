@@ -19,12 +19,16 @@ class AbstractSummaryReader(ABC):
     """Async query port returning a monthly summary."""
 
     @abstractmethod
-    async def monthly_summary(self, month: date) -> MonthlySummary:
-        """Aggregate the trend and category breakdown for a month (ADR-042).
+    async def monthly_summary(self, month: date, user_id: str) -> MonthlySummary:
+        """Aggregate the trend and category breakdown for a month (ADR-042, ADR-108).
 
         Args:
             month: Any date within the requested calendar month; only its year
                 and month are significant.
+            user_id: The authenticated owner. The summary derives entirely from
+                the caller's transactions, so every source query filters by it —
+                the read model itself carries no ownership column (ADR-108,
+                ADR-112).
 
         Returns:
             The 6-month expense trend ending at ``month`` (oldest-first, the

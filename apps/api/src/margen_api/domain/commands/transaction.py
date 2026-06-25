@@ -71,7 +71,9 @@ class CreateTransaction(Command):
     counting forced ``False`` for expense). USD rows without a rate are accepted.
     An optional ``document`` attaches the imported invoice PDF, stored as a side
     record in the same unit of work (ADR-070, ADR-071); omitting it leaves the
-    existing create contract unchanged.
+    existing create contract unchanged. ``user_id`` is the authenticated owner the
+    entrypoint sets from ``AuthUser.id`` before dispatch (ADR-108); the handler
+    stores it on the inserted row so the transaction is owned from creation.
     """
 
     occurred_on: date
@@ -88,6 +90,7 @@ class CreateTransaction(Command):
     notes: str | None = None
     recurring: bool = False
     counts_toward_monotributo: bool = False
+    user_id: str
     document: TransactionDocumentPayload | None = None
 
 
@@ -95,11 +98,14 @@ class UpdateTransaction(Command):
     """Request to patch an existing transaction.
 
     Every mutable field is optional; ``None`` means "leave unchanged". The handler
-    loads the aggregate by ``id``, applies the present fields, re-runs invariants,
-    and refreshes ``updated_at``.
+    loads the aggregate by ``id`` **scoped to ``user_id``** (a foreign owner's id is
+    not found, ADR-108/ADR-111), applies the present fields, re-runs invariants, and
+    refreshes ``updated_at``. ``user_id`` is the authenticated owner the entrypoint
+    sets from ``AuthUser.id`` before dispatch.
     """
 
     id: UUID
+    user_id: str
     occurred_on: date | None = None
     name: str | None = Field(default=None, min_length=1)
     kind: Kind | None = None
@@ -117,6 +123,12 @@ class UpdateTransaction(Command):
 
 
 class DeleteTransaction(Command):
-    """Request to delete a transaction by identity."""
+    """Request to delete a transaction by identity.
+
+    ``user_id`` is the authenticated owner the entrypoint sets from ``AuthUser.id``
+    before dispatch; the handler scopes the delete by it so a cross-tenant delete
+    removes nothing and surfaces a not-found (404, ADR-108/ADR-111).
+    """
 
     id: UUID
+    user_id: str

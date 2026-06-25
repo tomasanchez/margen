@@ -35,6 +35,7 @@ from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, T
 
 A_DATE = date(2026, 6, 12)
 A_TIME = datetime(2026, 6, 12, tzinfo=UTC)
+A_USER = "00000000-0000-4000-8000-000000000001"
 
 
 def _record(kind: str = "expense", currency: str = "ARS", fx_rate_type: str | None = None) -> TransactionRecord:
@@ -78,7 +79,7 @@ class TestListTransactions:
         reader = SqlAlchemyTransactionReader(session)
 
         # WHEN
-        models = await reader.list_transactions()
+        models = await reader.list_transactions(A_USER)
 
         # THEN
         session.execute.assert_awaited_once()
@@ -88,6 +89,8 @@ class TestListTransactions:
         compiled = str(statement).lower()
         assert "order by" in compiled
         assert "occurred_on desc" in compiled
+        # The query is scoped to the owner (ADR-108).
+        assert "user_id" in compiled
         assert len(models) == 2
         # Derived type and parsed enums come through the projection.
         assert models[0].type is TxType.INCOME
@@ -108,49 +111,56 @@ class TestListTransactions:
         reader = SqlAlchemyTransactionReader(session)
 
         # WHEN
-        models = await reader.list_transactions()
+        models = await reader.list_transactions(A_USER)
 
         # THEN
         assert models == []
 
 
 class TestGetTransaction:
-    """``get_transaction`` fetches one row by identity and projects it."""
+    """``get_transaction`` fetches one owner-scoped row by identity and projects it (ADR-108, ADR-111)."""
 
     async def test_returns_read_model_when_found(self):
         """
-        GIVEN a session whose get returns a record
+        GIVEN a session whose owner-scoped select returns a record
         WHEN get_transaction runs
-        THEN session.get is awaited and a read model is returned
+        THEN an owner-filtered Select runs and a read model is returned
         """
         # GIVEN
         record = _record(kind="expense")
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = record
         session = AsyncMock()
-        session.get.return_value = record
+        session.execute.return_value = result
         reader = SqlAlchemyTransactionReader(session)
 
         # WHEN
-        model = await reader.get_transaction(record.id)
+        model = await reader.get_transaction(record.id, A_USER)
 
         # THEN
-        session.get.assert_awaited_once_with(TransactionRecord, record.id)
+        session.execute.assert_awaited_once()
+        (statement,) = session.execute.call_args.args
+        assert isinstance(statement, Select)
+        assert "user_id" in str(statement).lower()
         assert model is not None
         assert model.kind is Kind.EXPENSE
         assert model.type is TxType.EXPENSE
 
-    async def test_returns_none_when_absent(self):
+    async def test_returns_none_when_absent_or_cross_tenant(self):
         """
-        GIVEN a session whose get returns None
+        GIVEN a session whose owner-scoped select returns None
         WHEN get_transaction runs
-        THEN it returns None
+        THEN it returns None (a foreign owner's id is not found, ADR-111)
         """
         # GIVEN
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
         session = AsyncMock()
-        session.get.return_value = None
+        session.execute.return_value = result
         reader = SqlAlchemyTransactionReader(session)
 
         # WHEN
-        model = await reader.get_transaction(uuid4())
+        model = await reader.get_transaction(uuid4(), A_USER)
 
         # THEN
         assert model is None
@@ -191,7 +201,7 @@ class TestSummaryReader:
         reader = SqlAlchemySummaryReader(session)
 
         # WHEN
-        summary = await reader.monthly_summary(date(2026, 6, 15))
+        summary = await reader.monthly_summary(date(2026, 6, 15), A_USER)
 
         # THEN — three aggregation queries ran as Selects filtered to expenses.
         assert session.execute.await_count == 3
@@ -201,6 +211,9 @@ class TestSummaryReader:
         compiled = str(session.execute.await_args_list[0].args[0]).lower()
         assert "sum" in compiled
         assert "group by" in compiled
+        # Every aggregation is scoped to the owner (ADR-108).
+        for call in session.execute.await_args_list:
+            assert "user_id" in str(call.args[0]).lower()
 
         # THEN — the trend spans the 6 months ending at June, oldest-first.
         assert summary.month == "2026-06"
@@ -240,7 +253,7 @@ class TestSummaryReader:
         reader = SqlAlchemySummaryReader(session)
 
         # WHEN
-        summary = await reader.monthly_summary(date(2026, 6, 1))
+        summary = await reader.monthly_summary(date(2026, 6, 1), A_USER)
 
         # THEN
         assert summary.trend[-1].expenses == Decimal("250.5")
@@ -299,13 +312,14 @@ class TestInsightsReader:
         reader = SqlAlchemyInsightsReader(session)
 
         # WHEN — reference in July makes June a past month: actual savings.
-        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1))
+        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1), A_USER)
 
-        # THEN — six aggregation queries ran as Selects.
+        # THEN — six aggregation queries ran as Selects, each scoped to the owner (ADR-108).
         assert session.execute.await_count == 6
         for call in session.execute.await_args_list:
             (statement,) = call.args
             assert isinstance(statement, Select)
+            assert "user_id" in str(statement).lower()
 
         # THEN — facts.
         assert insights.month == "2026-06"
@@ -343,7 +357,7 @@ class TestInsightsReader:
         reader = SqlAlchemyInsightsReader(session)
 
         # WHEN
-        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1))
+        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1), A_USER)
 
         # THEN
         assert insights.top_category_mover is None
@@ -370,7 +384,7 @@ class TestInsightsReader:
         reader = SqlAlchemyInsightsReader(session)
 
         # WHEN
-        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1))
+        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1), A_USER)
 
         # THEN
         assert insights.latest_usd_invoice is not None
@@ -395,7 +409,7 @@ class TestInsightsReader:
         reader = SqlAlchemyInsightsReader(session)
 
         # WHEN
-        insights = await reader.monthly_insights(date(2026, 1, 1), date(2026, 2, 1))
+        insights = await reader.monthly_insights(date(2026, 1, 1), date(2026, 2, 1), A_USER)
 
         # THEN — no crash on the year rollover and the requested month is January.
         assert insights.month == "2026-01"
@@ -420,7 +434,7 @@ class TestInsightsReader:
         reader = SqlAlchemyInsightsReader(session)
 
         # WHEN
-        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1))
+        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1), A_USER)
 
         # THEN
         assert insights.recurring is not None
@@ -505,9 +519,11 @@ class TestMonotributoReader:
         reader = SqlAlchemyMonotributoReader(session)
 
         # WHEN
-        snapshot = await reader.snapshot(reference)
+        snapshot = await reader.snapshot(reference, A_USER)
 
-        # THEN
+        # THEN — every owner-scoped query carries the user_id predicate (ADR-108).
+        for call in session.execute.await_args_list:
+            assert "user_id" in str(call.args[0]).lower()
         assert snapshot.current.category == "A"
         assert snapshot.current.used == Decimal("1500000.50")
         assert [entry.letter for entry in snapshot.scale] == list("ABCDEFGHIJK")
@@ -540,7 +556,7 @@ class TestMonotributoReader:
         reader = SqlAlchemyMonotributoReader(session)
 
         # WHEN
-        snapshot = await reader.snapshot(reference)
+        snapshot = await reader.snapshot(reference, A_USER)
 
         # THEN — the documented settings default category (C) applies, zero current, live previous.
         assert snapshot.current.category == "C"
@@ -570,7 +586,7 @@ class TestMonotributoReader:
         reader = SqlAlchemyMonotributoReader(session)
 
         # WHEN
-        snapshot = await reader.snapshot(date(2026, 6, 14))
+        snapshot = await reader.snapshot(date(2026, 6, 14), A_USER)
 
         # THEN
         assert snapshot.invoices[0].is_foreign_currency is True
@@ -590,7 +606,7 @@ class TestMonotributoReader:
         reader = SqlAlchemyMonotributoReader(session)
 
         # WHEN
-        standing = await reader.current_standing(date(2026, 6, 14))
+        standing = await reader.current_standing(date(2026, 6, 14), A_USER)
 
         # THEN
         assert standing.category == "H"
@@ -628,13 +644,14 @@ class TestSettingsReader:
         reader = SqlAlchemySettingsReader(session)
 
         # WHEN
-        settings = await reader.get_settings()
+        settings = await reader.get_settings(A_USER)
 
-        # THEN
+        # THEN — the four fields project AND the read is scoped to the owner (ADR-110).
         assert settings.preferred_display_currency == "USD"
         assert settings.fx_default_rate_type == "official"
         assert settings.monotributo_current_category == "F"
         assert settings.monotributo_activity_type == "bienes"
+        assert "user_id" in str(session.execute.call_args.args[0]).lower()
 
     async def test_returns_documented_defaults_when_absent(self):
         """
@@ -648,7 +665,7 @@ class TestSettingsReader:
         reader = SqlAlchemySettingsReader(session)
 
         # WHEN
-        settings = await reader.get_settings()
+        settings = await reader.get_settings(A_USER)
 
         # THEN
         assert settings.preferred_display_currency == DEFAULT_DISPLAY_CURRENCY

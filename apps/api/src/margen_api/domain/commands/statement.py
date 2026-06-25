@@ -131,11 +131,15 @@ class ImportStatement(Command):
     flushes to obtain its id, then builds one EXPENSE transaction per ``lines``
     entry — each linked to the document via ``statement_document_id`` — and commits
     atomically in a single unit of work. It generates every transaction's identity
-    and timestamps (ADR-026).
+    and timestamps (ADR-026) and stamps each created/merged transaction with the
+    authenticated owner ``user_id`` the entrypoint sets from ``AuthUser.id`` before
+    dispatch, so imported rows are owned exactly like manually-created ones
+    (ADR-108).
     """
 
     document: StatementDocumentPayload
     lines: list[StatementLineInput]
+    user_id: str
 
 
 @dataclass(frozen=True, slots=True)

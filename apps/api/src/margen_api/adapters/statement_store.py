@@ -36,6 +36,7 @@ class SqlAlchemyStatementStore(AbstractStatementStore):
     async def save(
         self,
         *,
+        user_id: str | None,
         pdf_bytes: bytes,
         content_type: str,
         byte_size: int,
@@ -49,13 +50,16 @@ class SqlAlchemyStatementStore(AbstractStatementStore):
         period_due: date | None,
         total_amount: Decimal | None,
     ) -> UUID:
-        """Stage one statement document row and return its generated id (ADR-077).
+        """Stage one statement document row and return its generated id (ADR-077, ADR-108).
 
         The row is flushed so the server-generated ``id`` is populated and can be
         used as the FK each imported transaction links back to, all within the same
-        unit of work (ADR-078).
+        unit of work (ADR-078). The ownership column is a nullable UUID (ADR-094); the
+        owner arrives as a string (the Supabase ``sub``), so it is coerced on the way
+        down to mirror the transaction repository's mapper.
         """
         record = StatementDocumentRecord(
+            user_id=UUID(user_id) if user_id is not None else None,
             pdf_bytes=pdf_bytes,
             content_type=content_type,
             byte_size=byte_size,
@@ -73,9 +77,16 @@ class SqlAlchemyStatementStore(AbstractStatementStore):
         await self.session.flush([record])
         return record.id
 
-    async def get(self, statement_document_id: UUID) -> StatementDocument | None:
-        """Return the stored document by identity, or ``None`` when absent."""
-        statement = select(StatementDocumentRecord).where(StatementDocumentRecord.id == statement_document_id).limit(1)
+    async def get(self, statement_document_id: UUID, user_id: str) -> StatementDocument | None:
+        """Return the owner's stored document by identity, or ``None`` (ADR-108, ADR-111)."""
+        statement = (
+            select(StatementDocumentRecord)
+            .where(
+                StatementDocumentRecord.id == statement_document_id,
+                StatementDocumentRecord.user_id == UUID(user_id),
+            )
+            .limit(1)
+        )
         record = (await self.session.execute(statement)).scalar_one_or_none()
         if record is None:
             return None

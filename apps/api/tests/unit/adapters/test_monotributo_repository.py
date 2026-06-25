@@ -13,12 +13,15 @@ from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
 
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
 from margen_api.adapters.monotributo_repository import (
     SqlAlchemyMonotributoSnapshotRepository,
 )
 from margen_api.service_layer.monotributo_read_models import MonotributoStanding
+
+A_USER = "00000000-0000-4000-8000-000000000001"
 
 
 def _session() -> AsyncMock:
@@ -81,7 +84,7 @@ class TestSnapshotRepositoryUpsert:
         repo = SqlAlchemyMonotributoSnapshotRepository(session)
 
         # WHEN
-        await repo.upsert(_standing())
+        await repo.upsert(_standing(), A_USER)
 
         # THEN
         session.add.assert_called_once()
@@ -89,6 +92,8 @@ class TestSnapshotRepositoryUpsert:
         assert isinstance(added, MonotributoSnapshotRecord)
         assert added.period_end == date(2026, 6, 1)
         assert added.limit_amount == Decimal("8992597.87")
+        # The inserted row is attributed to the owner (ADR-112).
+        assert added.user_id == UUID(A_USER)
 
     async def test_overlays_when_present(self):
         """
@@ -104,7 +109,7 @@ class TestSnapshotRepositoryUpsert:
         repo = SqlAlchemyMonotributoSnapshotRepository(session)
 
         # WHEN
-        await repo.upsert(_standing())
+        await repo.upsert(_standing(), A_USER)
 
         # THEN — overlaid, not inserted.
         session.add.assert_not_called()
@@ -126,7 +131,7 @@ class TestSnapshotRepositoryReads:
         repo = SqlAlchemyMonotributoSnapshotRepository(session)
 
         # WHEN / THEN
-        assert await repo.configured_category() == ("C", "bienes")
+        assert await repo.configured_category(A_USER) == ("C", "bienes")
 
     async def test_configured_category_none_when_absent(self):
         """GIVEN no config row WHEN configured_category runs THEN it returns None."""
@@ -136,7 +141,7 @@ class TestSnapshotRepositoryReads:
         repo = SqlAlchemyMonotributoSnapshotRepository(session)
 
         # WHEN / THEN
-        assert await repo.configured_category() is None
+        assert await repo.configured_category(A_USER) is None
 
     async def test_used_in_window_sums(self):
         """GIVEN a window SUM WHEN used_in_window runs THEN it returns the Decimal total."""
@@ -146,7 +151,7 @@ class TestSnapshotRepositoryReads:
         repo = SqlAlchemyMonotributoSnapshotRepository(session)
 
         # WHEN / THEN
-        assert await repo.used_in_window(date(2025, 6, 1), date(2026, 6, 1)) == Decimal("4200000.00")
+        assert await repo.used_in_window(date(2025, 6, 1), date(2026, 6, 1), A_USER) == Decimal("4200000.00")
 
     async def test_used_in_window_zero_when_no_rows(self):
         """GIVEN no included rows WHEN used_in_window runs THEN it returns 0."""
@@ -156,7 +161,7 @@ class TestSnapshotRepositoryReads:
         repo = SqlAlchemyMonotributoSnapshotRepository(session)
 
         # WHEN / THEN
-        assert await repo.used_in_window(date(2025, 6, 1), date(2026, 6, 1)) == Decimal(0)
+        assert await repo.used_in_window(date(2025, 6, 1), date(2026, 6, 1), A_USER) == Decimal(0)
 
     async def test_used_in_window_coerces_float(self):
         """GIVEN a float SUM (SQLite) WHEN used_in_window runs THEN it coerces to Decimal."""
@@ -166,7 +171,7 @@ class TestSnapshotRepositoryReads:
         repo = SqlAlchemyMonotributoSnapshotRepository(session)
 
         # WHEN / THEN
-        assert await repo.used_in_window(date(2025, 6, 1), date(2026, 6, 1)) == Decimal("4200000.0")
+        assert await repo.used_in_window(date(2025, 6, 1), date(2026, 6, 1), A_USER) == Decimal("4200000.0")
 
     async def test_existing_period_ends_returns_set(self):
         """GIVEN persisted snapshots WHEN existing_period_ends runs THEN it returns the months."""
@@ -176,4 +181,4 @@ class TestSnapshotRepositoryReads:
         repo = SqlAlchemyMonotributoSnapshotRepository(session)
 
         # WHEN / THEN
-        assert await repo.existing_period_ends() == {date(2026, 6, 1), date(2026, 5, 1)}
+        assert await repo.existing_period_ends(A_USER) == {date(2026, 6, 1), date(2026, 5, 1)}

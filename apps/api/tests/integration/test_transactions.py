@@ -22,6 +22,10 @@ from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, T
 
 pytestmark = pytest.mark.integration
 
+# The owning user threaded through every write/read (ADR-108). Contains hex letters
+# so the ``UUID`` ownership column stays TEXT even on a digit-only-averse backend.
+A_USER = "f0e1d2c3-b4a5-4960-8788-99aabbccddee"
+
 
 def _ars(occurred_on: date, name: str = "Apartment rent") -> Transaction:
     """Build an ARS aggregate with stable identity and timestamps."""
@@ -36,6 +40,7 @@ def _ars(occurred_on: date, name: str = "Apartment rent") -> Transaction:
         category="Rent",
         payment_method="Transfer",
         notes="monthly rent",
+        user_id=A_USER,
         created_at=moment,
         updated_at=moment,
     )
@@ -56,6 +61,7 @@ def _usd(occurred_on: date, name: str = "MacBook") -> Transaction:
         fx_rate_type=FxRateType.MEP,
         fx_rate_as_of=datetime(2026, 1, 2, 12, 0, tzinfo=UTC),
         counts_toward_monotributo=True,
+        user_id=A_USER,
         created_at=moment,
         updated_at=moment,
     )
@@ -84,7 +90,7 @@ class TestTransactionPersistenceRoundTrip:
         # THEN — the reader lists them newest-first (USD's later date wins).
         async with session_factory() as session:
             reader = SqlAlchemyTransactionReader(session)
-            listed = await reader.list_transactions()
+            listed = await reader.list_transactions(A_USER)
             assert [model.id for model in listed] == [usd.id, ars.id]  # type: ignore[attr-defined]
 
             # FX block and NUMERIC precision survive the round-trip.
@@ -105,14 +111,14 @@ class TestTransactionPersistenceRoundTrip:
             assert ars_model.fx_rate is None
 
             # get by identity returns the same row.
-            fetched = await reader.get_transaction(ars.id)  # type: ignore[attr-defined]
+            fetched = await reader.get_transaction(ars.id, A_USER)  # type: ignore[attr-defined]
             assert fetched is not None
             assert fetched.amount == Decimal("123456.78")
 
         # WHEN — load, mutate and persist the ARS aggregate.
         async with session_factory() as session:
             repository = SqlAlchemyTransactionRepository(session)
-            loaded = await repository.get(ars.id)  # type: ignore[attr-defined]
+            loaded = await repository.get(ars.id, A_USER)  # type: ignore[attr-defined]
             assert loaded is not None
             patched = build_transaction(
                 transaction_id=loaded.id,
@@ -121,6 +127,7 @@ class TestTransactionPersistenceRoundTrip:
                 kind=loaded.kind,
                 amount=Decimal("200000.00"),
                 currency=loaded.currency,
+                user_id=loaded.user_id,
                 created_at=loaded.created_at,
                 updated_at=datetime.now(UTC),
             )
@@ -130,7 +137,7 @@ class TestTransactionPersistenceRoundTrip:
         # THEN — the update is reflected.
         async with session_factory() as session:
             reader = SqlAlchemyTransactionReader(session)
-            refreshed = await reader.get_transaction(ars.id)  # type: ignore[attr-defined]
+            refreshed = await reader.get_transaction(ars.id, A_USER)  # type: ignore[attr-defined]
             assert refreshed is not None
             assert refreshed.name == "Apartment rent (updated)"
             assert refreshed.amount == Decimal("200000.00")
@@ -138,16 +145,16 @@ class TestTransactionPersistenceRoundTrip:
         # WHEN — hard-delete both rows.
         async with session_factory() as session:
             repository = SqlAlchemyTransactionRepository(session)
-            assert await repository.delete(ars.id) is True  # type: ignore[attr-defined]
-            assert await repository.delete(usd.id) is True  # type: ignore[attr-defined]
+            assert await repository.delete(ars.id, A_USER) is True  # type: ignore[attr-defined]
+            assert await repository.delete(usd.id, A_USER) is True  # type: ignore[attr-defined]
             await session.commit()
 
         # THEN — they are gone, and deleting again reports nothing removed.
         async with session_factory() as session:
             reader = SqlAlchemyTransactionReader(session)
-            assert await reader.list_transactions() == []
+            assert await reader.list_transactions(A_USER) == []
             repository = SqlAlchemyTransactionRepository(session)
-            assert await repository.delete(ars.id) is False  # type: ignore[attr-defined]
+            assert await repository.delete(ars.id, A_USER) is False  # type: ignore[attr-defined]
 
 
 class TestMigrationParity:
@@ -170,6 +177,6 @@ class TestMigrationParity:
         # THEN
         async with session_factory() as session:
             reader = SqlAlchemyTransactionReader(session)
-            fetched = await reader.get_transaction(ghost.id)  # type: ignore[attr-defined]
+            fetched = await reader.get_transaction(ghost.id, A_USER)  # type: ignore[attr-defined]
             assert fetched is not None
             assert fetched.name == "Ghost insert"

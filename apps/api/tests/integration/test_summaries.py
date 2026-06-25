@@ -23,9 +23,13 @@ from margen_api.domain.models.value_objects import Currency, Kind
 
 pytestmark = pytest.mark.integration
 
+# Two distinct owners prove the summary is scoped to the caller (ADR-108).
+OWNER = "11111111-1111-4111-8111-111111111111"
+OTHER_OWNER = "22222222-2222-4222-8222-222222222222"
 
-def _expense(occurred_on: date, amount: str, category: str | None, name: str = "Spend"):
-    """Build an ARS expense aggregate for a date and category."""
+
+def _expense(occurred_on: date, amount: str, category: str | None, name: str = "Spend", *, user_id: str = OWNER):
+    """Build an ARS expense aggregate for a date, category and owner."""
     moment = datetime(2026, 1, 1, tzinfo=UTC)
     return build_transaction(
         transaction_id=uuid4(),
@@ -35,12 +39,13 @@ def _expense(occurred_on: date, amount: str, category: str | None, name: str = "
         amount=Decimal(amount),
         currency=Currency.ARS,
         category=category,
+        user_id=user_id,
         created_at=moment,
         updated_at=moment,
     )
 
 
-def _income(occurred_on: date, amount: str):
+def _income(occurred_on: date, amount: str, *, user_id: str = OWNER):
     """Build an income aggregate that must be excluded from expense sums."""
     moment = datetime(2026, 1, 1, tzinfo=UTC)
     return build_transaction(
@@ -51,6 +56,7 @@ def _income(occurred_on: date, amount: str):
         amount=Decimal(amount),
         currency=Currency.ARS,
         category="Income",
+        user_id=user_id,
         created_at=moment,
         updated_at=moment,
     )
@@ -86,7 +92,7 @@ class TestSummaryAggregation:
         # WHEN
         async with session_factory() as session:
             reader = SqlAlchemySummaryReader(session)
-            summary = await reader.monthly_summary(date(2026, 6, 15))
+            summary = await reader.monthly_summary(date(2026, 6, 15), OWNER)
 
         # THEN — month and a 6-point trend ending at June.
         assert summary.month == "2026-06"
@@ -116,3 +122,26 @@ class TestSummaryAggregation:
         assert by_category["Rent"].delta_pct == Decimal("0")
         # Uncategorized had no May presence => None.
         assert by_category["Uncategorized"].delta_pct is None
+
+    async def test_summary_is_scoped_to_the_caller(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN one owner's expenses and a different owner's expenses in the same month
+        WHEN the summary for the other owner (with no spending) is read
+        THEN it sees a zero trend and no categories — never the first owner's rows
+             (ADR-108)
+        """
+        # GIVEN — only OWNER has June expenses.
+        async with session_factory() as session:
+            repository = SqlAlchemyTransactionRepository(session)
+            repository.add(_expense(date(2026, 6, 5), "300.00", "Food", user_id=OWNER))
+            repository.add(_expense(date(2026, 6, 6), "200.00", "Rent", user_id=OWNER))
+            await session.commit()
+
+        # WHEN — OTHER_OWNER reads their own (empty) summary.
+        async with session_factory() as session:
+            reader = SqlAlchemySummaryReader(session)
+            summary = await reader.monthly_summary(date(2026, 6, 15), OTHER_OWNER)
+
+        # THEN — no cross-tenant leakage: zero trend, no categories.
+        assert summary.categories == []
+        assert all(point.expenses == Decimal("0") for point in summary.trend)

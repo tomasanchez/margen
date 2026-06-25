@@ -18,13 +18,14 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
 from margen_api.entrypoint.dependencies import (
+    AuthUser,
     Bus,
     MonotributoReader,
-    require_auth_user,
+    Settings,
     require_capture_token,
 )
 from margen_api.entrypoint.monotributo_schemas import (
@@ -46,30 +47,32 @@ def _today() -> date:
     name="Monotributo standing",
     status_code=status.HTTP_200_OK,
     response_model=ResponseModel[MonotributoSnapshotResponse],
-    dependencies=[Depends(require_auth_user)],
 )
 async def monotributo_snapshot(
     reader: MonotributoReader,
     bus: Bus,
+    user: AuthUser,
 ) -> ResponseModel[MonotributoSnapshotResponse]:
-    """Return the Monotributo standing, comparison, scale and drilldown (ADR-052).
+    """Return the caller's Monotributo standing, comparison, scale and drilldown (ADR-052, ADR-112).
 
-    Computes the live trailing-12-month ``current`` standing, the prior-window
-    ``previous`` standing for the comparison toggle (read from a saved snapshot
-    when one exists, else computed live), the A-K ``scale``, and the included
-    invoice drilldown. It then records the current-period snapshot (and backfills
-    missing months on first read) by dispatching ``CaptureMonotributoSnapshot``
-    through the bus — the reader stays read-only.
+    Computes the caller's live trailing-12-month ``current`` standing, the
+    prior-window ``previous`` standing for the comparison toggle (read from a saved
+    snapshot when one exists, else computed live), the shared AFIP A-K ``scale``,
+    and the included invoice drilldown. It then records the caller's current-period
+    snapshot (and backfills missing months on first read) by dispatching
+    ``CaptureMonotributoSnapshot`` through the bus — the reader stays read-only.
 
-    Guarded per-route by ``require_auth_user`` (ADR-092): this human-facing read
-    requires a valid Supabase user JWT. It is gated on the route rather than at
-    router-include level so the sibling ``POST /capture`` machine endpoint keeps
-    ONLY its static-token guard (ADR-064) and is never double-guarded.
+    Scoped to the authenticated caller (ADR-112): the standing and snapshots are
+    user-owned, while the AFIP scale stays shared reference data. The identity
+    comes from the ``AuthUser`` parameter (a valid Supabase user JWT, ADR-092),
+    declared on the handler rather than at router-include level so the sibling
+    ``POST /capture`` machine endpoint keeps ONLY its static-token guard (ADR-064)
+    and is never double-guarded.
     """
     reference = _today()
-    snapshot = await reader.snapshot(reference)
-    # Read-records: persist the current period (and backfill) via the UoW (ADR-052).
-    await bus.handle(CaptureMonotributoSnapshot(as_of=reference))
+    snapshot = await reader.snapshot(reference, user.id)
+    # Read-records: persist the caller's current period (and backfill) via the UoW (ADR-052).
+    await bus.handle(CaptureMonotributoSnapshot(as_of=reference, user_id=user.id))
     return ResponseModel(data=MonotributoSnapshotResponse.from_read_model(snapshot))
 
 
@@ -80,17 +83,29 @@ async def monotributo_snapshot(
     response_model=ResponseModel[MonotributoCaptureResponse],
     dependencies=[Depends(require_capture_token)],
 )
-async def capture_monotributo(bus: Bus) -> ResponseModel[MonotributoCaptureResponse]:
-    """Trigger a Monotributo snapshot capture for the current period (ADR-052).
+async def capture_monotributo(bus: Bus, settings: Settings) -> ResponseModel[MonotributoCaptureResponse]:
+    """Trigger a Monotributo snapshot capture for the configured owner (ADR-052, ADR-112).
 
     Thin endpoint for an external scheduler to hit at ARCA's recategorization
     cadence; dispatches ``CaptureMonotributoSnapshot`` through the bus, which
-    idempotently UPSERTs the current-period snapshot (and backfills missing months)
-    on the unit of work.
+    idempotently UPSERTs the configured owner's current-period snapshot (and
+    backfills missing months) on the unit of work.
+
+    The M2M caller authenticates with a static token and carries no user JWT
+    (ADR-064), so the snapshot owner is read from configuration: the
+    ``FASTAPI_MONOTRIBUTO_OWNER_ID`` env var (ADR-112). When the owner is unset the
+    capture fails closed with ``503`` — mirroring the capture-token contract — so
+    a snapshot is never written without an explicit owner.
 
     Guarded by ``require_capture_token`` (ADR-064): the shared-secret bearer token
     must be configured (else ``503``) and the request must carry a matching
     ``Authorization: Bearer <token>`` header (else ``401``).
     """
-    await bus.handle(CaptureMonotributoSnapshot(as_of=_today()))
+    owner = settings.MONOTRIBUTO_OWNER_ID
+    if not owner:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Monotributo capture owner is not configured.",
+        )
+    await bus.handle(CaptureMonotributoSnapshot(as_of=_today(), user_id=owner))
     return ResponseModel(data=MonotributoCaptureResponse())

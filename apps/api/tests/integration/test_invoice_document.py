@@ -29,6 +29,9 @@ from margen_api.service_layer.handlers import create_transaction
 
 pytestmark = pytest.mark.integration
 
+# The owning user threaded through the create/read path (ADR-108).
+A_USER = "f0e1d2c3-b4a5-4960-8788-99aabbccddee"
+
 _MOMENT = datetime(2026, 1, 1, tzinfo=UTC)
 
 
@@ -47,6 +50,7 @@ async def _seed_transaction(session_factory: async_sessionmaker[AsyncSession]) -
         currency=Currency.ARS,
         category="Services",
         counts_toward_monotributo=True,
+        user_id=A_USER,
         created_at=_MOMENT,
         updated_at=_MOMENT,
     )
@@ -71,6 +75,7 @@ async def _save_document(
         store = SqlAlchemyDocumentStore(session)
         await store.save(
             transaction_id=transaction_id,
+            user_id=A_USER,
             pdf_bytes=pdf_bytes,
             content_type="application/pdf",
             byte_size=len(pdf_bytes),
@@ -107,7 +112,7 @@ class TestDocumentRoundTrip:
 
         # WHEN
         async with session_factory() as session:
-            document = await SqlAlchemyDocumentStore(session).get(transaction_id)
+            document = await SqlAlchemyDocumentStore(session).get(transaction_id, A_USER)
 
         # THEN
         assert document is not None
@@ -135,7 +140,7 @@ class TestDocumentRoundTrip:
         """
         # WHEN
         async with session_factory() as session:
-            document = await SqlAlchemyDocumentStore(session).get(uuid4())
+            document = await SqlAlchemyDocumentStore(session).get(uuid4(), A_USER)
 
         # THEN
         assert document is None
@@ -184,6 +189,7 @@ class TestCreateWithAttachment:
             amount=Decimal("1000.00"),
             currency=Currency.ARS,
             counts_toward_monotributo=True,
+            user_id=A_USER,
             document=document,
         )
 
@@ -192,8 +198,8 @@ class TestCreateWithAttachment:
 
         # THEN — both rows persisted and the document links to the transaction.
         async with session_factory() as session:
-            transaction = await SqlAlchemyTransactionRepository(session).get(transaction_id)
-            stored = await SqlAlchemyDocumentStore(session).get(transaction_id)
+            transaction = await SqlAlchemyTransactionRepository(session).get(transaction_id, A_USER)
+            stored = await SqlAlchemyDocumentStore(session).get(transaction_id, A_USER)
         assert transaction is not None
         assert stored is not None
         assert stored.transaction_id == transaction_id

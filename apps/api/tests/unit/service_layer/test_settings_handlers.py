@@ -20,6 +20,9 @@ from margen_api.domain.models.settings import (
 from margen_api.service_layer.settings_handlers import update_settings
 from tests.fakes.persistence import FakeUnitOfWork
 
+# The owner the per-user settings update is scoped to (ADR-108, ADR-110).
+OWNER = "f0e1d2c3-b4a5-4960-8788-99aabbccddee"
+
 
 class TestPartialMerge:
     """``update_settings`` merges only the provided fields onto the single row."""
@@ -42,7 +45,7 @@ class TestPartialMerge:
         )
 
         # WHEN
-        result = await update_settings(UpdateSettings(preferred_display_currency="ARS"), uow)
+        result = await update_settings(UpdateSettings(user_id=OWNER, preferred_display_currency="ARS"), uow)
 
         # THEN — only the currency changed; the merge committed through the unit of work.
         assert result.preferred_display_currency == "ARS"
@@ -59,6 +62,7 @@ class TestPartialMerge:
         # WHEN
         result = await update_settings(
             UpdateSettings(
+                user_id=OWNER,
                 preferred_display_currency="USD",
                 fx_default_rate_type="official",
                 monotributo_current_category="K",
@@ -83,7 +87,7 @@ class TestPartialMerge:
         uow = FakeUnitOfWork()
 
         # WHEN
-        result = await update_settings(UpdateSettings(), uow)
+        result = await update_settings(UpdateSettings(user_id=OWNER), uow)
 
         # THEN — defaults from the fake's single-row store.
         assert result.preferred_display_currency == "ARS"
@@ -104,6 +108,7 @@ class TestNormalization:
         # WHEN
         result = await update_settings(
             UpdateSettings(
+                user_id=OWNER,
                 preferred_display_currency="  usd  ",
                 monotributo_current_category=" h ",
                 monotributo_activity_type="  bienes  ",
@@ -127,7 +132,7 @@ class TestValidation:
 
         # WHEN / THEN
         with pytest.raises(UnknownDisplayCurrencyError):
-            await update_settings(UpdateSettings(preferred_display_currency="EUR"), uow)
+            await update_settings(UpdateSettings(user_id=OWNER, preferred_display_currency="EUR"), uow)
         assert uow.committed is False
 
     async def test_unknown_fx_default_raises(self):
@@ -137,7 +142,7 @@ class TestValidation:
 
         # WHEN / THEN
         with pytest.raises(UnknownFxRateTypeError):
-            await update_settings(UpdateSettings(fx_default_rate_type="manual"), uow)
+            await update_settings(UpdateSettings(user_id=OWNER, fx_default_rate_type="manual"), uow)
         assert uow.committed is False
 
     async def test_unknown_category_raises(self):
@@ -147,5 +152,5 @@ class TestValidation:
 
         # WHEN / THEN
         with pytest.raises(UnknownCategoryError):
-            await update_settings(UpdateSettings(monotributo_current_category="Z"), uow)
+            await update_settings(UpdateSettings(user_id=OWNER, monotributo_current_category="Z"), uow)
         assert uow.committed is False

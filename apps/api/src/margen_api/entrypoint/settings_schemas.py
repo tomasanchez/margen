@@ -43,9 +43,16 @@ class SettingsUpdateRequest(CamelCaseModel):
         description="Monotributo activity type ('services' or 'bienes'); omit to leave unchanged.",
     )
 
-    def to_command(self) -> UpdateSettings:
-        """Translate the request into the boundary-agnostic command."""
+    def to_command(self, user_id: str) -> UpdateSettings:
+        """Translate the request into the owner-stamped command (ADR-108, ADR-110).
+
+        Args:
+            user_id: The authenticated owner the update is scoped to; carried on
+                the command so the handler get-or-creates and merges the owner's
+                row (ADR-110).
+        """
         return UpdateSettings(
+            user_id=user_id,
             preferred_display_currency=self.preferred_display_currency,
             fx_default_rate_type=self.fx_default_rate_type,
             monotributo_current_category=self.monotributo_current_category,

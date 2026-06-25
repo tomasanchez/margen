@@ -466,8 +466,13 @@ class StatementImportRequest(CamelCaseModel):
     document: StatementDocumentRequest = Field(description="The document payload echoed from parse.")
     lines: list[StatementLineRequest] = Field(description="The user-confirmed lines to import.")
 
-    def to_command(self) -> ImportStatement:
+    def to_command(self, user_id: str) -> ImportStatement:
         """Translate the request into an :class:`ImportStatement` command.
+
+        Args:
+            user_id: The authenticated owner (``AuthUser.id``) the handler stamps
+                onto every created/merged transaction so imported rows are owned
+                like manual ones (ADR-108).
 
         Returns:
             The boundary-agnostic command the message bus dispatches; the document
@@ -479,6 +484,7 @@ class StatementImportRequest(CamelCaseModel):
         return ImportStatement(
             document=self.document.to_payload(),
             lines=[line.to_input() for line in self.lines],
+            user_id=user_id,
         )
 
 

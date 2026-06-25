@@ -256,8 +256,12 @@ class TransactionCreateRequest(CamelCaseModel):
         description="Optional imported invoice PDF to store and link (ADR-070, ADR-071).",
     )
 
-    def to_command(self) -> CreateTransaction:
+    def to_command(self, user_id: str) -> CreateTransaction:
         """Translate the request into a :class:`CreateTransaction` command.
+
+        Args:
+            user_id: The authenticated owner (``AuthUser.id``) the entrypoint
+                stamps onto the command so the created row is owned (ADR-108).
 
         Returns:
             The boundary-agnostic command the message bus dispatches; the optional
@@ -268,6 +272,7 @@ class TransactionCreateRequest(CamelCaseModel):
             InvalidDocumentBase64Error: When a document's ``pdfBase64`` is invalid.
         """
         return CreateTransaction(
+            user_id=user_id,
             occurred_on=self.occurred_on,
             name=self.name,
             kind=self.kind,
@@ -339,11 +344,14 @@ class TransactionPatchRequest(CamelCaseModel):
     recurring: bool | None = Field(default=None, description="New recurring flag.")
     counts_toward_monotributo: bool | None = Field(default=None, description="New Monotributo counting hint.")
 
-    def to_command(self, transaction_id: UUID) -> UpdateTransaction:
+    def to_command(self, transaction_id: UUID, user_id: str) -> UpdateTransaction:
         """Translate the patch into an :class:`UpdateTransaction` command.
 
         Args:
             transaction_id: The identity from the URL path.
+            user_id: The authenticated owner (``AuthUser.id``) the handler scopes
+                the load/persist by, so a cross-tenant patch is a 404 (ADR-108,
+                ADR-111).
 
         Returns:
             The command addressing one aggregate; ``None`` fields are left
@@ -351,6 +359,7 @@ class TransactionPatchRequest(CamelCaseModel):
         """
         return UpdateTransaction(
             id=transaction_id,
+            user_id=user_id,
             occurred_on=self.occurred_on,
             name=self.name,
             kind=self.kind,

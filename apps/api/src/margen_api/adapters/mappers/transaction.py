@@ -8,6 +8,8 @@ and the domain never learns about SQLAlchemy (AGENTS.md).
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind
@@ -43,6 +45,7 @@ def to_domain(record: TransactionRecord) -> Transaction:
         recurring=record.recurring,
         counts_toward_monotributo=record.counts_toward_monotributo,
         statement_document_id=record.statement_document_id,
+        user_id=str(record.user_id) if record.user_id is not None else None,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
@@ -93,5 +96,13 @@ def update_record(record: TransactionRecord, transaction: Transaction) -> None:
     record.recurring = transaction.recurring
     record.counts_toward_monotributo = transaction.counts_toward_monotributo
     record.statement_document_id = transaction.statement_document_id
+    # The aggregate carries ``user_id`` as a string (the Supabase ``sub``); the
+    # ownership column is a NOT NULL UUID (ADR-109), so coerce on the way down. Every
+    # write path threads the authenticated owner (ADR-108), so a missing id here is a
+    # programming error rather than a persistable state -- fail fast and clearly.
+    if transaction.user_id is None:
+        msg = "Cannot persist a transaction without an owning user_id (ADR-108, ADR-109)."
+        raise ValueError(msg)
+    record.user_id = UUID(transaction.user_id)
     record.created_at = transaction.created_at
     record.updated_at = transaction.updated_at

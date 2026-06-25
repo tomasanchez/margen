@@ -37,6 +37,9 @@ from margen_api.service_layer.handlers import import_statement
 
 pytestmark = pytest.mark.integration
 
+# The owning user threaded through the import/read path (ADR-108).
+A_USER = "f0e1d2c3-b4a5-4960-8788-99aabbccddee"
+
 
 async def _save_document(
     session_factory: async_sessionmaker[AsyncSession],
@@ -50,6 +53,7 @@ async def _save_document(
     async with session_factory() as session:
         store = SqlAlchemyStatementStore(session)
         document_id = await store.save(
+            user_id=A_USER,
             pdf_bytes=pdf_bytes,
             content_type="application/pdf",
             byte_size=len(pdf_bytes),
@@ -84,7 +88,7 @@ class TestStatementDocumentRoundTrip:
 
         # WHEN
         async with session_factory() as session:
-            document = await SqlAlchemyStatementStore(session).get(document_id)
+            document = await SqlAlchemyStatementStore(session).get(document_id, A_USER)
 
         # THEN
         assert document is not None
@@ -109,7 +113,7 @@ class TestStatementDocumentRoundTrip:
         """
         # WHEN
         async with session_factory() as session:
-            document = await SqlAlchemyStatementStore(session).get(uuid4())
+            document = await SqlAlchemyStatementStore(session).get(uuid4(), A_USER)
 
         # THEN
         assert document is None
@@ -180,6 +184,7 @@ class TestImportStatementAtomic:
             total_amount=Decimal("13821.66"),
         )
         command = ImportStatement(
+            user_id=A_USER,
             document=document,
             lines=[
                 StatementLineInput(
@@ -208,9 +213,11 @@ class TestImportStatementAtomic:
         # THEN — the document and both transactions persisted and link back.
         assert len(result.created_transaction_ids) == 2
         async with session_factory() as session:
-            stored = await SqlAlchemyStatementStore(session).get(result.statement_document_id)
+            stored = await SqlAlchemyStatementStore(session).get(result.statement_document_id, A_USER)
             repository = SqlAlchemyTransactionRepository(session)
-            transactions = [await repository.get(transaction_id) for transaction_id in result.created_transaction_ids]
+            transactions = [
+                await repository.get(transaction_id, A_USER) for transaction_id in result.created_transaction_ids
+            ]
 
         assert stored is not None
         assert stored.pdf_bytes == pdf_bytes
@@ -251,6 +258,7 @@ class TestImportStatementMerge:
             kind=Kind.EXPENSE,
             amount=Decimal("10180.00"),
             currency=Currency.ARS,
+            user_id=A_USER,
         )
         async with session_factory() as session:
             repository = SqlAlchemyTransactionRepository(session)
@@ -259,6 +267,7 @@ class TestImportStatementMerge:
 
         pdf_bytes = b"%PDF-1.4 merge statement"
         command = ImportStatement(
+            user_id=A_USER,
             document=StatementDocumentPayload(
                 pdf_bytes=pdf_bytes,
                 content_type="application/pdf",
@@ -292,7 +301,7 @@ class TestImportStatementMerge:
 
         # THEN — the existing row was enriched in place; no duplicate exists.
         async with session_factory() as session:
-            enriched = await SqlAlchemyTransactionRepository(session).get(manual.id)
+            enriched = await SqlAlchemyTransactionRepository(session).get(manual.id, A_USER)
             row_count = await session.scalar(select(func.count()).select_from(TransactionRecord))
 
         assert enriched is not None

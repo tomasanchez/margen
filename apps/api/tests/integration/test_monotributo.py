@@ -38,10 +38,12 @@ pytestmark = pytest.mark.integration
 # window ends at 2025-06-01 (the period_end the comparison + backfill line up on).
 REFERENCE = date(2026, 6, 14)
 _MOMENT = datetime(2026, 1, 1, tzinfo=UTC)
+# The owner the user-scoped monotributo standing is computed for (ADR-112).
+OWNER = "f0e1d2c3-b4a5-4960-8788-99aabbccddee"
 
 
 def _counted(occurred_on: date, amount: str, *, kind: Kind = Kind.INVOICE, name: str = "Invoice"):
-    """Build an invoice/income aggregate that counts toward the Monotributo limit."""
+    """Build an owner-owned invoice/income aggregate that counts toward the Monotributo limit."""
     return build_transaction(
         transaction_id=uuid4(),
         occurred_on=occurred_on,
@@ -51,13 +53,14 @@ def _counted(occurred_on: date, amount: str, *, kind: Kind = Kind.INVOICE, name:
         currency=Currency.ARS,
         category="Consulting",
         counts_toward_monotributo=True,
+        user_id=OWNER,
         created_at=_MOMENT,
         updated_at=_MOMENT,
     )
 
 
 def _not_counted(occurred_on: date, amount: str):
-    """Build an invoice flagged as NOT counting toward the limit (must be excluded)."""
+    """Build an owner-owned invoice flagged as NOT counting toward the limit (must be excluded)."""
     return build_transaction(
         transaction_id=uuid4(),
         occurred_on=occurred_on,
@@ -67,13 +70,14 @@ def _not_counted(occurred_on: date, amount: str):
         currency=Currency.ARS,
         category="Consulting",
         counts_toward_monotributo=False,
+        user_id=OWNER,
         created_at=_MOMENT,
         updated_at=_MOMENT,
     )
 
 
 def _expense(occurred_on: date, amount: str):
-    """Build an expense (must be excluded from the Monotributo total by kind)."""
+    """Build an owner-owned expense (must be excluded from the Monotributo total by kind)."""
     return build_transaction(
         transaction_id=uuid4(),
         occurred_on=occurred_on,
@@ -82,6 +86,7 @@ def _expense(occurred_on: date, amount: str):
         amount=Decimal(amount),
         currency=Currency.ARS,
         category="Food",
+        user_id=OWNER,
         created_at=_MOMENT,
         updated_at=_MOMENT,
     )
@@ -125,8 +130,8 @@ class TestMonotributoAggregation:
         # WHEN
         async with session_factory() as session:
             reader = SqlAlchemyMonotributoReader(session)
-            standing = await reader.current_standing(REFERENCE)
-            snapshot = await reader.snapshot(REFERENCE)
+            standing = await reader.current_standing(REFERENCE, OWNER)
+            snapshot = await reader.snapshot(REFERENCE, OWNER)
 
         # THEN — used excludes the non-counting invoice, the expense and the old row.
         assert standing.used == Decimal("1700000.00")
@@ -168,7 +173,7 @@ class TestReadRecordsAndBackfill:
         uow = SqlAlchemyUnitOfWork(session_factory)
 
         # WHEN — first capture (read-records current + first-read backfill).
-        await capture_monotributo_snapshot(CaptureMonotributoSnapshot(as_of=REFERENCE), uow)
+        await capture_monotributo_snapshot(CaptureMonotributoSnapshot(as_of=REFERENCE, user_id=OWNER), uow)
 
         prior_end = prior_window(REFERENCE)[1]
         async with session_factory() as session:
@@ -193,8 +198,8 @@ class TestReadRecordsAndBackfill:
         assert prior_row is not None
         assert prior_row.used == Decimal("800000.00")
 
-        # WHEN — a second capture (idempotent UPSERT keyed by period_end).
-        await capture_monotributo_snapshot(CaptureMonotributoSnapshot(as_of=REFERENCE), uow)
+        # WHEN — a second capture (idempotent UPSERT keyed by (user_id, period_end)).
+        await capture_monotributo_snapshot(CaptureMonotributoSnapshot(as_of=REFERENCE, user_id=OWNER), uow)
         async with session_factory() as session:
             total_after_second = await session.scalar(select(func.count()).select_from(MonotributoSnapshotRecord)) or 0
             current_rows_again = (
@@ -212,27 +217,31 @@ class TestReadRecordsAndBackfill:
 
         # THEN — the reader resolves previous from the persisted prior-window snapshot.
         async with session_factory() as session:
-            snapshot = await SqlAlchemyMonotributoReader(session).snapshot(REFERENCE)
+            snapshot = await SqlAlchemyMonotributoReader(session).snapshot(REFERENCE, OWNER)
         assert snapshot.previous is not None
         assert snapshot.previous.used == Decimal("800000.00")
         assert snapshot.previous.projection_note == "Saved snapshot from this period."
 
 
 class TestConfigRoundTrip:
-    """The settings category persists where the Monotributo reader then applies it (ADR-054)."""
+    """The settings category persists where the Monotributo reader then applies it (ADR-054, ADR-112)."""
 
     async def test_settings_category_is_read_back_and_used_by_the_reader(
         self, session_factory: async_sessionmaker[AsyncSession]
     ):
         """
-        GIVEN a configured category D written through the settings repository
-        WHEN it is read back and the reader computes the current standing
-        THEN the persisted category round-trips and the standing uses category D's ceiling
+        GIVEN a configured category D written through the settings repository and
+              attributed to the owner
+        WHEN it is read back and the reader computes the owner's current standing
+        THEN the persisted category round-trips and the owner's standing uses
+             category D's ceiling (the reader scopes the category to the owner, ADR-112)
         """
-        # GIVEN
+        # GIVEN — the owner's settings row is get-or-created scoped to the owner, so
+        # the user-scoped reader resolves it directly (ADR-110, ADR-112).
         async with session_factory() as session:
             repository = SqlAlchemySettingsRepository(session)
             await repository.upsert_settings(
+                OWNER,
                 monotributo_current_category="D",
                 monotributo_activity_type="services",
             )
@@ -240,9 +249,9 @@ class TestConfigRoundTrip:
 
         # WHEN
         async with session_factory() as session:
-            persisted = await SqlAlchemySettingsRepository(session).get_settings()
+            persisted = await SqlAlchemySettingsRepository(session).get_settings(OWNER)
         async with session_factory() as session:
-            standing = await SqlAlchemyMonotributoReader(session).current_standing(REFERENCE)
+            standing = await SqlAlchemyMonotributoReader(session).current_standing(REFERENCE, OWNER)
 
         # THEN
         assert persisted.monotributo_current_category == "D"

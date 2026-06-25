@@ -65,6 +65,7 @@ class AbstractStatementStore(ABC):
     async def save(
         self,
         *,
+        user_id: str | None,
         pdf_bytes: bytes,
         content_type: str,
         byte_size: int,
@@ -78,13 +79,16 @@ class AbstractStatementStore(ABC):
         period_due: date | None,
         total_amount: Decimal | None,
     ) -> UUID:
-        """Insert one statement document row and return its new identity (ADR-077).
+        """Insert one statement document row and return its new identity (ADR-077, ADR-108).
 
         The returned id is the FK target each imported transaction links back to,
         so the import handler stages the document, flushes, then attaches the id to
         every created line in the same unit of work (ADR-078).
 
         Args:
+            user_id: The authenticated owner the document is attributed to, mirroring
+                its imported transactions' owner so the bytes are owner-scoped on
+                download (ADR-108); ``None`` only for legacy/unowned rows.
             pdf_bytes: The original uploaded PDF bytes.
             content_type: The MIME type of the upload.
             byte_size: The PDF size in bytes.
@@ -103,15 +107,20 @@ class AbstractStatementStore(ABC):
         """
 
     @abstractmethod
-    async def get(self, statement_document_id: UUID) -> StatementDocument | None:
-        """Return the stored document by identity, or ``None`` when absent.
+    async def get(self, statement_document_id: UUID, user_id: str) -> StatementDocument | None:
+        """Return the owner's stored document by identity, or ``None`` (ADR-108, ADR-111).
+
+        Scopes the lookup by ``user_id`` (filter-in-reader) so another user's document
+        id is simply not found — the download endpoint maps that to a 404 before any
+        bytes are read, so foreign PDFs never leak (ADR-081, ADR-111).
 
         Args:
             statement_document_id: The statement document to fetch.
+            user_id: The authenticated owner the lookup is scoped to.
 
         Returns:
             The :class:`StatementDocument` read model, or ``None`` when no document
-            matches the identity.
+            owned by ``user_id`` matches the identity.
         """
 
     @abstractmethod

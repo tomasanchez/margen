@@ -14,7 +14,7 @@ import datetime
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Numeric, String, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, Index, Numeric, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,11 +38,14 @@ class MonotributoSnapshotRecord(Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    # Forward-compat ownership column (ADR-094): nullable, unused, no enforcement
-    # yet. No ForeignKey -- auth users live in Supabase's ``auth.users`` schema and
-    # the hermetic SQLite e2e tier has no such table, so a cross-schema FK would
-    # break both migrations and tests. The deferred backfill (ADR-090) sets this.
-    user_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # Ownership column (ADR-094, ADR-112): the snapshot is user-scoped — the
+    # standing is per-user, computed from the owner's transactions. No ForeignKey
+    # -- auth users live in Supabase's ``auth.users`` schema and the hermetic
+    # SQLite e2e tier has no such table, so a cross-schema FK would break both
+    # migrations and tests. Now NOT NULL (ADR-109; enforced in PROD only after the
+    # backfill script fills legacy NULLs); the uniqueness/index below scope the
+    # snapshot history to the owner.
+    user_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
     period_start: Mapped[datetime.date] = mapped_column(Date(), nullable=False)
     period_end: Mapped[datetime.date] = mapped_column(Date(), nullable=False)
     category: Mapped[str] = mapped_column(String(2), nullable=False)
@@ -60,6 +63,9 @@ class MonotributoSnapshotRecord(Base):
     )
 
     __table_args__ = (
-        # One snapshot per trailing-12-month period; reads upsert on this key (ADR-052).
-        UniqueConstraint("period_end", name="uq_monotributo_snapshot_period_end"),
+        # One snapshot per owner per trailing-12-month period; reads upsert on this
+        # composite key so each user's history is independent (ADR-052, ADR-112).
+        UniqueConstraint("user_id", "period_end", name="uq_monotributo_snapshot_user_period_end"),
+        # Index the ownership column for the user-scoped reads (ADR-112).
+        Index("ix_monotributo_snapshot_user_id", "user_id"),
     )

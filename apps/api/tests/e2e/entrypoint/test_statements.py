@@ -27,10 +27,18 @@ import httpx
 import pytest
 from fastapi import status
 
+from margen_api.asgi import get_application
+from margen_api.bootstrap import ApplicationContainer
+from margen_api.entrypoint.dependencies import AuthUserModel, require_auth_user
 from margen_api.service_layer import statement_parser
 
 STATEMENTS = "/api/v1/statements"
 TRANSACTIONS = "/api/v1/transactions"
+
+# A second authenticated identity used to prove cross-tenant isolation: it imports
+# nothing, so any document id it requests belongs to someone else (ADR-108, ADR-111).
+_OTHER_USER_ID = "11111111-2222-4333-8444-555566667777"
+_OTHER_AUTH_USER = AuthUserModel(id=_OTHER_USER_ID, email="other@example.com", claims={"sub": _OTHER_USER_ID})
 
 # Minimal valid %PDF-prefixed bytes: the boundary only checks the magic header,
 # and ``extract_text`` is monkeypatched so no real PyMuPDF decode happens.
@@ -971,3 +979,28 @@ class TestDownloadStatementDocument:
 
         # THEN
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_returns_404_for_another_users_document(
+        self, test_client: httpx.AsyncClient, container: ApplicationContainer
+    ):
+        """
+        GIVEN a statement document really imported by the stub user
+        WHEN a DIFFERENT authenticated user downloads it by the shared id
+        THEN it returns 404 (filter-in-reader hides existence; no bytes leak — ADR-111)
+        """
+        # GIVEN — the stub user imports a statement, so its document is owned by them.
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        result = (await test_client.post(f"{STATEMENTS}/import", json=_import_body(pdf_base64=encoded))).json()["data"]
+        statement_document_id = result["statementDocumentId"]
+
+        # GIVEN — a second app over the SAME container, authenticated as another user.
+        other_app = get_application(container)
+        other_app.dependency_overrides[require_auth_user] = lambda: _OTHER_AUTH_USER
+        transport = httpx.ASGITransport(app=other_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as other_client:
+            # WHEN — the other user requests the stub user's document by id.
+            response = await other_client.get(f"{STATEMENTS}/{statement_document_id}/document")
+
+        # THEN — the foreign id is not found, and no bytes were returned.
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.content != _PDF_BYTES

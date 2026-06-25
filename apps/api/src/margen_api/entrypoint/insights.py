@@ -15,7 +15,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from margen_api.entrypoint.dependencies import InsightsReader
+from margen_api.entrypoint.dependencies import AuthUser, InsightsReader
 from margen_api.entrypoint.insights_schemas import MonthlyInsightsResponse
 from margen_api.entrypoint.schemas import ResponseModel
 
@@ -60,6 +60,7 @@ def _parse_month(value: str) -> date:
 )
 async def monthly_insights(
     reader: InsightsReader,
+    user: AuthUser,
     month: Annotated[
         str | None,
         Query(
@@ -69,7 +70,7 @@ async def monthly_insights(
         ),
     ] = None,
 ) -> ResponseModel[MonthlyInsightsResponse]:
-    """Return the structured insight facts for a month (ADR-060, ADR-061).
+    """Return the caller's structured insight facts for a month (ADR-060, ADR-061, ADR-108).
 
     The facts are the biggest positive expense category mover versus the prior
     month, the recurring-expense footprint (count + total), the month's savings
@@ -78,8 +79,9 @@ async def monthly_insights(
     applied rate. Each fact is ``null`` when its underlying data does not exist
     (savings excepted), so the card renders only what applies. Money is serialized
     as ``Decimal`` strings (ADR-025) and the frontend composes the prose itself.
-    A malformed ``month`` yields ``422``.
+    The facts are scoped to ``user.id`` so a caller only sees their own data
+    (ADR-108). A malformed ``month`` yields ``422``.
     """
     target = _parse_month(month or _current_month())
-    insights = await reader.monthly_insights(target, _today())
+    insights = await reader.monthly_insights(target, _today(), user.id)
     return ResponseModel(data=MonthlyInsightsResponse.from_read_model(insights))

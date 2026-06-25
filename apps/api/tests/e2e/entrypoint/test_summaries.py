@@ -26,6 +26,7 @@ from margen_api.service_layer.summary_read_models import (
     TrendPoint,
 )
 from margen_api.settings.database_settings import DatabaseSettings
+from tests.conftest import STUB_USER_ID
 from tests.fakes.persistence import FakeSummaryReader
 
 SUMMARIES = "/api/v1/summaries"
@@ -103,6 +104,8 @@ class TestMonthlySummary:
         assert uncategorized["deltaPct"] is None
         # The router parsed the param to the first of the requested month.
         assert reader.requested_month == date(2026, 6, 1)
+        # The summary is scoped to the authenticated owner (ADR-108).
+        assert reader.requested_user_id == STUB_USER_ID
 
     async def test_defaults_to_current_server_month(self, client: httpx.AsyncClient, reader: FakeSummaryReader):
         """

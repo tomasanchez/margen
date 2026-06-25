@@ -35,6 +35,7 @@ class SqlAlchemyDocumentStore(AbstractDocumentStore):
         self,
         *,
         transaction_id: UUID,
+        user_id: str | None,
         pdf_bytes: bytes,
         content_type: str,
         byte_size: int,
@@ -50,10 +51,16 @@ class SqlAlchemyDocumentStore(AbstractDocumentStore):
         moneda: str | None,
         ctz: Decimal | None,
     ) -> None:
-        """Stage one document row for the next commit (ADR-071)."""
+        """Stage one document row for the next commit (ADR-071, ADR-108).
+
+        The ownership column is a nullable UUID (ADR-094); the owner arrives as a
+        string (the Supabase ``sub``), so it is coerced on the way down to mirror the
+        transaction repository's mapper.
+        """
         self.session.add(
             InvoiceDocumentRecord(
                 transaction_id=transaction_id,
+                user_id=UUID(user_id) if user_id is not None else None,
                 pdf_bytes=pdf_bytes,
                 content_type=content_type,
                 byte_size=byte_size,
@@ -71,9 +78,16 @@ class SqlAlchemyDocumentStore(AbstractDocumentStore):
             )
         )
 
-    async def get(self, transaction_id: UUID) -> InvoiceDocument | None:
-        """Return the stored document for a transaction, or ``None`` when absent."""
-        statement = select(InvoiceDocumentRecord).where(InvoiceDocumentRecord.transaction_id == transaction_id).limit(1)
+    async def get(self, transaction_id: UUID, user_id: str) -> InvoiceDocument | None:
+        """Return the owner's stored document for a transaction, or ``None`` (ADR-108, ADR-111)."""
+        statement = (
+            select(InvoiceDocumentRecord)
+            .where(
+                InvoiceDocumentRecord.transaction_id == transaction_id,
+                InvoiceDocumentRecord.user_id == UUID(user_id),
+            )
+            .limit(1)
+        )
         record = (await self.session.execute(statement)).scalar_one_or_none()
         if record is None:
             return None

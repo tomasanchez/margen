@@ -31,6 +31,7 @@ from margen_api.service_layer.handlers import (
 from tests.fakes.persistence import FakeUnitOfWork
 
 A_DATE = date(2026, 6, 12)
+A_USER = "00000000-0000-4000-8000-000000000001"
 
 
 def _seed(uow: FakeUnitOfWork, **overrides: object) -> UUID:
@@ -41,6 +42,7 @@ def _seed(uow: FakeUnitOfWork, **overrides: object) -> UUID:
         "kind": Kind.EXPENSE,
         "amount": Decimal("1000"),
         "transaction_id": uuid4(),
+        "user_id": A_USER,
         "created_at": datetime(2026, 1, 1, tzinfo=UTC),
         "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
     }
@@ -61,7 +63,9 @@ class TestCreateHandler:
         """
         # GIVEN
         uow = FakeUnitOfWork()
-        command = CreateTransaction(occurred_on=A_DATE, name="Coto", kind=Kind.EXPENSE, amount=Decimal("250"))
+        command = CreateTransaction(
+            occurred_on=A_DATE, name="Coto", kind=Kind.EXPENSE, amount=Decimal("250"), user_id=A_USER
+        )
 
         # WHEN
         transaction_id = await create_transaction(command, uow)
@@ -69,6 +73,8 @@ class TestCreateHandler:
         # THEN
         assert uow.committed is True
         assert transaction_id in uow.committed_aggregates
+        # The handler stamps the command's owner onto the inserted aggregate (ADR-108).
+        assert uow.committed_aggregates[transaction_id].user_id == A_USER
 
     async def test_injects_identity_and_timestamps(self):
         """
@@ -78,7 +84,9 @@ class TestCreateHandler:
         """
         # GIVEN
         uow = FakeUnitOfWork()
-        command = CreateTransaction(occurred_on=A_DATE, name="Coto", kind=Kind.EXPENSE, amount=Decimal("250"))
+        command = CreateTransaction(
+            occurred_on=A_DATE, name="Coto", kind=Kind.EXPENSE, amount=Decimal("250"), user_id=A_USER
+        )
 
         # WHEN
         transaction_id = await create_transaction(command, uow)
@@ -102,6 +110,7 @@ class TestCreateHandler:
             kind=Kind.EXPENSE,
             amount=Decimal("250"),
             counts_toward_monotributo=True,
+            user_id=A_USER,
         )
 
         # WHEN
@@ -125,6 +134,7 @@ class TestCreateHandler:
             amount=Decimal("1000000"),
             currency=Currency.USD,
             usd_amount=Decimal("1000"),
+            user_id=A_USER,
         )
 
         # WHEN
@@ -147,7 +157,7 @@ class TestUpdateHandler:
         uow = FakeUnitOfWork()
         original_created = datetime(2026, 1, 1, tzinfo=UTC)
         transaction_id = _seed(uow, created_at=original_created, updated_at=original_created)
-        command = UpdateTransaction(id=transaction_id, name="Updated rent", amount=Decimal("2000"))
+        command = UpdateTransaction(id=transaction_id, name="Updated rent", amount=Decimal("2000"), user_id=A_USER)
 
         # WHEN
         await update_transaction(command, uow)
@@ -168,7 +178,7 @@ class TestUpdateHandler:
         # GIVEN
         uow = FakeUnitOfWork()
         transaction_id = _seed(uow, name="Original", amount=Decimal("1000"))
-        command = UpdateTransaction(id=transaction_id, amount=Decimal("1500"))
+        command = UpdateTransaction(id=transaction_id, amount=Decimal("1500"), user_id=A_USER)
 
         # WHEN
         await update_transaction(command, uow)
@@ -187,7 +197,7 @@ class TestUpdateHandler:
         # GIVEN
         uow = FakeUnitOfWork()
         transaction_id = _seed(uow, kind=Kind.INCOME, counts_toward_monotributo=True)
-        command = UpdateTransaction(id=transaction_id, kind=Kind.EXPENSE)
+        command = UpdateTransaction(id=transaction_id, kind=Kind.EXPENSE, user_id=A_USER)
 
         # WHEN
         await update_transaction(command, uow)
@@ -203,11 +213,27 @@ class TestUpdateHandler:
         """
         # GIVEN
         uow = FakeUnitOfWork()
-        command = UpdateTransaction(id=uuid4(), name="ghost")
+        command = UpdateTransaction(id=uuid4(), name="ghost", user_id=A_USER)
 
         # WHEN / THEN
         with pytest.raises(TransactionNotFoundError):
             await update_transaction(command, uow)
+
+    async def test_cross_tenant_id_raises_not_found(self):
+        """
+        GIVEN an aggregate owned by another user
+        WHEN the update handler runs for a different owner
+        THEN it raises TransactionNotFoundError and leaves the row untouched (ADR-111)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        transaction_id = _seed(uow, name="Theirs", user_id="ffffffff-0000-4000-8000-000000000002")
+        command = UpdateTransaction(id=transaction_id, name="Hijacked", user_id=A_USER)
+
+        # WHEN / THEN
+        with pytest.raises(TransactionNotFoundError):
+            await update_transaction(command, uow)
+        assert uow.committed_aggregates[transaction_id].name == "Theirs"
 
 
 class TestDeleteHandler:
@@ -224,7 +250,7 @@ class TestDeleteHandler:
         transaction_id = _seed(uow)
 
         # WHEN
-        await delete_transaction(DeleteTransaction(id=transaction_id), uow)
+        await delete_transaction(DeleteTransaction(id=transaction_id, user_id=A_USER), uow)
 
         # THEN
         assert transaction_id not in uow.committed_aggregates
@@ -241,4 +267,19 @@ class TestDeleteHandler:
 
         # WHEN / THEN
         with pytest.raises(TransactionNotFoundError):
-            await delete_transaction(DeleteTransaction(id=uuid4()), uow)
+            await delete_transaction(DeleteTransaction(id=uuid4(), user_id=A_USER), uow)
+
+    async def test_cross_tenant_id_raises_not_found(self):
+        """
+        GIVEN an aggregate owned by another user
+        WHEN the delete handler runs for a different owner
+        THEN it raises TransactionNotFoundError and the row survives (ADR-111)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        transaction_id = _seed(uow, name="Theirs", user_id="ffffffff-0000-4000-8000-000000000002")
+
+        # WHEN / THEN
+        with pytest.raises(TransactionNotFoundError):
+            await delete_transaction(DeleteTransaction(id=transaction_id, user_id=A_USER), uow)
+        assert transaction_id in uow.committed_aggregates
