@@ -1,15 +1,17 @@
-"""Unit tests for the SQLAlchemy application-settings adapter (ADR-032, ADR-054).
+"""Unit tests for the SQLAlchemy application-settings adapter (ADR-032, ADR-054, ADR-110).
 
 Per ADR-032 these mock the ``AsyncSession`` and the execute result -- no real
-database. They assert the single-row read falls back to the documented defaults,
-that ``upsert_settings`` overlays only the provided fields onto the loaded row,
-and that an absent row is inserted from the documented defaults before the merge
-so the write never silently no-ops.
+database. They assert the owner-scoped read falls back to the documented
+defaults, that ``upsert_settings`` overlays only the provided fields onto the
+owner's loaded row, and that an absent row is get-or-created from the documented
+defaults (with ``user_id`` set) before the merge so the write never silently
+no-ops (ADR-110).
 """
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
 
 from margen_api.adapters.models.app_settings import AppSettingsRecord
 from margen_api.adapters.settings_repository import (
@@ -19,6 +21,9 @@ from margen_api.adapters.settings_repository import (
     DEFAULT_MONOTRIBUTO_CATEGORY,
     SqlAlchemySettingsRepository,
 )
+
+# The owner the per-user settings row is scoped to (ADR-110); a valid UUID string.
+OWNER = "f0e1d2c3-b4a5-4960-8788-99aabbccddee"
 
 
 def _session() -> AsyncMock:
@@ -64,7 +69,7 @@ class TestGetSettings:
         repo = SqlAlchemySettingsRepository(session)
 
         # WHEN
-        settings = await repo.get_settings()
+        settings = await repo.get_settings(OWNER)
 
         # THEN
         assert settings.preferred_display_currency == "USD"
@@ -80,7 +85,7 @@ class TestGetSettings:
         repo = SqlAlchemySettingsRepository(session)
 
         # WHEN
-        settings = await repo.get_settings()
+        settings = await repo.get_settings(OWNER)
 
         # THEN
         assert settings.preferred_display_currency == DEFAULT_DISPLAY_CURRENCY
@@ -105,7 +110,7 @@ class TestUpsertSettings:
         repo = SqlAlchemySettingsRepository(session)
 
         # WHEN
-        result = await repo.upsert_settings(preferred_display_currency="USD")
+        result = await repo.upsert_settings(OWNER, preferred_display_currency="USD")
 
         # THEN — only the currency changed; no new row inserted.
         session.add.assert_not_called()
@@ -124,6 +129,7 @@ class TestUpsertSettings:
 
         # WHEN
         result = await repo.upsert_settings(
+            OWNER,
             preferred_display_currency="USD",
             fx_default_rate_type="official",
             monotributo_current_category="H",
@@ -136,11 +142,11 @@ class TestUpsertSettings:
         assert result.monotributo_current_category == "H"
         assert result.monotributo_activity_type == "bienes"
 
-    async def test_inserts_from_defaults_when_absent_then_merges(self):
+    async def test_get_or_creates_owner_row_when_absent_then_merges(self):
         """
-        GIVEN no settings row yet
+        GIVEN the owner has no settings row yet
         WHEN upsert is called with one field
-        THEN a defaults row is added to the session and the provided field overlays it
+        THEN an owner-scoped defaults row is added and the provided field overlays it
         """
         # GIVEN
         session = _session()
@@ -148,12 +154,14 @@ class TestUpsertSettings:
         repo = SqlAlchemySettingsRepository(session)
 
         # WHEN
-        result = await repo.upsert_settings(monotributo_current_category="K")
+        result = await repo.upsert_settings(OWNER, monotributo_current_category="K")
 
-        # THEN — a new row seeded from defaults was added, then the category overlaid.
+        # THEN — a new row seeded from defaults was added, scoped to the owner, then
+        # the category overlaid (ADR-110).
         session.add.assert_called_once()
         (added,) = session.add.call_args.args
         assert isinstance(added, AppSettingsRecord)
+        assert added.user_id == UUID(OWNER)
         assert result.monotributo_current_category == "K"
         # Unprovided fields keep the documented defaults the row was seeded from.
         assert result.preferred_display_currency == DEFAULT_DISPLAY_CURRENCY

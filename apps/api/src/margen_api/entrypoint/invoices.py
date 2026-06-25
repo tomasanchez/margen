@@ -26,7 +26,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, UploadFile, status
 from fastapi.responses import Response
 
-from margen_api.entrypoint.dependencies import DocumentReader
+from margen_api.entrypoint.dependencies import AuthUser, DocumentReader
 from margen_api.entrypoint.invoices_schemas import InvoiceParseResponse
 from margen_api.entrypoint.schemas import ResponseModel
 from margen_api.service_layer.invoice_parser import parse_invoice
@@ -139,14 +139,17 @@ async def parse_invoice_upload(
 async def download_invoice_document(
     transaction_id: UUID,
     documents: DocumentReader,
+    user: AuthUser,
 ) -> Response:
-    """Stream the PDF stored for a transaction's invoice attachment (ADR-072).
+    """Stream the PDF stored for the owner's invoice attachment (ADR-072, ADR-108).
 
-    Reads the download read model through the ``DocumentStore`` port and returns
-    the original bytes with the stored content type. Raises ``404`` when no
-    document is attached to the transaction.
+    Reads the download read model through the ``DocumentStore`` port scoped to
+    ``user.id`` (filter-in-reader) and returns the original bytes with the stored
+    content type. A document id that does not exist OR that belongs to another user
+    both raise ``404`` before any bytes are read — existence is never leaked and a
+    foreign PDF never streams (ADR-073, ADR-111).
     """
-    document = await documents.get(transaction_id)
+    document = await documents.get(transaction_id, user.id)
     if document is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

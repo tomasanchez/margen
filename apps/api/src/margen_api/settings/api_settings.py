@@ -54,6 +54,7 @@ class ApplicationSettings(BaseSettings):
         * FASTAPI_DOCS_URL
         * FASTAPI_BACKEND_CORS_ORIGINS
         * FASTAPI_MONOTRIBUTO_CAPTURE_TOKEN
+        * FASTAPI_MONOTRIBUTO_OWNER_ID
         * FASTAPI_SUPABASE_URL
         * FASTAPI_SUPABASE_JWKS_URL
         * FASTAPI_SUPABASE_JWT_ISSUER
@@ -74,6 +75,12 @@ class ApplicationSettings(BaseSettings):
             guards ``POST /api/v1/monotributo/capture`` (ADR-064). ``None`` (the
             default) disables the endpoint — it fails closed with ``503`` until
             a machine-to-machine secret is configured.
+        MONOTRIBUTO_OWNER_ID (str | None): Supabase user id the machine-to-machine
+            Monotributo capture (ADR-064) attributes the computed snapshot to.
+            The capture endpoint uses a static token with no user JWT (ADR-112),
+            so it reads the owner from configuration. ``None`` (the default)
+            leaves the owner unconfigured; a later task fails the capture closed
+            with ``503`` until it is set.
         SUPABASE_URL (str | None): Base URL of the Supabase Cloud project (ADR-091),
             e.g. ``https://<ref>.supabase.co``. ``None`` (the default) leaves
             Supabase-backed auth unconfigured; a JWKS auth dependency (ADR-092)
@@ -103,6 +110,7 @@ class ApplicationSettings(BaseSettings):
     DOCS_URL: str = "/docs"
     BACKEND_CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
     MONOTRIBUTO_CAPTURE_TOKEN: str | None = None
+    MONOTRIBUTO_OWNER_ID: str | None = None
     SUPABASE_URL: str | None = None
     SUPABASE_JWKS_URL: str | None = None
     SUPABASE_JWT_ISSUER: str | None = None

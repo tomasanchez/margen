@@ -57,6 +57,10 @@ class Transaction:
             for an imported credit-card expense (ADR-077). A plain carried field,
             not a domain invariant — the aggregate stays lean (ADR-028); ``None``
             for manually-entered transactions.
+        user_id: The owning user's id (the Supabase ``sub``), threaded from the
+            authenticated request so every write is attributable and every read
+            can be scoped to its owner (ADR-094, ADR-108). A plain carried field,
+            not a domain invariant; ``None`` for legacy rows predating ownership.
         created_at: Server-managed creation timestamp.
         updated_at: Server-managed last-update timestamp.
     """
@@ -77,6 +81,7 @@ class Transaction:
     recurring: bool = False
     counts_toward_monotributo: bool = False
     statement_document_id: UUID | None = None
+    user_id: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -151,6 +156,7 @@ def build_transaction(
     recurring: bool = False,
     counts_toward_monotributo: bool = False,
     statement_document_id: UUID | None = None,
+    user_id: str | None = None,
     transaction_id: UUID | None = None,
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
@@ -179,6 +185,8 @@ def build_transaction(
         counts_toward_monotributo: Monotributo counting hint (income / invoice only).
         statement_document_id: Optional link to the source statement document for
             an imported credit-card expense (ADR-077); ``None`` otherwise.
+        user_id: The owning user's id (the Supabase ``sub``); ``None`` otherwise
+            (ADR-094, ADR-108).
         transaction_id: Optional identity; generated when omitted.
         created_at: Optional creation timestamp; defaults to now (UTC).
         updated_at: Optional update timestamp; defaults to now (UTC).
@@ -211,6 +219,7 @@ def build_transaction(
         recurring=recurring,
         counts_toward_monotributo=counts_toward_monotributo,
         statement_document_id=statement_document_id,
+        user_id=user_id,
         created_at=created_at if created_at is not None else now,
         updated_at=updated_at if updated_at is not None else now,
     )

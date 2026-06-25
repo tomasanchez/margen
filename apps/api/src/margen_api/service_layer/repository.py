@@ -31,14 +31,19 @@ class AbstractTransactionRepository(ABC):
         """
 
     @abstractmethod
-    async def get(self, transaction_id: UUID) -> Transaction | None:
-        """Load an aggregate by identity.
+    async def get(self, transaction_id: UUID, user_id: str) -> Transaction | None:
+        """Load one of the owner's aggregates by identity (ADR-108, ADR-111).
+
+        Scoped to ``user_id`` so a foreign owner's id is treated as absent — the
+        update/delete handlers then surface a not-found (404 at the boundary,
+        ADR-111).
 
         Args:
             transaction_id: The aggregate identity.
+            user_id: The authenticated owner the row must belong to.
 
         Returns:
-            The aggregate, or ``None`` when no row matches.
+            The aggregate, or ``None`` when no row matches the id for this owner.
         """
 
     @abstractmethod
@@ -54,12 +59,16 @@ class AbstractTransactionRepository(ABC):
         """
 
     @abstractmethod
-    async def delete(self, transaction_id: UUID) -> bool:
-        """Hard-delete an aggregate by identity (ADR-030).
+    async def delete(self, transaction_id: UUID, user_id: str) -> bool:
+        """Hard-delete one of the owner's aggregates by identity (ADR-030, ADR-108).
+
+        Scoped to ``user_id``: a foreign owner's id removes nothing and reports a
+        miss, so a cross-tenant delete surfaces 404 (ADR-111).
 
         Args:
             transaction_id: The aggregate identity.
+            user_id: The authenticated owner the row must belong to.
 
         Returns:
-            ``True`` when a row was removed, ``False`` when none matched.
+            ``True`` when a row was removed, ``False`` when none matched for this owner.
         """

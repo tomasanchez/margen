@@ -34,12 +34,15 @@ from margen_api.service_layer.monotributo_read_models import (
 from margen_api.service_layer.registry import COMMAND_HANDLERS, EVENT_HANDLERS
 from margen_api.settings.api_settings import ApplicationSettings
 from margen_api.settings.database_settings import DatabaseSettings
+from tests.conftest import STUB_USER_ID
 from tests.fakes.persistence import FakeMonotributoReader, FakeUnitOfWork
 
 MONOTRIBUTO = "/api/v1/monotributo"
 TODAY = date(2026, 6, 14)
 # Shared-secret capture token used by the guarded-endpoint tests (ADR-064).
 CAPTURE_TOKEN = "s3cr3t-capture-token"  # noqa: S105 — test fixture, not a real secret
+# Configured M2M capture owner the snapshot is attributed to (ADR-112).
+OWNER_ID = "a1b2c3d4-e5f6-4789-8abc-def012345678"
 
 
 def _standing(*, used: str, reference: date = TODAY) -> MonotributoStanding:
@@ -95,6 +98,7 @@ def _build_client(
     reader: FakeMonotributoReader,
     *,
     capture_token: str | None = CAPTURE_TOKEN,
+    owner_id: str | None = OWNER_ID,
 ) -> tuple[httpx.AsyncClient, ApplicationContainer]:
     """Build an ASGI app whose bus + reader dependencies are mocked.
 
@@ -104,9 +108,11 @@ def _build_client(
     touched because both persistence dependencies are overridden.
 
     The ``get_settings`` dependency is overridden with an explicitly-constructed
-    :class:`ApplicationSettings` so the capture token is deterministic and never
-    leaks across tests via the ``lru_cache`` (ADR-064/ADR-066). Pass
-    ``capture_token=None`` to exercise the unconfigured/disabled path.
+    :class:`ApplicationSettings` so the capture token and capture owner are
+    deterministic and never leak across tests via the ``lru_cache``
+    (ADR-064/ADR-066/ADR-112). Pass ``capture_token=None`` to exercise the
+    unconfigured/disabled path, or ``owner_id=None`` to exercise the
+    capture-owner-unset 503 (ADR-112).
     """
     container = bootstrap(DatabaseSettings(URL="sqlite+aiosqlite://", AUTO_CREATE_SCHEMA=False))
     app = get_application(container)
@@ -118,7 +124,10 @@ def _build_client(
     )
     app.dependency_overrides[get_bus] = lambda: bus
     app.dependency_overrides[get_monotributo_reader] = lambda: reader
-    app.dependency_overrides[get_settings] = lambda: ApplicationSettings(MONOTRIBUTO_CAPTURE_TOKEN=capture_token)
+    app.dependency_overrides[get_settings] = lambda: ApplicationSettings(
+        MONOTRIBUTO_CAPTURE_TOKEN=capture_token,
+        MONOTRIBUTO_OWNER_ID=owner_id,
+    )
 
     transport = httpx.ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://test"), container
@@ -201,7 +210,9 @@ class TestMonotributoSnapshot:
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["data"]["previous"] is None
 
-    async def test_records_the_capture_command(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+    async def test_records_the_capture_command(
+        self, client: httpx.AsyncClient, uow: FakeUnitOfWork, reader: FakeMonotributoReader
+    ):
         """
         GIVEN a mocked reader and a fake unit of work
         WHEN the Monotributo endpoint is requested (a "read that records")
@@ -211,12 +222,15 @@ class TestMonotributoSnapshot:
         # WHEN
         response = await client.get(MONOTRIBUTO)
 
-        # THEN — the read-records capture committed a snapshot for the current month.
+        # THEN — the read-records capture committed a snapshot for the caller's current month.
         assert response.status_code == status.HTTP_200_OK
         assert uow.committed is True
         today = datetime.now(UTC).date()
-        # The current period is always (re)captured through the unit of work.
-        assert date(today.year, today.month, 1) in uow.snapshots
+        # The caller's current period is always (re)captured through the unit of work,
+        # scoped to the authenticated stub user (ADR-112).
+        assert (STUB_USER_ID, date(today.year, today.month, 1)) in uow.snapshots
+        # The reader was asked for the caller's standing (ADR-112).
+        assert reader.requested_user_id == STUB_USER_ID
 
 
 class TestCaptureMonotributo:
@@ -238,10 +252,11 @@ class TestCaptureMonotributo:
         # THEN
         assert response.status_code == status.HTTP_202_ACCEPTED
         assert response.json()["data"]["status"] == "captured"
-        # The command flowed through the bus and committed via the fake UoW.
+        # The command flowed through the bus and committed via the fake UoW,
+        # attributed to the configured capture owner (ADR-112).
         assert uow.committed is True
         today = datetime.now(UTC).date()
-        assert date(today.year, today.month, 1) in uow.snapshots
+        assert (OWNER_ID, date(today.year, today.month, 1)) in uow.snapshots
 
 
 class TestCaptureMonotributoAuthGuard:
@@ -329,8 +344,35 @@ class TestCaptureMonotributoAuthGuard:
             headers={"Authorization": f"Bearer {CAPTURE_TOKEN}"},
         )
 
-        # THEN — authorized: the command flowed through the bus and committed.
+        # THEN — authorized: the command flowed through the bus and committed,
+        # attributed to the configured capture owner (ADR-112).
         assert response.status_code == status.HTTP_202_ACCEPTED
         assert uow.committed is True
         today = datetime.now(UTC).date()
-        assert date(today.year, today.month, 1) in uow.snapshots
+        assert (OWNER_ID, date(today.year, today.month, 1)) in uow.snapshots
+
+
+class TestCaptureMonotributoOwnerGuard:
+    """POST /monotributo/capture fails closed when the owner is unconfigured (ADR-112)."""
+
+    async def test_returns_503_when_owner_not_configured(self, uow: FakeUnitOfWork, reader: FakeMonotributoReader):
+        """
+        GIVEN a configured capture token but no configured capture owner
+        WHEN the capture endpoint is posted with the matching bearer token
+        THEN it returns 503 and no capture command is dispatched (no owner to attribute to)
+        """
+        # GIVEN — the token authorizes the call but the owner env var is unset.
+        client, container = _build_client(uow, reader, owner_id=None)
+
+        # WHEN
+        async with client:
+            response = await client.post(
+                f"{MONOTRIBUTO}/capture",
+                headers={"Authorization": f"Bearer {CAPTURE_TOKEN}"},
+            )
+        await container.shutdown()
+
+        # THEN — fail closed: 503 and nothing flowed through the bus/UoW (ADR-112).
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert uow.committed is False
+        assert uow.snapshots == {}

@@ -18,14 +18,18 @@ class AbstractInsightsReader(ABC):
     """Async query port returning the structured monthly insight facts."""
 
     @abstractmethod
-    async def monthly_insights(self, month: date, reference: date) -> MonthlyInsights:
-        """Aggregate the structured insight facts for a month (ADR-060, ADR-061).
+    async def monthly_insights(self, month: date, reference: date, user_id: str) -> MonthlyInsights:
+        """Aggregate the structured insight facts for a month (ADR-060, ADR-061, ADR-108).
 
         Args:
             month: The first day of the requested calendar month; only its year
                 and month are significant.
             reference: The server "today" used to project the current month's
                 savings to month-end. For a past month it has no effect.
+            user_id: The authenticated owner. The insights derive entirely from
+                the caller's transactions, so every source query filters by it —
+                the read model itself carries no ownership column (ADR-108,
+                ADR-112).
 
         Returns:
             The :class:`MonthlyInsights` facts: the biggest positive category

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from uuid import UUID
 
 from sqlalchemy import Numeric, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,25 +48,31 @@ class SqlAlchemyMonotributoSnapshotRepository(AbstractMonotributoSnapshotReposit
         """
         self.session = session
 
-    async def configured_category(self) -> tuple[str, str] | None:
-        """Return the configured ``(category, activity_type)`` from ``app_settings``.
+    async def configured_category(self, user_id: str) -> tuple[str, str] | None:
+        """Return the owner's configured ``(category, activity_type)`` from ``app_settings`` (ADR-112).
 
-        The Monotributo category now lives in the single-row ``app_settings`` table
-        (ADR-054, superseding the retired ``monotributo_config``); returns ``None``
-        when no settings row exists yet so the caller supplies a sensible default.
+        The Monotributo category lives in the per-user ``app_settings`` row
+        (ADR-054, superseding the retired ``monotributo_config``); scoped to the
+        owner (ADR-108) and returning ``None`` when no settings row exists yet so
+        the caller supplies a sensible default.
         """
-        statement = select(
-            AppSettingsRecord.monotributo_current_category,
-            AppSettingsRecord.monotributo_activity_type,
-        ).limit(1)
+        statement = (
+            select(
+                AppSettingsRecord.monotributo_current_category,
+                AppSettingsRecord.monotributo_activity_type,
+            )
+            .where(AppSettingsRecord.user_id == UUID(user_id))
+            .limit(1)
+        )
         row = (await self.session.execute(statement)).first()
         if row is None:
             return None
         return str(row.monotributo_current_category), str(row.monotributo_activity_type)
 
-    async def used_in_window(self, window_start: date, window_end: date) -> Decimal:
-        """SUM the included income over the inclusive ``[start, end]`` window."""
+    async def used_in_window(self, window_start: date, window_end: date, user_id: str) -> Decimal:
+        """SUM the owner's included income over the inclusive ``[start, end]`` window (ADR-108)."""
         statement = select(_INCLUDED_AMOUNT).where(
+            TransactionRecord.user_id == UUID(user_id),
             TransactionRecord.kind.in_(_MONOTRIBUTO_KINDS),
             TransactionRecord.counts_toward_monotributo.is_(True),
             TransactionRecord.occurred_on >= window_start,
@@ -74,29 +81,36 @@ class SqlAlchemyMonotributoSnapshotRepository(AbstractMonotributoSnapshotReposit
         total = (await self.session.execute(statement)).scalar_one_or_none()
         return _ZERO if total is None else _as_decimal(total)
 
-    async def existing_period_ends(self) -> set[date]:
-        """Return the ``period_end`` months that already have a snapshot."""
-        statement = select(MonotributoSnapshotRecord.period_end)
+    async def existing_period_ends(self, user_id: str) -> set[date]:
+        """Return the owner's ``period_end`` months that already have a snapshot (ADR-108)."""
+        statement = select(MonotributoSnapshotRecord.period_end).where(
+            MonotributoSnapshotRecord.user_id == UUID(user_id)
+        )
         result = await self.session.execute(statement)
         return set(result.scalars().all())
 
-    async def upsert(self, standing: MonotributoStanding) -> None:
-        """Insert or update the snapshot for the standing's ``period_end`` (ADR-052)."""
+    async def upsert(self, standing: MonotributoStanding, user_id: str) -> None:
+        """Insert or update the owner's snapshot for the standing's ``period_end`` (ADR-052, ADR-112)."""
+        owner = UUID(user_id)
         statement = (
             select(MonotributoSnapshotRecord)
-            .where(MonotributoSnapshotRecord.period_end == standing.period_end)
+            .where(
+                MonotributoSnapshotRecord.user_id == owner,
+                MonotributoSnapshotRecord.period_end == standing.period_end,
+            )
             .limit(1)
         )
         record = (await self.session.execute(statement)).scalar_one_or_none()
         if record is None:
-            self.session.add(_to_record(standing))
+            self.session.add(_to_record(standing, owner))
             return
         _apply(record, standing)
 
 
-def _to_record(standing: MonotributoStanding) -> MonotributoSnapshotRecord:
-    """Build a new snapshot record from a computed standing."""
+def _to_record(standing: MonotributoStanding, owner: UUID) -> MonotributoSnapshotRecord:
+    """Build a new owner-attributed snapshot record from a computed standing (ADR-112)."""
     record = MonotributoSnapshotRecord(
+        user_id=owner,
         period_start=standing.period_start,
         period_end=standing.period_end,
         category=standing.category,

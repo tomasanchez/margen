@@ -12,10 +12,14 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.models.invoice_document import InvoiceDocumentRecord
+
+# A valid Supabase ``sub`` (UUID string); the adapter coerces it to ``UUID`` for
+# the nullable ownership column (ADR-108).
+_A_USER = "f0e1d2c3-b4a5-4960-8788-99aabbccddee"
 
 
 def _session() -> AsyncMock:
@@ -64,7 +68,7 @@ class TestSave:
     """``save`` stages one document row on the session."""
 
     async def test_adds_record(self):
-        """GIVEN document fields WHEN save THEN an InvoiceDocumentRecord is added."""
+        """GIVEN document fields WHEN save THEN an owned InvoiceDocumentRecord is added."""
         # GIVEN
         session = _session()
         store = SqlAlchemyDocumentStore(session)
@@ -73,6 +77,7 @@ class TestSave:
         # WHEN
         await store.save(
             transaction_id=transaction_id,
+            user_id=_A_USER,
             pdf_bytes=b"%PDF-1.4 body",
             content_type="application/pdf",
             byte_size=13,
@@ -95,6 +100,38 @@ class TestSave:
         assert isinstance(added, InvoiceDocumentRecord)
         assert added.transaction_id == transaction_id
         assert added.pdf_bytes == b"%PDF-1.4 body"
+        # THEN — the string owner is coerced to a UUID for the ownership column (ADR-108).
+        assert added.user_id == UUID(_A_USER)
+
+    async def test_unowned_save_keeps_user_id_none(self):
+        """GIVEN no owner WHEN save THEN the ownership column stays NULL (legacy rows)."""
+        # GIVEN
+        session = _session()
+        store = SqlAlchemyDocumentStore(session)
+
+        # WHEN
+        await store.save(
+            transaction_id=uuid4(),
+            user_id=None,
+            pdf_bytes=b"%PDF-1.4 body",
+            content_type="application/pdf",
+            byte_size=13,
+            extracted_text=None,
+            qr_json=None,
+            emisor_cuit=None,
+            pto_vta=None,
+            tipo_cmp=None,
+            nro_cmp=None,
+            cae=None,
+            fecha=None,
+            importe=None,
+            moneda=None,
+            ctz=None,
+        )
+
+        # THEN
+        (added,) = session.add.call_args.args
+        assert added.user_id is None
 
 
 class TestGet:
@@ -109,7 +146,7 @@ class TestGet:
         store = SqlAlchemyDocumentStore(session)
 
         # WHEN
-        document = await store.get(record.transaction_id)
+        document = await store.get(record.transaction_id, _A_USER)
 
         # THEN
         assert document is not None
@@ -125,7 +162,7 @@ class TestGet:
         store = SqlAlchemyDocumentStore(session)
 
         # WHEN / THEN
-        assert await store.get(uuid4()) is None
+        assert await store.get(uuid4(), _A_USER) is None
 
 
 class TestExistsByNaturalKey:

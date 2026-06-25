@@ -32,7 +32,7 @@ from fastapi.responses import Response
 from margen_api.domain.commands.statement import StatementImportResult
 from margen_api.domain.models.exceptions import MergeTargetNotFoundError
 from margen_api.domain.models.value_objects import Currency, Kind
-from margen_api.entrypoint.dependencies import Bus, StatementReader, TransactionReader
+from margen_api.entrypoint.dependencies import AuthUser, Bus, StatementReader, TransactionReader
 from margen_api.entrypoint.schemas import ResponseModel
 from margen_api.entrypoint.statements_schemas import (
     InvalidDocumentBase64Error,
@@ -118,11 +118,13 @@ def _is_manual_expense(transaction: TransactionReadModel) -> bool:
 async def _candidate_pool(
     parsed: ParsedStatement,
     transactions: AbstractTransactionReader,
+    user_id: str,
 ) -> list[ReconCandidate]:
-    """Fetch the manual-expense candidates within the statement's date window (ADR-085).
+    """Fetch the owner's manual-expense candidates within the statement window (ADR-085).
 
-    Reads existing transactions through the query reader, keeps only manual expenses
-    (kind expense, ``statement_document_id`` null) whose ``occurred_on`` falls within
+    Reads the owner's existing transactions through the query reader (scoped to
+    ``user_id``, ADR-108), keeps only manual expenses (kind expense,
+    ``statement_document_id`` null) whose ``occurred_on`` falls within
     ``[min(line purchase date) - WINDOW_DAYS, max(line purchase date) + WINDOW_DAYS]``
     spanning all parsed lines, and projects them into pure :class:`ReconCandidate`
     records for the matcher. The window is built on each line's **purchase date**
@@ -133,6 +135,7 @@ async def _candidate_pool(
     Args:
         parsed: The parse result whose lines define the date window.
         transactions: The query-side reader for existing transactions.
+        user_id: The authenticated owner whose manual expenses are candidates.
 
     Returns:
         The manual-expense candidate records within the window.
@@ -155,7 +158,7 @@ async def _candidate_pool(
             category=transaction.category,
             payment_method=transaction.payment_method,
         )
-        for transaction in await transactions.list_transactions()
+        for transaction in await transactions.list_transactions(user_id)
         if _is_manual_expense(transaction)
         and transaction.currency is Currency.ARS
         and lower <= transaction.occurred_on <= upper
@@ -172,6 +175,7 @@ async def parse_statement_upload(
     file: UploadFile,
     statements: StatementReader,
     transactions: TransactionReader,
+    user: AuthUser,
 ) -> ResponseModel[StatementParseResponse]:
     """Parse an uploaded CC statement PDF into editable line drafts, statelessly (ADR-078).
 
@@ -193,7 +197,7 @@ async def parse_statement_upload(
     if lookup is not None:
         duplicate = await statements.exists_by_natural_key(**lookup)
 
-    candidates = await _candidate_pool(parsed, transactions)
+    candidates = await _candidate_pool(parsed, transactions, user.id)
     matches = match_lines(parsed.lines, candidates)
 
     return ResponseModel(data=StatementParseResponse.from_parsed(parsed, content, duplicate=duplicate, matches=matches))
@@ -208,6 +212,7 @@ async def parse_statement_upload(
 async def import_statement_endpoint(
     body: StatementImportRequest,
     bus: Bus,
+    user: AuthUser,
 ) -> ResponseModel[StatementImportResponse]:
     """Import the confirmed statement lines, resolving each per-line (ADR-078, ADR-085).
 
@@ -220,7 +225,7 @@ async def import_statement_endpoint(
     transaction yields ``409`` (ADR-078, ADR-085).
     """
     try:
-        command = body.to_command()
+        command = body.to_command(user.id)
     except InvalidDocumentBase64Error as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
 
@@ -256,14 +261,17 @@ async def import_statement_endpoint(
 async def download_statement_document(
     statement_document_id: UUID,
     statements: StatementReader,
+    user: AuthUser,
 ) -> Response:
-    """Stream the stored statement PDF by document identity (ADR-078).
+    """Stream the owner's stored statement PDF by document identity (ADR-078, ADR-108).
 
-    Reads the download read model through the ``StatementStore`` port and returns
-    the original bytes with the stored content type. Raises ``404`` when no document
-    matches the identity.
+    Reads the download read model through the ``StatementStore`` port scoped to
+    ``user.id`` (filter-in-reader) and returns the original bytes with the stored
+    content type. A document id that does not exist OR that belongs to another user
+    both raise ``404`` before any bytes are read — existence is never leaked and a
+    foreign PDF never streams (ADR-081, ADR-111).
     """
-    document = await statements.get(statement_document_id)
+    document = await statements.get(statement_document_id, user.id)
     if document is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

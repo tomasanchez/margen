@@ -84,6 +84,7 @@ class TestFxRateType:
             usd_amount=Decimal("1000"),
             fx_rate=Decimal("1200"),
             fx_rate_type="manual",
+            user_id="00000000-0000-4000-8000-000000000001",
         )
 
         # THEN
@@ -111,7 +112,7 @@ class TestFxRateType:
 
         # THEN
         assert request.fx_rate_type == FxRateType.MANUAL
-        assert request.to_command().fx_rate_type == FxRateType.MANUAL
+        assert request.to_command("00000000-0000-4000-8000-000000000001").fx_rate_type == FxRateType.MANUAL
 
 
 class TestKnownCategory:

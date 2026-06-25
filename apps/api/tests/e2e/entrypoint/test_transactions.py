@@ -28,6 +28,7 @@ from margen_api.entrypoint.dependencies import get_bus, get_transaction_reader
 from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.registry import COMMAND_HANDLERS, EVENT_HANDLERS
 from margen_api.settings.database_settings import DatabaseSettings
+from tests.conftest import STUB_USER_ID
 from tests.fakes.persistence import FakeTransactionReader, FakeUnitOfWork
 
 TRANSACTIONS = "/api/v1/transactions"
@@ -77,6 +78,7 @@ def _seed(uow: FakeUnitOfWork, **overrides: object):
         "kind": Kind.EXPENSE,
         "amount": Decimal("1000"),
         "transaction_id": uuid4(),
+        "user_id": STUB_USER_ID,
         "created_at": datetime(2026, 1, 1, tzinfo=UTC),
         "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
     }
@@ -372,3 +374,77 @@ class TestDeleteTransaction:
 
         # THEN
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+# A second tenant whose rows the authenticated stub user must never see or touch.
+OTHER_USER_ID = "a1b2c3d4-e5f6-4789-8abc-def012345678"
+
+
+class TestCrossTenantIsolation:
+    """Another user's transaction is invisible and a 404 across by-id paths (ADR-108, ADR-111)."""
+
+    async def test_list_excludes_other_users_rows(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN one row owned by the stub user and one owned by another user
+        WHEN the authenticated stub user lists transactions
+        THEN only its own row is returned (ownership filter, ADR-108)
+        """
+        # GIVEN
+        mine = _seed(uow, name="Mine")
+        _seed(uow, name="Theirs", user_id=OTHER_USER_ID)
+
+        # WHEN
+        response = await client.get(TRANSACTIONS)
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK
+        names = [row["name"] for row in response.json()["data"]]
+        assert names == ["Mine"]
+        assert str(mine.id) in {row["id"] for row in response.json()["data"]}
+
+    async def test_get_other_users_row_returns_404(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN a row owned by another user
+        WHEN the stub user fetches it by id
+        THEN it returns 404 (existence is never leaked, ADR-111)
+        """
+        # GIVEN
+        theirs = _seed(uow, name="Theirs", user_id=OTHER_USER_ID)
+
+        # WHEN
+        response = await client.get(f"{TRANSACTIONS}/{theirs.id}")
+
+        # THEN
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_patch_other_users_row_returns_404(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN a row owned by another user
+        WHEN the stub user patches it
+        THEN it returns 404 and the row is left untouched (ADR-111)
+        """
+        # GIVEN
+        theirs = _seed(uow, name="Theirs", user_id=OTHER_USER_ID)
+
+        # WHEN
+        response = await client.patch(f"{TRANSACTIONS}/{theirs.id}", json={"name": "Hijacked"})
+
+        # THEN
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert uow.committed_aggregates[theirs.id].name == "Theirs"
+
+    async def test_delete_other_users_row_returns_404(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN a row owned by another user
+        WHEN the stub user deletes it
+        THEN it returns 404 and the row still exists (ADR-111)
+        """
+        # GIVEN
+        theirs = _seed(uow, name="Theirs", user_id=OTHER_USER_ID)
+
+        # WHEN
+        response = await client.delete(f"{TRANSACTIONS}/{theirs.id}")
+
+        # THEN
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert theirs.id in uow.committed_aggregates

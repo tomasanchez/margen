@@ -68,6 +68,7 @@ class AbstractDocumentStore(ABC):
         self,
         *,
         transaction_id: UUID,
+        user_id: str | None,
         pdf_bytes: bytes,
         content_type: str,
         byte_size: int,
@@ -83,10 +84,13 @@ class AbstractDocumentStore(ABC):
         moneda: str | None,
         ctz: Decimal | None,
     ) -> None:
-        """Insert one document row for a transaction (ADR-071).
+        """Insert one document row for a transaction (ADR-071, ADR-108).
 
         Args:
             transaction_id: The transaction this document belongs to (1:1).
+            user_id: The authenticated owner the document is attributed to, mirroring
+                its transaction's owner so the bytes are owner-scoped on download
+                (ADR-108); ``None`` only for legacy/unowned rows.
             pdf_bytes: The original uploaded PDF bytes.
             content_type: The MIME type of the upload.
             byte_size: The PDF size in bytes.
@@ -104,15 +108,20 @@ class AbstractDocumentStore(ABC):
         """
 
     @abstractmethod
-    async def get(self, transaction_id: UUID) -> InvoiceDocument | None:
-        """Return the stored document for a transaction, or ``None`` when absent.
+    async def get(self, transaction_id: UUID, user_id: str) -> InvoiceDocument | None:
+        """Return the owner's stored document for a transaction, or ``None`` (ADR-108, ADR-111).
+
+        Scopes the lookup by ``user_id`` (filter-in-reader) so another user's document
+        id is simply not found — the download endpoint maps that to a 404 before any
+        bytes are read, so foreign PDFs never leak (ADR-073, ADR-111).
 
         Args:
             transaction_id: The transaction whose document to fetch.
+            user_id: The authenticated owner the lookup is scoped to.
 
         Returns:
             The :class:`InvoiceDocument` read model, or ``None`` when no document
-            exists for the transaction.
+            owned by ``user_id`` exists for the transaction.
         """
 
     @abstractmethod

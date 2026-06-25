@@ -28,9 +28,21 @@ pytestmark = pytest.mark.integration
 # A stable creation timestamp so the latest-USD tiebreak is deterministic.
 _MOMENT = datetime(2026, 1, 1, tzinfo=UTC)
 
+# Two distinct owners prove the insights are scoped to the caller (ADR-108).
+OWNER = "11111111-1111-4111-8111-111111111111"
+OTHER_OWNER = "22222222-2222-4222-8222-222222222222"
 
-def _expense(occurred_on: date, amount: str, category: str | None, *, recurring: bool = False, name: str = "Spend"):
-    """Build an ARS expense aggregate for a date and category."""
+
+def _expense(
+    occurred_on: date,
+    amount: str,
+    category: str | None,
+    *,
+    recurring: bool = False,
+    name: str = "Spend",
+    user_id: str = OWNER,
+):
+    """Build an ARS expense aggregate for a date, category and owner."""
     return build_transaction(
         transaction_id=uuid4(),
         occurred_on=occurred_on,
@@ -40,12 +52,13 @@ def _expense(occurred_on: date, amount: str, category: str | None, *, recurring:
         currency=Currency.ARS,
         category=category,
         recurring=recurring,
+        user_id=user_id,
         created_at=_MOMENT,
         updated_at=_MOMENT,
     )
 
 
-def _income(occurred_on: date, amount: str, kind: Kind = Kind.INCOME):
+def _income(occurred_on: date, amount: str, kind: Kind = Kind.INCOME, *, user_id: str = OWNER):
     """Build an inflow (income or invoice) aggregate feeding savings."""
     return build_transaction(
         transaction_id=uuid4(),
@@ -55,12 +68,13 @@ def _income(occurred_on: date, amount: str, kind: Kind = Kind.INCOME):
         amount=Decimal(amount),
         currency=Currency.ARS,
         category="Income",
+        user_id=user_id,
         created_at=_MOMENT,
         updated_at=_MOMENT,
     )
 
 
-def _usd_invoice(occurred_on: date, usd: str, rate: str, created_at: datetime):
+def _usd_invoice(occurred_on: date, usd: str, rate: str, created_at: datetime, *, user_id: str = OWNER):
     """Build a USD invoice carrying an applied rate (latest-USD input)."""
     return build_transaction(
         transaction_id=uuid4(),
@@ -74,6 +88,7 @@ def _usd_invoice(occurred_on: date, usd: str, rate: str, created_at: datetime):
         fx_rate_type=FxRateType.MEP,
         category="Income",
         counts_toward_monotributo=True,
+        user_id=user_id,
         created_at=created_at,
         updated_at=created_at,
     )
@@ -96,6 +111,7 @@ def _usd_expense(occurred_on: date, usd: str, rate: str, created_at: datetime):
         fx_rate=Decimal(rate),
         fx_rate_type=FxRateType.MEP,
         category="Fee",
+        user_id=OWNER,
         created_at=created_at,
         updated_at=created_at,
     )
@@ -146,7 +162,7 @@ class TestInsightsAggregation:
         # WHEN — reference in July makes June a past month: actual savings.
         async with session_factory() as session:
             reader = SqlAlchemyInsightsReader(session)
-            insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1))
+            insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1), OWNER)
 
         # THEN — month key.
         assert insights.month == "2026-06"
@@ -191,7 +207,9 @@ class TestInsightsAggregation:
 
         # WHEN
         async with session_factory() as session:
-            insights = await SqlAlchemyInsightsReader(session).monthly_insights(date(2026, 6, 1), date(2026, 7, 1))
+            insights = await SqlAlchemyInsightsReader(session).monthly_insights(
+                date(2026, 6, 1), date(2026, 7, 1), OWNER
+            )
 
         # THEN — the invoice (10th), not the later fee expense (20th).
         assert insights.latest_usd_invoice is not None
@@ -216,7 +234,7 @@ class TestInsightsAggregation:
         # WHEN — reference June 15th: June has 30 days -> fraction 15/30.
         async with session_factory() as session:
             reader = SqlAlchemyInsightsReader(session)
-            insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 6, 15))
+            insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 6, 15), OWNER)
 
         # THEN — projected: 3000 / (15/30) = 6000.
         assert insights.savings.is_projected is True
@@ -234,7 +252,7 @@ class TestInsightsAggregation:
         # WHEN — empty database, reference in a later month (actual savings).
         async with session_factory() as session:
             reader = SqlAlchemyInsightsReader(session)
-            insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1))
+            insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1), OWNER)
 
         # THEN
         assert insights.top_category_mover is None
@@ -242,3 +260,30 @@ class TestInsightsAggregation:
         assert insights.latest_usd_invoice is None
         assert insights.savings.amount == Decimal("0")
         assert insights.savings.is_projected is False
+
+    async def test_insights_are_scoped_to_the_caller(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN one owner's expenses, recurring rows, inflow and a USD invoice in June
+        WHEN a different owner (with no data) reads the June insights
+        THEN every fact is empty/zero — never the first owner's rows (ADR-108)
+        """
+        # GIVEN — only OWNER has June activity.
+        rows = [
+            _expense(date(2026, 5, 10), "100.00", "Food", user_id=OWNER),
+            _expense(date(2026, 6, 5), "200.00", "Food", user_id=OWNER),
+            _expense(date(2026, 6, 7), "500.00", "Subscriptions", recurring=True, user_id=OWNER),
+            _income(date(2026, 6, 2), "5000.00", Kind.INCOME, user_id=OWNER),
+            _usd_invoice(date(2026, 6, 20), "100.00", "1200.00", _MOMENT, user_id=OWNER),
+        ]
+        await _seed(session_factory, rows)
+
+        # WHEN — OTHER_OWNER reads their own (empty) insights.
+        async with session_factory() as session:
+            reader = SqlAlchemyInsightsReader(session)
+            insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1), OTHER_OWNER)
+
+        # THEN — no cross-tenant leakage.
+        assert insights.top_category_mover is None
+        assert insights.recurring is None
+        assert insights.latest_usd_invoice is None
+        assert insights.savings.amount == Decimal("0")

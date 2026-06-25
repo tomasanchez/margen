@@ -1,11 +1,11 @@
-"""Application handler for the settings update (ADR-054).
+"""Application handler for the settings update (ADR-054, ADR-110).
 
 The PATCH settings endpoint dispatches :class:`UpdateSettings`, and this handler
-validates each provided field, merges only those fields onto the single
-``app_settings`` row through the unit of work, and returns the resulting
-settings. Validation lives in the domain rules (currency / FX default in
-:mod:`margen_api.domain.models.settings`, category in the AFIP scale); the
-handler contains no SQLAlchemy (AGENTS.md).
+validates each provided field, merges only those fields onto the owner's
+``app_settings`` row through the unit of work (get-or-creating it on first write,
+ADR-110), and returns the resulting settings. Validation lives in the domain
+rules (currency / FX default in :mod:`margen_api.domain.models.settings`, category
+in the AFIP scale); the handler contains no SQLAlchemy (AGENTS.md).
 """
 
 from __future__ import annotations
@@ -26,20 +26,21 @@ from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
 
 
 async def update_settings(command: UpdateSettings, uow: AbstractUnitOfWork) -> AppSettings:
-    """Merge the provided settings fields and return the resulting row (ADR-054).
+    """Merge the provided settings fields and return the resulting row (ADR-054, ADR-110).
 
     Validates each field that was provided: the display currency against
     ``{ARS, USD}``, the FX default against ``{MEP, official}``, and the
     Monotributo category against the AFIP A-K scale (derived from the scale, never
     a duplicated list). Normalizes the provided values, merges only those fields
-    on the single ``app_settings`` row through the unit of work, and commits. The
+    on the owner's ``app_settings`` row through the unit of work (get-or-creating
+    it scoped to ``command.user_id`` on first write, ADR-110), and commits. The
     resulting settings are returned so the boundary can echo them without a second
     read (a subsequent ``GET /monotributo`` re-snapshots with the new category,
     ADR-052).
 
     Args:
-        command: The validated update request; every field is optional and only
-            the provided ones are applied.
+        command: The validated update request; it carries the owner ``user_id``
+            (ADR-108) plus the optional fields, only the provided ones applied.
         uow: The unit of work providing the settings repository.
 
     Returns:
@@ -57,6 +58,7 @@ async def update_settings(command: UpdateSettings, uow: AbstractUnitOfWork) -> A
     activity_type = command.monotributo_activity_type.strip() if command.monotributo_activity_type is not None else None
     async with uow:
         settings = await uow.settings.upsert_settings(
+            command.user_id,
             preferred_display_currency=currency,
             fx_default_rate_type=fx_default,
             monotributo_current_category=category,

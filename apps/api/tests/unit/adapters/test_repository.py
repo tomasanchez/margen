@@ -11,7 +11,9 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+from sqlalchemy import Select
 
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
@@ -20,6 +22,7 @@ from margen_api.domain.models.value_objects import Kind
 
 A_DATE = date(2026, 6, 12)
 A_TIME = datetime(2026, 6, 12, tzinfo=UTC)
+A_USER = "00000000-0000-4000-8000-000000000001"
 
 
 def _aggregate():
@@ -30,6 +33,7 @@ def _aggregate():
         name="Coto",
         kind=Kind.EXPENSE,
         amount=Decimal("100"),
+        user_id=A_USER,
         created_at=A_TIME,
         updated_at=A_TIME,
     )
@@ -40,6 +44,13 @@ def _session() -> AsyncMock:
     session = AsyncMock()
     session.add = MagicMock()
     return session
+
+
+def _execute_result(record: object) -> MagicMock:
+    """Wrap a record (or ``None``) in a fake execute result exposing ``scalar_one_or_none``."""
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = record
+    return result
 
 
 class TestAdd:
@@ -67,13 +78,13 @@ class TestAdd:
 
 
 class TestGet:
-    """``get`` awaits ``session.get`` and maps the row."""
+    """``get`` runs an owner-scoped select and maps the row (ADR-108, ADR-111)."""
 
     async def test_returns_domain_when_found(self):
         """
-        GIVEN a session whose get returns a record
+        GIVEN a session whose owner-scoped select returns a record
         WHEN the repository loads the aggregate
-        THEN session.get is awaited and a domain aggregate is returned
+        THEN an owner-filtered Select runs and a domain aggregate is returned
         """
         # GIVEN
         transaction = _aggregate()
@@ -93,33 +104,37 @@ class TestGet:
         record.notes = None
         record.recurring = False
         record.counts_toward_monotributo = False
+        record.user_id = UUID(A_USER)
         record.created_at = A_TIME
         record.updated_at = A_TIME
         session = _session()
-        session.get.return_value = record
+        session.execute.return_value = _execute_result(record)
         repository = SqlAlchemyTransactionRepository(session)
 
         # WHEN
-        result = await repository.get(transaction.id)
+        result = await repository.get(transaction.id, A_USER)
 
-        # THEN
-        session.get.assert_awaited_once_with(TransactionRecord, transaction.id)
+        # THEN — an owner-scoped Select was executed.
+        session.execute.assert_awaited_once()
+        (statement,) = session.execute.call_args.args
+        assert isinstance(statement, Select)
+        assert "user_id" in str(statement).lower()
         assert result is not None
         assert result.id == transaction.id
 
-    async def test_returns_none_when_absent(self):
+    async def test_returns_none_when_absent_or_cross_tenant(self):
         """
-        GIVEN a session whose get returns None
+        GIVEN a session whose owner-scoped select returns None
         WHEN the repository loads the aggregate
-        THEN it returns None
+        THEN it returns None (a foreign owner's id is simply not found, ADR-111)
         """
         # GIVEN
         session = _session()
-        session.get.return_value = None
+        session.execute.return_value = _execute_result(None)
         repository = SqlAlchemyTransactionRepository(session)
 
         # WHEN
-        result = await repository.get(uuid4())
+        result = await repository.get(uuid4(), A_USER)
 
         # THEN
         assert result is None
@@ -169,41 +184,45 @@ class TestPersist:
 
 
 class TestDelete:
-    """``delete`` removes the row when present (ADR-030)."""
+    """``delete`` removes the owner's row when present (ADR-030, ADR-108)."""
 
     async def test_deletes_existing_row(self):
         """
-        GIVEN a session whose get returns a record
+        GIVEN a session whose owner-scoped select returns a record
         WHEN the aggregate is deleted
-        THEN session.delete is awaited and True is returned
+        THEN an owner-filtered Select runs, session.delete is awaited and True returned
         """
         # GIVEN
         record = TransactionRecord()
         session = _session()
-        session.get.return_value = record
+        session.execute.return_value = _execute_result(record)
         repository = SqlAlchemyTransactionRepository(session)
         transaction_id = uuid4()
 
         # WHEN
-        removed = await repository.delete(transaction_id)
+        removed = await repository.delete(transaction_id, A_USER)
 
         # THEN
+        session.execute.assert_awaited_once()
+        (statement,) = session.execute.call_args.args
+        assert isinstance(statement, Select)
+        assert "user_id" in str(statement).lower()
         session.delete.assert_awaited_once_with(record)
         assert removed is True
 
-    async def test_returns_false_when_absent(self):
+    async def test_returns_false_when_absent_or_cross_tenant(self):
         """
-        GIVEN a session whose get returns None
+        GIVEN a session whose owner-scoped select returns None
         WHEN a delete is attempted
-        THEN no delete is issued and False is returned
+        THEN no delete is issued and False is returned (cross-tenant is a miss, ADR-111)
         """
         # GIVEN
         session = _session()
-        session.get.return_value = None
+        session.execute.return_value = _execute_result(None)
         repository = SqlAlchemyTransactionRepository(session)
 
         # WHEN
-        removed = await repository.delete(uuid4())
+        removed = await repository.delete(uuid4(), A_USER)
 
         # THEN
         session.delete.assert_not_called()

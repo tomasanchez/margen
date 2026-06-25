@@ -90,18 +90,31 @@ class SqlAlchemyTransactionReader(AbstractTransactionReader):
         """
         self.session = session
 
-    async def list_transactions(self) -> list[TransactionReadModel]:
-        """List all transactions newest-first by ``occurred_on`` (ADR-030)."""
-        statement = select(TransactionRecord).order_by(
-            TransactionRecord.occurred_on.desc(),
-            TransactionRecord.created_at.desc(),
+    async def list_transactions(self, user_id: str) -> list[TransactionReadModel]:
+        """List the owner's transactions newest-first by ``occurred_on`` (ADR-030, ADR-108)."""
+        statement = (
+            select(TransactionRecord)
+            .where(TransactionRecord.user_id == UUID(user_id))
+            .order_by(
+                TransactionRecord.occurred_on.desc(),
+                TransactionRecord.created_at.desc(),
+            )
         )
         result = await self.session.execute(statement)
         return [_to_read_model(record) for record in result.scalars().all()]
 
-    async def get_transaction(self, transaction_id: UUID) -> TransactionReadModel | None:
-        """Fetch one transaction read model, or ``None`` when absent."""
-        record = await self.session.get(TransactionRecord, transaction_id)
+    async def get_transaction(self, transaction_id: UUID, user_id: str) -> TransactionReadModel | None:
+        """Fetch one of the owner's transaction read models, or ``None`` (ADR-108, ADR-111).
+
+        The ``user_id`` predicate is part of the lookup, so a foreign owner's id is
+        simply not found — the boundary then answers 404 (ADR-111). The owner id is
+        coerced to ``UUID`` to match the typed ownership column (ADR-094).
+        """
+        statement = select(TransactionRecord).where(
+            TransactionRecord.id == transaction_id,
+            TransactionRecord.user_id == UUID(user_id),
+        )
+        record = (await self.session.execute(statement)).scalar_one_or_none()
         if record is None:
             return None
         return _to_read_model(record)
@@ -145,15 +158,16 @@ class SqlAlchemySummaryReader(AbstractSummaryReader):
         """
         self.session = session
 
-    async def monthly_summary(self, month: date) -> MonthlySummary:
-        """Aggregate the 6-month trend and the month's category breakdown."""
+    async def monthly_summary(self, month: date, user_id: str) -> MonthlySummary:
+        """Aggregate the 6-month trend and the month's category breakdown (ADR-108)."""
+        owner = UUID(user_id)
         window = trend_window(month)
         prior = window[-2]
         requested = window[-1]
 
-        trend_totals = await self._trend_totals(window[0], requested)
-        month_category_totals = await self._category_totals(requested)
-        prior_category_totals = await self._category_totals(prior)
+        trend_totals = await self._trend_totals(window[0], requested, owner)
+        month_category_totals = await self._category_totals(requested, owner)
+        prior_category_totals = await self._category_totals(prior, owner)
 
         return build_monthly_summary(
             month,
@@ -162,16 +176,18 @@ class SqlAlchemySummaryReader(AbstractSummaryReader):
             prior_category_totals=prior_category_totals,
         )
 
-    async def _trend_totals(self, oldest: date, newest: date) -> dict[str, Decimal]:
-        """Return expense totals keyed by ``YYYY-MM`` across the trend window.
+    async def _trend_totals(self, oldest: date, newest: date, owner: UUID) -> dict[str, Decimal]:
+        """Return the owner's expense totals keyed by ``YYYY-MM`` across the trend window.
 
         Groups expenses by ``(year, month)`` over the inclusive range from the
-        first day of ``oldest`` to the last day of ``newest``.
+        first day of ``oldest`` to the last day of ``newest``, scoped to ``owner``
+        (ADR-108).
         """
         upper = date(newest.year + (newest.month // 12), (newest.month % 12) + 1, 1)
         statement = (
             select(_YEAR.label("year"), _MONTH.label("month"), _EXPENSE_AMOUNT.label("total"))
             .where(
+                TransactionRecord.user_id == owner,
                 TransactionRecord.kind == Kind.EXPENSE.value,
                 TransactionRecord.occurred_on >= oldest,
                 TransactionRecord.occurred_on < upper,
@@ -181,12 +197,13 @@ class SqlAlchemySummaryReader(AbstractSummaryReader):
         result = await self.session.execute(statement)
         return {f"{int(row.year):04d}-{int(row.month):02d}": _as_decimal(row.total) for row in result.all()}
 
-    async def _category_totals(self, month: date) -> dict[str, Decimal]:
-        """Return the month's expense totals keyed by category."""
+    async def _category_totals(self, month: date, owner: UUID) -> dict[str, Decimal]:
+        """Return the owner's expense totals for the month keyed by category (ADR-108)."""
         upper = date(month.year + (month.month // 12), (month.month % 12) + 1, 1)
         statement = (
             select(_CATEGORY.label("category"), _EXPENSE_AMOUNT.label("total"))
             .where(
+                TransactionRecord.user_id == owner,
                 TransactionRecord.kind == Kind.EXPENSE.value,
                 TransactionRecord.occurred_on >= month,
                 TransactionRecord.occurred_on < upper,
@@ -230,16 +247,17 @@ class SqlAlchemyInsightsReader(AbstractInsightsReader):
         """
         self.session = session
 
-    async def monthly_insights(self, month: date, reference: date) -> MonthlyInsights:
-        """Aggregate the structured insight facts for a month (ADR-060, ADR-061)."""
+    async def monthly_insights(self, month: date, reference: date, user_id: str) -> MonthlyInsights:
+        """Aggregate the structured insight facts for a month (ADR-060, ADR-061, ADR-108)."""
+        owner = UUID(user_id)
         prior = date(month.year - 1, 12, 1) if month.month == 1 else date(month.year, month.month - 1, 1)
 
-        month_category_totals = await self._expense_category_totals(month)
-        prior_category_totals = await self._expense_category_totals(prior)
-        recurring_count, recurring_total = await self._recurring_expenses(month)
-        income_total = await self._inflow_total(month)
-        expense_total = await self._expense_total(month)
-        latest_usd_invoice = await self._latest_usd_invoice(month)
+        month_category_totals = await self._expense_category_totals(month, owner)
+        prior_category_totals = await self._expense_category_totals(prior, owner)
+        recurring_count, recurring_total = await self._recurring_expenses(month, owner)
+        income_total = await self._inflow_total(month, owner)
+        expense_total = await self._expense_total(month, owner)
+        latest_usd_invoice = await self._latest_usd_invoice(month, owner)
 
         return build_monthly_insights(
             month,
@@ -253,11 +271,12 @@ class SqlAlchemyInsightsReader(AbstractInsightsReader):
             latest_usd_invoice=latest_usd_invoice,
         )
 
-    async def _expense_category_totals(self, month: date) -> dict[str, Decimal]:
-        """Return the month's expense totals keyed by category (mover input)."""
+    async def _expense_category_totals(self, month: date, owner: UUID) -> dict[str, Decimal]:
+        """Return the owner's expense totals for the month keyed by category (mover input, ADR-108)."""
         statement = (
             select(_CATEGORY.label("category"), _EXPENSE_AMOUNT.label("total"))
             .where(
+                TransactionRecord.user_id == owner,
                 TransactionRecord.kind == Kind.EXPENSE.value,
                 TransactionRecord.occurred_on >= month,
                 TransactionRecord.occurred_on < _month_upper_bound(month),
@@ -267,12 +286,13 @@ class SqlAlchemyInsightsReader(AbstractInsightsReader):
         result = await self.session.execute(statement)
         return {str(row.category): _as_decimal(row.total) for row in result.all()}
 
-    async def _recurring_expenses(self, month: date) -> tuple[int, Decimal]:
-        """Return the count and ARS-equivalent total of recurring expenses."""
+    async def _recurring_expenses(self, month: date, owner: UUID) -> tuple[int, Decimal]:
+        """Return the count and ARS-equivalent total of the owner's recurring expenses (ADR-108)."""
         statement = select(
             func.count().label("recurring_count"),
             cast(func.coalesce(func.sum(TransactionRecord.amount), _ZERO), Numeric(18, 2)).label("recurring_total"),
         ).where(
+            TransactionRecord.user_id == owner,
             *_RECURRING_EXPENSE,
             TransactionRecord.occurred_on >= month,
             TransactionRecord.occurred_on < _month_upper_bound(month),
@@ -280,9 +300,10 @@ class SqlAlchemyInsightsReader(AbstractInsightsReader):
         row = (await self.session.execute(statement)).one()
         return int(row.recurring_count), _as_decimal(row.recurring_total)
 
-    async def _inflow_total(self, month: date) -> Decimal:
-        """SUM the month's ARS-equivalent income + invoice amounts (savings input)."""
+    async def _inflow_total(self, month: date, owner: UUID) -> Decimal:
+        """SUM the owner's ARS-equivalent income + invoice amounts for the month (savings input, ADR-108)."""
         statement = select(cast(func.sum(TransactionRecord.amount), Numeric(18, 2))).where(
+            TransactionRecord.user_id == owner,
             TransactionRecord.kind.in_(_INFLOW_KINDS),
             TransactionRecord.occurred_on >= month,
             TransactionRecord.occurred_on < _month_upper_bound(month),
@@ -290,9 +311,10 @@ class SqlAlchemyInsightsReader(AbstractInsightsReader):
         total = (await self.session.execute(statement)).scalar_one_or_none()
         return _ZERO if total is None else _as_decimal(total)
 
-    async def _expense_total(self, month: date) -> Decimal:
-        """SUM the month's ARS-equivalent expense amounts (savings input)."""
+    async def _expense_total(self, month: date, owner: UUID) -> Decimal:
+        """SUM the owner's ARS-equivalent expense amounts for the month (savings input, ADR-108)."""
         statement = select(_EXPENSE_AMOUNT).where(
+            TransactionRecord.user_id == owner,
             TransactionRecord.kind == Kind.EXPENSE.value,
             TransactionRecord.occurred_on >= month,
             TransactionRecord.occurred_on < _month_upper_bound(month),
@@ -300,18 +322,20 @@ class SqlAlchemyInsightsReader(AbstractInsightsReader):
         total = (await self.session.execute(statement)).scalar_one_or_none()
         return _ZERO if total is None else _as_decimal(total)
 
-    async def _latest_usd_invoice(self, month: date) -> LatestUsdInvoice | None:
+    async def _latest_usd_invoice(self, month: date, owner: UUID) -> LatestUsdInvoice | None:
         """Return the month's most recent USD INVOICE with an applied rate.
 
         Only ``invoice``-kind rows qualify — the insight is "latest invoice", so a
         USD expense (e.g. a fee paid in dollars) must not surface here (it would
         read as a positive invoice, ADR-060). The row must be in USD and carry both
         a ``usd_amount`` and an ``fx_rate``. Ordered newest-first by ``occurred_on``
-        (``created_at`` as a stable tiebreak) and limited to one.
+        (``created_at`` as a stable tiebreak) and limited to one. Scoped to the
+        ``owner`` so a foreign user's invoice never surfaces (ADR-108).
         """
         statement = (
             select(TransactionRecord)
             .where(
+                TransactionRecord.user_id == owner,
                 TransactionRecord.kind == Kind.INVOICE.value,
                 TransactionRecord.currency == Currency.USD.value,
                 TransactionRecord.usd_amount.is_not(None),
@@ -364,18 +388,25 @@ class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
         """
         self.session = session
 
-    async def snapshot(self, reference: date) -> MonotributoSnapshot:
-        """Assemble the current standing, previous standing and drilldown."""
-        current = await self.current_standing(reference)
-        invoices = await self._invoices_in_window(current.period_start, current.period_end)
-        previous = await self._previous_standing(reference)
+    async def snapshot(self, reference: date, user_id: str) -> MonotributoSnapshot:
+        """Assemble the owner's current standing, previous standing and drilldown (ADR-112)."""
+        owner = UUID(user_id)
+        current = await self._current_standing(reference, owner)
+        invoices = await self._invoices_in_window(current.period_start, current.period_end, owner)
+        previous = await self._previous_standing(reference, owner)
         return build_snapshot(current=current, previous=previous, invoices=invoices)
 
-    async def current_standing(self, reference: date) -> MonotributoStanding:
-        """Compute the live trailing-12-month standing (ADR-046)."""
+    async def current_standing(self, reference: date, user_id: str) -> MonotributoStanding:
+        """Compute the owner's live trailing-12-month standing (ADR-046, ADR-112)."""
+        return await self._current_standing(reference, UUID(user_id))
+
+    async def _current_standing(self, reference: date, owner: UUID) -> MonotributoStanding:
+        """Compute the live trailing-12-month standing for an already-coerced ``owner``."""
         window_start, window_end = trailing_window(reference)
-        category, activity_type = await self._configured_category()
-        used = await self._used_in_window(window_start, window_end)
+        # The AFIP scale (category ceilings) is shared reference data; only the
+        # configured category and used income are user-scoped (ADR-112).
+        category, activity_type = await self._configured_category(owner)
+        used = await self._used_in_window(window_start, window_end, owner)
         return build_standing(
             used=used,
             category=category,
@@ -385,19 +416,20 @@ class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
             reference=reference,
         )
 
-    async def _previous_standing(self, reference: date) -> MonotributoStanding | None:
-        """Resolve the prior-window standing from a snapshot, else compute it.
+    async def _previous_standing(self, reference: date, owner: UUID) -> MonotributoStanding | None:
+        """Resolve the owner's prior-window standing from a snapshot, else compute it.
 
-        Reads the persisted snapshot for the prior window's ``period_end`` when one
-        exists (frozen historical figures, ADR-052); otherwise computes the prior
-        window live so the comparison still has data on first read.
+        Reads the owner's persisted snapshot for the prior window's ``period_end``
+        when one exists (frozen historical figures, ADR-052); otherwise computes the
+        prior window live from the owner's transactions so the comparison still has
+        data on first read.
         """
         prior_start, prior_end = prior_window(reference)
-        persisted = await self._snapshot_at(prior_end)
+        persisted = await self._snapshot_at(prior_end, owner)
         if persisted is not None:
             return persisted
-        category, activity_type = await self._configured_category()
-        used = await self._used_in_window(prior_start, prior_end)
+        category, activity_type = await self._configured_category(owner)
+        used = await self._used_in_window(prior_start, prior_end, owner)
         return build_standing(
             used=used,
             category=category,
@@ -407,25 +439,31 @@ class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
             reference=prior_end,
         )
 
-    async def _configured_category(self) -> tuple[str, str]:
-        """Return the ``(category, activity_type)`` from ``app_settings`` (ADR-054).
+    async def _configured_category(self, owner: UUID) -> tuple[str, str]:
+        """Return the owner's ``(category, activity_type)`` from ``app_settings`` (ADR-054, ADR-112).
 
-        The Monotributo category now lives in the single-row ``app_settings`` table
-        (ADR-054, superseding the retired ``monotributo_config``); falls back to the
-        documented settings defaults when no row exists yet.
+        The Monotributo category lives in the per-user ``app_settings`` row
+        (ADR-054, superseding the retired ``monotributo_config``); scoped to
+        ``owner`` (ADR-108) and falling back to the documented settings defaults
+        when no row exists yet.
         """
-        statement = select(
-            AppSettingsRecord.monotributo_current_category,
-            AppSettingsRecord.monotributo_activity_type,
-        ).limit(1)
+        statement = (
+            select(
+                AppSettingsRecord.monotributo_current_category,
+                AppSettingsRecord.monotributo_activity_type,
+            )
+            .where(AppSettingsRecord.user_id == owner)
+            .limit(1)
+        )
         row = (await self.session.execute(statement)).first()
         if row is None:
             return DEFAULT_MONOTRIBUTO_CATEGORY, DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE
         return str(row.monotributo_current_category), str(row.monotributo_activity_type)
 
-    async def _used_in_window(self, window_start: date, window_end: date) -> Decimal:
-        """SUM the included income over the inclusive ``[start, end]`` window."""
+    async def _used_in_window(self, window_start: date, window_end: date, owner: UUID) -> Decimal:
+        """SUM the owner's included income over the inclusive ``[start, end]`` window (ADR-108)."""
         statement = select(_INCLUDED_AMOUNT).where(
+            TransactionRecord.user_id == owner,
             *_COUNTS_TOWARD_LIMIT,
             TransactionRecord.occurred_on >= window_start,
             TransactionRecord.occurred_on <= window_end,
@@ -433,11 +471,12 @@ class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
         total = (await self.session.execute(statement)).scalar_one_or_none()
         return _ZERO if total is None else _as_decimal(total)
 
-    async def _invoices_in_window(self, window_start: date, window_end: date) -> list[MonotributoInvoice]:
-        """List the counted invoices oldest-first with a running cumulative."""
+    async def _invoices_in_window(self, window_start: date, window_end: date, owner: UUID) -> list[MonotributoInvoice]:
+        """List the owner's counted invoices oldest-first with a running cumulative (ADR-108)."""
         statement = (
             select(TransactionRecord)
             .where(
+                TransactionRecord.user_id == owner,
                 *_COUNTS_TOWARD_LIMIT,
                 TransactionRecord.occurred_on >= window_start,
                 TransactionRecord.occurred_on <= window_end,
@@ -463,9 +502,16 @@ class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
             )
         return invoices
 
-    async def _snapshot_at(self, period_end: date) -> MonotributoStanding | None:
-        """Read a persisted standing for a ``period_end`` month, or ``None``."""
-        statement = select(MonotributoSnapshotRecord).where(MonotributoSnapshotRecord.period_end == period_end).limit(1)
+    async def _snapshot_at(self, period_end: date, owner: UUID) -> MonotributoStanding | None:
+        """Read the owner's persisted standing for a ``period_end`` month, or ``None`` (ADR-108)."""
+        statement = (
+            select(MonotributoSnapshotRecord)
+            .where(
+                MonotributoSnapshotRecord.user_id == owner,
+                MonotributoSnapshotRecord.period_end == period_end,
+            )
+            .limit(1)
+        )
         record = (await self.session.execute(statement)).scalar_one_or_none()
         if record is None:
             return None
@@ -485,13 +531,14 @@ class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
 
 
 class SqlAlchemySettingsReader(AbstractSettingsReader):
-    """Serve the application settings from the single ``app_settings`` row (ADR-054).
+    """Serve the per-user application settings from ``app_settings`` (ADR-054, ADR-110).
 
-    Runs a read-only query over ``app_settings`` and projects the single row into
-    an :class:`AppSettings` read model. When no row exists yet it returns the
-    documented defaults (ARS / MEP / category ``C`` / services) so the query side
-    never returns ``None``. It never mutates state -- settings writes are a
-    separate command on the unit of work (ADR-054).
+    Runs a read-only query over the owner's ``app_settings`` row and projects it
+    into an :class:`AppSettings` read model. When the owner has no row yet it
+    returns the documented defaults (ARS / MEP / category ``C`` / services) so the
+    query side never returns ``None``. It never mutates state -- settings writes
+    are a separate command on the unit of work (ADR-054), which get-or-creates the
+    owner's row (ADR-110).
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -502,9 +549,9 @@ class SqlAlchemySettingsReader(AbstractSettingsReader):
         """
         self.session = session
 
-    async def get_settings(self) -> AppSettings:
-        """Return the current settings, or the documented defaults when absent."""
-        statement = select(AppSettingsRecord).limit(1)
+    async def get_settings(self, user_id: str) -> AppSettings:
+        """Return the owner's settings, or the documented defaults when absent (ADR-110)."""
+        statement = select(AppSettingsRecord).where(AppSettingsRecord.user_id == UUID(user_id)).limit(1)
         record = (await self.session.execute(statement)).scalar_one_or_none()
         if record is None:
             return AppSettings(

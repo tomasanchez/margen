@@ -21,6 +21,8 @@ from margen_api.domain.models.monotributo_scale import get_ceiling
 pytestmark = pytest.mark.integration
 
 REFERENCE = date(2026, 6, 14)
+# The owner the user-scoped monotributo standing is computed for (ADR-112).
+OWNER = "f0e1d2c3-b4a5-4960-8788-99aabbccddee"
 
 
 class TestSettingsRoundTrip:
@@ -32,29 +34,29 @@ class TestSettingsRoundTrip:
         WHEN a currency-only update is saved, then a category-only update
         THEN each field persists and the earlier change is not overwritten
         """
-        # WHEN — first a currency-only change (creates the row from defaults).
+        # WHEN — first a currency-only change (get-or-creates the owner's row).
         async with session_factory() as session:
             repository = SqlAlchemySettingsRepository(session)
-            await repository.upsert_settings(preferred_display_currency="USD")
+            await repository.upsert_settings(OWNER, preferred_display_currency="USD")
             await session.commit()
 
         # THEN — currency persists; the other fields are the documented defaults.
         async with session_factory() as session:
-            settings = await SqlAlchemySettingsRepository(session).get_settings()
+            settings = await SqlAlchemySettingsRepository(session).get_settings(OWNER)
         assert settings.preferred_display_currency == "USD"
         assert settings.fx_default_rate_type == "MEP"
         assert settings.monotributo_current_category == "C"
         assert settings.monotributo_activity_type == "services"
 
-        # WHEN — a category-only change later.
+        # WHEN — a category-only change later (reuses the owner's row, not a new one).
         async with session_factory() as session:
             repository = SqlAlchemySettingsRepository(session)
-            await repository.upsert_settings(monotributo_current_category="D")
+            await repository.upsert_settings(OWNER, monotributo_current_category="D")
             await session.commit()
 
         # THEN — the category updates AND the earlier currency change survives.
         async with session_factory() as session:
-            settings = await SqlAlchemySettingsRepository(session).get_settings()
+            settings = await SqlAlchemySettingsRepository(session).get_settings(OWNER)
         assert settings.monotributo_current_category == "D"
         assert settings.preferred_display_currency == "USD"
 
@@ -68,15 +70,16 @@ class TestMonotributoUsesSettingsCategory:
         WHEN the current Monotributo standing is read from PostgreSQL
         THEN the standing uses category E and its ceiling
         """
-        # GIVEN
+        # GIVEN — the owner's settings row is get-or-created scoped to the owner, so
+        # the user-scoped snapshot reader resolves it directly (ADR-110, ADR-112).
         async with session_factory() as session:
             repository = SqlAlchemySettingsRepository(session)
-            await repository.upsert_settings(monotributo_current_category="E")
+            await repository.upsert_settings(OWNER, monotributo_current_category="E")
             await session.commit()
 
         # WHEN
         async with session_factory() as session:
-            standing = await SqlAlchemyMonotributoReader(session).current_standing(REFERENCE)
+            standing = await SqlAlchemyMonotributoReader(session).current_standing(REFERENCE, OWNER)
 
         # THEN
         assert standing.category == "E"

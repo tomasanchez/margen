@@ -38,6 +38,7 @@ from margen_api.service_layer.invoice_parser_read_models import (
 from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.registry import COMMAND_HANDLERS, EVENT_HANDLERS
 from margen_api.settings.database_settings import DatabaseSettings
+from tests.conftest import STUB_USER_ID
 from tests.fakes.persistence import FakeTransactionReader, FakeUnitOfWork
 
 INVOICES = "/api/v1/invoices"
@@ -123,6 +124,33 @@ async def fixture_client(uow: FakeUnitOfWork) -> AsyncIterator[httpx.AsyncClient
 def _pdf_upload(content: bytes = _PDF_BYTES, *, content_type: str = "application/pdf") -> dict:
     """Build the multipart ``files`` kwarg for the parse endpoint."""
     return {"file": ("invoice.pdf", content, content_type)}
+
+
+def _seed_document(uow: FakeUnitOfWork, transaction_id: UUID, *, owner: str) -> None:
+    """Seed a stored invoice document attributed to ``owner`` (ADR-108).
+
+    Mirrors a saved attachment: the read model lands in the committed store and the
+    owner side map records ``user_id`` so the store's owner-scoped ``get`` matches
+    the adapter's filter-in-reader behavior (ADR-111).
+    """
+    uow.documents_store[transaction_id] = InvoiceDocument(
+        transaction_id=transaction_id,
+        pdf_bytes=_PDF_BYTES,
+        content_type="application/pdf",
+        byte_size=len(_PDF_BYTES),
+        extracted_text=None,
+        qr_json=None,
+        emisor_cuit=None,
+        pto_vta=None,
+        tipo_cmp=None,
+        nro_cmp=None,
+        cae=None,
+        fecha=None,
+        importe=None,
+        moneda=None,
+        ctz=None,
+    )
+    uow.document_owners[transaction_id] = owner
 
 
 class TestParseInvoice:
@@ -379,6 +407,9 @@ class TestCreateWithAttachment:
         assert stored.emisor_cuit == "20304050607"
         assert stored.importe == Decimal("150000.50")
 
+        # THEN — the document is owned by the authenticated user (ADR-108).
+        assert uow.document_owners[transaction_id] == STUB_USER_ID
+
     async def test_invalid_base64_returns_422(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
         """
         GIVEN a create body whose pdfBase64 is not valid base64
@@ -420,25 +451,9 @@ class TestDownloadDocument:
         WHEN its document is downloaded
         THEN it returns 200 with the original bytes and stored content type
         """
-        # GIVEN
+        # GIVEN — a document owned by the authenticated stub user.
         transaction_id = uuid4()
-        uow.documents_store[transaction_id] = InvoiceDocument(
-            transaction_id=transaction_id,
-            pdf_bytes=_PDF_BYTES,
-            content_type="application/pdf",
-            byte_size=len(_PDF_BYTES),
-            extracted_text=None,
-            qr_json=None,
-            emisor_cuit=None,
-            pto_vta=None,
-            tipo_cmp=None,
-            nro_cmp=None,
-            cae=None,
-            fecha=None,
-            importe=None,
-            moneda=None,
-            ctz=None,
-        )
+        _seed_document(uow, transaction_id, owner=STUB_USER_ID)
 
         # WHEN
         response = await client.get(f"{INVOICES}/{transaction_id}/document")
@@ -459,3 +474,20 @@ class TestDownloadDocument:
 
         # THEN
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_returns_404_for_another_users_document(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN a stored document owned by a DIFFERENT user
+        WHEN the authenticated user downloads it by id
+        THEN it returns 404 (filter-in-reader hides existence; no bytes leak — ADR-111)
+        """
+        # GIVEN — a document owned by someone other than the stub user.
+        transaction_id = uuid4()
+        _seed_document(uow, transaction_id, owner="11111111-2222-4333-8444-555566667777")
+
+        # WHEN
+        response = await client.get(f"{INVOICES}/{transaction_id}/document")
+
+        # THEN — the foreign id is not found, and no bytes were returned.
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.content != _PDF_BYTES

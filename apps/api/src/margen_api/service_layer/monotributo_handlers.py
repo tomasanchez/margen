@@ -38,33 +38,37 @@ async def capture_monotributo_snapshot(
 ) -> None:
     """Capture the current-period snapshot and backfill missing months (ADR-052).
 
-    Computes the trailing-12-month standing for the window ending at
-    ``command.as_of`` and UPSERTs it keyed by ``period_end``. When earlier monthly
-    snapshots are missing it backfills them from existing transactions, so the
-    history self-populates without a scheduler.
+    Computes the owner's trailing-12-month standing for the window ending at
+    ``command.as_of`` and UPSERTs it keyed by ``(user_id, period_end)``. When the
+    owner's earlier monthly snapshots are missing it backfills them from the
+    owner's existing transactions, so the history self-populates without a
+    scheduler. The owner is carried on the command (ADR-108, ADR-112).
 
     Args:
-        command: The validated capture request carrying the reference date.
+        command: The validated capture request carrying the reference date and the
+            owner ``user_id``.
         uow: The unit of work providing the snapshot repository.
     """
+    user_id = command.user_id
     async with uow:
         repo = uow.monotributo_snapshots
-        category, activity_type = await _resolve_config(repo)
-        existing = await repo.existing_period_ends()
+        category, activity_type = await _resolve_config(repo, user_id)
+        existing = await repo.existing_period_ends(user_id)
         for period_end in _periods_to_capture(command.as_of, existing):
             standing = await _standing_for(
                 repo,
                 period_end=period_end,
                 category=category,
                 activity_type=activity_type,
+                user_id=user_id,
             )
-            await repo.upsert(standing)
+            await repo.upsert(standing, user_id)
         await uow.commit()
 
 
-async def _resolve_config(repo: AbstractMonotributoSnapshotRepository) -> tuple[str, str]:
-    """Return the persisted ``(category, activity_type)`` or the defaults."""
-    config = await repo.configured_category()
+async def _resolve_config(repo: AbstractMonotributoSnapshotRepository, user_id: str) -> tuple[str, str]:
+    """Return the owner's persisted ``(category, activity_type)`` or the defaults (ADR-112)."""
+    config = await repo.configured_category(user_id)
     if config is None:
         return DEFAULT_CATEGORY, DEFAULT_ACTIVITY_TYPE
     return config
@@ -91,10 +95,11 @@ async def _standing_for(
     period_end: date,
     category: str,
     activity_type: str,
+    user_id: str,
 ) -> MonotributoStanding:
-    """Compute the standing to persist for one trailing window ending at ``period_end``."""
+    """Compute the owner's standing for one trailing window ending at ``period_end`` (ADR-112)."""
     window_start, window_end = trailing_window(period_end)
-    used = await repo.used_in_window(window_start, window_end)
+    used = await repo.used_in_window(window_start, window_end, user_id)
     return build_standing(
         used=used,
         category=category,

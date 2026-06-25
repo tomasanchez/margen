@@ -88,6 +88,7 @@ async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork
         notes=command.notes,
         recurring=command.recurring,
         counts_toward_monotributo=command.counts_toward_monotributo,
+        user_id=command.user_id,
     )
     async with uow:
         uow.transactions.add(transaction)
@@ -95,7 +96,7 @@ async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork
             # Flush the transaction first so the document's foreign key resolves;
             # SQLAlchemy does not order these two inserts on its own (ADR-070/071).
             await uow.flush()
-            await _save_invoice_document(uow, transaction.id, command.document)
+            await _save_invoice_document(uow, transaction.id, transaction.user_id, command.document)
         await uow.commit()
     return transaction.id
 
@@ -103,21 +104,27 @@ async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork
 async def _save_invoice_document(
     uow: AbstractUnitOfWork,
     transaction_id: UUID,
+    user_id: str | None,
     document: TransactionDocumentPayload,
 ) -> None:
-    """Stage the imported invoice PDF as a 1:1 side record (ADR-070, ADR-071).
+    """Stage the imported invoice PDF as a 1:1 side record (ADR-070, ADR-071, ADR-108).
 
     Persists through the ``DocumentStore`` port on the same unit of work as the
     transaction so both land in one commit. The document is a side record, not
     part of the transaction aggregate, so its bytes stay out of the domain model.
+    It is stamped with the transaction's ``user_id`` so the stored PDF is owned
+    exactly like its transaction and the download is owner-scoped (ADR-108, ADR-111).
 
     Args:
         uow: The unit of work whose document store stages the row.
         transaction_id: The just-built transaction the document belongs to.
+        user_id: The transaction's owner, copied onto the document so the bytes are
+            owner-scoped on download (ADR-108).
         document: The validated document payload carrying the PDF and metadata.
     """
     await uow.documents.save(
         transaction_id=transaction_id,
+        user_id=user_id,
         pdf_bytes=document.pdf_bytes,
         content_type=document.content_type,
         byte_size=document.byte_size,
@@ -168,14 +175,14 @@ async def import_statement(command: ImportStatement, uow: AbstractUnitOfWork) ->
     """
     now = datetime.now(UTC)
     async with uow:
-        document_id = await _save_statement_document(uow, command.document)
+        document_id = await _save_statement_document(uow, command.document, command.user_id)
         created: list[UUID] = []
         merged: list[UUID] = []
         for line in command.lines:
             if line.resolution is StatementLineResolution.MERGE:
-                merged.append(await _merge_statement_line(uow, line, document_id, now))
+                merged.append(await _merge_statement_line(uow, line, document_id, now, command.user_id))
             else:
-                created.append(_create_statement_line(uow, line, document_id, now))
+                created.append(_create_statement_line(uow, line, document_id, now, command.user_id))
         await uow.commit()
     return StatementImportResult(
         statement_document_id=document_id,
@@ -189,18 +196,21 @@ def _create_statement_line(
     line: StatementLineInput,
     document_id: UUID,
     now: datetime,
+    user_id: str,
 ) -> UUID:
     """Build and stage a new EXPENSE transaction for an ``IMPORT``/``KEEP_BOTH`` line.
 
     Builds the aggregate through the domain factory so invariants run (ADR-031),
     injecting a generated identity and the shared ``now`` timestamps (ADR-026), and
-    links it to the saved statement document.
+    links it to the saved statement document. The aggregate is stamped with
+    ``user_id`` so an imported row is owned exactly like a manual one (ADR-108).
 
     Args:
         uow: The unit of work whose repository stages the new aggregate.
         line: The confirmed import line to create.
         document_id: The saved statement document the new expense links to.
         now: The shared creation/update timestamp for the import batch.
+        user_id: The authenticated owner the new expense belongs to (ADR-108).
 
     Returns:
         The generated identity of the staged transaction.
@@ -222,6 +232,7 @@ def _create_statement_line(
         payment_method=line.payment_method,
         notes=line.notes,
         statement_document_id=document_id,
+        user_id=user_id,
     )
     uow.transactions.add(transaction)
     return transaction.id
@@ -232,6 +243,7 @@ async def _merge_statement_line(
     line: StatementLineInput,
     document_id: UUID,
     now: datetime,
+    user_id: str,
 ) -> UUID:
     """Enrich an existing manual expense from a ``MERGE`` line in place (ADR-085).
 
@@ -249,15 +261,18 @@ async def _merge_statement_line(
         line: The confirmed ``MERGE`` line carrying the statement-derived enrichment.
         document_id: The saved statement document to link the enriched expense to.
         now: The shared timestamp the enriched aggregate's ``updated_at`` takes.
+        user_id: The authenticated owner; the merge target is loaded scoped to it,
+            so another user's transaction is never enriched (ADR-108, ADR-111).
 
     Returns:
         The identity of the enriched transaction.
 
     Raises:
-        MergeTargetNotFoundError: When ``line.match_transaction_id`` matches no row.
+        MergeTargetNotFoundError: When ``line.match_transaction_id`` matches no row
+            owned by ``user_id``.
     """
     match_id = line.match_transaction_id
-    existing = await uow.transactions.get(match_id) if match_id is not None else None
+    existing = await uow.transactions.get(match_id, user_id) if match_id is not None else None
     if existing is None:
         raise MergeTargetNotFoundError(match_id)
 
@@ -280,6 +295,7 @@ async def _merge_statement_line(
         recurring=existing.recurring,
         counts_toward_monotributo=existing.counts_toward_monotributo,
         statement_document_id=document_id,
+        user_id=existing.user_id,
     )
     await uow.transactions.persist(enriched)
     return enriched.id
@@ -288,22 +304,28 @@ async def _merge_statement_line(
 async def _save_statement_document(
     uow: AbstractUnitOfWork,
     document: StatementDocumentPayload,
+    user_id: str | None,
 ) -> UUID:
-    """Stage the statement PDF as the shared parent row and return its id (ADR-077).
+    """Stage the statement PDF as the shared parent row and return its id (ADR-077, ADR-108).
 
     Persists through the ``StatementStore`` port on the unit of work; the store
     flushes so the generated id is available to link every imported transaction in
     the same unit of work (ADR-078). The document is a parent record, not part of a
-    transaction aggregate, so its bytes stay out of the domain model.
+    transaction aggregate, so its bytes stay out of the domain model. It is stamped
+    with the importing user's ``user_id`` so the stored PDF is owned exactly like the
+    expenses it backs and the download is owner-scoped (ADR-108, ADR-111).
 
     Args:
         uow: The unit of work whose statement store stages the row.
         document: The validated document payload carrying the PDF and metadata.
+        user_id: The importing owner, copied onto the document so the bytes are
+            owner-scoped on download (ADR-108).
 
     Returns:
         The new statement document identity.
     """
     return await uow.statements.save(
+        user_id=user_id,
         pdf_bytes=document.pdf_bytes,
         content_type=document.content_type,
         byte_size=document.byte_size,
@@ -338,7 +360,7 @@ async def update_transaction(command: UpdateTransaction, uow: AbstractUnitOfWork
         TransactionNotFoundError: When no transaction matches ``command.id``.
     """
     async with uow:
-        existing = await uow.transactions.get(command.id)
+        existing = await uow.transactions.get(command.id, command.user_id)
         if existing is None:
             raise TransactionNotFoundError(command.id)
         patched = _apply_patch(existing, command)
@@ -358,7 +380,7 @@ async def delete_transaction(command: DeleteTransaction, uow: AbstractUnitOfWork
         TransactionNotFoundError: When no transaction matches ``command.id``.
     """
     async with uow:
-        removed = await uow.transactions.delete(command.id)
+        removed = await uow.transactions.delete(command.id, command.user_id)
         if not removed:
             raise TransactionNotFoundError(command.id)
         await uow.commit()
@@ -368,8 +390,10 @@ def _apply_patch(existing: Transaction, command: UpdateTransaction) -> Transacti
     """Build a new aggregate overlaying the patch's present fields.
 
     Rebuilding through :func:`build_transaction` re-runs the domain invariants
-    so the patched state is validated and normalized, while preserving identity
-    and ``created_at`` and bumping ``updated_at`` to now (ADR-026, ADR-031).
+    so the patched state is validated and normalized, while preserving identity,
+    ``created_at`` and ownership (``user_id``) and bumping ``updated_at`` to now
+    (ADR-026, ADR-031, ADR-108). Ownership is never patchable — a patch must not
+    move a row to another tenant.
     """
     fields = {name: getattr(existing, name) for name in _PATCHABLE_FIELDS}
     for name in _PATCHABLE_FIELDS:
@@ -380,5 +404,6 @@ def _apply_patch(existing: Transaction, command: UpdateTransaction) -> Transacti
         transaction_id=existing.id,
         created_at=existing.created_at,
         updated_at=datetime.now(UTC),
+        user_id=existing.user_id,
         **fields,
     )

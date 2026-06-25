@@ -22,6 +22,7 @@ from margen_api.domain.commands.transaction import (
 from margen_api.domain.models.value_objects import Currency, Kind
 
 A_DATE = date(2026, 6, 12)
+A_USER = "00000000-0000-4000-8000-000000000001"
 
 
 class TestCreateTransactionCommand:
@@ -39,11 +40,13 @@ class TestCreateTransactionCommand:
             name="Coto",
             kind=Kind.EXPENSE,
             amount=Decimal("100"),
+            user_id=A_USER,
         )
 
         # THEN
         assert command.currency is Currency.ARS
         assert command.counts_toward_monotributo is False
+        assert command.user_id == A_USER
 
     async def test_non_positive_amount_is_rejected(self):
         """
@@ -53,7 +56,7 @@ class TestCreateTransactionCommand:
         """
         # WHEN / THEN
         with pytest.raises(ValidationError):
-            CreateTransaction(occurred_on=A_DATE, name="Coto", kind=Kind.EXPENSE, amount=Decimal("0"))
+            CreateTransaction(occurred_on=A_DATE, name="Coto", kind=Kind.EXPENSE, amount=Decimal("0"), user_id=A_USER)
 
     async def test_empty_name_is_rejected(self):
         """
@@ -63,7 +66,7 @@ class TestCreateTransactionCommand:
         """
         # WHEN / THEN
         with pytest.raises(ValidationError):
-            CreateTransaction(occurred_on=A_DATE, name="", kind=Kind.EXPENSE, amount=Decimal("100"))
+            CreateTransaction(occurred_on=A_DATE, name="", kind=Kind.EXPENSE, amount=Decimal("100"), user_id=A_USER)
 
 
 class TestUpdateTransactionCommand:
@@ -76,7 +79,7 @@ class TestUpdateTransactionCommand:
         THEN every mutable field defaults to None ("leave unchanged")
         """
         # WHEN
-        command = UpdateTransaction(id=uuid4())
+        command = UpdateTransaction(id=uuid4(), user_id=A_USER)
 
         # THEN
         assert command.name is None
@@ -91,7 +94,7 @@ class TestUpdateTransactionCommand:
         """
         # WHEN / THEN
         with pytest.raises(ValidationError):
-            UpdateTransaction(id=uuid4(), amount=Decimal("-5"))
+            UpdateTransaction(id=uuid4(), amount=Decimal("-5"), user_id=A_USER)
 
 
 class TestDeleteTransactionCommand:
@@ -107,7 +110,8 @@ class TestDeleteTransactionCommand:
         identity = uuid4()
 
         # WHEN
-        command = DeleteTransaction(id=identity)
+        command = DeleteTransaction(id=identity, user_id=A_USER)
 
         # THEN
         assert command.id == identity
+        assert command.user_id == A_USER

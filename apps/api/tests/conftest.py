@@ -21,19 +21,33 @@ from margen_api.settings.database_settings import DatabaseSettings
 # A canned authenticated user the e2e tier authenticates as. The coverage gate
 # is hermetic (ADR-032): no live Supabase, no minted JWTs. Per ADR-098, e2e tests
 # swap the Supabase JWT guard for this stub via ``app.dependency_overrides`` so
-# every gated route resolves an identity without a real token. ADR-095 gates
-# only this iteration (a valid user is required), so the stub id is never used to
-# filter rows yet.
-STUB_AUTH_USER = AuthUserModel(id="stub-user-id", email="stub@example.com", claims={"sub": "stub-user-id"})
+# every gated route resolves an identity without a real token. The id is a valid
+# UUID string (a real Supabase ``sub`` is a UUID): per ADR-108 it is now threaded
+# into the transactions write/read path and stored in the ``UUID`` ownership
+# column (ADR-094), which must round-trip on the in-memory SQLite e2e tier.
+# Contains hex letters on purpose: an all-digit UUID would hit SQLite's NUMERIC
+# affinity on the ``UUID`` ownership column and round-trip back as a float, so the
+# stub id keeps letters to stay TEXT on the in-memory e2e tier.
+STUB_USER_ID = "f0e1d2c3-b4a5-4960-8788-99aabbccddee"
+STUB_AUTH_USER = AuthUserModel(id=STUB_USER_ID, email="stub@example.com", claims={"sub": STUB_USER_ID})
+
+# A SECOND canned authenticated identity (user "B"), used to prove per-user data
+# isolation end to end (ADR-113): user A creates data, user B authenticates
+# separately, and B must never see or mutate A's rows. Like ``STUB_USER_ID`` it is
+# a valid hex-letter UUID so it stays TEXT (not NUMERIC) on the in-memory SQLite
+# ``UUID`` ownership column and round-trips on the hermetic e2e tier (ADR-094).
+STUB_USER_ID_B = "a1b2c3d4-e5f6-4789-8abc-def012345678"
+STUB_AUTH_USER_B = AuthUserModel(id=STUB_USER_ID_B, email="stub-b@example.com", claims={"sub": STUB_USER_ID_B})
 
 
-def _override_auth(app: FastAPI) -> None:
-    """Install the stub-user auth override on ``app`` (ADR-098).
+def _override_auth(app: FastAPI, user: AuthUserModel = STUB_AUTH_USER) -> None:
+    """Install a stub-user auth override on ``app`` (ADR-098/ADR-113).
 
-    Swaps ``require_auth_user`` for a callable returning :data:`STUB_AUTH_USER`
-    so the JWKS-verify guard never runs in the hermetic e2e tier.
+    Swaps ``require_auth_user`` for a callable returning ``user`` (the default
+    single-user stub, or user B for isolation tests) so the JWKS-verify guard
+    never runs in the hermetic e2e tier.
     """
-    app.dependency_overrides[require_auth_user] = lambda: STUB_AUTH_USER
+    app.dependency_overrides[require_auth_user] = lambda: user
 
 
 @compiles(Function, "sqlite")
@@ -102,6 +116,35 @@ def fixture_without_auth_override() -> Callable[[FastAPI], None]:
         app.dependency_overrides.pop(require_auth_user, None)
 
     return remove
+
+
+@pytest.fixture(name="client_for_user")
+def fixture_client_for_user() -> Callable[[ApplicationContainer, AuthUserModel], httpx.AsyncClient]:
+    """Return a factory that builds a client authenticated as a chosen user (ADR-113).
+
+    Consolidates the "second app authenticated as a different user" pattern that
+    several per-domain isolation tests built inline (transactions, settings,
+    statements). The factory builds a fresh FastAPI app over the SAME container —
+    so the two users share one in-memory database and B genuinely reads A's
+    persisted rows through the real adapters — and installs the auth override for
+    the given user on that app (ADR-098).
+
+    The caller owns the returned client's lifecycle (``async with`` it). The
+    ``container`` fixture starts and disposes the shared resources, so the apps
+    built here only need their auth override.
+
+    Returns:
+        A callable ``(container, user) -> httpx.AsyncClient`` building an async
+        client authenticated as ``user``.
+    """
+
+    def build(container: ApplicationContainer, user: AuthUserModel) -> httpx.AsyncClient:
+        app = get_application(container)
+        _override_auth(app, user)
+        transport = httpx.ASGITransport(app=app)
+        return httpx.AsyncClient(transport=transport, base_url="http://test")
+
+    return build
 
 
 @pytest.fixture(name="container")

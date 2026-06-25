@@ -64,90 +64,120 @@ class FakeTransactionRepository(AbstractTransactionRepository):
         self._staged = staged
 
     def add(self, transaction: Transaction) -> None:
-        """Stage a new aggregate until the unit of work commits."""
+        """Stage a new aggregate until the unit of work commits.
+
+        Ownership rides on the aggregate (``transaction.user_id``), mirroring the
+        SQLAlchemy adapter (ADR-108).
+        """
         self._staged[transaction.id] = transaction
 
-    async def get(self, transaction_id: UUID) -> Transaction | None:
-        """Return a staged or committed aggregate, or ``None`` when absent."""
-        return self._staged.get(transaction_id) or self._committed.get(transaction_id)
+    async def get(self, transaction_id: UUID, user_id: str) -> Transaction | None:
+        """Return the owner's staged/committed aggregate, or ``None`` (ADR-108, ADR-111).
+
+        Mirrors the adapter's owner-scoped lookup: a row owned by another user is
+        treated as absent so the handler surfaces a not-found.
+        """
+        transaction = self._staged.get(transaction_id) or self._committed.get(transaction_id)
+        if transaction is None or transaction.user_id != user_id:
+            return None
+        return transaction
 
     async def persist(self, transaction: Transaction) -> None:
         """Stage a mutated aggregate for the next commit."""
         self._staged[transaction.id] = transaction
 
-    async def delete(self, transaction_id: UUID) -> bool:
-        """Hard-delete an aggregate from staged and committed stores."""
-        staged = self._staged.pop(transaction_id, None)
-        committed = self._committed.pop(transaction_id, None)
-        return staged is not None or committed is not None
+    async def delete(self, transaction_id: UUID, user_id: str) -> bool:
+        """Hard-delete the owner's aggregate from staged and committed stores (ADR-108).
+
+        A row owned by another user is not removed and reports a miss, so a
+        cross-tenant delete surfaces 404 (ADR-111).
+        """
+        staged = self._staged.get(transaction_id)
+        committed = self._committed.get(transaction_id)
+        target = staged or committed
+        if target is None or target.user_id != user_id:
+            return False
+        self._staged.pop(transaction_id, None)
+        self._committed.pop(transaction_id, None)
+        return True
 
 
 class FakeMonotributoSnapshotRepository(AbstractMonotributoSnapshotRepository):
-    """In-memory snapshot history keyed by ``period_end`` month (ADR-052).
+    """In-memory snapshot history keyed by ``(user_id, period_end)`` (ADR-052, ADR-112).
 
-    Mirrors the SQLAlchemy adapter: ``upsert`` replaces the row for a
+    Mirrors the SQLAlchemy adapter: ``upsert`` replaces the owner's row for a
     ``period_end`` (idempotent — never duplicates), and the focused read helpers
-    return the unit of work's configured category and the per-window included
-    income that the capture handler derives its standings from.
+    return the owner's configured category and the per-window included income that
+    the capture handler derives its standings from. Snapshots are scoped to the
+    owner so one user's history is independent of another's (ADR-112).
     """
 
     def __init__(
         self,
-        committed: dict[date, MonotributoStanding],
+        committed: dict[tuple[str, date], MonotributoStanding],
         config: dict[str, str],
-        used_by_window: dict[tuple[date, date], Decimal],
+        used_by_window: dict[tuple[str, date, date], Decimal],
     ) -> None:
         """Initialize the repository over the unit of work's stores."""
         self._committed = committed
         self._config = config
         self._used_by_window = used_by_window
 
-    async def configured_category(self) -> tuple[str, str] | None:
-        """Return the configured ``(category, activity_type)`` pair, if set."""
+    async def configured_category(self, user_id: str) -> tuple[str, str] | None:
+        """Return the owner's configured ``(category, activity_type)`` pair, if set (ADR-112).
+
+        The fake shares a single settings dict the way ``app_settings`` is the
+        single source of truth; ``user_id`` is accepted to mirror the adapter's
+        owner-scoped read (ADR-108).
+        """
         if not self._config:
             return None
         return self._config["current_category"], self._config["activity_type"]
 
-    async def used_in_window(self, window_start: date, window_end: date) -> Decimal:
-        """Return the canned SUM of included income for a window, else 0."""
-        return self._used_by_window.get((window_start, window_end), Decimal(0))
+    async def used_in_window(self, window_start: date, window_end: date, user_id: str) -> Decimal:
+        """Return the canned SUM of the owner's included income for a window, else 0 (ADR-112)."""
+        return self._used_by_window.get((user_id, window_start, window_end), Decimal(0))
 
-    async def existing_period_ends(self) -> set[date]:
-        """Return the ``period_end`` months that already have a snapshot."""
-        return set(self._committed)
+    async def existing_period_ends(self, user_id: str) -> set[date]:
+        """Return the owner's ``period_end`` months that already have a snapshot (ADR-112)."""
+        return {period_end for (owner, period_end) in self._committed if owner == user_id}
 
-    async def upsert(self, standing: MonotributoStanding) -> None:
-        """Insert or update the snapshot for the standing's ``period_end``."""
-        self._committed[standing.period_end] = standing
+    async def upsert(self, standing: MonotributoStanding, user_id: str) -> None:
+        """Insert or update the owner's snapshot for the standing's ``period_end`` (ADR-112)."""
+        self._committed[user_id, standing.period_end] = standing
 
 
 class FakeSettingsRepository(AbstractSettingsRepository):
-    """In-memory single-row application settings (ADR-054).
+    """In-memory per-user application settings (ADR-054, ADR-110).
 
     Mirrors the SQLAlchemy adapter: ``upsert_settings`` merges only the provided
-    fields onto a shared single-row dict and ``get_settings`` projects it, falling
-    back to the documented defaults when a field is unset. The Monotributo
-    category/activity share the same backing dict the snapshot fake reads from, so
-    ``app_settings`` is the single source of truth for the category.
+    fields onto a shared settings dict and ``get_settings`` projects it, falling
+    back to the documented defaults when a field is unset. ``user_id`` is accepted
+    to mirror the owner-scoped adapter (ADR-108, ADR-110); the fake backs a single
+    shared dict the way ``configured_category`` does, so unit/route tests drive one
+    owner at a time. The Monotributo category/activity share the same backing dict
+    the snapshot fake reads from, so ``app_settings`` is the single source of truth
+    for the category.
     """
 
     def __init__(self, settings: dict[str, str]) -> None:
-        """Initialize over a shared single-row settings dict."""
+        """Initialize over a shared settings dict."""
         self._settings = settings
 
-    async def get_settings(self) -> AppSettings:
-        """Return the persisted settings, falling back to the documented defaults."""
+    async def get_settings(self, user_id: str) -> AppSettings:
+        """Return the owner's persisted settings, falling back to the documented defaults."""
         return self._as_read_model()
 
     async def upsert_settings(
         self,
+        user_id: str,
         *,
         preferred_display_currency: str | None = None,
         fx_default_rate_type: str | None = None,
         monotributo_current_category: str | None = None,
         monotributo_activity_type: str | None = None,
     ) -> AppSettings:
-        """Merge only the provided fields onto the single settings row."""
+        """Merge only the provided fields onto the owner's settings row (ADR-110)."""
         if preferred_display_currency is not None:
             self._settings["preferred_display_currency"] = preferred_display_currency
         if fx_default_rate_type is not None:
@@ -178,14 +208,21 @@ class FakeDocumentStore(AbstractDocumentStore):
     (ADR-074).
     """
 
-    def __init__(self, committed: dict[UUID, InvoiceDocument]) -> None:
-        """Initialize the store over the unit of work's committed dict."""
+    def __init__(self, committed: dict[UUID, InvoiceDocument], owners: dict[UUID, str | None]) -> None:
+        """Initialize the store over the unit of work's committed dict.
+
+        Ownership is tracked in a side map (the download read model intentionally
+        carries no ``user_id``), keyed by ``transaction_id``, so ``get`` can mirror
+        the adapter's owner-scoped lookup (ADR-108, ADR-111).
+        """
         self._committed = committed
+        self._owners = owners
 
     async def save(
         self,
         *,
         transaction_id: UUID,
+        user_id: str | None,
         pdf_bytes: bytes,
         content_type: str,
         byte_size: int,
@@ -201,7 +238,8 @@ class FakeDocumentStore(AbstractDocumentStore):
         moneda: str | None,
         ctz: Decimal | None,
     ) -> None:
-        """Store one document row keyed by ``transaction_id``."""
+        """Store one document row keyed by ``transaction_id``, owned by ``user_id`` (ADR-108)."""
+        self._owners[transaction_id] = user_id
         self._committed[transaction_id] = InvoiceDocument(
             transaction_id=transaction_id,
             pdf_bytes=pdf_bytes,
@@ -220,8 +258,14 @@ class FakeDocumentStore(AbstractDocumentStore):
             ctz=ctz,
         )
 
-    async def get(self, transaction_id: UUID) -> InvoiceDocument | None:
-        """Return the stored document for a transaction, or ``None`` when absent."""
+    async def get(self, transaction_id: UUID, user_id: str) -> InvoiceDocument | None:
+        """Return the owner's stored document for a transaction, or ``None`` (ADR-108, ADR-111).
+
+        Mirrors the adapter's owner-scoped lookup: a document owned by another user is
+        treated as absent so the download surfaces a 404 before any bytes are read.
+        """
+        if self._owners.get(transaction_id) != user_id:
+            return None
         return self._committed.get(transaction_id)
 
     async def exists_by_natural_key(
@@ -253,13 +297,20 @@ class FakeStatementStore(AbstractStatementStore):
     block). Thorough behavior is covered by the integration tier (ADR-082).
     """
 
-    def __init__(self, committed: dict[UUID, StatementDocument]) -> None:
-        """Initialize the store over the unit of work's committed dict."""
+    def __init__(self, committed: dict[UUID, StatementDocument], owners: dict[UUID, str | None]) -> None:
+        """Initialize the store over the unit of work's committed dict.
+
+        Ownership is tracked in a side map (the download read model intentionally
+        carries no ``user_id``), keyed by the generated document id, so ``get`` can
+        mirror the adapter's owner-scoped lookup (ADR-108, ADR-111).
+        """
         self._committed = committed
+        self._owners = owners
 
     async def save(
         self,
         *,
+        user_id: str | None,
         pdf_bytes: bytes,
         content_type: str,
         byte_size: int,
@@ -273,8 +324,9 @@ class FakeStatementStore(AbstractStatementStore):
         period_due: date | None,
         total_amount: Decimal | None,
     ) -> UUID:
-        """Store one document row under a generated id and return that id."""
+        """Store one document row under a generated id, owned by ``user_id`` (ADR-108)."""
         document_id = uuid4()
+        self._owners[document_id] = user_id
         self._committed[document_id] = StatementDocument(
             id=document_id,
             pdf_bytes=pdf_bytes,
@@ -292,8 +344,14 @@ class FakeStatementStore(AbstractStatementStore):
         )
         return document_id
 
-    async def get(self, statement_document_id: UUID) -> StatementDocument | None:
-        """Return the stored document by identity, or ``None`` when absent."""
+    async def get(self, statement_document_id: UUID, user_id: str) -> StatementDocument | None:
+        """Return the owner's stored document by identity, or ``None`` (ADR-108, ADR-111).
+
+        Mirrors the adapter's owner-scoped lookup: a document owned by another user is
+        treated as absent so the download surfaces a 404 before any bytes are read.
+        """
+        if self._owners.get(statement_document_id) != user_id:
+            return None
         return self._committed.get(statement_document_id)
 
     async def exists_by_natural_key(
@@ -318,26 +376,29 @@ class FakeUnitOfWork(AbstractUnitOfWork):
     Beyond the transaction repository it exposes fake Monotributo snapshot and
     application-settings repositories (ADR-052, ADR-054) so the read-records
     capture and settings handlers can be driven without a database. ``snapshots``
-    is the committed snapshot history keyed by ``period_end``; ``config`` is the
-    single-row settings dict (the Monotributo category/activity live here too,
-    ADR-054); ``used_by_window`` seeds the per-window included-income totals the
-    capture handler reads.
+    is the committed snapshot history keyed by ``(user_id, period_end)`` so each
+    owner's history is independent (ADR-112); ``config`` is the single-row settings
+    dict (the Monotributo category/activity live here too, ADR-054);
+    ``used_by_window`` seeds the per-owner per-window included-income totals the
+    capture handler reads, keyed by ``(user_id, window_start, window_end)``.
     """
 
     def __init__(self) -> None:
         """Initialize an empty unit of work."""
         self.committed_aggregates: dict[UUID, Transaction] = {}
         self._staged: dict[UUID, Transaction] = {}
-        self.snapshots: dict[date, MonotributoStanding] = {}
+        self.snapshots: dict[tuple[str, date], MonotributoStanding] = {}
         self.config: dict[str, str] = {}
-        self.used_by_window: dict[tuple[date, date], Decimal] = {}
+        self.used_by_window: dict[tuple[str, date, date], Decimal] = {}
         self.documents_store: dict[UUID, InvoiceDocument] = {}
+        self.document_owners: dict[UUID, str | None] = {}
         self.statements_store: dict[UUID, StatementDocument] = {}
+        self.statement_owners: dict[UUID, str | None] = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
         self.settings = FakeSettingsRepository(self.config)
-        self.documents = FakeDocumentStore(self.documents_store)
-        self.statements = FakeStatementStore(self.statements_store)
+        self.documents = FakeDocumentStore(self.documents_store, self.document_owners)
+        self.statements = FakeStatementStore(self.statements_store, self.statement_owners)
         self.committed = False
 
     async def __aenter__(self) -> FakeUnitOfWork:
@@ -347,8 +408,8 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
         self.settings = FakeSettingsRepository(self.config)
-        self.documents = FakeDocumentStore(self.documents_store)
-        self.statements = FakeStatementStore(self.statements_store)
+        self.documents = FakeDocumentStore(self.documents_store, self.document_owners)
+        self.statements = FakeStatementStore(self.statements_store, self.statement_owners)
         return self
 
     async def __aexit__(
@@ -389,19 +450,22 @@ class FakeTransactionReader(AbstractTransactionReader):
         """
         self._committed = committed
 
-    async def list_transactions(self) -> list[TransactionReadModel]:
-        """List read models newest-first by ``occurred_on`` then ``created_at``."""
+    async def list_transactions(self, user_id: str) -> list[TransactionReadModel]:
+        """List the owner's read models newest-first by ``occurred_on`` then ``created_at`` (ADR-108)."""
+        owned = [tx for tx in self._committed.values() if tx.user_id == user_id]
         ordered = sorted(
-            self._committed.values(),
+            owned,
             key=lambda tx: (tx.occurred_on, tx.created_at),
             reverse=True,
         )
         return [_project(tx) for tx in ordered]
 
-    async def get_transaction(self, transaction_id: UUID) -> TransactionReadModel | None:
-        """Return one read model, or ``None`` when absent."""
+    async def get_transaction(self, transaction_id: UUID, user_id: str) -> TransactionReadModel | None:
+        """Return the owner's read model, or ``None`` when absent/cross-tenant (ADR-108, ADR-111)."""
         transaction = self._committed.get(transaction_id)
-        return _project(transaction) if transaction is not None else None
+        if transaction is None or transaction.user_id != user_id:
+            return None
+        return _project(transaction)
 
 
 class FakeSummaryReader(AbstractSummaryReader):
@@ -420,10 +484,12 @@ class FakeSummaryReader(AbstractSummaryReader):
         """
         self._summary = summary
         self.requested_month: date | None = None
+        self.requested_user_id: str | None = None
 
-    async def monthly_summary(self, month: date) -> MonthlySummary:
-        """Record the requested month and return the canned summary."""
+    async def monthly_summary(self, month: date, user_id: str) -> MonthlySummary:
+        """Record the requested month and owner and return the canned summary (ADR-108)."""
         self.requested_month = month
+        self.requested_user_id = user_id
         return self._summary
 
 
@@ -445,11 +511,13 @@ class FakeInsightsReader(AbstractInsightsReader):
         self._insights = insights
         self.requested_month: date | None = None
         self.requested_reference: date | None = None
+        self.requested_user_id: str | None = None
 
-    async def monthly_insights(self, month: date, reference: date) -> MonthlyInsights:
-        """Record the requested month and reference and return the canned facts."""
+    async def monthly_insights(self, month: date, reference: date, user_id: str) -> MonthlyInsights:
+        """Record the requested month, reference and owner and return the canned facts (ADR-108)."""
         self.requested_month = month
         self.requested_reference = reference
+        self.requested_user_id = user_id
         return self._insights
 
 
@@ -465,33 +533,38 @@ class FakeMonotributoReader(AbstractMonotributoReader):
         """Initialize the reader with the snapshot every call returns."""
         self._snapshot = snapshot
         self.requested_reference: date | None = None
+        self.requested_user_id: str | None = None
 
-    async def snapshot(self, reference: date) -> MonotributoSnapshot:
-        """Record the reference and return the canned snapshot."""
+    async def snapshot(self, reference: date, user_id: str) -> MonotributoSnapshot:
+        """Record the reference and owner and return the canned snapshot (ADR-112)."""
         self.requested_reference = reference
+        self.requested_user_id = user_id
         return self._snapshot
 
-    async def current_standing(self, reference: date) -> MonotributoStanding:
-        """Return the canned snapshot's current standing."""
+    async def current_standing(self, reference: date, user_id: str) -> MonotributoStanding:
+        """Record the reference and owner and return the canned current standing (ADR-112)."""
         self.requested_reference = reference
+        self.requested_user_id = user_id
         return self._snapshot.current
 
 
 class FakeSettingsReader(AbstractSettingsReader):
-    """Settings reader projecting a shared single-row dict for route tests (ADR-054).
+    """Settings reader projecting a shared settings dict for route tests (ADR-054, ADR-110).
 
     Mirrors :class:`FakeSettingsRepository`'s read side so the GET route returns
     the documented defaults when a field is unset, and -- when backed by a unit of
     work's ``config`` dict -- reflects writes a PATCH committed through that unit of
-    work (the e2e round-trip), all without a database (ADR-032).
+    work (the e2e round-trip), all without a database (ADR-032). ``user_id`` is
+    accepted to mirror the owner-scoped adapter (ADR-108, ADR-110); the fake backs a
+    single shared dict, so route tests drive one owner at a time.
     """
 
     def __init__(self, settings: dict[str, str]) -> None:
-        """Initialize over a shared single-row settings dict."""
+        """Initialize over a shared settings dict."""
         self._settings = settings
 
-    async def get_settings(self) -> AppSettings:
-        """Project the shared dict into an :class:`AppSettings`, applying defaults."""
+    async def get_settings(self, user_id: str) -> AppSettings:
+        """Project the owner's shared dict into an :class:`AppSettings`, applying defaults."""
         return AppSettings(
             preferred_display_currency=self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY),
             fx_default_rate_type=self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE),

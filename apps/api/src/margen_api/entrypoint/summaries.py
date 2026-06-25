@@ -14,7 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from margen_api.entrypoint.dependencies import SummaryReader
+from margen_api.entrypoint.dependencies import AuthUser, SummaryReader
 from margen_api.entrypoint.schemas import ResponseModel
 from margen_api.entrypoint.summaries_schemas import MonthlySummaryResponse
 
@@ -54,6 +54,7 @@ def _parse_month(value: str) -> date:
 )
 async def monthly_summary(
     reader: SummaryReader,
+    user: AuthUser,
     month: Annotated[
         str | None,
         Query(
@@ -63,15 +64,16 @@ async def monthly_summary(
         ),
     ] = None,
 ) -> ResponseModel[MonthlySummaryResponse]:
-    """Return the spending trend and category breakdown for a month (ADR-042).
+    """Return the caller's spending trend and category breakdown for a month (ADR-042, ADR-108).
 
     The ``trend`` carries the 6 calendar months ending at ``month`` (oldest-first,
     the requested month flagged ``current``), each with its total expenses. The
     ``categories`` breakdown lists the requested month's expenses by category,
     sorted by amount descending, with each category's ``share`` of the month total
     and ``deltaPct`` versus the prior month. Income and invoice kinds are excluded.
-    A malformed ``month`` yields ``422``.
+    The summary is scoped to ``user.id`` so a caller only sees their own spending
+    (ADR-108). A malformed ``month`` yields ``422``.
     """
     target = _parse_month(month or _current_month())
-    summary = await reader.monthly_summary(target)
+    summary = await reader.monthly_summary(target, user.id)
     return ResponseModel(data=MonthlySummaryResponse.from_read_model(summary))

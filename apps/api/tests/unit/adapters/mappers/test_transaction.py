@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+import pytest
 
 from margen_api.adapters.mappers.transaction import to_domain, to_record, update_record
 from margen_api.adapters.models.transaction import TransactionRecord
@@ -18,6 +20,7 @@ from margen_api.domain.models.value_objects import Currency, FxRateType, Kind
 
 A_DATE = date(2026, 6, 12)
 A_TIME = datetime(2026, 6, 12, 10, 0, tzinfo=UTC)
+A_USER = "00000000-0000-4000-8000-000000000001"
 
 
 def _usd_record() -> TransactionRecord:
@@ -38,6 +41,7 @@ def _usd_record() -> TransactionRecord:
     record.notes = "work laptop"
     record.recurring = False
     record.counts_toward_monotributo = False
+    record.user_id = UUID(A_USER)
     record.created_at = A_TIME
     record.updated_at = A_TIME
     return record
@@ -108,6 +112,7 @@ class TestToRecordAndUpdate:
             usd_amount=Decimal("1000.00"),
             fx_rate=Decimal("1000.500000"),
             fx_rate_type=FxRateType.MEP,
+            user_id=A_USER,
             created_at=A_TIME,
             updated_at=A_TIME,
         )
@@ -137,6 +142,7 @@ class TestToRecordAndUpdate:
             kind=Kind.EXPENSE,
             amount=Decimal("500000"),
             currency=Currency.ARS,
+            user_id=A_USER,
             created_at=A_TIME,
             updated_at=A_TIME,
         )
@@ -164,6 +170,7 @@ class TestToRecordAndUpdate:
             amount=Decimal("3000000.00"),
             currency=Currency.ARS,
             counts_toward_monotributo=True,
+            user_id=A_USER,
             created_at=A_TIME,
             updated_at=A_TIME,
         )
@@ -176,3 +183,25 @@ class TestToRecordAndUpdate:
         assert rehydrated.kind is original.kind
         assert rehydrated.amount == original.amount
         assert rehydrated.counts_toward_monotributo is True
+
+    async def test_to_record_rejects_missing_owner(self):
+        """
+        GIVEN an aggregate without a user_id (a missed write path)
+        WHEN it is mapped to a persistence record
+        THEN a ValueError is raised because the column is NOT NULL (ADR-108, ADR-109)
+        """
+        # GIVEN
+        ownerless = build_transaction(
+            transaction_id=uuid4(),
+            occurred_on=A_DATE,
+            name="Coto",
+            kind=Kind.EXPENSE,
+            amount=Decimal("100"),
+            currency=Currency.ARS,
+            created_at=A_TIME,
+            updated_at=A_TIME,
+        )
+
+        # WHEN / THEN
+        with pytest.raises(ValueError, match="owning user_id"):
+            to_record(ownerless)
