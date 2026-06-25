@@ -34,7 +34,8 @@
     "edit": "Editar {{name}}",
     "delete": "Eliminar {{name}}",
     "openInvoicePdf": "Abrir PDF de la factura",
-    "openInvoicePdfFor": "Abrir PDF de la factura de {{name}}"
+    "openInvoicePdfFor": "Abrir PDF de la factura de {{name}}",
+    "notes": "Notas"
   },
   "filters": {
     "typeAriaLabel": "Tipo de movimiento",

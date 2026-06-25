@@ -22,6 +22,7 @@ import Typography from '@mui/material/Typography'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlineOutlined'
 import AttachFileIcon from '@mui/icons-material/AttachFile'
+import NotesOutlinedIcon from '@mui/icons-material/NotesOutlined'
 import { Amount } from '../../components/Amount'
 import { FxBadge } from '../../components/FxBadge'
 import { formatDispDate } from '../../lib/format'
@@ -131,6 +132,55 @@ function InvoiceAttachmentBadge({ transaction }: { transaction: Transaction }) {
         </Typography>
       ) : null}
     </Box>
+  )
+}
+
+/**
+ * Calm per-row notes indicator (ADR-037). When a transaction carries free-text
+ * notes — now including statement installment detail like
+ * "Compra 20-03-26 · Cuota 03/03" (ADR-088/089) — we surface a small, muted
+ * notes icon beside the name; the note itself shows in a Tooltip on hover OR
+ * focus.
+ *
+ * It is an indicator, not an action: it never triggers the row's edit affordance
+ * (it stops click propagation, mirroring the attachment badge). But it must still
+ * be reachable without a mouse (ADR-019) — hover alone is insufficient — so it is
+ * a focusable element (`tabIndex={0}`) carrying an `aria-label` that announces the
+ * label + the note text, and the Tooltip opens on focus too. Renders nothing when
+ * there are no notes (no empty affordance).
+ */
+function NotesIndicator({ notes }: { notes?: string }) {
+  const { t } = useTranslation('transactions')
+
+  const trimmed = notes?.trim()
+  if (!trimmed) return null
+
+  return (
+    <Tooltip title={trimmed}>
+      <Box
+        component="span"
+        role="note"
+        tabIndex={0}
+        aria-label={`${t('row.notes')}: ${trimmed}`}
+        onClick={(event) => event.stopPropagation()}
+        sx={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          flex: 'none',
+          color: 'text.disabled',
+          cursor: 'default',
+          borderRadius: '5px',
+          '&:hover': { color: 'text.secondary' },
+          '&:focus-visible': {
+            outline: '2px solid',
+            outlineColor: 'primary.main',
+            outlineOffset: 2,
+          },
+        }}
+      >
+        <NotesOutlinedIcon sx={{ fontSize: 13 }} aria-hidden />
+      </Box>
+    </Tooltip>
   )
 }
 
@@ -310,6 +360,7 @@ export function TransactionRow(props: TransactionRowProps) {
           {t.recurring ? <RowBadge>{translate('row.recurring')}</RowBadge> : null}
           {isUsd ? <FxBadge /> : null}
           <InvoiceAttachmentBadge transaction={t} />
+          <NotesIndicator notes={t.notes} />
         </Box>
         <Typography
           component="span"
@@ -483,6 +534,7 @@ export function TransactionRowMobile(props: TransactionRowProps) {
           }}
         >
           <InvoiceAttachmentBadge transaction={t} />
+          <NotesIndicator notes={t.notes} />
           <Typography
             component="span"
             sx={{

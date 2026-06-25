@@ -34,7 +34,8 @@
     "edit": "Edit {{name}}",
     "delete": "Delete {{name}}",
     "openInvoicePdf": "Open invoice PDF",
-    "openInvoicePdfFor": "Open invoice PDF for {{name}}"
+    "openInvoicePdfFor": "Open invoice PDF for {{name}}",
+    "notes": "Notes"
   },
   "filters": {
     "typeAriaLabel": "Transaction type",

@@ -175,3 +175,33 @@ describe('invoice attachment badge', () => {
     ).toBeNull()
   })
 })
+
+// Notes indicator (ADR-088/089, ADR-019): a row whose `notes` carry statement
+// installment detail surfaces a small, focusable notes icon whose accessible
+// name + (hover/focus) tooltip expose the note without a mouse. A row with no
+// notes shows no indicator (no empty affordance).
+describe('notes indicator', () => {
+  const note = 'Compra 20-03-26 · Cuota 03/03'
+
+  test('a row with notes renders a focusable indicator that exposes the note', () => {
+    renderRow({ ...baseUsd, notes: note })
+
+    // Reachable by accessible name (label prefix + the note data itself),
+    // keyboard-focusable so the tooltip opens on focus (ADR-019).
+    const indicator = screen.getByRole('note', { name: `Notes: ${note}` })
+    expect(indicator).toHaveAttribute('tabindex', '0')
+
+    // The note text is also the tooltip title, shown on hover/focus.
+    expect(indicator).toHaveAttribute('aria-label', `Notes: ${note}`)
+  })
+
+  test('a row without notes renders no indicator', () => {
+    renderRow({ ...baseUsd, notes: undefined })
+    expect(screen.queryByRole('note')).toBeNull()
+  })
+
+  test('an empty/whitespace note renders no indicator', () => {
+    renderRow({ ...baseUsd, notes: '   ' })
+    expect(screen.queryByRole('note')).toBeNull()
+  })
+})
