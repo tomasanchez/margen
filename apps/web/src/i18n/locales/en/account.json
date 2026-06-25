@@ -1,0 +1,14 @@
+{
+  "language": "Language",
+  "english": "English",
+  "spanish": "Español",
+  "title": "Account",
+  "menuLabel": "Account menu",
+  "closeLabel": "Close account",
+  "darkMode": "Dark mode",
+  "darkModeOn": "Dark mode on",
+  "darkModeOff": "Dark mode off",
+  "toggleDarkMode": "Toggle dark mode",
+  "settings": "Settings",
+  "signOut": "Sign out"
+}

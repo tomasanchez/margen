@@ -9,6 +9,8 @@
  * alone (ADR-019): the sign text carries the direction.
  */
 
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { monoFontFamily } from '../../theme'
@@ -23,13 +25,16 @@ import type {
 } from '../../mock/types'
 import { SectionCard } from '../../components/SectionCard'
 
-/** Status band → calm word for the comparison cells (ADR-046). */
-const STATUS_WORD: Record<string, string> = {
-  safe: 'On track',
-  watch: 'Keep an eye',
-  close: 'Close to limit',
-  over: 'Over limit',
-  risk: 'Needs attention',
+/**
+ * Status band → calm word for the comparison cells (ADR-046). Resolved against
+ * the `monotributo` namespace's own comparison-status copy (distinct from the
+ * shared `common:status.*` meter bands).
+ */
+function statusWord(t: TFunction<'monotributo'>, band: string): string {
+  const key = `comparison.status.${band}` as const
+  const word = t(key)
+  // Fall back to the raw band when an unexpected value has no mapped word.
+  return word === key ? band : word
 }
 
 /** A signed currency delta, e.g. 1000 → "+ARS 1.000", -500 → "−ARS 500". */
@@ -39,9 +44,9 @@ function signedCurrency(diff: number): string {
 }
 
 /** A signed percentage-point delta, e.g. 4.2 → "+4.2 pts", -1 → "−1 pts". */
-function signedPoints(diff: number): string {
+function signedPoints(t: TFunction<'monotributo'>, diff: number): string {
   const sign = diff > 0 ? PLUS : diff < 0 ? MINUS : ''
-  return `${sign}${Math.abs(diff).toFixed(1)} pts`
+  return t('comparison.points', { value: `${sign}${Math.abs(diff).toFixed(1)}` })
 }
 
 /** One labeled current/previous/delta column. */
@@ -56,6 +61,7 @@ function CompareCell({
   previous: string
   delta: string
 }) {
+  const { t } = useTranslation('monotributo')
   return (
     <Box sx={{ minWidth: 0 }}>
       <Typography
@@ -88,7 +94,7 @@ function CompareCell({
         sx={{ fontFamily: monoFontFamily, fontSize: 11.5, mt: 0.25 }}
         color="text.disabled"
       >
-        was {previous}
+        {t('comparison.wasValue', { value: previous })}
       </Typography>
       <Typography
         component="p"
@@ -108,33 +114,38 @@ export interface ComparisonRowProps {
 }
 
 export function ComparisonRow({ comparison, previous }: ComparisonRowProps) {
+  const { t } = useTranslation('monotributo')
+
   if (!comparison || !previous) {
     return (
-      <SectionCard title="Compared to the previous period">
+      <SectionCard title={t('comparison.title')}>
         <Typography
           sx={{ fontSize: 13.5, lineHeight: 1.5, textWrap: 'pretty' }}
           color="text.secondary"
         >
-          No prior period to compare yet. Once a full prior trailing-12-month
-          window exists, you'll see how this period stacks up against it here.
+          {t('comparison.empty')}
         </Typography>
       </SectionCard>
     )
   }
 
   const categoryDelta = comparison.category.changed
-    ? `${comparison.category.previous} → ${comparison.category.current}`
-    : 'unchanged'
+    ? t('comparison.delta', {
+        previous: comparison.category.previous,
+        current: comparison.category.current,
+      })
+    : t('comparison.unchanged')
   const statusDelta = comparison.status.changed
-    ? `${STATUS_WORD[comparison.status.previous] ?? comparison.status.previous} → ${
-        STATUS_WORD[comparison.status.current] ?? comparison.status.current
-      }`
-    : 'unchanged'
+    ? t('comparison.delta', {
+        previous: statusWord(t, comparison.status.previous),
+        current: statusWord(t, comparison.status.current),
+      })
+    : t('comparison.unchanged')
 
   return (
     <SectionCard
-      title="Compared to the previous period"
-      subtitle={`Prior trailing-12-month window ending ${previous.periodEnd}`}
+      title={t('comparison.title')}
+      subtitle={t('comparison.subtitle', { date: previous.periodEnd })}
     >
       <Box
         sx={{
@@ -147,32 +158,31 @@ export function ComparisonRow({ comparison, previous }: ComparisonRowProps) {
         }}
       >
         <CompareCell
-          label="Invoiced"
+          label={t('comparison.labelInvoiced')}
           current={formatCurrency(comparison.used.current, 'ARS')}
           previous={formatCurrency(comparison.used.previous, 'ARS')}
           delta={signedCurrency(comparison.used.diff)}
         />
         <CompareCell
-          label="% of limit"
+          label={t('comparison.labelPercent')}
           current={`${comparison.percentUsed.current.toFixed(1)}%`}
           previous={`${comparison.percentUsed.previous.toFixed(1)}%`}
-          delta={signedPoints(comparison.percentUsed.diff)}
+          delta={signedPoints(t, comparison.percentUsed.diff)}
         />
         <CompareCell
-          label="Category"
-          current={`Cat. ${comparison.category.current}`}
-          previous={`Cat. ${comparison.category.previous}`}
+          label={t('comparison.labelCategory')}
+          current={t('comparison.categoryCell', {
+            letter: comparison.category.current,
+          })}
+          previous={t('comparison.categoryCell', {
+            letter: comparison.category.previous,
+          })}
           delta={categoryDelta}
         />
         <CompareCell
-          label="Status"
-          current={
-            STATUS_WORD[comparison.status.current] ?? comparison.status.current
-          }
-          previous={
-            STATUS_WORD[comparison.status.previous] ??
-            comparison.status.previous
-          }
+          label={t('comparison.labelStatus')}
+          current={statusWord(t, comparison.status.current)}
+          previous={statusWord(t, comparison.status.previous)}
           delta={statusDelta}
         />
       </Box>

@@ -9,6 +9,7 @@
  * icon + text, never color alone (ADR-019 / HIG).
  */
 
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
@@ -28,6 +29,7 @@ export interface ManualThresholdNoteProps {
 export function ManualThresholdNote({
   scaleYear = AFIP_SCALE_YEAR,
 }: ManualThresholdNoteProps) {
+  const { t } = useTranslation('settings')
   return (
     <Box
       sx={{
@@ -39,7 +41,7 @@ export function ManualThresholdNote({
     >
       <InfoOutlinedIcon aria-hidden fontSize="small" />
       <Typography component="p" sx={{ fontSize: 12.5 }}>
-        Thresholds are manually maintained · AFIP scale {scaleYear}
+        {t('manualThreshold.note', { year: scaleYear })}
       </Typography>
     </Box>
   )

@@ -8,9 +8,14 @@
  * (keyed to the insight kind, purely decorative) with an uppercase eyebrow label
  * and the sentence; the label carries the meaning so the dot color is never the
  * only cue (ADR-019). A row renders only when its underlying fact is present; if
- * none apply, the calm empty state shows (ADR-037). English-only.
+ * none apply, the calm empty state shows (ADR-037). Localized via the `insights`
+ * namespace (ADR-100/101): the eyebrow labels and sentence templates are
+ * translated and the dynamic facts are interpolated (ADR-061), with the category
+ * label resolved through the shared `categoryLabel` map (ADR-103).
  */
 
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import Box from '@mui/material/Box'
 import Skeleton from '@mui/material/Skeleton'
 import Stack from '@mui/material/Stack'
@@ -23,6 +28,7 @@ import {
   fxSourceLabel,
 } from '../../lib/format'
 import { useDisplayMoney } from '../settings/displayCurrencyContext'
+import { categoryLabel } from '../transactions/presentation'
 import type { MonthlyInsights } from '../../api/insightsClient'
 import { SectionCard } from '../../components/SectionCard'
 
@@ -64,6 +70,7 @@ export interface InsightsProps {
 function composeInsightRows(
   insights: MonthlyInsights,
   formatMoney: (ars: number | null | undefined) => string,
+  t: TFunction<'insights'>,
 ): InsightRowData[] {
   const rows: InsightRowData[] = []
 
@@ -73,46 +80,59 @@ function composeInsightRows(
     rows.push({
       id: 'spending',
       kind: 'spending',
-      label: 'Spending',
-      text: `${topCategoryMover.category} is up ${formatDelta(
-        topCategoryMover.deltaPct,
-      )} vs last month`,
+      label: t('labels.spending'),
+      // Category label localized via the shared resolver (ADR-103); the
+      // sentence is built from the template by interpolation (ADR-061).
+      text: t('spending.up', {
+        category: categoryLabel(topCategoryMover.category),
+        delta: formatDelta(topCategoryMover.deltaPct),
+      }),
     })
   }
 
   if (recurring) {
-    const noun = recurring.count === 1 ? 'expense' : 'expenses'
     rows.push({
       id: 'recurring',
       kind: 'recurring',
-      label: 'Recurring',
-      text: `${recurring.count} recurring ${noun} · ≈ ${formatMoney(
-        recurring.total,
-      )}`,
+      label: t('labels.recurring'),
+      // i18next plural rules pick the singular/plural template by `count`.
+      text: t('recurring', {
+        count: recurring.count,
+        amount: formatMoney(recurring.total),
+      }),
     })
   }
 
-  // Savings is always present: a projection for the current month, the actual
-  // saved amount for a past month.
-  rows.push({
-    id: 'projection',
-    kind: 'projection',
-    label: savings.isProjected ? 'Projection' : 'Savings',
-    text: savings.isProjected
-      ? `At this pace, projected savings ≈ ${formatMoney(savings.amount)}`
-      : `Saved ${formatMoney(savings.amount)} this month`,
-  })
+  // Savings carries signal only when there is a non-zero figure — a projection
+  // for the current month or an actual saved amount for a past one. A month with
+  // zero savings (and, with no other facts, no activity at all) pushes NO row, so
+  // a genuinely empty month falls through to the calm empty state (ADR-037)
+  // instead of a noisy "Saved ARS 0" line.
+  if (savings.amount !== 0) {
+    rows.push({
+      id: 'projection',
+      kind: 'projection',
+      label: savings.isProjected ? t('labels.projection') : t('labels.savings'),
+      text: savings.isProjected
+        ? t('savings.projected', { amount: formatMoney(savings.amount) })
+        : t('savings.actual', { amount: formatMoney(savings.amount) }),
+    })
+  }
 
   if (latestUsdInvoice) {
     rows.push({
       id: 'fx',
       kind: 'fx',
-      label: 'FX',
-      text: `Latest invoice · USD ${formatUSD(
-        latestUsdInvoice.usd,
-      )} at ${fxSourceLabel(latestUsdInvoice.rateType)} ${formatARS(
-        latestUsdInvoice.rate,
-      )} · ${formatDispDate(latestUsdInvoice.occurredOn)}`,
+      label: t('labels.fx'),
+      // The literal USD + ARS rate and the ISO date are formatted by the
+      // shared helpers and interpolated into the localized template; the date
+      // stays as-is (formatDispDate) by design.
+      text: t('fx.latest', {
+        usd: formatUSD(latestUsdInvoice.usd),
+        source: fxSourceLabel(latestUsdInvoice.rateType),
+        rate: formatARS(latestUsdInvoice.rate),
+        date: formatDispDate(latestUsdInvoice.occurredOn),
+      }),
     })
   }
 
@@ -149,11 +169,12 @@ function InsightRow({ insight }: { insight: InsightRowData }) {
 }
 
 export function Insights({ insights, loading = false }: InsightsProps) {
+  const { t } = useTranslation('insights')
   const formatMoney = useDisplayMoney()
 
   if (loading || !insights) {
     return (
-      <SectionCard title="Insights">
+      <SectionCard title={t('title')}>
         <Stack spacing={2}>
           {Array.from({ length: 4 }).map((_, i) => (
             <Box key={i}>
@@ -166,20 +187,20 @@ export function Insights({ insights, loading = false }: InsightsProps) {
     )
   }
 
-  const rows = composeInsightRows(insights, formatMoney)
+  const rows = composeInsightRows(insights, formatMoney, t)
 
   if (rows.length === 0) {
     return (
-      <SectionCard title="Insights">
+      <SectionCard title={t('title')}>
         <Typography sx={{ fontSize: 13.5 }} color="text.disabled">
-          No insights yet — add a few transactions to see patterns here.
+          {t('empty')}
         </Typography>
       </SectionCard>
     )
   }
 
   return (
-    <SectionCard title="Insights">
+    <SectionCard title={t('title')}>
       <Stack spacing={2}>
         {rows.map((insight) => (
           <InsightRow key={insight.id} insight={insight} />

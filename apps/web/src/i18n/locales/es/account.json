@@ -1,0 +1,14 @@
+{
+  "language": "Idioma",
+  "english": "English",
+  "spanish": "Español",
+  "title": "Cuenta",
+  "menuLabel": "Menú de cuenta",
+  "closeLabel": "Cerrar cuenta",
+  "darkMode": "Modo oscuro",
+  "darkModeOn": "Modo oscuro activado",
+  "darkModeOff": "Modo oscuro desactivado",
+  "toggleDarkMode": "Alternar modo oscuro",
+  "settings": "Configuración",
+  "signOut": "Cerrar sesión"
+}

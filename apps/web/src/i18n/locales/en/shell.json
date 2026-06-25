@@ -1,0 +1,27 @@
+{
+  "nav": {
+    "primary": "Primary",
+    "home": "Home",
+    "transactions": "Transactions",
+    "monotributo": "Monotributo",
+    "homeShort": "Home",
+    "transactionsShort": "Activity",
+    "monotributoShort": "Mono"
+  },
+  "actions": {
+    "addTransaction": "Add transaction",
+    "importStatement": "Import statement"
+  },
+  "olderHint": "Older than 6 months — search in Transactions",
+  "month": {
+    "previous": "Previous month",
+    "next": "Next month",
+    "olderRedirect": "Older months — search in Transactions",
+    "selected": "Selected month: {{label}}",
+    "select": "Select month",
+    "selectWithLabel": "Select month, {{label}}",
+    "menuLabel": "Select month",
+    "olderTitle": "Older months",
+    "olderSubtitle": "Search in Transactions"
+  }
+}

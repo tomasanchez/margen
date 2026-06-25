@@ -1,0 +1,79 @@
+{
+  "actions": {
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "retry": "Reintentar",
+    "close": "Cerrar",
+    "add": "Agregar",
+    "loading": "Cargando",
+    "all": "Todos"
+  },
+  "status": {
+    "safe": "Seguro",
+    "watch": "Atención",
+    "close": "Cerca del límite",
+    "over": "Excedido",
+    "risk": "Riesgo"
+  },
+  "statusDescription": {
+    "safe": "Estado: seguro",
+    "watch": "Estado: atención",
+    "close": "Estado: cerca del límite",
+    "over": "Estado: límite excedido",
+    "risk": "Estado: en riesgo"
+  },
+  "connection": {
+    "connecting": "Conectando…",
+    "connected": "Servidor conectado",
+    "unreachable": "Servidor no disponible",
+    "srConnecting": "Verificando la conexión con el servidor",
+    "srConnected": "Servidor conectado",
+    "srUnreachable": "Servidor no disponible"
+  },
+  "errorState": {
+    "title": "No se puede conectar con el servidor",
+    "description": "No pudimos cargar tus datos. Verificá tu conexión e intentá de nuevo."
+  },
+  "fx": {
+    "badge": "FX",
+    "label": "Moneda extranjera",
+    "tooltip": "Moneda extranjera — el importe original en USD, convertido a ARS al tipo de cambio mostrado."
+  },
+  "currency": {
+    "ars": "pesos argentinos",
+    "usd": "dólares estadounidenses"
+  },
+  "fxSource": {
+    "mep": "MEP",
+    "official": "oficial",
+    "manual": "manual"
+  },
+  "sign": {
+    "plus": "más",
+    "minus": "menos"
+  },
+  "categories": {
+    "Income": "Ingresos",
+    "Food": "Comida",
+    "Rent": "Alquiler",
+    "Transport": "Transporte",
+    "Subscriptions": "Suscripciones",
+    "Health": "Salud",
+    "Shopping": "Compras",
+    "Entertainment": "Entretenimiento",
+    "Services": "Servicios",
+    "Taxes": "Impuestos",
+    "Fee": "Comisión",
+    "Other": "Otros"
+  },
+  "banks": {
+    "Galicia · Visa": "Galicia · Visa",
+    "Santander · Mastercard": "Santander · Mastercard",
+    "Mercado Pago": "Mercado Pago",
+    "Brubank": "Brubank",
+    "Deel": "Deel",
+    "Transfer": "Transferencia"
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "actions": {
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "retry": "Retry",
+    "close": "Close",
+    "add": "Add",
+    "loading": "Loading",
+    "all": "All"
+  },
+  "status": {
+    "safe": "Safe",
+    "watch": "Watch",
+    "close": "Close",
+    "over": "Over",
+    "risk": "Risk"
+  },
+  "statusDescription": {
+    "safe": "Status: safe",
+    "watch": "Status: watch",
+    "close": "Status: close to your limit",
+    "over": "Status: over your limit",
+    "risk": "Status: at risk"
+  },
+  "connection": {
+    "connecting": "Connecting…",
+    "connected": "Backend connected",
+    "unreachable": "Backend unreachable",
+    "srConnecting": "Checking backend connection",
+    "srConnected": "Backend connected",
+    "srUnreachable": "Backend unreachable"
+  },
+  "errorState": {
+    "title": "Can't reach the server",
+    "description": "We could not load your data. Check your connection and try again."
+  },
+  "fx": {
+    "badge": "FX",
+    "label": "Foreign exchange",
+    "tooltip": "Foreign exchange — the original USD amount, converted to ARS at the shown rate."
+  },
+  "currency": {
+    "ars": "Argentine pesos",
+    "usd": "US dollars"
+  },
+  "fxSource": {
+    "mep": "MEP",
+    "official": "official",
+    "manual": "manual"
+  },
+  "sign": {
+    "plus": "plus",
+    "minus": "minus"
+  },
+  "categories": {
+    "Income": "Income",
+    "Food": "Food",
+    "Rent": "Rent",
+    "Transport": "Transport",
+    "Subscriptions": "Subscriptions",
+    "Health": "Health",
+    "Shopping": "Shopping",
+    "Entertainment": "Entertainment",
+    "Services": "Services",
+    "Taxes": "Taxes",
+    "Fee": "Fee",
+    "Other": "Other"
+  },
+  "banks": {
+    "Galicia · Visa": "Galicia · Visa",
+    "Santander · Mastercard": "Santander · Mastercard",
+    "Mercado Pago": "Mercado Pago",
+    "Brubank": "Brubank",
+    "Deel": "Deel",
+    "Transfer": "Transfer"
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "import": {
+    "title": "Import statement",
+    "subtitle": "Upload a credit-card statement PDF and review the expenses before importing them.",
+    "parseMessage": "We couldn't read this statement automatically — you can still add expenses manually.",
+    "unsupportedMessage": "This bank isn't supported yet — you can still add expenses manually.",
+    "importError": "We couldn't import these expenses. Please try again.",
+    "uploadDifferent": "Upload a different statement",
+    "picker": {
+      "title": "Upload a statement PDF",
+      "description": "We'll read the expenses so you can review and import them in one go.",
+      "reading": "Reading your statement…",
+      "choose": "Choose statement PDF"
+    },
+    "done": {
+      "withMerges": "They've been added to your transactions; matched charges were merged into the ones you already had.",
+      "noMerges": "They've been added to your transactions.",
+      "importAnother": "Import another",
+      "done": "Done"
+    },
+    "confirmation": {
+      "created_one": "Imported {{count}} expense",
+      "created_other": "Imported {{count}} expenses",
+      "merged_one": "merged {{count}} into existing transaction",
+      "merged_other": "merged {{count}} into existing transactions",
+      "combined": "{{created}}, {{merged}}"
+    }
+  },
+  "review": {
+    "cardFallback": "Card statement",
+    "statementNumber": "Statement {{number}}",
+    "period": "Period",
+    "statementTotal": "Statement total",
+    "duplicate": "Looks like you already imported this statement. You can still import it if this is intentional.",
+    "dateNote": "Lines are dated when the card is paid; the original purchase date is shown per row.",
+    "tableAriaLabel": "Statement line items",
+    "columns": {
+      "date": "Date",
+      "merchant": "Merchant",
+      "amount": "Amount",
+      "category": "Category",
+      "cuota": "Cuota",
+      "include": "Include"
+    },
+    "summary": "{{newCount}} new · {{mergeCount}} merged",
+    "cta": {
+      "importing": "Importing…",
+      "importMerge": "Import {{newCount}} · merge {{mergeCount}}",
+      "import_one": "Import {{count}} expense",
+      "import_other": "Import {{count}} expenses"
+    },
+    "line": {
+      "paid": "paid {{date}}",
+      "bought": "bought {{date}}",
+      "possibleDuplicate": "Possible duplicate",
+      "fee": "Fee / charge",
+      "matchContext": "↔ \"{{name}}\" · {{date}} · {{amount}}",
+      "resolutionAriaLabel": "Resolution for {{name}}",
+      "merge": "Merge",
+      "mergeAriaLabel": "Merge {{name}} into the existing transaction",
+      "keepBoth": "Keep both",
+      "keepBothAriaLabel": "Keep both — import {{name}} as a separate expense",
+      "compare": "Compare",
+      "hideCompare": "Hide compare",
+      "categoryFor": "Category for {{name}}",
+      "uncategorized": "Uncategorized",
+      "willImport": "Will import",
+      "skipped": "Skipped",
+      "skipAriaLabel": "Skip {{name}} — currently set to import",
+      "importAriaLabel": "Import {{name}} — currently skipped"
+    },
+    "compare": {
+      "fromStatement": "From this statement",
+      "alreadyInTransactions": "Already in your transactions",
+      "date": "Date",
+      "name": "Name",
+      "amount": "Amount",
+      "category": "Category",
+      "card": "Card"
+    }
+  }
+}

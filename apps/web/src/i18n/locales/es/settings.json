@@ -1,0 +1,47 @@
+{
+  "title": "Configuración",
+  "subtitle": "Preferencias que definen cómo lee Margen y qué calcula.",
+  "error": {
+    "title": "Configuración no disponible",
+    "description": "No pudimos cargar tu configuración. Revisá tu conexión y volvé a intentar."
+  },
+  "saveError": {
+    "notAllowed": "Ese valor no está permitido. Elegí uno de la lista.",
+    "generic": "No pudimos guardar ese cambio. Volvé a intentar."
+  },
+  "preferences": "Preferencias",
+  "display": {
+    "title": "Visualización",
+    "currency": {
+      "label": "Moneda de visualización",
+      "helper": "La moneda de las tarjetas de métricas del Inicio y de los resúmenes mensuales. ARS mantiene el valor guardado; USD convierte a tu cotización por defecto.",
+      "selectLabel": "Moneda",
+      "ars": "ARS (pesos)",
+      "usd": "USD (dólares)"
+    },
+    "fxDefault": {
+      "label": "Cotización por defecto",
+      "helper": "La cotización del dólar preseleccionada cuando agregás una transacción en USD, y usada para la conversión a USD en pantalla.",
+      "selectLabel": "Fuente de cotización",
+      "mep": "MEP",
+      "official": "Oficial"
+    }
+  },
+  "monotributo": {
+    "title": "Monotributo",
+    "category": {
+      "label": "Categoría",
+      "helper": "Tu categoría actual de Monotributo. Define el medidor de límite y la proyección en la página de Monotributo.",
+      "selectLabel": "Categoría",
+      "option": "Categoría {{letter}}"
+    },
+    "activityServices": "Servicios",
+    "activityServicesTitle": "El tipo de actividad es servicios en esta versión"
+  },
+  "manualThreshold": {
+    "note": "Los umbrales se mantienen manualmente · escala AFIP {{year}}"
+  },
+  "displayCurrency": {
+    "fallback": "Mostrando ARS — no se pudo obtener una cotización en USD."
+  }
+}

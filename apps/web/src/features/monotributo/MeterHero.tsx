@@ -10,6 +10,7 @@
  * with a dashed "Projected D" badge.
  */
 
+import { Trans, useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Divider from '@mui/material/Divider'
 import Typography from '@mui/material/Typography'
@@ -42,6 +43,7 @@ export interface MeterHeroProps {
 }
 
 export function MeterHero({ monotributo, projection }: MeterHeroProps) {
+  const { t } = useTranslation('monotributo')
   const ratio = Math.min(Math.max(monotributo.usedRatio, 0), 1)
   const pct = ratio * 100
   const pctLabel = formatPercent(monotributo.usedRatio)
@@ -58,7 +60,7 @@ export function MeterHero({ monotributo, projection }: MeterHeroProps) {
         }}
       >
         <Box sx={{ minWidth: 260 }}>
-          <Eyebrow>Invoiced this period · counts toward limit</Eyebrow>
+          <Eyebrow>{t('meter.invoicedEyebrow')}</Eyebrow>
           <Typography
             component="p"
             sx={{
@@ -78,13 +80,15 @@ export function MeterHero({ monotributo, projection }: MeterHeroProps) {
             sx={{ fontFamily: monoFontFamily, fontSize: 13, mt: 0.75 }}
             color="text.disabled"
           >
-            of {formatCurrency(monotributo.annualLimit, 'ARS')} · Category{' '}
-            {monotributo.category} annual limit
+            {t('meter.of', {
+              limit: formatCurrency(monotributo.annualLimit, 'ARS'),
+              category: monotributo.category,
+            })}
           </Typography>
         </Box>
 
         <Box sx={{ textAlign: 'right', minWidth: 0 }}>
-          <Eyebrow>Margin left</Eyebrow>
+          <Eyebrow>{t('meter.marginEyebrow')}</Eyebrow>
           <Typography
             component="p"
             sx={{
@@ -103,7 +107,7 @@ export function MeterHero({ monotributo, projection }: MeterHeroProps) {
             sx={{ fontSize: 12.5, mt: 0.625 }}
             color="text.secondary"
           >
-            ≈ {projection.marginMonths} months at this pace
+            {t('meter.marginMonths', { months: projection.marginMonths })}
           </Typography>
         </Box>
       </Box>
@@ -114,7 +118,10 @@ export function MeterHero({ monotributo, projection }: MeterHeroProps) {
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(pct)}
-        aria-label={`${pctLabel} of the Category ${monotributo.category} annual limit used`}
+        aria-label={t('meter.ariaLabel', {
+          percent: pctLabel,
+          category: monotributo.category,
+        })}
         sx={{
           position: 'relative',
           height: 16,
@@ -165,13 +172,22 @@ export function MeterHero({ monotributo, projection }: MeterHeroProps) {
           sx={{ fontFamily: monoFontFamily, fontSize: 13 }}
           color="var(--mg-text-mid)"
         >
-          {pctLabel} used
+          {t('meter.used', { percent: pctLabel })}
         </Typography>
         <Typography component="span" sx={{ fontSize: 12.5 }} color="text.secondary">
-          Projected to reach the ceiling around{' '}
-          <Box component="span" sx={{ color: 'var(--mg-watch)', fontWeight: 600 }}>
-            {projection.ceilingMonth}
-          </Box>
+          <Trans
+            t={t}
+            i18nKey="meter.projectedToReach"
+            values={{ month: projection.ceilingMonth }}
+            components={{
+              month: (
+                <Box
+                  component="span"
+                  sx={{ color: 'var(--mg-watch)', fontWeight: 600 }}
+                />
+              ),
+            }}
+          />
         </Typography>
       </Box>
 
@@ -188,7 +204,7 @@ export function MeterHero({ monotributo, projection }: MeterHeroProps) {
       >
         <Box sx={{ minWidth: 0 }}>
           <Typography sx={{ fontSize: 13 }} color="text.secondary">
-            Projected trailing-12-month total
+            {t('meter.projectedTotal')}
           </Typography>
           <Typography
             sx={{
@@ -199,8 +215,7 @@ export function MeterHero({ monotributo, projection }: MeterHeroProps) {
             }}
             color="text.disabled"
           >
-            Lands in Category {projection.landsInCategory} — you'd recategorize at
-            the next review.
+            {t('meter.landsInNote', { category: projection.landsInCategory })}
           </Typography>
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -216,7 +231,7 @@ export function MeterHero({ monotributo, projection }: MeterHeroProps) {
               {projection.projectedAnnualLabel}
             </Typography>
             <Typography sx={{ fontSize: 11.5, mt: 0.25 }} color="text.disabled">
-              / yr
+              {t('meter.perYear')}
             </Typography>
           </Box>
           <Box
@@ -241,7 +256,7 @@ export function MeterHero({ monotributo, projection }: MeterHeroProps) {
               }}
               color="text.disabled"
             >
-              Projected
+              {t('meter.projectedBadge')}
             </Typography>
             <Typography
               sx={{

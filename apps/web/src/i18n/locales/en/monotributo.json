@@ -1,0 +1,107 @@
+{
+  "title": "Monotributo",
+  "header": {
+    "pill": "{{status}} · {{percent}} used",
+    "subtitle": "Category <category>{{category}}</category> · services · monthly fee <fee>{{fee}}</fee>"
+  },
+  "error": {
+    "title": "Monotributo data unavailable",
+    "description": "We couldn't load your Monotributo standing. Check your connection and try again."
+  },
+  "categoryError": {
+    "unknown": "That category isn't recognized. Pick one from the list.",
+    "generic": "We couldn't update your category. Try again."
+  },
+  "meter": {
+    "invoicedEyebrow": "Invoiced this period · counts toward limit",
+    "of": "of {{limit}} · Category {{category}} annual limit",
+    "marginEyebrow": "Margin left",
+    "marginMonths": "≈ {{months}} months at this pace",
+    "ariaLabel": "{{percent}} of the Category {{category}} annual limit used",
+    "used": "{{percent}} used",
+    "projectedToReach": "Projected to reach the ceiling around <month>{{month}}</month>",
+    "projectedTotal": "Projected trailing-12-month total",
+    "landsInNote": "Lands in Category {{category}} — you'd recategorize at the next review.",
+    "perYear": "/ yr",
+    "projectedBadge": "Projected"
+  },
+  "ladder": {
+    "title": "Where you land on the scale",
+    "subtitle": "Annual gross-income ceiling per category",
+    "tagNow": "Now",
+    "tagProjected": "Proj.",
+    "roleCurrent": "current category",
+    "roleProjected": "projected category",
+    "roleCategory": "category",
+    "cellAriaLabel": "Category {{letter}}, {{role}}, ceiling {{ceiling}}"
+  },
+  "scale": {
+    "title": "Monotributo 2026 — full scale",
+    "subtitle": "Official scale, in effect since February 1, 2026 · next review Jul / Aug 2026",
+    "arcaButton": "ARCA · official table",
+    "arcaText": "View categories on arca.gob.ar",
+    "header": {
+      "cat": "Cat.",
+      "income": "Annual gross income",
+      "feeServices": "Fee · services",
+      "feeGoods": "Fee · goods"
+    },
+    "mobileHeader": {
+      "cat": "Cat.",
+      "income": "Income",
+      "feeServices": "Fee · serv."
+    },
+    "tagCurrent": "Current",
+    "tagProjected": "Projected",
+    "tagShortCurrent": "NOW",
+    "tagShortProjected": "PROJ",
+    "footnote": "The fee includes the tax component, the SIPA (pension) contribution, and the health-insurance contribution. Values are rounded; exact amounts (with cents) are on the ARCA site. Since 2026 the scale runs up to category K for both services and goods."
+  },
+  "projection": {
+    "title": "The projection, broken down",
+    "invoiced": "Invoiced {{period}}",
+    "monthlyAverage": "Monthly average",
+    "projectedTotal": "Projected 12-mo total",
+    "landsIn": "Lands in",
+    "landsInValue": "Category {{category}} <cap>· cap {{ceiling}}</cap>",
+    "noteMoves": "Moving to Category {{projected}} {{direction}} your monthly fee <fee>{{from}} → {{to}}</fee>. Easing your pace keeps you in Category {{current}}.",
+    "noteSteady": "At this pace you stay in Category {{current}} — monthly fee <fee>{{fee}}</fee>.",
+    "directionRaises": "raises",
+    "directionLowers": "lowers"
+  },
+  "invoices": {
+    "title": "The {{n}} invoices behind this",
+    "subtitle": "Income invoiced in 2026, oldest first — watch the annual total build.",
+    "openInTransactions": "Open in Transactions →",
+    "header": {
+      "date": "Date",
+      "client": "Client",
+      "amount": "Amount",
+      "cumulative": "Cumulative"
+    },
+    "cumulativeShort": "cum {{amount}}",
+    "footerCount": "{{n}} invoices · 2026",
+    "totalCounted": "Total counted"
+  },
+  "comparison": {
+    "title": "Compared to the previous period",
+    "empty": "No prior period to compare yet. Once a full prior trailing-12-month window exists, you'll see how this period stacks up against it here.",
+    "subtitle": "Prior trailing-12-month window ending {{date}}",
+    "unchanged": "unchanged",
+    "wasValue": "was {{value}}",
+    "delta": "{{previous}} → {{current}}",
+    "labelInvoiced": "Invoiced",
+    "labelPercent": "% of limit",
+    "labelCategory": "Category",
+    "labelStatus": "Status",
+    "categoryCell": "Cat. {{letter}}",
+    "points": "{{value}} pts",
+    "status": {
+      "safe": "On track",
+      "watch": "Keep an eye",
+      "close": "Close to limit",
+      "over": "Over limit",
+      "risk": "Needs attention"
+    }
+  }
+}

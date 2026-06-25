@@ -11,6 +11,8 @@
  * so the list is a clean, non-interactive summary.
  */
 
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import Box from '@mui/material/Box'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
@@ -19,6 +21,8 @@ import { Amount } from '../../components/Amount'
 import { FxBadge } from '../../components/FxBadge'
 import { monoFontFamily } from '../../theme'
 import { formatDispDate } from '../../lib/format'
+import { localizeDispDate } from '../../i18n/locale'
+import { bankLabel, categoryLabel } from '../transactions/presentation'
 import type { Transaction } from '../../mock/types'
 import { SectionCard } from '../../components/SectionCard'
 
@@ -55,8 +59,14 @@ function RowBadge({
   )
 }
 
-function ActivityRow({ transaction: t }: { transaction: Transaction }) {
-  const isUsd = t.currency === 'USD'
+function ActivityRow({
+  transaction: tx,
+  t,
+}: {
+  transaction: Transaction
+  t: TFunction<'home'>
+}) {
+  const isUsd = tx.currency === 'USD'
   return (
     <Box
       sx={{
@@ -79,7 +89,7 @@ function ActivityRow({ transaction: t }: { transaction: Transaction }) {
           display: { xs: 'none', sm: 'block' },
         }}
       >
-        {formatDispDate(t.dispDate)}
+        {localizeDispDate(formatDispDate(tx.dispDate))}
       </Typography>
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
@@ -94,9 +104,9 @@ function ActivityRow({ transaction: t }: { transaction: Transaction }) {
               minWidth: 0,
             }}
           >
-            {t.name}
+            {tx.name}
           </Typography>
-          {t.recurring ? <RowBadge>recurring</RowBadge> : null}
+          {tx.recurring ? <RowBadge>{t('recent.recurringBadge')}</RowBadge> : null}
           {isUsd ? <FxBadge /> : null}
         </Box>
         <Typography
@@ -108,18 +118,21 @@ function ActivityRow({ transaction: t }: { transaction: Transaction }) {
             color: 'text.disabled',
           }}
         >
-          {t.category} · {t.bank}
+          {t('recent.subline', {
+            category: categoryLabel(tx.category),
+            bank: bankLabel(tx.bank),
+          })}
         </Typography>
       </Box>
       <Box sx={{ flex: 'none', textAlign: 'right' }}>
         <Amount
-          value={t.amountNum}
-          type={t.type}
+          value={tx.amountNum}
+          type={tx.type}
           currency="ARS"
           size="md"
-          fxUsd={isUsd ? t.usd : undefined}
-          fxRate={isUsd ? t.rate : undefined}
-          fxSource={isUsd ? t.fxRateType : undefined}
+          fxUsd={isUsd ? tx.usd : undefined}
+          fxRate={isUsd ? tx.rate : undefined}
+          fxSource={isUsd ? tx.fxRateType : undefined}
         />
       </Box>
     </Box>
@@ -131,7 +144,7 @@ export interface RecentActivityProps {
   loading?: boolean
 }
 
-function ViewAllLink() {
+function ViewAllLink({ t }: { t: TFunction<'home'> }) {
   return (
     <Box
       component={Link}
@@ -149,7 +162,7 @@ function ViewAllLink() {
         },
       }}
     >
-      View all →
+      {t('recent.viewAll')}
     </Box>
   )
 }
@@ -158,9 +171,10 @@ export function RecentActivity({
   transactions,
   loading = false,
 }: RecentActivityProps) {
+  const { t } = useTranslation('home')
   if (loading || !transactions) {
     return (
-      <SectionCard title="Recent activity" action={<ViewAllLink />}>
+      <SectionCard title={t('recent.title')} action={<ViewAllLink t={t} />}>
         <Box>
           {Array.from({ length: 5 }).map((_, i) => (
             <Box
@@ -181,15 +195,15 @@ export function RecentActivity({
   }
 
   return (
-    <SectionCard title="Recent activity" action={<ViewAllLink />}>
+    <SectionCard title={t('recent.title')} action={<ViewAllLink t={t} />}>
       {transactions.length === 0 ? (
         <Typography sx={{ fontSize: 13.5, py: 1 }} color="text.disabled">
-          No activity yet. Add your first transaction to see it here.
+          {t('recent.empty')}
         </Typography>
       ) : (
         <Box>
-          {transactions.map((t) => (
-            <ActivityRow key={t.id} transaction={t} />
+          {transactions.map((tx) => (
+            <ActivityRow key={tx.id} transaction={tx} t={t} />
           ))}
         </Box>
       )}

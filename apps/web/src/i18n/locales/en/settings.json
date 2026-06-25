@@ -1,0 +1,47 @@
+{
+  "title": "Settings",
+  "subtitle": "Preferences that shape how Margen reads and what it calculates.",
+  "error": {
+    "title": "Settings unavailable",
+    "description": "We couldn't load your settings. Check your connection and try again."
+  },
+  "saveError": {
+    "notAllowed": "That value isn't allowed. Pick one from the list.",
+    "generic": "We couldn't save that change. Try again."
+  },
+  "preferences": "Preferences",
+  "display": {
+    "title": "Display",
+    "currency": {
+      "label": "Display currency",
+      "helper": "The currency for the Home metric cards and monthly summaries. ARS stays the stored value; USD converts at your default rate.",
+      "selectLabel": "Currency",
+      "ars": "ARS (pesos)",
+      "usd": "USD (dollars)"
+    },
+    "fxDefault": {
+      "label": "FX default source",
+      "helper": "The dollar rate pre-selected when you add a USD transaction, and used for the USD display conversion.",
+      "selectLabel": "Rate source",
+      "mep": "MEP",
+      "official": "Official"
+    }
+  },
+  "monotributo": {
+    "title": "Monotributo",
+    "category": {
+      "label": "Category",
+      "helper": "Your current Monotributo category. Drives the limit meter and projection on the Monotributo page.",
+      "selectLabel": "Category",
+      "option": "Category {{letter}}"
+    },
+    "activityServices": "Services",
+    "activityServicesTitle": "Activity type is services in this version"
+  },
+  "manualThreshold": {
+    "note": "Thresholds are manually maintained · AFIP scale {{year}}"
+  },
+  "displayCurrency": {
+    "fallback": "Showing ARS — couldn't fetch a USD rate."
+  }
+}

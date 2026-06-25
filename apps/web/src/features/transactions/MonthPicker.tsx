@@ -16,6 +16,7 @@
  */
 
 import { useId, useState, type MouseEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Divider from '@mui/material/Divider'
@@ -35,9 +36,6 @@ import {
   type MonthSelection,
   type ViewingMonth,
 } from '../../components/months'
-
-/** Label shown on the trigger and in the menu for the "All time" option. */
-const ALL_TIME_LABEL = 'All time'
 
 export interface MonthPickerProps {
   /** Current selection: a specific month or the `'all'` ("All time") sentinel. */
@@ -72,13 +70,15 @@ export function MonthPicker({
   occurredOns,
   fullWidth = false,
 }: MonthPickerProps) {
+  const { t } = useTranslation('transactions')
+  const allTimeLabel = t('month.allTime')
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const open = Boolean(anchorEl)
   const menuId = useId()
 
   const months = monthsWithData(occurredOns)
   const active = isMonth(value)
-  const label = active ? formatViewingMonth(value) : ALL_TIME_LABEL
+  const label = active ? formatViewingMonth(value) : allTimeLabel
 
   const handleOpen = (event: MouseEvent<HTMLElement>) =>
     setAnchorEl(event.currentTarget)
@@ -98,7 +98,7 @@ export function MonthPicker({
         aria-haspopup="menu"
         aria-controls={open ? menuId : undefined}
         aria-expanded={open ? 'true' : undefined}
-        aria-label={`Month: ${label}`}
+        aria-label={t('month.triggerAriaLabel', { label })}
         sx={{
           textTransform: 'none',
           fontSize: 13,
@@ -146,7 +146,7 @@ export function MonthPicker({
               boxShadow: '0 12px 32px -12px rgba(0,0,0,0.45)',
             },
           },
-          list: { sx: { py: 0.5 }, 'aria-label': 'Select month' },
+          list: { sx: { py: 0.5 }, 'aria-label': t('month.menuAriaLabel') },
         }}
       >
         {/* "All time" first: the escape hatch that shows every transaction. */}
@@ -157,7 +157,7 @@ export function MonthPicker({
           sx={{ py: 1.25 }}
         >
           <ListItemText
-            primary={ALL_TIME_LABEL}
+            primary={allTimeLabel}
             slotProps={{
               primary: { sx: { fontWeight: !active ? 600 : 400 } },
             }}

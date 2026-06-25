@@ -22,6 +22,7 @@
  */
 
 import { useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate } from '@tanstack/react-router'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
@@ -42,14 +43,6 @@ import {
 import { StatementReviewTable } from './StatementReviewTable'
 import { useImportStatement } from './queries'
 
-/** Calm copy shown when a statement can't be read automatically (ADR-080/037). */
-const GENERIC_PARSE_MESSAGE =
-  "We couldn't read this statement automatically — you can still add expenses manually."
-
-/** Calm copy for the unsupported-bank case (a recognized PDF, unknown issuer). */
-const UNSUPPORTED_MESSAGE =
-  "This bank isn't supported yet — you can still add expenses manually."
-
 /**
  * Flow phase. `idle` shows the picker; `parsing` the progress state; `review`
  * the parsed table; `done` the import confirmation. A calm `fallback` message is
@@ -62,6 +55,9 @@ type Phase =
   | { kind: 'done'; result: StatementImportResult }
 
 export function ImportStatement() {
+  const { t } = useTranslation('statements')
+  const genericParseMessage = t('import.parseMessage')
+  const unsupportedMessage = t('import.unsupportedMessage')
   const navigate = useNavigate()
   const importMutation = useImportStatement()
 
@@ -84,12 +80,12 @@ export function ImportStatement() {
     void parseStatement(file)
       .then((parse) => {
         if (parse.status === 'unsupported') {
-          setFallbackMessage(UNSUPPORTED_MESSAGE)
+          setFallbackMessage(unsupportedMessage)
           setPhase({ kind: 'idle' })
           return
         }
         if (parse.status === 'unparseable' || parse.lines.length === 0) {
-          setFallbackMessage(GENERIC_PARSE_MESSAGE)
+          setFallbackMessage(genericParseMessage)
           setPhase({ kind: 'idle' })
           return
         }
@@ -100,7 +96,7 @@ export function ImportStatement() {
         setFallbackMessage(
           error instanceof StatementsApiError
             ? error.message
-            : GENERIC_PARSE_MESSAGE,
+            : genericParseMessage,
         )
         setPhase({ kind: 'idle' })
       })
@@ -122,6 +118,20 @@ export function ImportStatement() {
     void navigate({ to: '/transactions' })
   }
 
+  /**
+   * Build the success-confirmation heading from the split import result (ADR-086).
+   * Reflects created expenses + any transactions enriched by a merge, e.g.
+   * "Imported 3 expenses, merged 1 into existing transactions". Both parts
+   * pluralize independently via the catalog, then combine.
+   */
+  const confirmationHeading = (result: StatementImportResult): string => {
+    const { createdCount, mergedCount } = result
+    const created = t('import.confirmation.created', { count: createdCount })
+    if (mergedCount === 0) return created
+    const merged = t('import.confirmation.merged', { count: mergedCount })
+    return t('import.confirmation.combined', { created, merged })
+  }
+
   // The hidden PDF picker, rendered once and shared across the idle states.
   const hiddenPicker = (
     <Box
@@ -140,11 +150,10 @@ export function ImportStatement() {
     <Box component="section" sx={{ maxWidth: 920, mx: 'auto' }}>
       <Box sx={{ mb: 2.5 }}>
         <Typography component="h1" sx={{ fontSize: 22, fontWeight: 600 }}>
-          Import statement
+          {t('import.title')}
         </Typography>
         <Typography sx={{ fontSize: 13.5, color: 'text.secondary', mt: 0.5 }}>
-          Upload a credit-card statement PDF and review the expenses before
-          importing them.
+          {t('import.subtitle')}
         </Typography>
       </Box>
 
@@ -185,8 +194,8 @@ export function ImportStatement() {
           </Typography>
           <Typography sx={{ fontSize: 13.5, color: 'text.secondary', maxWidth: 360 }}>
             {phase.result.mergedCount > 0
-              ? "They've been added to your transactions; matched charges were merged into the ones you already had."
-              : "They've been added to your transactions."}
+              ? t('import.done.withMerges')
+              : t('import.done.noMerges')}
           </Typography>
           <Stack direction="row" spacing={1.25} sx={{ mt: 0.75 }}>
             <Button
@@ -201,7 +210,7 @@ export function ImportStatement() {
                 color: 'text.primary',
               }}
             >
-              Import another
+              {t('import.done.importAnother')}
             </Button>
             <Button
               type="button"
@@ -210,7 +219,7 @@ export function ImportStatement() {
               onClick={handleDone}
               sx={{ textTransform: 'none', fontWeight: 600 }}
             >
-              Done
+              {t('import.done.done')}
             </Button>
           </Stack>
         </Paper>
@@ -233,7 +242,7 @@ export function ImportStatement() {
                 '& .MuiAlert-message': { fontSize: 13 },
               }}
             >
-              We couldn't import these expenses. Please try again.
+              {t('import.importError')}
             </Alert>
           ) : null}
           <Box sx={{ mt: 1.5 }}>
@@ -245,7 +254,7 @@ export function ImportStatement() {
               disabled={importMutation.isPending}
               sx={{ px: 0, color: 'text.secondary', textTransform: 'none' }}
             >
-              Upload a different statement
+              {t('import.uploadDifferent')}
             </Button>
           </Box>
         </>
@@ -281,12 +290,12 @@ export function ImportStatement() {
             <UploadFileIcon fontSize="small" />
           </Box>
           <Typography component="h2" sx={{ fontSize: 16, fontWeight: 600 }}>
-            Upload a statement PDF
+            {t('import.picker.title')}
           </Typography>
           <Typography
             sx={{ fontSize: 13.5, color: 'text.secondary', maxWidth: 380 }}
           >
-            We'll read the expenses so you can review and import them in one go.
+            {t('import.picker.description')}
           </Typography>
 
           <Button
@@ -305,15 +314,15 @@ export function ImportStatement() {
             sx={{ mt: 0.5, py: 1.25, px: 3, fontWeight: 600, textTransform: 'none' }}
           >
             {phase.kind === 'parsing'
-              ? 'Reading your statement…'
-              : 'Choose statement PDF'}
+              ? t('import.picker.reading')
+              : t('import.picker.choose')}
           </Button>
 
           {/* Live region so the parse state is announced to assistive tech. */}
           <Box aria-live="polite" sx={{ width: '100%' }}>
             {phase.kind === 'parsing' ? (
               <Typography sx={visuallyHiddenSx}>
-                Reading your statement…
+                {t('import.picker.reading')}
               </Typography>
             ) : null}
             {fallbackMessage ? (
@@ -337,23 +346,6 @@ export function ImportStatement() {
       {hiddenPicker}
     </Box>
   )
-}
-
-/**
- * Build the success-confirmation heading from the split import result (ADR-086).
- * Reflects created expenses + any transactions enriched by a merge, e.g.
- * "Imported 3 expenses, merged 1 into existing transactions".
- */
-function confirmationHeading(result: StatementImportResult): string {
-  const { createdCount, mergedCount } = result
-  const createdLabel = `Imported ${createdCount} ${
-    createdCount === 1 ? 'expense' : 'expenses'
-  }`
-  if (mergedCount === 0) return createdLabel
-  const mergedLabel = `merged ${mergedCount} into existing ${
-    mergedCount === 1 ? 'transaction' : 'transactions'
-  }`
-  return `${createdLabel}, ${mergedLabel}`
 }
 
 /** Visually-hidden style for off-screen live-region text (mirrors @mui/utils). */

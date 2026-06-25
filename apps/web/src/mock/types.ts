@@ -281,10 +281,6 @@ export interface MonotributoProjection {
   ceilingMonth: string
   /** Approx. months of margin left at this pace. */
   marginMonths: number
-  /** Window of the next recategorization, e.g. "Jul – Aug 2026". */
-  nextRecategorization: string
-  /** Period the recategorization evaluates, e.g. "Jan–Jun". */
-  evaluates: string
   /** Authoritative ARCA (ex-AFIP) scale URL. */
   arcaUrl: string
 }

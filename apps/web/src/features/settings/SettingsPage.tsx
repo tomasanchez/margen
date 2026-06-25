@@ -20,6 +20,7 @@
  */
 
 import { useId } from 'react'
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Chip from '@mui/material/Chip'
 import FormControl from '@mui/material/FormControl'
@@ -99,6 +100,7 @@ function SettingRow({
 }
 
 export function SettingsPage() {
+  const { t } = useTranslation('settings')
   const settingsQuery = useSettings()
   const updateSettings = useUpdateSettings()
 
@@ -115,8 +117,8 @@ export function SettingsPage() {
     updateSettings.isError && updateSettings.error
       ? updateSettings.error instanceof SettingsApiError &&
         updateSettings.error.status === 422
-        ? "That value isn't allowed. Pick one from the list."
-        : "We couldn't save that change. Try again."
+        ? t('saveError.notAllowed')
+        : t('saveError.generic')
       : null
 
   function save(patch: SettingsPatch) {
@@ -137,11 +139,11 @@ export function SettingsPage() {
           }}
           color="text.primary"
         >
-          Settings
+          {t('title')}
         </Typography>
         <ErrorState
-          title="Settings unavailable"
-          description="We couldn't load your settings. Check your connection and try again."
+          title={t('error.title')}
+          description={t('error.description')}
           onRetry={() => void settingsQuery.refetch()}
         />
       </Box>
@@ -159,10 +161,10 @@ export function SettingsPage() {
         }}
         color="text.primary"
       >
-        Settings
+        {t('title')}
       </Typography>
       <Typography sx={{ fontSize: 13.5, mb: 2.5 }} color="text.secondary">
-        Preferences that shape how Margen reads and what it calculates.
+        {t('subtitle')}
       </Typography>
 
       {saveError ? (
@@ -177,27 +179,27 @@ export function SettingsPage() {
       ) : null}
 
       {settingsQuery.isPending || !settings ? (
-        <SectionCard title="Preferences">
+        <SectionCard title={t('preferences')}>
           <Skeleton variant="rounded" height={64} sx={{ mb: 1.5, borderRadius: '10px' }} />
           <Skeleton variant="rounded" height={64} sx={{ mb: 1.5, borderRadius: '10px' }} />
           <Skeleton variant="rounded" height={64} sx={{ borderRadius: '10px' }} />
         </SectionCard>
       ) : (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: { xs: 1.75, md: 2.25 } }}>
-          <SectionCard title="Display">
+          <SectionCard title={t('display.title')}>
             <SettingRow
-              label="Display currency"
-              helper="The currency for the Home metric cards and monthly summaries. ARS stays the stored value; USD converts at your default rate."
+              label={t('display.currency.label')}
+              helper={t('display.currency.helper')}
               htmlFor={displayCurrencyId}
               control={
                 <FormControl size="small" sx={{ minWidth: 168 }} disabled={saving}>
                   <InputLabel id={`${displayCurrencyId}-label`}>
-                    Currency
+                    {t('display.currency.selectLabel')}
                   </InputLabel>
                   <Select
                     id={displayCurrencyId}
                     labelId={`${displayCurrencyId}-label`}
-                    label="Currency"
+                    label={t('display.currency.selectLabel')}
                     value={settings.preferredDisplayCurrency}
                     aria-describedby={saveError ? errorId : undefined}
                     onChange={(event) =>
@@ -208,24 +210,26 @@ export function SettingsPage() {
                     }
                     sx={{ borderRadius: '10px', bgcolor: 'var(--mg-paper)' }}
                   >
-                    <MenuItem value="ARS">ARS (pesos)</MenuItem>
-                    <MenuItem value="USD">USD (dollars)</MenuItem>
+                    <MenuItem value="ARS">{t('display.currency.ars')}</MenuItem>
+                    <MenuItem value="USD">{t('display.currency.usd')}</MenuItem>
                   </Select>
                 </FormControl>
               }
             />
 
             <SettingRow
-              label="FX default source"
-              helper="The dollar rate pre-selected when you add a USD transaction, and used for the USD display conversion."
+              label={t('display.fxDefault.label')}
+              helper={t('display.fxDefault.helper')}
               htmlFor={fxDefaultId}
               control={
                 <FormControl size="small" sx={{ minWidth: 168 }} disabled={saving}>
-                  <InputLabel id={`${fxDefaultId}-label`}>Rate source</InputLabel>
+                  <InputLabel id={`${fxDefaultId}-label`}>
+                    {t('display.fxDefault.selectLabel')}
+                  </InputLabel>
                   <Select
                     id={fxDefaultId}
                     labelId={`${fxDefaultId}-label`}
-                    label="Rate source"
+                    label={t('display.fxDefault.selectLabel')}
                     value={settings.fxDefaultRateType}
                     onChange={(event) =>
                       save({
@@ -235,27 +239,31 @@ export function SettingsPage() {
                     }
                     sx={{ borderRadius: '10px', bgcolor: 'var(--mg-paper)' }}
                   >
-                    <MenuItem value="MEP">MEP</MenuItem>
-                    <MenuItem value="official">Official</MenuItem>
+                    <MenuItem value="MEP">{t('display.fxDefault.mep')}</MenuItem>
+                    <MenuItem value="official">
+                      {t('display.fxDefault.official')}
+                    </MenuItem>
                   </Select>
                 </FormControl>
               }
             />
           </SectionCard>
 
-          <SectionCard title="Monotributo">
+          <SectionCard title={t('monotributo.title')}>
             <SettingRow
-              label="Category"
-              helper="Your current Monotributo category. Drives the limit meter and projection on the Monotributo page."
+              label={t('monotributo.category.label')}
+              helper={t('monotributo.category.helper')}
               htmlFor={categoryId}
               control={
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
                   <FormControl size="small" sx={{ minWidth: 140 }} disabled={saving}>
-                    <InputLabel id={`${categoryId}-label`}>Category</InputLabel>
+                    <InputLabel id={`${categoryId}-label`}>
+                      {t('monotributo.category.selectLabel')}
+                    </InputLabel>
                     <Select
                       id={categoryId}
                       labelId={`${categoryId}-label`}
-                      label="Category"
+                      label={t('monotributo.category.selectLabel')}
                       value={settings.monotributoCurrentCategory}
                       onChange={(event) =>
                         save({
@@ -268,17 +276,17 @@ export function SettingsPage() {
                     >
                       {CATEGORY_LETTERS.map((letter) => (
                         <MenuItem key={letter} value={letter}>
-                          Category {letter}
+                          {t('monotributo.category.option', { letter })}
                         </MenuItem>
                       ))}
                     </Select>
                   </FormControl>
                   {/* Activity type is fixed to services in the MVP (ADR-053/059). */}
                   <Chip
-                    label="Services"
+                    label={t('monotributo.activityServices')}
                     size="small"
                     variant="outlined"
-                    title="Activity type is services in this version"
+                    title={t('monotributo.activityServicesTitle')}
                     sx={{ borderRadius: '8px' }}
                   />
                 </Box>

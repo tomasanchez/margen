@@ -16,6 +16,7 @@ import {
   formatCurrency,
   formatMillionsCompact,
 } from '../../lib/format'
+import { localizedMonth } from '../../i18n/locale'
 import { ARCA_SCALE_URL } from '../../mock/seed'
 import type {
   MonotributoProjection,
@@ -36,46 +37,48 @@ function elapsedFraction(standing: MonotributoStanding): number {
   return Math.min(Math.max(fraction, 1 / 12), 1)
 }
 
-/** Long month name for an ISO date, e.g. "2026-10-01" → "October". */
-function longMonth(iso: string): string {
+/**
+ * A `Date` anchored at day 1 (UTC) of an ISO date's month, used purely as input
+ * to `Intl.DateTimeFormat`. Day 1 + UTC formatting avoids any timezone
+ * day-rollover affecting the month/year fields we format. Returns `null` for an
+ * unparseable ISO so callers can fall back to the raw string.
+ */
+function monthDateUTC(iso: string): Date | null {
+  const year = Number.parseInt(iso.slice(0, 4), 10)
   const month = Number.parseInt(iso.slice(5, 7), 10)
-  const names = [
-    'January',
-    'February',
-    'March',
-    'April',
-    'May',
-    'June',
-    'July',
-    'August',
-    'September',
-    'October',
-    'November',
-    'December',
-  ]
-  return names[month - 1] ?? iso
+  // Guard the month range: an out-of-range value (e.g. "2026-13-01") would
+  // otherwise roll over via Date.UTC (month 12 → Jan next year) and silently
+  // mislabel the period. Returning null lets callers fall back to the raw ISO.
+  if (Number.isNaN(year) || Number.isNaN(month) || month < 1 || month > 12) {
+    return null
+  }
+  return new Date(Date.UTC(year, month - 1, 1))
 }
 
-/** Short "Mon YYYY" label for an ISO date, e.g. "2025-06-01" → "Jun 2025". */
+/**
+ * Long month name for an ISO date, localized off the active UI language
+ * (ADR-102) and capitalized, e.g. "2026-10-01" → "October" (en) / "Octubre"
+ * (es). The locale is read at call time so labels track a language switch; UTC
+ * formatting keeps the month stable regardless of the runtime timezone. English
+ * output is identical to the prior hardcoded table.
+ */
+function longMonth(iso: string): string {
+  const date = monthDateUTC(iso)
+  if (!date) return iso
+  return localizedMonth(date, { style: 'long', utc: true })
+}
+
+/**
+ * Short "Mon YYYY" label for an ISO date, localized off the active UI language
+ * (ADR-102), e.g. "2025-06-01" → "Jun 2025" (en) / "Jun 2025" (es). The short
+ * month name comes from `Intl` (capitalized so the Spanish "jun" reads "Jun"),
+ * and the year is appended literally to keep a stable "month year" shape across
+ * locales. English output is identical to the prior hardcoded table.
+ */
 function shortMonthYear(iso: string): string {
-  const month = Number.parseInt(iso.slice(5, 7), 10)
-  const year = iso.slice(0, 4)
-  const names = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ]
-  const name = names[month - 1]
-  return name ? `${name} ${year}` : iso
+  const date = monthDateUTC(iso)
+  if (!date) return iso
+  return `${localizedMonth(date, { style: 'short', utc: true })} ${iso.slice(0, 4)}`
 }
 
 /** The scale row for a category letter, if present. */
@@ -112,10 +115,9 @@ export function standingToState(
  * `used` over the elapsed fraction of the window gives the linear-annualized
  * total (ADR-046); the projected category and its ceiling come from the scale.
  * The fee impact reads the current vs projected category's `cuotaServicios`
- * (services activity for MVP). Window-shaped labels (`nextRecategorization`,
- * `evaluates`) are derived from the period dates. The projection is explicitly
- * an estimate — the components label it as such and the standing's own
- * `projectionNote` is the source wording.
+ * (services activity for MVP). The projection is explicitly an estimate — the
+ * components label it as such and the standing's own `projectionNote` is the
+ * source wording.
  */
 export function deriveProjection(
   standing: MonotributoStanding,
@@ -165,8 +167,6 @@ export function deriveProjection(
     projectedCuota,
     ceilingMonth,
     marginMonths: monthsToCeiling,
-    nextRecategorization: 'next review',
-    evaluates: 'trailing 12 months',
     arcaUrl: ARCA_SCALE_URL,
   }
 }

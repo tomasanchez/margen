@@ -12,6 +12,7 @@
  * a neutral "set up your category" state instead of crashing.
  */
 
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Divider from '@mui/material/Divider'
@@ -36,11 +37,11 @@ export interface MonotributoCardProps {
 
 /** Neutral fallback when the user has not configured a category yet. */
 function MonotributoEmpty() {
+  const { t } = useTranslation('home')
   return (
-    <SectionCard title="Monotributo" highlight>
+    <SectionCard title={t('monotributo.title')} highlight>
       <Typography sx={{ fontSize: 13.5, lineHeight: 1.5 }} color="text.secondary">
-        Set up your Monotributo category to track how close you are to the next
-        AFIP threshold and how much margin you have left.
+        {t('monotributo.emptyBody')}
       </Typography>
       <Button
         variant="outlined"
@@ -53,7 +54,7 @@ function MonotributoEmpty() {
           color: 'text.primary',
         }}
       >
-        Set up category
+        {t('monotributo.setUp')}
       </Button>
     </SectionCard>
   )
@@ -64,9 +65,10 @@ export function MonotributoCard({
   invoiceCount,
   loading = false,
 }: MonotributoCardProps) {
+  const { t } = useTranslation('home')
   if (loading) {
     return (
-      <SectionCard title="Monotributo" highlight>
+      <SectionCard title={t('monotributo.title')} highlight>
         <Skeleton variant="text" width="50%" height={32} />
         <Skeleton variant="text" width="70%" sx={{ mb: 2 }} />
         <Skeleton variant="rounded" height={14} sx={{ borderRadius: '9px' }} />
@@ -83,7 +85,9 @@ export function MonotributoCard({
 
   return (
     <SectionCard
-      title={`Monotributo · Category ${monotributo.category}`}
+      title={t('monotributo.titleWithCategory', {
+        category: monotributo.category,
+      })}
       highlight
       action={<StatusPill status={monotributo.status} />}
     >
@@ -110,15 +114,17 @@ export function MonotributoCard({
           color: 'text.disabled',
         }}
       >
-        used of {formatCurrency(monotributo.annualLimit, 'ARS')} annual limit
+        {t('monotributo.usedOfLimit', {
+          limit: formatCurrency(monotributo.annualLimit, 'ARS'),
+        })}
       </Typography>
 
       <LinearProgress
         variant="determinate"
         value={pct}
-        aria-label={`Monotributo limit used: ${formatPercent(
-          monotributo.usedRatio,
-        )}`}
+        aria-label={t('monotributo.limitAriaLabel', {
+          percent: formatPercent(monotributo.usedRatio),
+        })}
         sx={{
           height: 14,
           borderRadius: '9px',
@@ -147,10 +153,14 @@ export function MonotributoCard({
             color: 'var(--mg-text-mid)',
           }}
         >
-          {formatPercent(monotributo.usedRatio)} used
+          {t('monotributo.percentUsed', {
+            percent: formatPercent(monotributo.usedRatio),
+          })}
         </Typography>
         <Typography component="span" sx={{ fontSize: 12.5 }} color="text.secondary">
-          {formatCurrency(monotributo.margin, 'ARS')} margin
+          {t('monotributo.margin', {
+            amount: formatCurrency(monotributo.margin, 'ARS'),
+          })}
         </Typography>
       </Box>
 
@@ -166,7 +176,7 @@ export function MonotributoCard({
       >
         <Box sx={{ minWidth: 0 }}>
           <Typography sx={{ fontSize: 13 }} color="text.secondary">
-            Projected category
+            {t('monotributo.projectedCategory')}
           </Typography>
           <Typography
             sx={{
@@ -196,7 +206,7 @@ export function MonotributoCard({
         sx={{ fontSize: 12, mt: 1.5, lineHeight: 1.5, textWrap: 'pretty' }}
         color="text.disabled"
       >
-        Projection assumes your current invoicing pace continues.
+        {t('monotributo.projectionNote')}
       </Typography>
 
       <Box
@@ -217,8 +227,7 @@ export function MonotributoCard({
           },
         }}
       >
-        See the {invoiceCount}{' '}
-        {invoiceCount === 1 ? 'invoice' : 'invoices'} behind this →
+        {t('monotributo.drillIn', { count: invoiceCount })}
       </Box>
     </SectionCard>
   )

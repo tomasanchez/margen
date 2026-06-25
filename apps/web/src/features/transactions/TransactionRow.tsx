@@ -12,6 +12,7 @@
  */
 
 import { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import CircularProgress from '@mui/material/CircularProgress'
 import IconButton from '@mui/material/IconButton'
@@ -28,7 +29,7 @@ import { monoFontFamily } from '../../theme'
 import type { Transaction } from '../../mock/types'
 import { fetchInvoiceDocument } from '../../api/invoicesClient'
 import { useDocumentOpener } from '../../api/useDocumentOpener'
-import { categoryDotColor } from './presentation'
+import { bankLabel, categoryDotColor, categoryLabel } from './presentation'
 
 /**
  * Compact attachment control for an imported invoice (ADR-072). Imported ARCA
@@ -44,6 +45,7 @@ import { categoryDotColor } from './presentation'
  * ADR-019), and stops the click from triggering the row's edit affordance.
  */
 function InvoiceAttachmentBadge({ transaction }: { transaction: Transaction }) {
+  const { t } = useTranslation('transactions')
   const fetchBlob = useCallback(
     () => fetchInvoiceDocument(transaction.id),
     [transaction.id],
@@ -52,13 +54,13 @@ function InvoiceAttachmentBadge({ transaction }: { transaction: Transaction }) {
 
   if (transaction.kind !== 'invoice') return null
 
-  const label = `Open invoice PDF for ${transaction.name}`
+  const label = t('row.openInvoicePdfFor', { name: transaction.name })
 
   return (
     <Box
       sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}
     >
-      <Tooltip title={error ?? 'Open invoice PDF'}>
+      <Tooltip title={error ?? t('row.openInvoicePdf')}>
         <Box
           component="button"
           type="button"
@@ -202,6 +204,7 @@ function RowActions({
   busy,
   className,
 }: TransactionRowProps & { className?: string }) {
+  const { t } = useTranslation(['transactions', 'common'])
   const label = transaction.name
   return (
     <Stack
@@ -210,11 +213,11 @@ function RowActions({
       className={className}
       sx={{ justifyContent: 'flex-end' }}
     >
-      <Tooltip title="Edit">
+      <Tooltip title={t('common:actions.edit')}>
         <span>
           <IconButton
             size="small"
-            aria-label={`Edit ${label}`}
+            aria-label={t('transactions:row.edit', { name: label })}
             disabled={busy}
             onClick={() => onEdit(transaction)}
             sx={{
@@ -226,11 +229,11 @@ function RowActions({
           </IconButton>
         </span>
       </Tooltip>
-      <Tooltip title="Delete">
+      <Tooltip title={t('common:actions.delete')}>
         <span>
           <IconButton
             size="small"
-            aria-label={`Delete ${label}`}
+            aria-label={t('transactions:row.delete', { name: label })}
             disabled={busy}
             onClick={() => onDelete(transaction)}
             sx={{
@@ -248,6 +251,7 @@ function RowActions({
 
 /** Desktop grid row. Actions fade in on row hover/focus-within for calm UX. */
 export function TransactionRow(props: TransactionRowProps) {
+  const { t: translate } = useTranslation('transactions')
   const { transaction: t } = props
   const isUsd = t.currency === 'USD'
 
@@ -303,7 +307,7 @@ export function TransactionRow(props: TransactionRowProps) {
           >
             {t.name}
           </Typography>
-          {t.recurring ? <RowBadge>recurring</RowBadge> : null}
+          {t.recurring ? <RowBadge>{translate('row.recurring')}</RowBadge> : null}
           {isUsd ? <FxBadge /> : null}
           <InvoiceAttachmentBadge transaction={t} />
         </Box>
@@ -320,7 +324,7 @@ export function TransactionRow(props: TransactionRowProps) {
             whiteSpace: 'nowrap',
           }}
         >
-          {t.bank}
+          {bankLabel(t.bank)}
         </Typography>
       </Box>
 
@@ -343,7 +347,7 @@ export function TransactionRow(props: TransactionRowProps) {
             whiteSpace: 'nowrap',
           }}
         >
-          {t.category}
+          {categoryLabel(t.category)}
         </Box>
       </Box>
 
@@ -371,6 +375,7 @@ export function TransactionRow(props: TransactionRowProps) {
 
 /** Condensed mobile row: name + meta on the left, amount + date on the right. */
 export function TransactionRowMobile(props: TransactionRowProps) {
+  const { t: translate } = useTranslation(['transactions', 'common'])
   const { transaction: t, onEdit } = props
   const isUsd = t.currency === 'USD'
 
@@ -389,7 +394,7 @@ export function TransactionRowMobile(props: TransactionRowProps) {
         component="button"
         type="button"
         onClick={() => onEdit(t)}
-        aria-label={`Edit ${t.name}`}
+        aria-label={translate('transactions:row.edit', { name: t.name })}
         sx={{
           flex: 1,
           minWidth: 0,
@@ -422,7 +427,9 @@ export function TransactionRowMobile(props: TransactionRowProps) {
           >
             {t.name}
           </Typography>
-          {t.recurring ? <RowBadge>recurring</RowBadge> : null}
+          {t.recurring ? (
+            <RowBadge>{translate('transactions:row.recurring')}</RowBadge>
+          ) : null}
           {isUsd ? <FxBadge /> : null}
         </Box>
         <Box
@@ -445,7 +452,7 @@ export function TransactionRowMobile(props: TransactionRowProps) {
               whiteSpace: 'nowrap',
             }}
           >
-            {t.category} · {t.bank}
+            {categoryLabel(t.category)} · {bankLabel(t.bank)}
           </Box>
         </Box>
       </Box>
@@ -489,11 +496,11 @@ export function TransactionRowMobile(props: TransactionRowProps) {
         </Box>
       </Box>
 
-      <Tooltip title="Delete">
+      <Tooltip title={translate('common:actions.delete')}>
         <span>
           <IconButton
             size="small"
-            aria-label={`Delete ${t.name}`}
+            aria-label={translate('transactions:row.delete', { name: t.name })}
             disabled={props.busy}
             onClick={() => props.onDelete(t)}
             sx={{ color: 'text.disabled', '&:hover': { color: 'error.main' } }}

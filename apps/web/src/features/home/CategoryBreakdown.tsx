@@ -13,6 +13,8 @@
  * and a visible focus ring (HIG); hover lifts it gently.
  */
 
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import Box from '@mui/material/Box'
 import Skeleton from '@mui/material/Skeleton'
 import Stack from '@mui/material/Stack'
@@ -21,6 +23,7 @@ import { Link } from '@tanstack/react-router'
 import { monoFontFamily } from '../../theme'
 import { formatCurrency } from '../../lib/format'
 import { useDisplayMoney } from '../settings/displayCurrencyContext'
+import { categoryLabel } from '../transactions/presentation'
 import type { CategorySpend } from '../../mock/types'
 import { SectionCard } from '../../components/SectionCard'
 
@@ -50,20 +53,25 @@ function CategoryRow({
   row,
   maxPct,
   formatMoney,
+  t,
 }: {
   row: CategorySpend
   maxPct: number
   /** Currency-aware money formatter from the display-currency context (ADR-056). */
   formatMoney: (ars: number | null | undefined) => string
+  t: TFunction<'home'>
 }) {
   const widthPct = maxPct > 0 ? Math.min((row.pct / maxPct) * 100, 100) : 0
   const rose = Boolean(row.up)
+  // Localized category label (ADR-103) reused for both the visible text and the
+  // accessible name.
+  const label = categoryLabel(row.category)
   // The accessible name spells out the action + the literal ARS amount so the
   // link reads clearly to screen readers regardless of the display currency.
-  const linkLabel = `${row.category}, ${formatCurrency(
-    row.amount,
-    'ARS',
-  )}${row.up ? `, up ${row.up}` : ''} — view transactions`
+  const amount = formatCurrency(row.amount, 'ARS')
+  const linkLabel = row.up
+    ? t('breakdown.rowLabelUp', { category: label, amount, up: row.up })
+    : t('breakdown.rowLabel', { category: label, amount })
   return (
     <Link
       to="/transactions"
@@ -100,7 +108,7 @@ function CategoryRow({
               minWidth: 0,
             }}
           >
-            {row.category}
+            {label}
           </Typography>
           {rose ? (
             <Box
@@ -162,13 +170,14 @@ export function CategoryBreakdown({
   categories,
   loading = false,
 }: CategoryBreakdownProps) {
+  const { t } = useTranslation('home')
   const formatMoney = useDisplayMoney()
 
   if (loading || !categories) {
     return (
       <SectionCard
-        title="Where it went"
-        subtitle="June · share of spending"
+        title={t('breakdown.title')}
+        subtitle={t('breakdown.subtitle')}
         minHeight={BODY_MIN_HEIGHT}
       >
         <Stack spacing={1.875}>
@@ -190,8 +199,8 @@ export function CategoryBreakdown({
   if (categories.length === 0) {
     return (
       <SectionCard
-        title="Where it went"
-        subtitle="June · share of spending"
+        title={t('breakdown.title')}
+        subtitle={t('breakdown.subtitle')}
         minHeight={BODY_MIN_HEIGHT}
       >
         <Box
@@ -204,7 +213,7 @@ export function CategoryBreakdown({
           }}
         >
           <Typography sx={{ fontSize: 13.5 }} color="text.disabled">
-            No spending recorded for this month yet.
+            {t('breakdown.empty')}
           </Typography>
         </Box>
       </SectionCard>
@@ -215,8 +224,8 @@ export function CategoryBreakdown({
 
   return (
     <SectionCard
-      title="Where it went"
-      subtitle="June · share of spending"
+      title={t('breakdown.title')}
+      subtitle={t('breakdown.subtitle')}
       minHeight={BODY_MIN_HEIGHT}
     >
       <Stack spacing={1.875}>
@@ -226,6 +235,7 @@ export function CategoryBreakdown({
             row={row}
             maxPct={maxPct}
             formatMoney={formatMoney}
+            t={t}
           />
         ))}
       </Stack>

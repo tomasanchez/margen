@@ -20,6 +20,7 @@
 
 import { useEffect, useId, useState } from 'react'
 import type { FormEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate } from '@tanstack/react-router'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
@@ -38,6 +39,7 @@ export interface LoginPageProps {
 }
 
 export function LoginPage({ redirectTo = '/' }: LoginPageProps) {
+  const { t } = useTranslation('auth')
   const { session, signInWithPassword, signInWithGoogle } = useAuth()
   const navigate = useNavigate()
 
@@ -118,21 +120,21 @@ export function LoginPage({ redirectTo = '/' }: LoginPageProps) {
               color: 'primary.main',
             }}
           >
-            Margen
+            {t('brand')}
           </Typography>
           <Typography
             component="h1"
             sx={{ mt: 1.5, fontSize: 18, fontWeight: 600 }}
             color="text.primary"
           >
-            Sign in to your account
+            {t('title')}
           </Typography>
           <Typography
             variant="body2"
             color="text.secondary"
             sx={{ mt: 0.5 }}
           >
-            Use your email and password, or continue with Google.
+            {t('subtitle')}
           </Typography>
         </Box>
 
@@ -153,7 +155,7 @@ export function LoginPage({ redirectTo = '/' }: LoginPageProps) {
           sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}
         >
           <TextField
-            label="Email"
+            label={t('email')}
             type="email"
             name="email"
             autoComplete="email"
@@ -169,7 +171,7 @@ export function LoginPage({ redirectTo = '/' }: LoginPageProps) {
             }}
           />
           <TextField
-            label="Password"
+            label={t('password')}
             type="password"
             name="password"
             autoComplete="current-password"
@@ -202,12 +204,12 @@ export function LoginPage({ redirectTo = '/' }: LoginPageProps) {
               },
             }}
           >
-            {busy ? 'Signing in…' : 'Sign in'}
+            {busy ? t('signingIn') : t('signIn')}
           </Button>
         </Box>
 
         <Divider sx={{ my: 3, color: 'text.secondary', fontSize: 12 }}>
-          or
+          {t('or')}
         </Divider>
 
         <Button
@@ -231,7 +233,7 @@ export function LoginPage({ redirectTo = '/' }: LoginPageProps) {
             },
           }}
         >
-          Continue with Google
+          {t('continueWithGoogle')}
         </Button>
       </Paper>
     </Box>

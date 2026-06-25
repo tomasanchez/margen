@@ -8,6 +8,7 @@
  * grayscale.
  */
 
+import { useTranslation } from 'react-i18next'
 import Chip from '@mui/material/Chip'
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded'
@@ -15,45 +16,45 @@ import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
 import type { StatusLevel } from '../mock/types'
 
 interface StatusPresentation {
-  /** Default visible label for the status. */
-  label: string
+  /** i18n key (common ns) for the default visible label. */
+  labelKey: string
   /** Semantic design token for the status color. */
   color: string
   icon: React.ReactElement
-  /** Spoken description for assistive tech. */
-  srDescription: string
+  /** i18n key (common ns) for the spoken description. */
+  srKey: string
 }
 
 const PRESENTATION: Record<StatusLevel, StatusPresentation> = {
   safe: {
-    label: 'Safe',
+    labelKey: 'status.safe',
     color: 'var(--mg-safe)',
     icon: <CheckCircleOutlinedIcon fontSize="small" />,
-    srDescription: 'Status: safe',
+    srKey: 'statusDescription.safe',
   },
   watch: {
-    label: 'Watch',
+    labelKey: 'status.watch',
     color: 'var(--mg-watch)',
     icon: <WarningAmberRoundedIcon fontSize="small" />,
-    srDescription: 'Status: watch',
+    srKey: 'statusDescription.watch',
   },
   close: {
-    label: 'Close',
+    labelKey: 'status.close',
     color: 'var(--mg-watch)',
     icon: <WarningAmberRoundedIcon fontSize="small" />,
-    srDescription: 'Status: close to your limit',
+    srKey: 'statusDescription.close',
   },
   over: {
-    label: 'Over',
+    labelKey: 'status.over',
     color: 'var(--mg-risk)',
     icon: <ErrorOutlinedIcon fontSize="small" />,
-    srDescription: 'Status: over your limit',
+    srKey: 'statusDescription.over',
   },
   risk: {
-    label: 'Risk',
+    labelKey: 'status.risk',
     color: 'var(--mg-risk)',
     icon: <ErrorOutlinedIcon fontSize="small" />,
-    srDescription: 'Status: at risk',
+    srKey: 'statusDescription.risk',
   },
 }
 
@@ -77,8 +78,9 @@ export function StatusPill({
   size = 'small',
   className,
 }: StatusPillProps) {
+  const { t } = useTranslation('common')
   const presentation = PRESENTATION[status]
-  const visibleLabel = label ?? presentation.label
+  const visibleLabel = label ?? t(presentation.labelKey)
 
   return (
     <Chip
@@ -88,7 +90,7 @@ export function StatusPill({
       size={size}
       variant="outlined"
       role="status"
-      aria-label={presentation.srDescription}
+      aria-label={t(presentation.srKey)}
       sx={{
         fontWeight: 600,
         color: presentation.color,

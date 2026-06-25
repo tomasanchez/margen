@@ -23,6 +23,7 @@ import {
   createRouter,
 } from '@tanstack/react-router'
 import { ColorModeProvider } from '../theme/colorMode'
+import { LanguageProvider } from '../i18n/LanguageProvider'
 import { AuthProvider } from '../auth/AuthProvider'
 import { AccountMenu } from './AccountMenu'
 import {
@@ -65,9 +66,11 @@ function renderAccountMenu() {
 
   render(
     <ColorModeProvider>
-      <AuthProvider>
-        <RouterProvider router={router} />
-      </AuthProvider>
+      <LanguageProvider>
+        <AuthProvider>
+          <RouterProvider router={router} />
+        </AuthProvider>
+      </LanguageProvider>
     </ColorModeProvider>,
   )
   return router

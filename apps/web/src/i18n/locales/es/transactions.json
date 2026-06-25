@@ -1,0 +1,172 @@
+{
+  "page": {
+    "eyebrow": "Movimientos",
+    "heading": "Cada movimiento, en un solo lugar",
+    "loadError": "No pudimos cargar tus movimientos.",
+    "loadErrorDescription": "No pudimos conectar con el servidor para cargar tus movimientos. Revisá tu conexión e intentá de nuevo.",
+    "deleteError": "No pudimos eliminar ese movimiento. Probá de nuevo."
+  },
+  "summary": {
+    "shown": "visibles",
+    "in": "entradas",
+    "out": "salidas",
+    "net": "neto"
+  },
+  "columns": {
+    "date": "Fecha",
+    "descriptionAndCard": "Descripción y tarjeta",
+    "category": "Categoría",
+    "amount": "Importe"
+  },
+  "empty": {
+    "title": "Ningún movimiento coincide con estos filtros.",
+    "tryPrefix": "Probá ",
+    "clearLink": "limpiar los filtros",
+    "trySuffix": "."
+  },
+  "search": {
+    "placeholderShort": "Buscar…",
+    "placeholderLong": "Buscar descripción o categoría…",
+    "ariaLabel": "Buscar movimientos"
+  },
+  "row": {
+    "recurring": "recurrente",
+    "edit": "Editar {{name}}",
+    "delete": "Eliminar {{name}}",
+    "openInvoicePdf": "Abrir PDF de la factura",
+    "openInvoicePdfFor": "Abrir PDF de la factura de {{name}}"
+  },
+  "filters": {
+    "typeAriaLabel": "Tipo de movimiento",
+    "currencyAriaLabel": "Moneda",
+    "categoryLabel": "Categoría",
+    "bankLabel": "Banco / tarjeta",
+    "amountLabel": "Importe",
+    "trigger": "Filtros",
+    "triggerCount": "Filtros · {{count}}",
+    "clear": "Limpiar filtros",
+    "clearAll": "Limpiar todo",
+    "sheetTitle": "Filtros",
+    "currencySection": "Moneda",
+    "categorySection": "Categoría",
+    "bankSection": "Banco / tarjeta",
+    "amountSection": "Importe",
+    "showResults_one": "Ver {{count}} movimiento",
+    "showResults_other": "Ver {{count}} movimientos"
+  },
+  "type": {
+    "all": "Todos",
+    "expense": "Gastos",
+    "income": "Ingresos",
+    "invoice": "Facturas",
+    "allShort": "Todos",
+    "expenseShort": "Sale",
+    "incomeShort": "Entra",
+    "invoiceShort": "Fact"
+  },
+  "currency": {
+    "all": "Todas",
+    "ars": "ARS",
+    "usd": "USD"
+  },
+  "amountRange": {
+    "any": "Cualquier importe",
+    "lt10": "Menos de ARS 10.000",
+    "10_100": "ARS 10.000 – 100.000",
+    "100_1m": "ARS 100.000 – 1.000.000",
+    "gt1m": "Más de ARS 1.000.000"
+  },
+  "month": {
+    "allTime": "Todo el período",
+    "triggerAriaLabel": "Mes: {{label}}",
+    "menuAriaLabel": "Seleccionar mes"
+  },
+  "form": {
+    "title": {
+      "edit": "Editar movimiento",
+      "newExpense": "Nuevo gasto",
+      "newInvoice": "Nueva factura · ingreso"
+    },
+    "close": "Cerrar",
+    "duplicate": "Parece que ya importaste esta factura. Igual podés guardarla si es intencional.",
+    "type": {
+      "ariaLabel": "Tipo de movimiento",
+      "expense": "Gasto",
+      "income": "Factura / ingreso"
+    },
+    "upload": {
+      "reading": "Leyendo tu factura…",
+      "cta": "Subir PDF de factura ARCA para autocompletar",
+      "attachedFallback": "Factura adjunta",
+      "remove": "Quitar factura adjunta",
+      "parseError": "No pudimos leer esto como una factura ARCA — ingresá los datos manualmente."
+    },
+    "name": {
+      "label": "Nombre",
+      "placeholder": "p. ej. Sushiclub (opcional)"
+    },
+    "amount": {
+      "section": "Importe",
+      "ariaLabel": "Importe en {{currency}}",
+      "placeholder": "0"
+    },
+    "currency": {
+      "ariaLabel": "Moneda",
+      "ars": "ARS",
+      "usd": "USD"
+    },
+    "fx": {
+      "convertedMissing": "≈ ARS — · ingresá una cotización",
+      "converted": "≈ ARS {{amount}} a {{source}} {{rate}}",
+      "convertedNoAmount": "Ingresá un importe · {{source}} {{rate}}",
+      "refreshAriaLabel": "Actualizar cotizaciones sugeridas",
+      "fetching": "Buscando…",
+      "refresh": "Actualizar cotización",
+      "sourceAriaLabel": "Fuente de la cotización",
+      "manual": "Manual",
+      "mepOption": "MEP {{rate}}",
+      "mepOptionEmpty": "MEP —",
+      "officialOption": "Oficial {{rate}}",
+      "officialOptionEmpty": "Oficial —",
+      "rateLabel": "Cotización (ARS por USD)",
+      "rateAriaLabel": "Cotización",
+      "ratePlaceholderFetching": "Buscando cotización sugerida…",
+      "ratePlaceholder": "0",
+      "helperFetchFailed": "No pudimos obtener una cotización — ingresala manualmente.",
+      "helperRequired": "Se necesita una cotización para convertir este importe en USD.",
+      "helperManual": "Cotización manual — editá cuando quieras.",
+      "helperOfficial": "Cotización oficial sugerida — confirmá o editá.",
+      "helperMep": "Cotización MEP sugerida — confirmá o editá."
+    },
+    "category": {
+      "section": "Categoría",
+      "loadCuota": "Cargar cuota de Monotributo",
+      "loadCuotaAmount": "Cargar cuota de Monotributo (ARS {{amount}})"
+    },
+    "bank": {
+      "section": "Banco / tarjeta"
+    },
+    "date": {
+      "label": "Fecha",
+      "ariaLabel": "Fecha del movimiento"
+    },
+    "monotributo": {
+      "label": "Cuenta para el Monotributo",
+      "description": "Suma a tu total facturado anual"
+    },
+    "more": "Más detalles",
+    "notes": {
+      "label": "Notas",
+      "placeholder": "Opcional"
+    },
+    "actions": {
+      "cancel": "Cancelar",
+      "reset": "Restablecer",
+      "resetAriaLabel": "Restablecer todos los campos",
+      "saving": "Guardando…",
+      "saveChanges": "Guardar cambios",
+      "save": "Guardar"
+    },
+    "saveError": "No pudimos guardar tu movimiento. Probá de nuevo."
+  }
+}

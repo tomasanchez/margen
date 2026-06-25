@@ -26,6 +26,7 @@
  */
 
 import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { visuallyHidden } from '@mui/utils'
@@ -59,6 +60,7 @@ function pctChange(current: number, previous: number): number {
 }
 
 export function HomePage() {
+  const { t } = useTranslation('home')
   const monotributoQuery = useMonotributo()
   const transactionsQuery = useTransactions()
 
@@ -132,10 +134,10 @@ export function HomePage() {
     return (
       <Box>
         <Typography component="h1" sx={visuallyHidden}>
-          Your command center
+          {t('srHeading')}
         </Typography>
         <ErrorState
-          description="We couldn't reach the server to load your data. Check your connection and try again."
+          description={t('error.description')}
           onRetry={() => void transactionsQuery.refetch()}
         />
       </Box>
@@ -145,7 +147,7 @@ export function HomePage() {
   return (
     <Box>
       <Typography component="h1" sx={visuallyHidden}>
-        Your command center
+        {t('srHeading')}
       </Typography>
 
       <StatusHero
@@ -194,8 +196,8 @@ export function HomePage() {
         >
           {summaryQuery.isError ? (
             <ErrorState
-              title="Spending data unavailable"
-              description="We couldn't load this month's spending trend and breakdown. Try again."
+              title={t('error.summaryTitle')}
+              description={t('error.summaryDescription')}
               onRetry={() => void summaryQuery.refetch()}
             />
           ) : (

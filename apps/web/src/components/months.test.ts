@@ -5,7 +5,8 @@
  * the recent-months window the compact picker lists.
  */
 
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
+import i18n from 'i18next'
 import {
   addMonths,
   boundedMonthsWindow,
@@ -69,6 +70,23 @@ describe('formatViewingMonth / monthName', () => {
 
   test('monthName returns the bare month', () => {
     expect(monthName({ year: 2026, month: 4 })).toBe('May')
+  })
+
+  // The global setup pins i18next to English (ADR-105); this case mutates the
+  // shared instance, so the afterEach resets it to keep the en-pinned suite
+  // green regardless of test order.
+  describe('Spanish (ADR-102)', () => {
+    afterEach(async () => {
+      await i18n.changeLanguage('en')
+    })
+
+    test('capitalizes the month and drops the Spanish "de"', async () => {
+      await i18n.changeLanguage('es')
+      // "julio de 2026" (Intl default) → "Julio 2026": capital J, plain space,
+      // no "de".
+      expect(formatViewingMonth({ year: 2026, month: 6 })).toBe('Julio 2026')
+      expect(monthName({ year: 2026, month: 5 })).toBe('Junio')
+    })
   })
 })
 

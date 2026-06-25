@@ -13,6 +13,7 @@
  * competing chip group here would diverge from it.
  */
 
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
@@ -29,6 +30,7 @@ import {
   type CurrencyFilter,
   type TransactionFilters,
 } from './filtering'
+import { bankLabel, categoryLabel } from './presentation'
 import type { FilterControls } from './useTransactionFilters'
 
 /** A selectable filter chip (gold-tinted when active), token-driven. */
@@ -99,7 +101,10 @@ export function MobileFilterSheet({
   controls,
   resultCount,
 }: MobileFilterSheetProps) {
+  const { t } = useTranslation('transactions')
   const showClear = hasActiveFilters(filters)
+  const currencyLabel = (id: CurrencyFilter) =>
+    id === 'all' ? t('currency.all') : id
 
   return (
     <Drawer
@@ -144,23 +149,23 @@ export function MobileFilterSheet({
         }}
       >
         <Typography variant="h6" component="h2">
-          Filters
+          {t('filters.sheetTitle')}
         </Typography>
         {showClear ? (
           <Button
             onClick={controls.clear}
             sx={{ textTransform: 'none', fontSize: 13, color: 'error.main' }}
           >
-            Clear all
+            {t('filters.clearAll')}
           </Button>
         ) : null}
       </Box>
 
-      <ChipSection title="Currency">
+      <ChipSection title={t('filters.currencySection')}>
         {CURRENCY_OPTIONS.map((option) => (
           <FilterChip
             key={option.id}
-            label={option.label}
+            label={currencyLabel(option.id)}
             selected={filters.currency === option.id}
             onClick={() =>
               controls.setCurrency(option.id as CurrencyFilter)
@@ -169,33 +174,33 @@ export function MobileFilterSheet({
         ))}
       </ChipSection>
 
-      <ChipSection title="Category">
+      <ChipSection title={t('filters.categorySection')}>
         {CATEGORIES.map((category: Category) => (
           <FilterChip
             key={category}
-            label={category}
+            label={categoryLabel(category)}
             selected={filters.categories.includes(category)}
             onClick={() => controls.toggleCategory(category)}
           />
         ))}
       </ChipSection>
 
-      <ChipSection title="Bank / card">
+      <ChipSection title={t('filters.bankSection')}>
         {BANKS.map((bank: Bank) => (
           <FilterChip
             key={bank}
-            label={bank}
+            label={bankLabel(bank)}
             selected={filters.banks.includes(bank)}
             onClick={() => controls.toggleBank(bank)}
           />
         ))}
       </ChipSection>
 
-      <ChipSection title="Amount">
+      <ChipSection title={t('filters.amountSection')}>
         {AMOUNT_RANGES.map((range) => (
           <FilterChip
             key={range.id}
-            label={range.label}
+            label={t(`amountRange.${range.id}`)}
             selected={filters.amount === range.id}
             onClick={() => controls.setAmount(range.id as AmountRange)}
           />
@@ -209,7 +214,7 @@ export function MobileFilterSheet({
         onClick={onClose}
         sx={{ py: 1.5, fontWeight: 600 }}
       >
-        Show {resultCount} {resultCount === 1 ? 'transaction' : 'transactions'}
+        {t('filters.showResults', { count: resultCount })}
       </Button>
     </Drawer>
   )

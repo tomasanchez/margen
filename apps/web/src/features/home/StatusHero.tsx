@@ -8,6 +8,8 @@
  * Monotributo snapshot so the message stays truthful as data changes.
  */
 
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Skeleton from '@mui/material/Skeleton'
@@ -19,24 +21,6 @@ import { StatusPill } from '../../components/StatusPill'
 import { formatPercent } from '../../lib/format'
 import type { MonotributoState, StatusLevel } from '../../mock/types'
 import { useAddTransaction } from '../transactions/addContext'
-
-/** Headline keyed to the overall standing (calm copy, ADR-046). */
-const HEADLINE: Record<StatusLevel, string> = {
-  safe: "You're within margin this month.",
-  watch: "You're within margin this month.",
-  close: "You're getting close to your Monotributo limit.",
-  over: "You're over your Monotributo limit.",
-  risk: 'Spending is outrunning your income this month.',
-}
-
-/** Short status-line label keyed to the standing (calm copy, ADR-046). */
-const STATUS_LABEL: Record<StatusLevel, string> = {
-  safe: 'On track',
-  watch: 'Keep an eye on this',
-  close: 'Close to your limit',
-  over: 'Over your limit',
-  risk: 'Needs attention',
-}
 
 export interface StatusHeroProps {
   /** Monotributo snapshot, drives the limit % in the supporting line. */
@@ -59,24 +43,27 @@ function buildSupportingLine(
   monotributo: MonotributoState | undefined,
   savings: number | undefined,
   expenseDeltaPct: number,
+  t: TFunction<'home'>,
 ): string {
-  const aheadClause =
+  // The localized clauses (including their leading comma/space) compose into the
+  // single supporting sentence by interpolation, not concatenation (ADR-061).
+  const lead =
     savings != null && savings >= 0
-      ? 'Income is comfortably ahead of spending'
-      : 'Spending is running ahead of income'
+      ? t('hero.supporting.ahead')
+      : t('hero.supporting.behind')
 
-  const limitClause = monotributo
-    ? `, and you're ${formatPercent(monotributo.usedRatio)} through your Monotributo limit`
+  const limit = monotributo
+    ? t('hero.supporting.limit', {
+        percent: formatPercent(monotributo.usedRatio),
+      })
     : ''
 
-  const watchClause =
+  const watch =
     expenseDeltaPct > 0
-      ? ` One thing to watch — spending is running ${Math.round(
-          expenseDeltaPct,
-        )}% higher than last month, mostly Food.`
+      ? t('hero.supporting.watch', { percent: Math.round(expenseDeltaPct) })
       : ''
 
-  return `${aheadClause}${limitClause}.${watchClause}`
+  return t('hero.supporting.sentence', { lead, limit, watch })
 }
 
 export function StatusHero({
@@ -86,6 +73,7 @@ export function StatusHero({
   monthLabel,
   loading = false,
 }: StatusHeroProps) {
+  const { t } = useTranslation('home')
   const { openAdd } = useAddTransaction()
   const status: StatusLevel = monotributo?.status ?? 'safe'
 
@@ -115,7 +103,7 @@ export function StatusHero({
         <Box sx={{ mb: 1.5 }}>
           <StatusPill
             status={status}
-            label={`${STATUS_LABEL[status]} · ${monthLabel}`}
+            label={`${t(`hero.statusLabel.${status}`)} · ${monthLabel}`}
           />
         </Box>
         <Typography
@@ -129,7 +117,7 @@ export function StatusHero({
             textWrap: 'pretty',
           }}
         >
-          {HEADLINE[status]}
+          {t(`hero.headline.${status}`)}
         </Typography>
         <Typography
           component="p"
@@ -142,7 +130,7 @@ export function StatusHero({
             textWrap: 'pretty',
           }}
         >
-          {buildSupportingLine(monotributo, savings, expenseDeltaPct)}
+          {buildSupportingLine(monotributo, savings, expenseDeltaPct, t)}
         </Typography>
       </Box>
 
@@ -170,7 +158,7 @@ export function StatusHero({
             flex: { xs: 1, md: 'none' },
           }}
         >
-          Expense
+          {t('hero.addExpense')}
         </Button>
         <Button
           variant="outlined"
@@ -191,7 +179,7 @@ export function StatusHero({
             flex: { xs: 1, md: 'none' },
           }}
         >
-          Invoice
+          {t('hero.addInvoice')}
         </Button>
       </Stack>
     </Box>

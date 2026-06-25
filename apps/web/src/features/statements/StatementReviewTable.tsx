@@ -28,6 +28,7 @@
  */
 
 import { useId, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -53,6 +54,7 @@ import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownR
 import KeyboardArrowUpRoundedIcon from '@mui/icons-material/KeyboardArrowUpRounded'
 import { CATEGORIES } from '../../mock/seed'
 import { formatCurrency, isoToDispDateLike } from './format'
+import { categoryLabel } from '../transactions/presentation'
 import { monoFontFamily } from '../../theme'
 import type { StatementMatch, StatementParse } from '../../api/statementsClient'
 import {
@@ -131,6 +133,7 @@ function CompareColumn({
   category: string
   card: string
 }) {
+  const { t } = useTranslation('statements')
   return (
     <Box
       sx={{
@@ -148,11 +151,11 @@ function CompareColumn({
         {heading}
       </Typography>
       <Stack spacing={1}>
-        <CompareField label="Date" value={date} />
-        <CompareField label="Name" value={name} />
-        <CompareField label="Amount" value={amount} />
-        <CompareField label="Category" value={category} />
-        <CompareField label="Card" value={card} />
+        <CompareField label={t('review.compare.date')} value={date} />
+        <CompareField label={t('review.compare.name')} value={name} />
+        <CompareField label={t('review.compare.amount')} value={amount} />
+        <CompareField label={t('review.compare.category')} value={category} />
+        <CompareField label={t('review.compare.card')} value={card} />
       </Stack>
     </Box>
   )
@@ -168,6 +171,7 @@ function CompareDetail({
   match: StatementMatch
   cardLabel: string
 }) {
+  const { t } = useTranslation('statements')
   return (
     <Box
       sx={{
@@ -181,11 +185,11 @@ function CompareDetail({
       }}
     >
       <CompareColumn
-        heading="From this statement"
+        heading={t('review.compare.fromStatement')}
         date={isoToDispDateLike(line.occurredOn)}
         name={line.name}
         amount={formatCurrency(line.amount, line.currency)}
-        category={line.category ?? 'Uncategorized'}
+        category={line.category ?? t('review.line.uncategorized')}
         card={cardLabel}
       />
       <Box
@@ -201,11 +205,11 @@ function CompareDetail({
         <CompareArrowsRoundedIcon fontSize="small" />
       </Box>
       <CompareColumn
-        heading="Already in your transactions"
+        heading={t('review.compare.alreadyInTransactions')}
         date={isoToDispDateLike(match.occurredOn)}
         name={match.name}
         amount={formatCurrency(match.amount, line.currency)}
-        category={match.category ?? 'Uncategorized'}
+        category={match.category ?? t('review.line.uncategorized')}
         card={match.paymentMethod ?? '—'}
       />
     </Box>
@@ -222,6 +226,7 @@ function ResolutionControl({
   onChange: (id: string, resolution: ReviewResolution) => void
   disabled: boolean
 }) {
+  const { t } = useTranslation('statements')
   return (
     <ToggleButtonGroup
       value={line.resolution}
@@ -232,7 +237,7 @@ function ResolutionControl({
         // Exclusive group: ignore a null (deselect) so a choice is always set.
         if (next) onChange(line.id, next)
       }}
-      aria-label={`Resolution for ${line.name}`}
+      aria-label={t('review.line.resolutionAriaLabel', { name: line.name })}
       sx={{
         '& .MuiToggleButton-root': {
           textTransform: 'none',
@@ -249,11 +254,17 @@ function ResolutionControl({
         },
       }}
     >
-      <ToggleButton value="merge" aria-label={`Merge ${line.name} into the existing transaction`}>
-        Merge
+      <ToggleButton
+        value="merge"
+        aria-label={t('review.line.mergeAriaLabel', { name: line.name })}
+      >
+        {t('review.line.merge')}
       </ToggleButton>
-      <ToggleButton value="keep_both" aria-label={`Keep both — import ${line.name} as a separate expense`}>
-        Keep both
+      <ToggleButton
+        value="keep_both"
+        aria-label={t('review.line.keepBothAriaLabel', { name: line.name })}
+      >
+        {t('review.line.keepBoth')}
       </ToggleButton>
     </ToggleButtonGroup>
   )
@@ -273,6 +284,7 @@ function LineDates({
   occurredOn: string
   purchaseDate?: string
 }) {
+  const { t } = useTranslation('statements')
   const paidDisp = isoToDispDateLike(occurredOn)
   const showBoth = purchaseDate !== undefined && purchaseDate !== occurredOn
 
@@ -298,7 +310,7 @@ function LineDates({
           color: 'text.primary',
         }}
       >
-        {`paid ${paidDisp}`}
+        {t('review.line.paid', { date: paidDisp })}
       </Typography>
       <Typography
         component="span"
@@ -309,7 +321,7 @@ function LineDates({
           color: 'text.secondary',
         }}
       >
-        {`bought ${isoToDispDateLike(purchaseDate)}`}
+        {t('review.line.bought', { date: isoToDispDateLike(purchaseDate) })}
       </Typography>
     </Box>
   )
@@ -331,6 +343,7 @@ function LineRow({
   cardLabel: string
   disabled: boolean
 }) {
+  const { t } = useTranslation('statements')
   const selectLabelId = useId()
   const compareRegionId = useId()
   const [compareOpen, setCompareOpen] = useState(false)
@@ -339,7 +352,9 @@ function LineRow({
   const isDuplicate = match !== undefined
   // Non-color status: an explicit word + strike-through on skipped rows so the
   // keep/exclude state never depends on the dimmed hue alone (ADR-019).
-  const statusWord = kept ? 'Will import' : 'Skipped'
+  const statusWord = kept
+    ? t('review.line.willImport')
+    : t('review.line.skipped')
   // A subtle background tints flagged rows, but the chip below is the real cue.
   const rowBg = isDuplicate
     ? 'color-mix(in srgb, var(--mg-gold) 6%, transparent)'
@@ -376,7 +391,7 @@ function LineRow({
             </Typography>
             {isDuplicate ? (
               <Chip
-                label="Possible duplicate"
+                label={t('review.line.possibleDuplicate')}
                 size="small"
                 sx={{
                   height: 20,
@@ -391,16 +406,17 @@ function LineRow({
           </Box>
           {line.lineKind === 'fee' ? (
             <Typography sx={{ fontSize: 11.5, color: 'text.disabled' }}>
-              Fee / charge
+              {t('review.line.fee')}
             </Typography>
           ) : null}
           {match ? (
             <Box sx={{ mt: 0.5 }}>
               <Typography sx={{ fontSize: 11.5, color: 'text.secondary' }}>
-                {`↔ "${match.name}" · ${isoToDispDateLike(match.occurredOn)} · ${formatCurrency(
-                  match.amount,
-                  line.currency,
-                )}`}
+                {t('review.line.matchContext', {
+                  name: match.name,
+                  date: isoToDispDateLike(match.occurredOn),
+                  amount: formatCurrency(match.amount, line.currency),
+                })}
               </Typography>
               <Stack
                 direction="row"
@@ -435,7 +451,9 @@ function LineRow({
                     px: 0.5,
                   }}
                 >
-                  {compareOpen ? 'Hide compare' : 'Compare'}
+                  {compareOpen
+                    ? t('review.line.hideCompare')
+                    : t('review.line.compare')}
                 </Button>
               </Stack>
             </Box>
@@ -458,7 +476,7 @@ function LineRow({
             component="span"
             sx={visuallyHiddenSx}
           >
-            Category for {line.name}
+            {t('review.line.categoryFor', { name: line.name })}
           </Typography>
           <Select
             value={line.category ?? ''}
@@ -477,11 +495,11 @@ function LineRow({
             }}
           >
             <MenuItem value="">
-              <em>Uncategorized</em>
+              <em>{t('review.line.uncategorized')}</em>
             </MenuItem>
             {STATEMENT_CATEGORIES.map((category) => (
               <MenuItem key={category} value={category}>
-                {category}
+                {categoryLabel(category)}
               </MenuItem>
             ))}
           </Select>
@@ -530,8 +548,8 @@ function LineRow({
               slotProps={{
                 input: {
                   'aria-label': kept
-                    ? `Skip ${line.name} — currently set to import`
-                    : `Import ${line.name} — currently skipped`,
+                    ? t('review.line.skipAriaLabel', { name: line.name })
+                    : t('review.line.importAriaLabel', { name: line.name }),
                 },
               }}
             />
@@ -577,9 +595,10 @@ export function StatementReviewTable({
   onImport,
   isImporting,
 }: StatementReviewTableProps) {
+  const { t } = useTranslation('statements')
   const review = useStatementReviewState(parse)
 
-  const cardLabel = parse.paymentMethod ?? 'Card statement'
+  const cardLabel = parse.paymentMethod ?? t('review.cardFallback')
   const periodLabel =
     parse.periodClose || parse.periodDue
       ? `${parse.periodClose ? isoToDispDateLike(parse.periodClose) : '—'} → ${
@@ -594,12 +613,12 @@ export function StatementReviewTable({
 
   // The footer summary + primary CTA split the kept lines into new vs merged.
   const { newCount, mergeCount } = review
-  const summaryText = `${newCount} new · ${mergeCount} merged`
+  const summaryText = t('review.summary', { newCount, mergeCount })
   const ctaText = isImporting
-    ? 'Importing…'
+    ? t('review.cta.importing')
     : mergeCount > 0
-      ? `Import ${newCount} · merge ${mergeCount}`
-      : `Import ${newCount} ${newCount === 1 ? 'expense' : 'expenses'}`
+      ? t('review.cta.importMerge', { newCount, mergeCount })
+      : t('review.cta.import', { count: newCount })
 
   return (
     <Box>
@@ -640,14 +659,14 @@ export function StatementReviewTable({
           </Typography>
           <Typography sx={{ fontSize: 12.5, color: 'text.secondary' }}>
             {parse.statementNumber
-              ? `Statement ${parse.statementNumber}`
-              : 'Card statement'}
+              ? t('review.statementNumber', { number: parse.statementNumber })
+              : t('review.cardFallback')}
           </Typography>
         </Box>
-        <Fact label="Period" value={periodLabel} />
+        <Fact label={t('review.period')} value={periodLabel} />
         {parse.totalAmount !== undefined ? (
           <Fact
-            label="Statement total"
+            label={t('review.statementTotal')}
             value={formatCurrency(parse.totalAmount, 'ARS')}
           />
         ) : null}
@@ -663,8 +682,7 @@ export function StatementReviewTable({
             '& .MuiAlert-message': { fontSize: 13 },
           }}
         >
-          Looks like you already imported this statement. You can still import it
-          if this is intentional.
+          {t('review.duplicate')}
         </Alert>
       ) : null}
 
@@ -672,7 +690,7 @@ export function StatementReviewTable({
       <Typography
         sx={{ mb: 1, fontSize: 12, color: 'text.secondary' }}
       >
-        Lines are dated when the card is paid; the original purchase date is shown per row.
+        {t('review.dateNote')}
       </Typography>
 
       {/* The editable line table. */}
@@ -683,7 +701,11 @@ export function StatementReviewTable({
           maxHeight: { xs: 'none', md: '52vh' },
         }}
       >
-        <Table stickyHeader size="small" aria-label="Statement line items">
+        <Table
+          stickyHeader
+          size="small"
+          aria-label={t('review.tableAriaLabel')}
+        >
           <TableHead>
             <TableRow
               sx={{
@@ -698,12 +720,12 @@ export function StatementReviewTable({
                 },
               }}
             >
-              <TableCell>Date</TableCell>
-              <TableCell>Merchant</TableCell>
-              <TableCell align="right">Amount</TableCell>
-              <TableCell>Category</TableCell>
-              <TableCell>Cuota</TableCell>
-              <TableCell align="right">Include</TableCell>
+              <TableCell>{t('review.columns.date')}</TableCell>
+              <TableCell>{t('review.columns.merchant')}</TableCell>
+              <TableCell align="right">{t('review.columns.amount')}</TableCell>
+              <TableCell>{t('review.columns.category')}</TableCell>
+              <TableCell>{t('review.columns.cuota')}</TableCell>
+              <TableCell align="right">{t('review.columns.include')}</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>

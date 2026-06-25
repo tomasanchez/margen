@@ -1,0 +1,23 @@
+{
+  "title": "Observaciones",
+  "empty": "Todavía no hay observaciones — agregá algunas transacciones para ver patrones acá.",
+  "labels": {
+    "spending": "Gastos",
+    "recurring": "Recurrentes",
+    "projection": "Proyección",
+    "savings": "Ahorro",
+    "fx": "Cambio"
+  },
+  "spending": {
+    "up": "{{category}} subió {{delta}} respecto del mes pasado"
+  },
+  "recurring_one": "{{count}} gasto recurrente · ≈ {{amount}}",
+  "recurring_other": "{{count}} gastos recurrentes · ≈ {{amount}}",
+  "savings": {
+    "projected": "A este ritmo, ahorro proyectado ≈ {{amount}}",
+    "actual": "Ahorraste {{amount}} este mes"
+  },
+  "fx": {
+    "latest": "Última factura · USD {{usd}} a {{source}} {{rate}} · {{date}}"
+  }
+}

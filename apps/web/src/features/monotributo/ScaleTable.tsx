@@ -9,6 +9,7 @@
  * grid; mobile is a compact category/ceiling/fee list.
  */
 
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { monoFontFamily } from '../../theme'
@@ -26,6 +27,7 @@ function ArcaLink({
   href: string
   variant: 'button' | 'text'
 }) {
+  const { t } = useTranslation('monotributo')
   const isButton = variant === 'button'
   return (
     <Box
@@ -66,7 +68,7 @@ function ArcaLink({
           sx={{ width: 7, height: 7, borderRadius: '2px', bgcolor: 'var(--mg-gold)' }}
         />
       ) : null}
-      {isButton ? 'ARCA · official table' : 'View categories on arca.gob.ar'}
+      {isButton ? t('scale.arcaButton') : t('scale.arcaText')}
       <Box component="span" aria-hidden sx={{ color: 'text.disabled' }}>
         ↗
       </Box>
@@ -87,10 +89,11 @@ export function ScaleTable({
   projected,
   arcaUrl,
 }: ScaleTableProps) {
+  const { t } = useTranslation('monotributo')
   return (
     <SectionCard
-      title="Monotributo 2026 — full scale"
-      subtitle="Official scale, in effect since February 1, 2026 · next review Jul / Aug 2026"
+      title={t('scale.title')}
+      subtitle={t('scale.subtitle')}
       action={<ArcaLink href={arcaUrl} variant="button" />}
     >
       {/* Desktop table header. */}
@@ -111,10 +114,10 @@ export function ScaleTable({
           borderBottom: '1px solid var(--mg-border)',
         }}
       >
-        <Box>Cat.</Box>
-        <Box>Annual gross income</Box>
-        <Box sx={{ textAlign: 'right' }}>Fee · services</Box>
-        <Box sx={{ textAlign: 'right' }}>Fee · goods</Box>
+        <Box>{t('scale.header.cat')}</Box>
+        <Box>{t('scale.header.income')}</Box>
+        <Box sx={{ textAlign: 'right' }}>{t('scale.header.feeServices')}</Box>
+        <Box sx={{ textAlign: 'right' }}>{t('scale.header.feeGoods')}</Box>
         <Box />
       </Box>
 
@@ -149,20 +152,28 @@ export function ScaleTable({
           }}
         >
           <Box component="span" sx={{ width: 22, flex: 'none' }}>
-            Cat.
+            {t('scale.mobileHeader.cat')}
           </Box>
           <Box component="span" sx={{ flex: 1 }}>
-            Income
+            {t('scale.mobileHeader.income')}
           </Box>
-          <Box component="span">Fee · serv.</Box>
+          <Box component="span">{t('scale.mobileHeader.feeServices')}</Box>
           <Box sx={{ width: 42, flex: 'none' }} />
         </Box>
 
         {scale.map((row) => {
           const isCurrent = row.letter === current
           const isProjected = row.letter === projected
-          const tag = isCurrent ? 'Current' : isProjected ? 'Projected' : ''
-          const tagShort = isCurrent ? 'NOW' : isProjected ? 'PROJ' : ''
+          const tag = isCurrent
+            ? t('scale.tagCurrent')
+            : isProjected
+              ? t('scale.tagProjected')
+              : ''
+          const tagShort = isCurrent
+            ? t('scale.tagShortCurrent')
+            : isProjected
+              ? t('scale.tagShortProjected')
+              : ''
           const letterColor = isCurrent
             ? 'var(--mg-text)'
             : isProjected
@@ -364,10 +375,7 @@ export function ScaleTable({
           sx={{ fontSize: 11.5, lineHeight: 1.5, maxWidth: 560, textWrap: 'pretty' }}
           color="text.disabled"
         >
-          The fee includes the tax component, the SIPA (pension) contribution,
-          and the health-insurance contribution. Values are rounded; exact
-          amounts (with cents) are on the ARCA site. Since 2026 the scale runs up
-          to category K for both services and goods.
+          {t('scale.footnote')}
         </Typography>
         <ArcaLink href={arcaUrl} variant="text" />
       </Box>

@@ -16,6 +16,7 @@
  */
 
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
@@ -67,6 +68,7 @@ function SummaryLine({
   outflow: number
   net: number
 }) {
+  const { t } = useTranslation('transactions')
   const netPositive = net >= 0
   const numberSx = { fontFamily: monoFontFamily } as const
   return (
@@ -79,15 +81,15 @@ function SummaryLine({
       <Box component="span" sx={{ ...numberSx, color: 'var(--mg-text-mid)' }}>
         {count}
       </Box>{' '}
-      shown ·{' '}
+      {t('summary.shown')} ·{' '}
       <Box component="span" sx={{ ...numberSx, color: 'var(--mg-safe)' }}>
         {formatSignedAmount(inflow, 'income')}
       </Box>{' '}
-      in ·{' '}
+      {t('summary.in')} ·{' '}
       <Box component="span" sx={{ ...numberSx, color: 'var(--mg-amount)' }}>
         {formatSignedAmount(outflow, 'expense')}
       </Box>{' '}
-      out · net{' '}
+      {t('summary.out')} · {t('summary.net')}{' '}
       <Box
         component="span"
         sx={{
@@ -172,14 +174,15 @@ function EmptyState({
   active: boolean
   onClear: () => void
 }) {
+  const { t } = useTranslation('transactions')
   return (
     <Box sx={{ textAlign: 'center', py: { xs: 6, md: 9 }, px: 2.5 }}>
       <Typography sx={{ fontSize: 15, mb: 0.75 }} color="text.secondary">
-        No transactions match these filters.
+        {t('empty.title')}
       </Typography>
       {active ? (
         <Typography sx={{ fontSize: 13 }} color="text.disabled">
-          Try{' '}
+          {t('empty.tryPrefix')}
           <Box
             component="button"
             type="button"
@@ -195,9 +198,9 @@ function EmptyState({
               textUnderlineOffset: 2,
             }}
           >
-            clearing your filters
+            {t('empty.clearLink')}
           </Box>
-          .
+          {t('empty.trySuffix')}
         </Typography>
       ) : null}
     </Box>
@@ -225,6 +228,7 @@ function ListSkeleton() {
 
 /** Desktop grid column header. */
 function ColumnHeader() {
+  const { t } = useTranslation('transactions')
   const cellSx = {
     fontSize: 11,
     letterSpacing: '0.08em',
@@ -244,10 +248,10 @@ function ColumnHeader() {
         borderColor: 'var(--mg-border)',
       }}
     >
-      <Box sx={cellSx}>Date</Box>
-      <Box sx={cellSx}>Description &amp; card</Box>
-      <Box sx={cellSx}>Category</Box>
-      <Box sx={{ ...cellSx, textAlign: 'right' }}>Amount</Box>
+      <Box sx={cellSx}>{t('columns.date')}</Box>
+      <Box sx={cellSx}>{t('columns.descriptionAndCard')}</Box>
+      <Box sx={cellSx}>{t('columns.category')}</Box>
+      <Box sx={{ ...cellSx, textAlign: 'right' }}>{t('columns.amount')}</Box>
       <Box />
     </Box>
   )
@@ -265,6 +269,7 @@ export interface TransactionsPageProps {
 }
 
 export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}) {
+  const { t } = useTranslation('transactions')
   const { filters, controls } = useTransactionFilters({
     initialCategories: initialCategory ? [initialCategory] : undefined,
   })
@@ -300,11 +305,11 @@ export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}
     <Box>
       <Box sx={{ mb: 2.5 }}>
         <Typography variant="overline" component="p">
-          Transactions
+          {t('page.eyebrow')}
         </Typography>
         {/* Heading text kept stable for the shell smoke test (App.test.tsx). */}
         <Typography variant="h4" component="h1" color="text.primary">
-          Every movement, in one place
+          {t('page.heading')}
         </Typography>
         {isError ? (
           <Typography
@@ -313,7 +318,7 @@ export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}
             color="text.secondary"
             sx={{ mt: 0.5 }}
           >
-            We couldn't load your transactions.
+            {t('page.loadError')}
           </Typography>
         ) : !isLoading ? (
           <SummaryLine
@@ -329,7 +334,7 @@ export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}
 
       {isError ? (
         <ErrorState
-          description="We couldn't reach the server to load your transactions. Check your connection and try again."
+          description={t('page.loadErrorDescription')}
           onRetry={() => void transactionsQuery.refetch()}
         />
       ) : (
@@ -347,12 +352,12 @@ export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}
           <TextField
             value={filters.q}
             onChange={(e) => controls.setSearch(e.target.value)}
-            placeholder="Search…"
+            placeholder={t('search.placeholderShort')}
             fullWidth
             size="small"
             type="search"
             slotProps={{
-              htmlInput: { 'aria-label': 'Search transactions' },
+              htmlInput: { 'aria-label': t('search.ariaLabel') },
               input: {
                 startAdornment: (
                   <InputAdornment position="start">
@@ -389,7 +394,7 @@ export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}
               onChange={(_, value: TypeFilter | null) => {
                 if (value) controls.setType(value)
               }}
-              aria-label="Transaction type"
+              aria-label={t('filters.typeAriaLabel')}
               sx={{
                 flex: 1,
                 bgcolor: 'var(--mg-paper)',
@@ -418,7 +423,7 @@ export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}
             >
               {TYPE_OPTIONS.map((option) => (
                 <ToggleButton key={option.id} value={option.id}>
-                  {option.short}
+                  {t(`type.${option.id}Short`)}
                 </ToggleButton>
               ))}
             </ToggleButtonGroup>
@@ -439,7 +444,9 @@ export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}
                   : 'var(--mg-paper)',
               }}
             >
-              {mobileFilterCount ? `Filters · ${mobileFilterCount}` : 'Filters'}
+              {mobileFilterCount
+                ? t('filters.triggerCount', { count: mobileFilterCount })
+                : t('filters.trigger')}
             </Button>
           </Stack>
         </Box>
@@ -513,7 +520,7 @@ export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}
           onClose={() => deleteMutation.reset()}
           sx={{ width: '100%' }}
         >
-          We couldn't delete that transaction. Please try again.
+          {t('page.deleteError')}
         </Alert>
       </Snackbar>
     </Box>
