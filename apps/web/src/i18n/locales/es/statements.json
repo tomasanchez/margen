@@ -1,0 +1,82 @@
+{
+  "import": {
+    "title": "Importar resumen",
+    "subtitle": "Subí el PDF del resumen de tu tarjeta y revisá los gastos antes de importarlos.",
+    "parseMessage": "No pudimos leer este resumen automáticamente — igual podés agregar los gastos manualmente.",
+    "unsupportedMessage": "Este banco todavía no está soportado — igual podés agregar los gastos manualmente.",
+    "importError": "No pudimos importar estos gastos. Probá de nuevo.",
+    "uploadDifferent": "Subir otro resumen",
+    "picker": {
+      "title": "Subí el PDF del resumen",
+      "description": "Leemos los gastos para que los revises e importes de una sola vez.",
+      "reading": "Leyendo tu resumen…",
+      "choose": "Elegir PDF del resumen"
+    },
+    "done": {
+      "withMerges": "Se agregaron a tus movimientos; los cargos que coincidían se combinaron con los que ya tenías.",
+      "noMerges": "Se agregaron a tus movimientos.",
+      "importAnother": "Importar otro",
+      "done": "Listo"
+    },
+    "confirmation": {
+      "created_one": "Se importó {{count}} gasto",
+      "created_other": "Se importaron {{count}} gastos",
+      "merged_one": "se combinó {{count}} con un movimiento existente",
+      "merged_other": "se combinaron {{count}} con movimientos existentes",
+      "combined": "{{created}}, {{merged}}"
+    }
+  },
+  "review": {
+    "cardFallback": "Resumen de tarjeta",
+    "statementNumber": "Resumen {{number}}",
+    "period": "Período",
+    "statementTotal": "Total del resumen",
+    "duplicate": "Parece que ya importaste este resumen. Igual podés importarlo si es intencional.",
+    "dateNote": "Las líneas se fechan cuando se paga la tarjeta; la fecha de compra original se muestra en cada fila.",
+    "tableAriaLabel": "Líneas del resumen",
+    "columns": {
+      "date": "Fecha",
+      "merchant": "Comercio",
+      "amount": "Importe",
+      "category": "Categoría",
+      "cuota": "Cuota",
+      "include": "Incluir"
+    },
+    "summary": "{{newCount}} nuevos · {{mergeCount}} combinados",
+    "cta": {
+      "importing": "Importando…",
+      "importMerge": "Importar {{newCount}} · combinar {{mergeCount}}",
+      "import_one": "Importar {{count}} gasto",
+      "import_other": "Importar {{count}} gastos"
+    },
+    "line": {
+      "paid": "pagado {{date}}",
+      "bought": "comprado {{date}}",
+      "possibleDuplicate": "Posible duplicado",
+      "fee": "Cargo / comisión",
+      "matchContext": "↔ \"{{name}}\" · {{date}} · {{amount}}",
+      "resolutionAriaLabel": "Resolución para {{name}}",
+      "merge": "Combinar",
+      "mergeAriaLabel": "Combinar {{name}} con el movimiento existente",
+      "keepBoth": "Mantener ambos",
+      "keepBothAriaLabel": "Mantener ambos — importar {{name}} como un gasto aparte",
+      "compare": "Comparar",
+      "hideCompare": "Ocultar comparación",
+      "categoryFor": "Categoría de {{name}}",
+      "uncategorized": "Sin categoría",
+      "willImport": "Se importa",
+      "skipped": "Omitido",
+      "skipAriaLabel": "Omitir {{name}} — actualmente se va a importar",
+      "importAriaLabel": "Importar {{name}} — actualmente omitido"
+    },
+    "compare": {
+      "fromStatement": "De este resumen",
+      "alreadyInTransactions": "Ya está en tus movimientos",
+      "date": "Fecha",
+      "name": "Nombre",
+      "amount": "Importe",
+      "category": "Categoría",
+      "card": "Tarjeta"
+    }
+  }
+}

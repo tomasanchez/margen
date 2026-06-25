@@ -18,6 +18,7 @@ import Alert from '@mui/material/Alert'
 import Snackbar from '@mui/material/Snackbar'
 import { useMediaQuery, useTheme } from '@mui/material'
 import { useId } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { NewTransactionInput } from '../../mock/types'
 import { useAddTransaction as useAddTransactionFlow } from './addContext'
 import {
@@ -30,6 +31,7 @@ import { AddEditForm } from './AddEditForm'
 const CONTENT_SX = { px: 3, py: 3 } as const
 
 export function AddEditTransaction() {
+  const { t } = useTranslation('transactions')
   const { isOpen, prefill, closeAdd } = useAddTransactionFlow()
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
@@ -93,7 +95,7 @@ export function AddEditTransaction() {
         }}
         sx={{ width: '100%' }}
       >
-        We couldn't save your transaction. Please try again.
+        {t('form.saveError')}
       </Alert>
     </Snackbar>
   )

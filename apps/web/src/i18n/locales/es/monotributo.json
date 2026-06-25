@@ -1,0 +1,107 @@
+{
+  "title": "Monotributo",
+  "header": {
+    "pill": "{{status}} · {{percent}} usado",
+    "subtitle": "Categoría <category>{{category}}</category> · servicios · cuota mensual <fee>{{fee}}</fee>"
+  },
+  "error": {
+    "title": "Datos de Monotributo no disponibles",
+    "description": "No pudimos cargar tu situación de Monotributo. Revisá tu conexión y volvé a intentar."
+  },
+  "categoryError": {
+    "unknown": "Esa categoría no es válida. Elegí una de la lista.",
+    "generic": "No pudimos actualizar tu categoría. Volvé a intentar."
+  },
+  "meter": {
+    "invoicedEyebrow": "Facturado este período · cuenta para el límite",
+    "of": "de {{limit}} · límite anual de la Categoría {{category}}",
+    "marginEyebrow": "Margen disponible",
+    "marginMonths": "≈ {{months}} meses a este ritmo",
+    "ariaLabel": "{{percent}} del límite anual de la Categoría {{category}} usado",
+    "used": "{{percent}} usado",
+    "projectedToReach": "Proyectás alcanzar el techo cerca de <month>{{month}}</month>",
+    "projectedTotal": "Total proyectado de los últimos 12 meses",
+    "landsInNote": "Cae en la Categoría {{category}} — te recategorizarías en la próxima revisión.",
+    "perYear": "/ año",
+    "projectedBadge": "Proyectado"
+  },
+  "ladder": {
+    "title": "Dónde caés en la escala",
+    "subtitle": "Techo de ingresos brutos anuales por categoría",
+    "tagNow": "Hoy",
+    "tagProjected": "Proy.",
+    "roleCurrent": "categoría actual",
+    "roleProjected": "categoría proyectada",
+    "roleCategory": "categoría",
+    "cellAriaLabel": "Categoría {{letter}}, {{role}}, techo {{ceiling}}"
+  },
+  "scale": {
+    "title": "Monotributo 2026 — escala completa",
+    "subtitle": "Escala oficial, vigente desde el 1 de febrero de 2026 · próxima revisión jul / ago 2026",
+    "arcaButton": "ARCA · tabla oficial",
+    "arcaText": "Ver categorías en arca.gob.ar",
+    "header": {
+      "cat": "Cat.",
+      "income": "Ingresos brutos anuales",
+      "feeServices": "Cuota · servicios",
+      "feeGoods": "Cuota · bienes"
+    },
+    "mobileHeader": {
+      "cat": "Cat.",
+      "income": "Ingresos",
+      "feeServices": "Cuota · serv."
+    },
+    "tagCurrent": "Actual",
+    "tagProjected": "Proyectada",
+    "tagShortCurrent": "HOY",
+    "tagShortProjected": "PROY",
+    "footnote": "La cuota incluye el componente impositivo, el aporte al SIPA (jubilación) y el aporte a la obra social. Los valores están redondeados; los montos exactos (con centavos) están en el sitio de ARCA. Desde 2026 la escala llega hasta la categoría K tanto para servicios como para bienes."
+  },
+  "projection": {
+    "title": "La proyección, en detalle",
+    "invoiced": "Facturado {{period}}",
+    "monthlyAverage": "Promedio mensual",
+    "projectedTotal": "Total proyectado a 12 meses",
+    "landsIn": "Cae en",
+    "landsInValue": "Categoría {{category}} <cap>· tope {{ceiling}}</cap>",
+    "noteMoves": "Pasar a la Categoría {{projected}} {{direction}} tu cuota mensual <fee>{{from}} → {{to}}</fee>. Aflojar el ritmo te mantiene en la Categoría {{current}}.",
+    "noteSteady": "A este ritmo te quedás en la Categoría {{current}} — cuota mensual <fee>{{fee}}</fee>.",
+    "directionRaises": "sube",
+    "directionLowers": "baja"
+  },
+  "invoices": {
+    "title": "Las {{n}} facturas detrás de esto",
+    "subtitle": "Ingresos facturados en 2026, del más antiguo al más reciente — mirá cómo se construye el total anual.",
+    "openInTransactions": "Abrir en Transacciones →",
+    "header": {
+      "date": "Fecha",
+      "client": "Cliente",
+      "amount": "Importe",
+      "cumulative": "Acumulado"
+    },
+    "cumulativeShort": "acum {{amount}}",
+    "footerCount": "{{n}} facturas · 2026",
+    "totalCounted": "Total contabilizado"
+  },
+  "comparison": {
+    "title": "Comparado con el período anterior",
+    "empty": "Todavía no hay un período anterior para comparar. Cuando exista una ventana completa de los 12 meses previos, vas a ver acá cómo se compara este período con ella.",
+    "subtitle": "Ventana anterior de 12 meses finalizada el {{date}}",
+    "unchanged": "sin cambios",
+    "wasValue": "era {{value}}",
+    "delta": "{{previous}} → {{current}}",
+    "labelInvoiced": "Facturado",
+    "labelPercent": "% del límite",
+    "labelCategory": "Categoría",
+    "labelStatus": "Estado",
+    "categoryCell": "Cat. {{letter}}",
+    "points": "{{value}} pts",
+    "status": {
+      "safe": "En camino",
+      "watch": "Atención",
+      "close": "Cerca del límite",
+      "over": "Sobre el límite",
+      "risk": "Requiere atención"
+    }
+  }
+}

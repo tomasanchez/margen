@@ -1,4 +1,11 @@
-import { useId, useState, type ElementType, type MouseEvent } from 'react'
+import {
+  useId,
+  useState,
+  type ElementType,
+  type MouseEvent,
+  type SyntheticEvent,
+} from 'react'
+import { useTranslation } from 'react-i18next'
 import Avatar from '@mui/material/Avatar'
 import Box from '@mui/material/Box'
 import Divider from '@mui/material/Divider'
@@ -10,6 +17,7 @@ import ListItemIcon from '@mui/material/ListItemIcon'
 import ListItemText from '@mui/material/ListItemText'
 import Menu from '@mui/material/Menu'
 import MenuItem from '@mui/material/MenuItem'
+import Select, { type SelectChangeEvent } from '@mui/material/Select'
 import Switch from '@mui/material/Switch'
 import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
@@ -18,10 +26,13 @@ import { useNavigate } from '@tanstack/react-router'
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded'
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined'
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined'
+import TranslateOutlinedIcon from '@mui/icons-material/TranslateOutlined'
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import LogoutOutlinedIcon from '@mui/icons-material/LogoutOutlined'
 import type { User } from '@supabase/supabase-js'
 import { useColorMode } from '../theme/colorModeContext'
+import { useLanguage } from '../i18n/languageContext'
+import type { Language } from '../i18n/resources'
 import { useAuth } from '../auth/useAuth'
 
 /**
@@ -104,22 +115,29 @@ function AccountIdentity({ identity }: { identity: DisplayIdentity }) {
 function AccountActions({
   isDark,
   onToggleTheme,
+  language,
+  onChangeLanguage,
   onOpenSettings,
   onSignOut,
   Row,
 }: {
   isDark: boolean
   onToggleTheme: () => void
+  language: Language
+  onChangeLanguage: (next: Language) => void
   onOpenSettings: () => void
   onSignOut: () => void
   Row: ElementType
 }) {
+  // All account labels resolve through the `account` namespace.
+  const { t } = useTranslation('account')
+
   return (
     <>
       <Row
         onClick={onToggleTheme}
         sx={{ py: { xs: 1.75, md: 1 } }}
-        aria-label={`Dark mode ${isDark ? 'on' : 'off'}`}
+        aria-label={isDark ? t('darkModeOn') : t('darkModeOff')}
       >
         <ListItemIcon>
           {isDark ? (
@@ -128,15 +146,55 @@ function AccountActions({
             <LightModeOutlinedIcon fontSize="small" />
           )}
         </ListItemIcon>
-        <ListItemText primary="Dark mode" />
+        <ListItemText primary={t('darkMode')} />
         <Switch
           edge="end"
           size="small"
           checked={isDark}
           onClick={(event) => event.stopPropagation()}
           onChange={onToggleTheme}
-          slotProps={{ input: { 'aria-label': 'Toggle dark mode' } }}
+          slotProps={{ input: { 'aria-label': t('toggleDarkMode') } }}
         />
+      </Row>
+
+      {/*
+        Language selector — sits beside dark mode in both surfaces (ADR-104).
+        Reflects the active locale and switches it live via the i18n context
+        (which persists to localStorage). A compact Select presents the two
+        languages by their own endonyms; the chosen value reads back as visible
+        text (non-color cue, ADR-019) and the control carries an explicit
+        `aria-label`. The row itself is inert — `component="div"` so the Drawer's
+        ListItemButton variant doesn't add a button role around a control, and
+        clicks/keys are stopped from bubbling to the Row's handler.
+      */}
+      <Row
+        component="div"
+        disableRipple
+        sx={{
+          py: { xs: 1.75, md: 1 },
+          cursor: 'default',
+          '&:hover': { backgroundColor: 'transparent' },
+        }}
+      >
+        <ListItemIcon>
+          <TranslateOutlinedIcon fontSize="small" />
+        </ListItemIcon>
+        <ListItemText primary={t('language')} />
+        <Select
+          size="small"
+          variant="standard"
+          disableUnderline
+          value={language}
+          onChange={(event: SelectChangeEvent) =>
+            onChangeLanguage(event.target.value as Language)
+          }
+          onClick={(event: SyntheticEvent) => event.stopPropagation()}
+          inputProps={{ 'aria-label': t('language') }}
+          sx={{ '& .MuiSelect-select': { py: 0.25, pr: 3, fontSize: 14 } }}
+        >
+          <MenuItem value="en">{t('english')}</MenuItem>
+          <MenuItem value="es">{t('spanish')}</MenuItem>
+        </Select>
       </Row>
 
       <Divider />
@@ -146,7 +204,7 @@ function AccountActions({
         <ListItemIcon>
           <SettingsOutlinedIcon fontSize="small" />
         </ListItemIcon>
-        <ListItemText primary="Settings" />
+        <ListItemText primary={t('settings')} />
       </Row>
 
       {/* Ends the real Supabase session, then returns to /login (ADR-096). */}
@@ -161,7 +219,7 @@ function AccountActions({
         <ListItemIcon sx={{ color: 'inherit' }}>
           <LogoutOutlinedIcon fontSize="small" />
         </ListItemIcon>
-        <ListItemText primary="Sign out" />
+        <ListItemText primary={t('signOut')} />
       </Row>
     </>
   )
@@ -185,7 +243,9 @@ function AccountActions({
  * {@link useColorMode} (state conveyed by icon + Switch, never color alone).
  */
 export function AccountMenu() {
+  const { t } = useTranslation('account')
   const { mode, toggle } = useColorMode()
+  const { language, setLanguage } = useLanguage()
   const { user, signOut } = useAuth()
   const theme = useTheme()
   const navigate = useNavigate()
@@ -229,10 +289,10 @@ export function AccountMenu() {
 
   return (
     <>
-      <Tooltip title="Account menu">
+      <Tooltip title={t('menuLabel')}>
         <IconButton
           onClick={handleOpen}
-          aria-label="Account menu"
+          aria-label={t('menuLabel')}
           aria-haspopup={isMobile ? 'dialog' : 'menu'}
           aria-controls={open ? surfaceId : undefined}
           aria-expanded={open ? 'true' : undefined}
@@ -298,6 +358,8 @@ export function AccountMenu() {
         <AccountActions
           isDark={isDark}
           onToggleTheme={toggle}
+          language={language}
+          onChangeLanguage={setLanguage}
           onOpenSettings={handleOpenSettings}
           onSignOut={handleSignOut}
           Row={MenuItem}
@@ -343,11 +405,11 @@ export function AccountMenu() {
               sx={{ fontWeight: 600, fontSize: 18, letterSpacing: '-0.01em' }}
               color="text.primary"
             >
-              Account
+              {t('title')}
             </Typography>
             <IconButton
               onClick={handleClose}
-              aria-label="Close account"
+              aria-label={t('closeLabel')}
               sx={{
                 '&:focus-visible': {
                   outline: '2px solid',
@@ -380,6 +442,8 @@ export function AccountMenu() {
             <AccountActions
               isDark={isDark}
               onToggleTheme={toggle}
+              language={language}
+              onChangeLanguage={setLanguage}
               onOpenSettings={handleOpenSettings}
               onSignOut={handleSignOut}
               Row={ListItemButton}

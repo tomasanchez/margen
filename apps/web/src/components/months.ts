@@ -10,6 +10,8 @@
  * rule.
  */
 
+import { localizedMonth } from '../i18n/locale'
+
 /** A specific calendar month. `month` is 0-based (0 = January) like `Date`. */
 export interface ViewingMonth {
   year: number
@@ -17,20 +19,14 @@ export interface ViewingMonth {
   month: number
 }
 
-const MONTH_NAMES = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-] as const
+/**
+ * A `Date` anchored at day 1 of the viewing month, used purely as input to
+ * `Intl.DateTimeFormat`. Day 1 avoids any timezone day-rollover affecting the
+ * month/year fields we format.
+ */
+function monthDate(value: ViewingMonth): Date {
+  return new Date(value.year, value.month, 1)
+}
 
 /** The current real calendar month, resolved at runtime (the default view). */
 export function currentViewingMonth(now: Date = new Date()): ViewingMonth {
@@ -51,14 +47,25 @@ export function addMonths(value: ViewingMonth, delta: number): ViewingMonth {
   return { year: Math.floor(total / 12), month: ((total % 12) + 12) % 12 }
 }
 
-/** The full-name month label, e.g. `{ year: 2026, month: 5 }` → "June 2026". */
+/**
+ * The full-name month + year label in the active UI language (ADR-102), e.g.
+ * `{ year: 2026, month: 5 }` → "June 2026" (en) / "Julio 2026" (es). The month
+ * name is formatted alone, capitalized (locale-aware), and composed with a plain
+ * space before the year — this drops the Spanish "de" and lowercase that
+ * `{ month: 'long', year: 'numeric' }` would emit ("julio de 2026") while
+ * leaving English byte-identical. The locale is read at call time so it tracks a
+ * language switch.
+ */
 export function formatViewingMonth(value: ViewingMonth): string {
-  return `${MONTH_NAMES[value.month]} ${value.year}`
+  return `${monthName(value)} ${value.year}`
 }
 
-/** The full month name only, e.g. "June" (matches the legacy `MonthName` union). */
+/**
+ * The full month name only in the active UI language (ADR-102), capitalized,
+ * e.g. "June" (en) / "Julio" (es). The locale is read at call time.
+ */
 export function monthName(value: ViewingMonth): string {
-  return MONTH_NAMES[value.month]
+  return localizedMonth(monthDate(value), { style: 'long' })
 }
 
 /**

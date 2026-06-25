@@ -11,6 +11,7 @@
  * projection is illustrative only — labeled as a pace estimate, not a guarantee.
  */
 
+import { Trans, useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { monoFontFamily } from '../../theme'
@@ -65,6 +66,7 @@ export interface ProjectionBreakdownProps {
 }
 
 export function ProjectionBreakdown({ projection }: ProjectionBreakdownProps) {
+  const { t } = useTranslation('monotributo')
   // Whether the pace projects a move OUT of the current category, and in which
   // direction the monthly fee would go. When the projection lands in the same
   // category (e.g. already in the lowest band A), there is no move and no fee
@@ -74,23 +76,30 @@ export function ProjectionBreakdown({ projection }: ProjectionBreakdownProps) {
   const feeRises = projection.projectedCuota > projection.currentCuota
 
   return (
-    <SectionCard title="The projection, broken down">
+    <SectionCard title={t('projection.title')}>
       <Box>
-        <Row label={`Invoiced ${projection.periodLabel}`}>
+        <Row label={t('projection.invoiced', { period: projection.periodLabel })}>
           {formatCurrency(projection.invoicedToDate, 'ARS')}
         </Row>
-        <Row label="Monthly average">
+        <Row label={t('projection.monthlyAverage')}>
           ≈ {formatCurrency(projection.monthlyAverage, 'ARS')}
         </Row>
-        <Row label="Projected 12-mo total" emphasis>
+        <Row label={t('projection.projectedTotal')} emphasis>
           ≈ {formatCurrency(projection.projectedAnnual, 'ARS')}
         </Row>
-        <Row label="Lands in" divider={false}>
+        <Row label={t('projection.landsIn')} divider={false}>
           <Box component="span" sx={{ fontFamily: 'inherit' }}>
-            Category {projection.landsInCategory}{' '}
-            <Box component="span" sx={{ color: 'var(--mg-text-3)' }}>
-              · cap {projection.landsInCeilingLabel}
-            </Box>
+            <Trans
+              t={t}
+              i18nKey="projection.landsInValue"
+              values={{
+                category: projection.landsInCategory,
+                ceiling: projection.landsInCeilingLabel,
+              }}
+              components={{
+                cap: <Box component="span" sx={{ color: 'var(--mg-text-3)' }} />,
+              }}
+            />
           </Box>
         </Row>
       </Box>
@@ -122,31 +131,50 @@ export function ProjectionBreakdown({ projection }: ProjectionBreakdownProps) {
           color="var(--mg-text-mid)"
         >
           {movesCategory ? (
-            <>
-              Moving to Category {projection.landsInCategory}{' '}
-              {feeRises ? 'raises' : 'lowers'} your monthly fee{' '}
-              <Box
-                component="span"
-                sx={{ fontFamily: monoFontFamily, color: 'var(--mg-text)' }}
-              >
-                {formatCurrency(projection.currentCuota, 'ARS')} →{' '}
-                {formatCurrency(projection.projectedCuota, 'ARS')}
-              </Box>
-              . Easing your pace keeps you in Category{' '}
-              {projection.currentCategory}.
-            </>
+            <Trans
+              t={t}
+              i18nKey="projection.noteMoves"
+              values={{
+                projected: projection.landsInCategory,
+                direction: feeRises
+                  ? t('projection.directionRaises')
+                  : t('projection.directionLowers'),
+                from: formatCurrency(projection.currentCuota, 'ARS'),
+                to: formatCurrency(projection.projectedCuota, 'ARS'),
+                current: projection.currentCategory,
+              }}
+              components={{
+                fee: (
+                  <Box
+                    component="span"
+                    sx={{
+                      fontFamily: monoFontFamily,
+                      color: 'var(--mg-text)',
+                    }}
+                  />
+                ),
+              }}
+            />
           ) : (
-            <>
-              At this pace you stay in Category {projection.currentCategory} —
-              monthly fee{' '}
-              <Box
-                component="span"
-                sx={{ fontFamily: monoFontFamily, color: 'var(--mg-text)' }}
-              >
-                {formatCurrency(projection.currentCuota, 'ARS')}
-              </Box>
-              .
-            </>
+            <Trans
+              t={t}
+              i18nKey="projection.noteSteady"
+              values={{
+                current: projection.currentCategory,
+                fee: formatCurrency(projection.currentCuota, 'ARS'),
+              }}
+              components={{
+                fee: (
+                  <Box
+                    component="span"
+                    sx={{
+                      fontFamily: monoFontFamily,
+                      color: 'var(--mg-text)',
+                    }}
+                  />
+                ),
+              }}
+            />
           )}
         </Typography>
       </Box>

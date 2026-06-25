@@ -1,0 +1,23 @@
+{
+  "title": "Insights",
+  "empty": "No insights yet — add a few transactions to see patterns here.",
+  "labels": {
+    "spending": "Spending",
+    "recurring": "Recurring",
+    "projection": "Projection",
+    "savings": "Savings",
+    "fx": "FX"
+  },
+  "spending": {
+    "up": "{{category}} is up {{delta}} vs last month"
+  },
+  "recurring_one": "{{count}} recurring expense · ≈ {{amount}}",
+  "recurring_other": "{{count}} recurring expenses · ≈ {{amount}}",
+  "savings": {
+    "projected": "At this pace, projected savings ≈ {{amount}}",
+    "actual": "Saved {{amount}} this month"
+  },
+  "fx": {
+    "latest": "Latest invoice · USD {{usd}} at {{source}} {{rate}} · {{date}}"
+  }
+}

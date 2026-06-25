@@ -1,0 +1,172 @@
+{
+  "page": {
+    "eyebrow": "Transactions",
+    "heading": "Every movement, in one place",
+    "loadError": "We couldn't load your transactions.",
+    "loadErrorDescription": "We couldn't reach the server to load your transactions. Check your connection and try again.",
+    "deleteError": "We couldn't delete that transaction. Please try again."
+  },
+  "summary": {
+    "shown": "shown",
+    "in": "in",
+    "out": "out",
+    "net": "net"
+  },
+  "columns": {
+    "date": "Date",
+    "descriptionAndCard": "Description & card",
+    "category": "Category",
+    "amount": "Amount"
+  },
+  "empty": {
+    "title": "No transactions match these filters.",
+    "tryPrefix": "Try ",
+    "clearLink": "clearing your filters",
+    "trySuffix": "."
+  },
+  "search": {
+    "placeholderShort": "Search…",
+    "placeholderLong": "Search description or category…",
+    "ariaLabel": "Search transactions"
+  },
+  "row": {
+    "recurring": "recurring",
+    "edit": "Edit {{name}}",
+    "delete": "Delete {{name}}",
+    "openInvoicePdf": "Open invoice PDF",
+    "openInvoicePdfFor": "Open invoice PDF for {{name}}"
+  },
+  "filters": {
+    "typeAriaLabel": "Transaction type",
+    "currencyAriaLabel": "Currency",
+    "categoryLabel": "Category",
+    "bankLabel": "Bank / card",
+    "amountLabel": "Amount",
+    "trigger": "Filters",
+    "triggerCount": "Filters · {{count}}",
+    "clear": "Clear filters",
+    "clearAll": "Clear all",
+    "sheetTitle": "Filters",
+    "currencySection": "Currency",
+    "categorySection": "Category",
+    "bankSection": "Bank / card",
+    "amountSection": "Amount",
+    "showResults_one": "Show {{count}} transaction",
+    "showResults_other": "Show {{count}} transactions"
+  },
+  "type": {
+    "all": "All",
+    "expense": "Expenses",
+    "income": "Income",
+    "invoice": "Invoices",
+    "allShort": "All",
+    "expenseShort": "Out",
+    "incomeShort": "In",
+    "invoiceShort": "Inv"
+  },
+  "currency": {
+    "all": "All",
+    "ars": "ARS",
+    "usd": "USD"
+  },
+  "amountRange": {
+    "any": "Any amount",
+    "lt10": "Under ARS 10.000",
+    "10_100": "ARS 10.000 – 100.000",
+    "100_1m": "ARS 100.000 – 1.000.000",
+    "gt1m": "Over ARS 1.000.000"
+  },
+  "month": {
+    "allTime": "All time",
+    "triggerAriaLabel": "Month: {{label}}",
+    "menuAriaLabel": "Select month"
+  },
+  "form": {
+    "title": {
+      "edit": "Edit transaction",
+      "newExpense": "New expense",
+      "newInvoice": "New invoice · income"
+    },
+    "close": "Close",
+    "duplicate": "Looks like you already imported this invoice. You can still save it if this is intentional.",
+    "type": {
+      "ariaLabel": "Transaction type",
+      "expense": "Expense",
+      "income": "Invoice / income"
+    },
+    "upload": {
+      "reading": "Reading your invoice…",
+      "cta": "Upload ARCA invoice PDF to autofill",
+      "attachedFallback": "Attached invoice",
+      "remove": "Remove attached invoice",
+      "parseError": "Couldn't read this as an ARCA invoice — enter the details manually."
+    },
+    "name": {
+      "label": "Name",
+      "placeholder": "e.g. Sushiclub (optional)"
+    },
+    "amount": {
+      "section": "Amount",
+      "ariaLabel": "Amount in {{currency}}",
+      "placeholder": "0"
+    },
+    "currency": {
+      "ariaLabel": "Currency",
+      "ars": "ARS",
+      "usd": "USD"
+    },
+    "fx": {
+      "convertedMissing": "≈ ARS — · enter a rate",
+      "converted": "≈ ARS {{amount}} at {{source}} {{rate}}",
+      "convertedNoAmount": "Enter an amount · {{source}} {{rate}}",
+      "refreshAriaLabel": "Refresh suggested FX rates",
+      "fetching": "Fetching…",
+      "refresh": "Refresh rate",
+      "sourceAriaLabel": "FX rate source",
+      "manual": "Manual",
+      "mepOption": "MEP {{rate}}",
+      "mepOptionEmpty": "MEP —",
+      "officialOption": "Official {{rate}}",
+      "officialOptionEmpty": "Official —",
+      "rateLabel": "FX rate (ARS per USD)",
+      "rateAriaLabel": "FX rate",
+      "ratePlaceholderFetching": "Fetching suggested rate…",
+      "ratePlaceholder": "0",
+      "helperFetchFailed": "Couldn't fetch a rate — enter it manually.",
+      "helperRequired": "A rate is required to convert this USD amount.",
+      "helperManual": "Manual rate — edit anytime.",
+      "helperOfficial": "Suggested official rate — confirm or edit.",
+      "helperMep": "Suggested MEP rate — confirm or edit."
+    },
+    "category": {
+      "section": "Category",
+      "loadCuota": "Load Monotributo cuota",
+      "loadCuotaAmount": "Load Monotributo cuota (ARS {{amount}})"
+    },
+    "bank": {
+      "section": "Bank / card"
+    },
+    "date": {
+      "label": "Date",
+      "ariaLabel": "Transaction date"
+    },
+    "monotributo": {
+      "label": "Counts toward Monotributo",
+      "description": "Adds to your annual invoiced total"
+    },
+    "more": "More details",
+    "notes": {
+      "label": "Notes",
+      "placeholder": "Optional"
+    },
+    "actions": {
+      "cancel": "Cancel",
+      "reset": "Reset",
+      "resetAriaLabel": "Reset all fields",
+      "saving": "Saving…",
+      "saveChanges": "Save changes",
+      "save": "Save"
+    },
+    "saveError": "We couldn't save your transaction. Please try again."
+  }
+}

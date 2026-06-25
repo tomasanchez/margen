@@ -6,6 +6,7 @@ import GlobalStyles from '@mui/material/GlobalStyles'
 import { StyledEngineProvider } from '@mui/material/styles'
 import './index.css'
 import { ColorModeProvider } from './theme/colorMode.tsx'
+import { LanguageProvider } from './i18n/LanguageProvider.tsx'
 import { DisplayCurrencyProvider } from './features/settings/displayCurrency.tsx'
 import { AuthProvider } from './auth/AuthProvider.tsx'
 import { AppRouter } from './router/AppRouter.tsx'
@@ -29,7 +30,13 @@ createRoot(document.getElementById('root')!).render(
               reads the live auth value and feeds it to the router context. */}
           <AuthProvider onAuthChange={() => void router.invalidate()}>
             <DisplayCurrencyProvider>
-              <AppRouter />
+              {/* LanguageProvider bootstraps the i18n singleton and exposes the
+                  active language + setter via useLanguage. Mounted inside the
+                  app providers so every consumer (including AppRouter) can
+                  translate and read the language (ADR-101). */}
+              <LanguageProvider>
+                <AppRouter />
+              </LanguageProvider>
             </DisplayCurrencyProvider>
           </AuthProvider>
         </ColorModeProvider>

@@ -10,6 +10,7 @@ import {
   createRouter,
 } from '@tanstack/react-router'
 import { ColorModeProvider } from './theme/colorMode'
+import { LanguageProvider } from './i18n/LanguageProvider'
 import { AppShell } from './components/AppShell'
 import { currentViewingMonth, formatViewingMonth } from './components/months'
 import { AddTransactionProvider } from './features/transactions/AddTransactionProvider'
@@ -61,7 +62,9 @@ function renderShell() {
   return render(
     <QueryClientProvider client={queryClient}>
       <ColorModeProvider>
-        <RouterProvider router={router} />
+        <LanguageProvider>
+          <RouterProvider router={router} />
+        </LanguageProvider>
       </ColorModeProvider>
     </QueryClientProvider>,
   )
@@ -159,7 +162,9 @@ test('the Add-transaction seam opens via the FAB / CTA trigger', async () => {
   render(
     <QueryClientProvider client={queryClient}>
       <ColorModeProvider>
-        <RouterProvider router={router} />
+        <LanguageProvider>
+          <RouterProvider router={router} />
+        </LanguageProvider>
       </ColorModeProvider>
     </QueryClientProvider>,
   )

@@ -13,6 +13,7 @@
  */
 
 import { useId, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Checkbox from '@mui/material/Checkbox'
@@ -43,7 +44,19 @@ import {
   type TypeFilter,
 } from './filtering'
 import { MonthPicker } from './MonthPicker'
+import { bankLabel, categoryLabel } from './presentation'
 import type { FilterControls } from './useTransactionFilters'
+
+/**
+ * Localized label for a currency segment. The "all" option translates ("All");
+ * the ARS/USD codes are currency identifiers and stay verbatim across locales.
+ */
+function currencyOptionLabel(
+  t: (key: string) => string,
+  id: CurrencyFilter,
+): string {
+  return id === 'all' ? t('currency.all') : id
+}
 
 /** Shared sx for the segmented ToggleButtonGroups (pill segments, gold active). */
 const segmentedGroupSx = {
@@ -118,6 +131,8 @@ interface MultiSelectMenuProps<T extends string> {
   selected: T[]
   countOf: (option: T) => number
   onToggle: (option: T) => void
+  /** Localized display label for an option (e.g. category/bank resolvers). */
+  formatOption: (option: T) => string
 }
 
 /** A bordered trigger that opens a checkbox menu with per-option counts. */
@@ -128,6 +143,7 @@ function MultiSelectMenu<T extends string>({
   selected,
   countOf,
   onToggle,
+  formatOption,
 }: MultiSelectMenuProps<T>) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const open = Boolean(anchorEl)
@@ -171,7 +187,7 @@ function MultiSelectMenu<T extends string>({
                 sx={{ p: 0, mr: 1, color: 'var(--mg-border-2)' }}
               />
               <ListItemText
-                primary={option}
+                primary={formatOption(option)}
                 slotProps={{ primary: { sx: { fontSize: 13 } } }}
               />
               <Typography
@@ -201,18 +217,19 @@ function AmountMenu({
   value: AmountRange
   onChange: (value: AmountRange) => void
 }) {
+  const { t } = useTranslation('transactions')
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const open = Boolean(anchorEl)
   const menuId = useId()
   const active = value !== 'any'
-  const label =
-    AMOUNT_RANGES.find((r) => r.id === value)?.label ?? 'Amount'
+  const rangeLabel = (id: AmountRange) => t(`amountRange.${id}`)
+  const label = active ? rangeLabel(value) : t('filters.amountLabel')
 
   return (
     <>
       <FilterMenuButton
         active={active}
-        label={active ? label : 'Amount'}
+        label={label}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
@@ -236,7 +253,7 @@ function AmountMenu({
             dense
             sx={{ borderRadius: 1.5, mx: 0.5, my: 0.25, fontSize: 13 }}
           >
-            {range.label}
+            {rangeLabel(range.id)}
           </MenuItem>
         ))}
       </Menu>
@@ -257,6 +274,7 @@ export function FilterBar({
   controls,
   allTransactions,
 }: FilterBarProps) {
+  const { t } = useTranslation('transactions')
   const showClear = hasActiveFilters(filters)
 
   return (
@@ -264,12 +282,12 @@ export function FilterBar({
       <TextField
         value={filters.q}
         onChange={(e) => controls.setSearch(e.target.value)}
-        placeholder="Search description or category…"
+        placeholder={t('search.placeholderLong')}
         fullWidth
         size="small"
         type="search"
         slotProps={{
-          htmlInput: { 'aria-label': 'Search transactions' },
+          htmlInput: { 'aria-label': t('search.ariaLabel') },
           input: {
             startAdornment: (
               <InputAdornment position="start">
@@ -299,12 +317,12 @@ export function FilterBar({
           onChange={(_, value: TypeFilter | null) => {
             if (value) controls.setType(value)
           }}
-          aria-label="Transaction type"
+          aria-label={t('filters.typeAriaLabel')}
           sx={segmentedGroupSx}
         >
           {TYPE_OPTIONS.map((option) => (
             <ToggleButton key={option.id} value={option.id}>
-              {option.label}
+              {t(`type.${option.id}`)}
             </ToggleButton>
           ))}
         </ToggleButtonGroup>
@@ -315,12 +333,12 @@ export function FilterBar({
           onChange={(_, value: CurrencyFilter | null) => {
             if (value) controls.setCurrency(value)
           }}
-          aria-label="Currency"
+          aria-label={t('filters.currencyAriaLabel')}
           sx={segmentedGroupSx}
         >
           {CURRENCY_OPTIONS.map((option) => (
             <ToggleButton key={option.id} value={option.id}>
-              {option.label}
+              {currencyOptionLabel(t, option.id)}
             </ToggleButton>
           ))}
         </ToggleButtonGroup>
@@ -332,21 +350,23 @@ export function FilterBar({
         />
 
         <MultiSelectMenu<Category>
-          buttonLabel="Category"
-          baseLabel="Category"
+          buttonLabel={t('filters.categoryLabel')}
+          baseLabel={t('filters.categoryLabel')}
           options={CATEGORIES}
           selected={filters.categories}
           countOf={(c) => countByCategory(allTransactions, c)}
           onToggle={controls.toggleCategory}
+          formatOption={categoryLabel}
         />
 
         <MultiSelectMenu<Bank>
-          buttonLabel="Bank / card"
-          baseLabel="Bank / card"
+          buttonLabel={t('filters.bankLabel')}
+          baseLabel={t('filters.bankLabel')}
           options={BANKS}
           selected={filters.banks}
           countOf={(b) => countByBank(allTransactions, b)}
           onToggle={controls.toggleBank}
+          formatOption={bankLabel}
         />
 
         <AmountMenu value={filters.amount} onChange={controls.setAmount} />
@@ -361,7 +381,7 @@ export function FilterBar({
               '&:hover': { bgcolor: 'action.hover' },
             }}
           >
-            Clear filters
+            {t('filters.clear')}
           </Button>
         ) : null}
       </Stack>

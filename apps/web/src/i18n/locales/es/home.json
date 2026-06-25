@@ -1,0 +1,78 @@
+{
+  "srHeading": "Tu centro de control",
+  "error": {
+    "description": "No pudimos conectar con el servidor para cargar tus datos. Verificá tu conexión e intentá de nuevo.",
+    "summaryTitle": "Datos de gastos no disponibles",
+    "summaryDescription": "No pudimos cargar la tendencia y el desglose de gastos de este mes. Intentá de nuevo."
+  },
+  "hero": {
+    "headline": {
+      "safe": "Estás dentro de tu margen este mes.",
+      "watch": "Estás dentro de tu margen este mes.",
+      "close": "Te estás acercando a tu límite de Monotributo.",
+      "over": "Superaste tu límite de Monotributo.",
+      "risk": "Los gastos están superando tus ingresos este mes."
+    },
+    "statusLabel": {
+      "safe": "En orden",
+      "watch": "Tenelo en cuenta",
+      "close": "Cerca de tu límite",
+      "over": "Superaste tu límite",
+      "risk": "Requiere atención"
+    },
+    "supporting": {
+      "ahead": "Los ingresos están cómodamente por encima de los gastos",
+      "behind": "Los gastos están por encima de los ingresos",
+      "limit": ", y vas {{percent}} de tu límite de Monotributo",
+      "watch": " Algo para vigilar — los gastos están {{percent}}% por encima del mes pasado, principalmente Comida.",
+      "sentence": "{{lead}}{{limit}}.{{watch}}"
+    },
+    "addExpense": "Gasto",
+    "addInvoice": "Factura"
+  },
+  "metrics": {
+    "income": "Ingresos",
+    "expenses": "Gastos",
+    "savings": "Ahorro est.",
+    "monotributoMargin": "Margen de Monotributo",
+    "delta": "{{delta}} vs. {{month}}",
+    "savingsEquivalent": "≈ {{amount}} al MEP",
+    "savingsContext": "ingresos − gastos",
+    "marginContext": "antes de la Categoría {{category}}",
+    "marginEmpty": "configurá tu categoría de Monotributo"
+  },
+  "trend": {
+    "title": "Tendencia de gastos",
+    "subtitle": "Gastos mensuales · últimos 6 meses",
+    "accessibleSummary": "Gastos mensuales, últimos seis meses. {{summary}}.",
+    "accessibleItem": "{{month}}: {{amount}}"
+  },
+  "breakdown": {
+    "title": "En qué se fue",
+    "subtitle": "Junio · porción del gasto",
+    "empty": "Todavía no hay gastos registrados para este mes.",
+    "rowLabel": "{{category}}, {{amount}} — ver transacciones",
+    "rowLabelUp": "{{category}}, {{amount}}, subió {{up}} — ver transacciones"
+  },
+  "monotributo": {
+    "title": "Monotributo",
+    "titleWithCategory": "Monotributo · Categoría {{category}}",
+    "usedOfLimit": "usado de {{limit}} de límite anual",
+    "percentUsed": "{{percent}} usado",
+    "margin": "{{amount}} de margen",
+    "projectedCategory": "Categoría proyectada",
+    "projectionNote": "La proyección asume que se mantiene tu ritmo de facturación actual.",
+    "drillIn_one": "Ver la {{count}} factura detrás de esto →",
+    "drillIn_other": "Ver las {{count}} facturas detrás de esto →",
+    "limitAriaLabel": "Límite de Monotributo usado: {{percent}}",
+    "emptyBody": "Configurá tu categoría de Monotributo para seguir qué tan cerca estás del próximo umbral de AFIP y cuánto margen te queda.",
+    "setUp": "Configurar categoría"
+  },
+  "recent": {
+    "title": "Actividad reciente",
+    "viewAll": "Ver todo →",
+    "empty": "Todavía no hay actividad. Agregá tu primera transacción para verla acá.",
+    "recurringBadge": "recurrente",
+    "subline": "{{category}} · {{bank}}"
+  }
+}

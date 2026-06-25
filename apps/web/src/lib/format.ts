@@ -1,12 +1,19 @@
 /**
- * Centralized money / number formatting for Margen (ADR-016).
+ * Centralized money / number formatting for Margen (ADR-016, ADR-102).
  *
  * The single source of truth for how amounts read across the app: es-AR
  * grouping (1.234,56), currency prefixes, sign handling, and deltas. Call sites
  * (and the <Amount> component) use these helpers instead of inlining
  * Intl.NumberFormat, so styling and sign rules never drift.
+ *
+ * ADR-102 clarification: ARS/USD numeric GROUPING is a domain constant
+ * ({@link MONEY_LOCALE} = `es-AR`) in BOTH languages — Argentine peso/USD
+ * figures read as `622.500` / `21,1M` regardless of UI language. Only the
+ * human-readable label WORDS (currency names, FX source, sign words) and the
+ * date helper localize off the active UI language.
  */
 
+import i18n from 'i18next'
 import type { Currency, FxRateType, TxType } from '../mock/types'
 
 /** Unicode minus (U+2212) — visually balanced with `+` and the digits. */
@@ -14,21 +21,26 @@ export const MINUS = '−'
 export const PLUS = '+'
 
 /**
- * es-AR integer formatter: 1234567 -> "1.234.567". Used for whole-peso amounts,
+ * Locale for ARS/USD numeric grouping — a DOMAIN constant, not the UI language
+ * (ADR-102). Argentine money figures use Argentine grouping in both English and
+ * Spanish, so this never tracks the active locale.
+ */
+const MONEY_LOCALE = 'es-AR'
+
+/**
+ * Integer money formatter: 1234567 -> "1.234.567". Used for whole-peso amounts,
  * which is how the concept renders ARS (no cents on the dashboard).
  */
-const arsInteger = new Intl.NumberFormat('es-AR', {
+const arsInteger = new Intl.NumberFormat(MONEY_LOCALE, {
   maximumFractionDigits: 0,
 })
 
-/** es-AR formatter allowing up to 2 decimals, for fractional values when needed. */
-const arsDecimal = new Intl.NumberFormat('es-AR', {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
-})
-
-/** USD formatter: up to 2 decimals, es-AR grouping for visual consistency. */
-const usdDecimal = new Intl.NumberFormat('es-AR', {
+/**
+ * Money formatter allowing up to 2 decimals (es-AR grouping). Shared by both ARS
+ * fractional amounts and USD — they were byte-identical formatters (same locale,
+ * 0–2 fraction digits), so there is a single source of truth here.
+ */
+const decimal = new Intl.NumberFormat(MONEY_LOCALE, {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 })
@@ -47,7 +59,7 @@ export function formatARS(n: number | null | undefined): string {
   const value = Math.abs(safe(n))
   return Number.isInteger(value)
     ? arsInteger.format(value)
-    : arsDecimal.format(value)
+    : decimal.format(value)
 }
 
 /**
@@ -55,7 +67,7 @@ export function formatARS(n: number | null | undefined): string {
  * Keeps up to 2 decimals (e.g. 2.99 -> "2,99", 500 -> "500").
  */
 export function formatUSD(n: number | null | undefined): string {
-  return usdDecimal.format(Math.abs(safe(n)))
+  return decimal.format(Math.abs(safe(n)))
 }
 
 /** Currency prefix used in amount strings, e.g. "ARS 1.234". */
@@ -92,17 +104,21 @@ export function formatSignedAmount(
 
 /**
  * Build the accessible label for an amount, spelling out sign + currency so
- * screen readers announce e.g. "plus 1.234 Argentine pesos" / "minus 38.400
- * Argentine pesos" (ADR-019). Avoids relying on the visual +/− glyphs alone.
+ * screen readers announce e.g. "plus 1.234 Argentine pesos" / "más 1.234 pesos
+ * argentinos" (ADR-019, ADR-102). The sign + currency WORDS localize off the
+ * active UI language; the numeric body keeps es-AR grouping (domain constant).
  */
 export function amountAccessibleLabel(
   n: number | null | undefined,
   type: TxType,
   currency: Currency = 'ARS',
 ): string {
-  const signWord = type === 'income' ? 'plus' : 'minus'
-  const currencyWord =
-    currency === 'USD' ? 'US dollars' : 'Argentine pesos'
+  const signWord = i18n.t(
+    type === 'income' ? 'common:sign.plus' : 'common:sign.minus',
+  )
+  const currencyWord = i18n.t(
+    currency === 'USD' ? 'common:currency.usd' : 'common:currency.ars',
+  )
   const body = currency === 'USD' ? formatUSD(n) : formatARS(n)
   return `${signWord} ${body} ${currencyWord}`
 }
@@ -136,17 +152,18 @@ export function formatPercent(
 }
 
 /**
- * Human label for an FX rate source (ADR-044/045). `MEP` reads as "MEP",
- * `official` reads as "official", and everything else (`manual`,
- * `configured_default`, or unknown) reads as "manual" — so a USD row always
- * declares which dollar it used.
+ * Human label for an FX rate source (ADR-044/045, ADR-102). `MEP` reads as
+ * "MEP", `official` reads as "official"/"oficial", and everything else
+ * (`manual`, `configured_default`, or unknown) reads as "manual" — so a USD row
+ * always declares which dollar it used. The word localizes off the active UI
+ * language.
  */
 export function fxSourceLabel(
   source: FxRateType | null | undefined,
 ): string {
-  if (source === 'MEP') return 'MEP'
-  if (source === 'official') return 'official'
-  return 'manual'
+  if (source === 'MEP') return i18n.t('common:fxSource.mep')
+  if (source === 'official') return i18n.t('common:fxSource.official')
+  return i18n.t('common:fxSource.manual')
 }
 
 /**
@@ -167,7 +184,7 @@ export function formatFxSubline(
 }
 
 /** es-AR 1-decimal formatter for the compact millions label (10277988 -> "10,3"). */
-const millionsCompact = new Intl.NumberFormat('es-AR', {
+const millionsCompact = new Intl.NumberFormat(MONEY_LOCALE, {
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
 })
@@ -183,8 +200,12 @@ export function formatMillionsCompact(n: number | null | undefined): string {
 
 /**
  * Display helper for the seeded short date. The mock stores dates as already
- * human-friendly strings (e.g. "Jun 12"); this pass-through trims and provides a
- * stable em-dash placeholder for empty values, keeping call sites uniform.
+ * human-friendly / literal strings (e.g. "Jun 12", or an ISO `occurredOn` shown
+ * verbatim); this pass-through trims and provides a stable em-dash placeholder
+ * for empty values, keeping call sites uniform. Date-name localization for the
+ * month navigator lives in `months.ts` (ADR-102); this helper intentionally
+ * stays a literal pass-through so the ledger's compact dates render exactly as
+ * stored.
  */
 export function formatDispDate(dispDate: string | null | undefined): string {
   const trimmed = dispDate?.trim()

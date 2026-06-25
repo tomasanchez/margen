@@ -8,6 +8,7 @@
  * label describing the category, its role, and its ceiling.
  */
 
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { monoFontFamily } from '../../theme'
@@ -28,10 +29,11 @@ export function CategoryLadder({
   current,
   projected,
 }: CategoryLadderProps) {
+  const { t } = useTranslation('monotributo')
   return (
     <SectionCard
-      title="Where you land on the scale"
-      subtitle="Annual gross-income ceiling per category"
+      title={t('ladder.title')}
+      subtitle={t('ladder.subtitle')}
     >
       <Box
         component="ol"
@@ -46,19 +48,27 @@ export function CategoryLadder({
         {scale.map((row) => {
           const isCurrent = row.letter === current
           const isProjected = row.letter === projected
-          const tag = isCurrent ? 'Now' : isProjected ? 'Proj.' : ''
+          const tag = isCurrent
+            ? t('ladder.tagNow')
+            : isProjected
+              ? t('ladder.tagProjected')
+              : ''
           const ceilingLabel = formatMillionsCompact(row.annualCeiling)
           const role = isCurrent
-            ? 'current category'
+            ? t('ladder.roleCurrent')
             : isProjected
-              ? 'projected category'
-              : 'category'
+              ? t('ladder.roleProjected')
+              : t('ladder.roleCategory')
 
           return (
             <Box
               component="li"
               key={row.letter}
-              aria-label={`Category ${row.letter}, ${role}, ceiling ${ceilingLabel}`}
+              aria-label={t('ladder.cellAriaLabel', {
+                letter: row.letter,
+                role,
+                ceiling: ceilingLabel,
+              })}
               sx={{
                 flex: 1,
                 display: 'flex',

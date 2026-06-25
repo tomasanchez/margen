@@ -180,12 +180,37 @@ describe('sparse and empty months', () => {
       latestUsdInvoice: null,
     })
 
-    // savings.amount of 0 still composes a "Saved ARS 0 this month" row, so the
-    // card is NOT empty — assert the calm zero-savings sentence renders instead
-    // of crashing or showing the empty state. (The empty-state copy only shows
-    // when composeInsightRows yields zero rows, which the always-present savings
-    // fact prevents.)
-    expect(screen.getByText('Saved ARS 0 this month')).toBeInTheDocument()
+    // A zero-savings month with no other facts carries no signal, so the savings
+    // row is omitted and the card falls through to the calm empty state (ADR-037)
+    // rather than a noisy "Saved ARS 0" line. (Previously the always-pushed
+    // savings row made the empty state unreachable; the empty copy was dead.)
+    expect(
+      screen.getByText(
+        'No insights yet — add a few transactions to see patterns here.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Saved ARS 0 this month')).not.toBeInTheDocument()
+  })
+
+  test('still shows a zero-savings row when another fact gives the month signal', () => {
+    // Zero savings is omitted, but a present mover keeps the card populated — the
+    // empty state is only for a truly signal-free month, not any zero-savings one.
+    renderInsights({
+      month: '2026-02',
+      topCategoryMover: { category: 'Food', deltaPct: 10 },
+      recurring: null,
+      savings: { amount: 0, isProjected: false, elapsedFraction: 0 },
+      latestUsdInvoice: null,
+    })
+
+    expect(screen.getByText('Food is up +10% vs last month')).toBeInTheDocument()
+    // Savings still omitted (zero), but the card is not empty.
+    expect(screen.queryByText('Saved ARS 0 this month')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(
+        'No insights yet — add a few transactions to see patterns here.',
+      ),
+    ).not.toBeInTheDocument()
   })
 
   test('renders the loading skeleton (no sentences) when insights is undefined', () => {

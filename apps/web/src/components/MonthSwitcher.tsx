@@ -1,4 +1,5 @@
 import { useId, useState, type MouseEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Divider from '@mui/material/Divider'
 import IconButton from '@mui/material/IconButton'
@@ -128,6 +129,7 @@ function Stepper({
   onSelect: (month: ViewingMonth) => void
   onNavigateOlder?: () => void
 }) {
+  const { t } = useTranslation('shell')
   const label = formatViewingMonth(current)
   const atUpper = isAtUpperBound(current)
   const atLower = isAtLowerBound(current)
@@ -145,7 +147,7 @@ function Stepper({
       <IconButton
         size="small"
         aria-label={
-          atLower ? 'Older months — search in Transactions' : 'Previous month'
+          atLower ? t('month.olderRedirect') : t('month.previous')
         }
         onClick={handlePrev}
         sx={{ border: 1, borderColor: 'divider', borderRadius: 1.75 }}
@@ -157,7 +159,7 @@ function Stepper({
         component="span"
         role="status"
         aria-live="polite"
-        aria-label={`Selected month: ${label}`}
+        aria-label={t('month.selected', { label })}
         sx={{
           fontFamily: monoFontFamily,
           color: 'text.primary',
@@ -171,7 +173,7 @@ function Stepper({
 
       <IconButton
         size="small"
-        aria-label="Next month"
+        aria-label={t('month.next')}
         onClick={() => onSelect(addMonths(current, 1))}
         disabled={atUpper}
         sx={{ border: 1, borderColor: 'divider', borderRadius: 1.75 }}
@@ -201,6 +203,7 @@ function CompactPicker({
   onSelect: (month: ViewingMonth) => void
   onNavigateOlder?: () => void
 }) {
+  const { t } = useTranslation('shell')
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const open = Boolean(anchorEl)
   const menuId = useId()
@@ -223,10 +226,10 @@ function CompactPicker({
 
   return (
     <>
-      <Tooltip title="Select month">
+      <Tooltip title={t('month.select')}>
         <IconButton
           onClick={handleOpen}
-          aria-label={`Select month, ${currentLabel}`}
+          aria-label={t('month.selectWithLabel', { label: currentLabel })}
           aria-haspopup="menu"
           aria-controls={open ? menuId : undefined}
           aria-expanded={open ? 'true' : undefined}
@@ -272,7 +275,7 @@ function CompactPicker({
               boxShadow: '0 12px 32px -12px rgba(0,0,0,0.45)',
             },
           },
-          list: { sx: { py: 0.5 }, 'aria-label': 'Select month' },
+          list: { sx: { py: 0.5 }, 'aria-label': t('month.menuLabel') },
         }}
       >
         {months.map((month) => {
@@ -316,8 +319,8 @@ function CompactPicker({
                 <HistoryRoundedIcon fontSize="small" />
               </ListItemIcon>
               <ListItemText
-                primary="Older months"
-                secondary="Search in Transactions"
+                primary={t('month.olderTitle')}
+                secondary={t('month.olderSubtitle')}
                 slotProps={{
                   primary: { sx: { fontSize: 14 } },
                   secondary: { sx: { fontSize: 11.5 } },

@@ -9,19 +9,25 @@
  * shows the current month's expenses.
  */
 
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import { visuallyHidden } from '@mui/utils'
 import { monoFontFamily } from '../../theme'
 import { useDisplayCurrency } from '../settings/displayCurrencyContext'
+import { formatMillionsCompact } from '../../lib/format'
+import { localizeShortMonthToken } from '../../i18n/locale'
 import type { TrendPoint } from '../../mock/types'
 import { SectionCard } from '../../components/SectionCard'
 
 /**
- * Compact label for the header total. ARS millions read as "ARS 2,85M"; small
- * ARS values and any USD-converted value fall through to {@link formatMoney},
- * which renders the user's preferred display currency (ADR-056).
+ * Compact label for the header total. ARS millions read as "ARS 2,8M" via the
+ * shared {@link formatMillionsCompact} (es-AR grouping, 1-decimal, single source
+ * of truth); small ARS values and any USD-converted value fall through to
+ * {@link formatMoney}, which renders the user's preferred display currency
+ * (ADR-056). The "ARS" prefix is the currency code (a domain constant, ADR-102),
+ * not a localized word.
  */
 function compactTotal(
   value: number,
@@ -29,8 +35,7 @@ function compactTotal(
   formatMoney: (ars: number | null | undefined) => string,
 ): string {
   if (!isUsd && value >= 1_000_000) {
-    const millions = (value / 1_000_000).toFixed(2).replace('.', ',')
-    return `ARS ${millions}M`
+    return `ARS ${formatMillionsCompact(value)}`
   }
   return formatMoney(value)
 }
@@ -50,14 +55,15 @@ const BAR_AREA_HEIGHT = 150
 const BODY_MIN_HEIGHT = BAR_AREA_HEIGHT + 28
 
 export function SpendingTrend({ trend, loading = false }: SpendingTrendProps) {
+  const { t } = useTranslation('home')
   const { formatMoney, effectiveCurrency } = useDisplayCurrency()
   const isUsd = effectiveCurrency === 'USD'
 
   if (loading || !trend) {
     return (
       <SectionCard
-        title="Spending trend"
-        subtitle="Monthly expenses · last 6 months"
+        title={t('trend.title')}
+        subtitle={t('trend.subtitle')}
         minHeight={BODY_MIN_HEIGHT}
       >
         <Skeleton variant="rounded" height={BAR_AREA_HEIGHT} />
@@ -67,14 +73,23 @@ export function SpendingTrend({ trend, loading = false }: SpendingTrendProps) {
 
   const peak = trend.reduce((max, p) => Math.max(max, p.value), 0)
   const current = trend.find((p) => p.current)
+  // Each item keeps the backend month token (ADR-103) and the display-aware
+  // formatted amount; the items join into the localized accessible summary.
   const accessibleSummary = trend
-    .map((p) => `${p.month}: ${formatMoney(p.value)}`)
+    .map((p) =>
+      t('trend.accessibleItem', {
+        // The backend bakes an English short-month token (ADR-103); re-localize
+        // it for display (ADR-102). English stays byte-identical ("Jun" → "Jun").
+        month: localizeShortMonthToken(p.month),
+        amount: formatMoney(p.value),
+      }),
+    )
     .join(', ')
 
   return (
     <SectionCard
-      title="Spending trend"
-      subtitle="Monthly expenses · last 6 months"
+      title={t('trend.title')}
+      subtitle={t('trend.subtitle')}
       minHeight={BODY_MIN_HEIGHT}
       action={
         current ? (
@@ -93,7 +108,7 @@ export function SpendingTrend({ trend, loading = false }: SpendingTrendProps) {
     >
       {/* Accessible equivalent of the visual bars. */}
       <Box component="p" sx={visuallyHidden}>
-        Monthly expenses, last six months. {accessibleSummary}.
+        {t('trend.accessibleSummary', { summary: accessibleSummary })}
       </Box>
 
       <Box
@@ -151,7 +166,7 @@ export function SpendingTrend({ trend, loading = false }: SpendingTrendProps) {
                   color: point.current ? 'primary.main' : 'text.disabled',
                 }}
               >
-                {point.month}
+                {localizeShortMonthToken(point.month)}
               </Typography>
             </Box>
           )

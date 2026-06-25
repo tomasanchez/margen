@@ -1,4 +1,5 @@
 import { useCallback, useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Link,
   Outlet,
@@ -45,10 +46,10 @@ const MOBILE_SCROLL_CLEARANCE =
 interface NavRoute {
   kind: 'route'
   to: '/' | '/transactions' | '/monotributo'
-  /** Sidebar label. */
-  label: string
-  /** Shorter label for the mobile bottom nav (concept uses "Activity"). */
-  shortLabel: string
+  /** i18n key (shell ns) for the sidebar label. */
+  labelKey: string
+  /** i18n key (shell ns) for the shorter mobile bottom-nav label. */
+  shortLabelKey: string
   /** Outlined icon shown when the route is inactive. */
   icon: ReactNode
   /** Filled icon variant shown when the route is active (non-color cue, ADR-019). */
@@ -61,24 +62,24 @@ const NAV_ITEMS: NavItem[] = [
   {
     kind: 'route',
     to: '/',
-    label: 'Home',
-    shortLabel: 'Home',
+    labelKey: 'nav.home',
+    shortLabelKey: 'nav.homeShort',
     icon: <HomeOutlinedIcon fontSize="small" />,
     activeIcon: <HomeIcon fontSize="small" />,
   },
   {
     kind: 'route',
     to: '/transactions',
-    label: 'Transactions',
-    shortLabel: 'Activity',
+    labelKey: 'nav.transactions',
+    shortLabelKey: 'nav.transactionsShort',
     icon: <ReceiptLongOutlinedIcon fontSize="small" />,
     activeIcon: <ReceiptLongIcon fontSize="small" />,
   },
   {
     kind: 'route',
     to: '/monotributo',
-    label: 'Monotributo',
-    shortLabel: 'Mono',
+    labelKey: 'nav.monotributo',
+    shortLabelKey: 'nav.monotributoShort',
     icon: <AccountBalanceOutlinedIcon fontSize="small" />,
     activeIcon: <AccountBalanceIcon fontSize="small" />,
   },
@@ -130,12 +131,13 @@ function BrandMark({ wordmark = true }: { wordmark?: boolean }) {
 }
 
 function Sidebar({ onAddTransaction }: { onAddTransaction: () => void }) {
+  const { t } = useTranslation('shell')
   const pathname = useRouterState({ select: (s) => s.location.pathname })
 
   return (
     <Box
       component="nav"
-      aria-label="Primary"
+      aria-label={t('nav.primary')}
       sx={{
         width: SIDEBAR_WIDTH,
         flexShrink: 0,
@@ -158,7 +160,7 @@ function Sidebar({ onAddTransaction }: { onAddTransaction: () => void }) {
         fullWidth
         sx={{ mb: 1, py: 1.25, fontWeight: 600 }}
       >
-        Add transaction
+        {t('actions.addTransaction')}
       </Button>
 
       {/* Import statement: a sibling to the add CTA that opens the multi-row
@@ -180,7 +182,7 @@ function Sidebar({ onAddTransaction }: { onAddTransaction: () => void }) {
           borderColor: 'var(--mg-border-2)',
         }}
       >
-        Import statement
+        {t('actions.importStatement')}
       </Button>
 
       {NAV_ITEMS.map((item) => {
@@ -221,7 +223,7 @@ function Sidebar({ onAddTransaction }: { onAddTransaction: () => void }) {
             }}
           >
             {active ? item.activeIcon : item.icon}
-            {item.label}
+            {t(item.labelKey)}
           </Box>
         )
       })}
@@ -253,12 +255,13 @@ const PILL_ITEM_SX = {
  * with no background.
  */
 function FloatingNavPill() {
+  const { t } = useTranslation('shell')
   const pathname = useRouterState({ select: (s) => s.location.pathname })
 
   return (
     <Box
       component="nav"
-      aria-label="Primary"
+      aria-label={t('nav.primary')}
       sx={{
         display: { xs: 'flex', md: 'none' },
         position: 'fixed',
@@ -286,7 +289,7 @@ function FloatingNavPill() {
             key={item.to}
             component={Link}
             to={item.to}
-            aria-label={item.label}
+            aria-label={t(item.labelKey)}
             aria-current={active ? 'page' : undefined}
             sx={{
               ...PILL_ITEM_SX,
@@ -318,12 +321,13 @@ function FloatingNavPill() {
  * `openAdd()` seam as the desktop sidebar CTA and is fully keyboard-operable.
  */
 function AddFab({ onAddTransaction }: { onAddTransaction: () => void }) {
+  const { t } = useTranslation('shell')
   return (
-    <Tooltip title="Add transaction">
+    <Tooltip title={t('actions.addTransaction')}>
       <Fab
         color="primary"
         onClick={onAddTransaction}
-        aria-label="Add transaction"
+        aria-label={t('actions.addTransaction')}
         sx={{
           display: { xs: 'inline-flex', md: 'none' },
           position: 'fixed',
@@ -382,6 +386,7 @@ function AddFab({ onAddTransaction }: { onAddTransaction: () => void }) {
  * seam (addContext); the actual form is a later task.
  */
 function AppShellBody() {
+  const { t } = useTranslation('shell')
   const { openAdd } = useAddTransaction()
   const onAddTransaction = () => openAdd()
 
@@ -537,7 +542,7 @@ function AppShellBody() {
         onClose={() => setOlderHintOpen(false)}
         autoHideDuration={5000}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-        message="Older than 6 months — search in Transactions"
+        message={t('olderHint')}
       />
     </Box>
   )

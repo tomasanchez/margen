@@ -8,6 +8,7 @@
  * Transactions screen. Amounts use the shared <Amount> for sign-aware mono money.
  */
 
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { Link } from '@tanstack/react-router'
@@ -33,12 +34,13 @@ export function InvoiceDrilldown({
   annualLimit,
   total,
 }: InvoiceDrilldownProps) {
+  const { t } = useTranslation('monotributo')
   const count = invoices.length
 
   return (
     <SectionCard
-      title={`The ${count} invoices behind this`}
-      subtitle="Income invoiced in 2026, oldest first — watch the annual total build."
+      title={t('invoices.title', { n: count })}
+      subtitle={t('invoices.subtitle')}
       action={
         <Box
           component={Link}
@@ -57,7 +59,7 @@ export function InvoiceDrilldown({
             },
           }}
         >
-          Open in Transactions →
+          {t('invoices.openInTransactions')}
         </Box>
       }
     >
@@ -78,10 +80,10 @@ export function InvoiceDrilldown({
           borderBottom: '1px solid var(--mg-border)',
         }}
       >
-        <Box>Date</Box>
-        <Box>Client</Box>
-        <Box sx={{ textAlign: 'right' }}>Amount</Box>
-        <Box sx={{ textAlign: 'right' }}>Cumulative</Box>
+        <Box>{t('invoices.header.date')}</Box>
+        <Box>{t('invoices.header.client')}</Box>
+        <Box sx={{ textAlign: 'right' }}>{t('invoices.header.amount')}</Box>
+        <Box sx={{ textAlign: 'right' }}>{t('invoices.header.cumulative')}</Box>
       </Box>
 
       <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 0 }}>
@@ -226,7 +228,9 @@ export function InvoiceDrilldown({
                     sx={{ fontFamily: monoFontFamily, fontSize: 10.5, mt: 0.25 }}
                     color="text.disabled"
                   >
-                    cum {formatCurrency(iv.cumulative, 'ARS')}
+                    {t('invoices.cumulativeShort', {
+                      amount: formatCurrency(iv.cumulative, 'ARS'),
+                    })}
                   </Typography>
                 </Box>
                 <Amount value={iv.amountNum} type="income" size="sm" />
@@ -247,11 +251,11 @@ export function InvoiceDrilldown({
         }}
       >
         <Typography sx={{ fontSize: 12.5 }} color="text.secondary">
-          {count} invoices · 2026
+          {t('invoices.footerCount', { n: count })}
         </Typography>
         <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
           <Typography sx={{ fontSize: 12.5 }} color="text.disabled">
-            Total counted
+            {t('invoices.totalCounted')}
           </Typography>
           <Typography
             sx={{

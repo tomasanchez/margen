@@ -12,11 +12,16 @@
  * font) so it stays visually identical to the badge it replaces.
  */
 
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Tooltip from '@mui/material/Tooltip'
 import { monoFontFamily } from '../theme'
 
-/** The concise tooltip + accessible-name copy. Reused for assertions in tests. */
+/**
+ * English fallbacks for the concise tooltip + accessible-name copy. The live
+ * component resolves these through the `common` namespace (`fx.*`); these
+ * constants remain as the English source-of-truth values.
+ */
 export const FX_BADGE_LABEL = 'Foreign exchange'
 export const FX_BADGE_TOOLTIP =
   'Foreign exchange — the original USD amount, converted to ARS at the shown rate.'
@@ -26,12 +31,13 @@ export const FX_BADGE_TOOLTIP =
  * former `<RowBadge tone="gold">FX</RowBadge>` usages.
  */
 export function FxBadge() {
+  const { t } = useTranslation('common')
   return (
-    <Tooltip title={FX_BADGE_TOOLTIP}>
+    <Tooltip title={t('fx.tooltip')}>
       <Box
         component="span"
         tabIndex={0}
-        aria-label={FX_BADGE_LABEL}
+        aria-label={t('fx.label')}
         sx={{
           flex: 'none',
           fontSize: 10,
@@ -52,7 +58,7 @@ export function FxBadge() {
           },
         }}
       >
-        FX
+        {t('fx.badge')}
       </Box>
     </Tooltip>
   )

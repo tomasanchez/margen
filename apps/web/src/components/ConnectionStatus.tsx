@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import Chip from '@mui/material/Chip'
 import CircularProgress from '@mui/material/CircularProgress'
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
@@ -9,31 +10,32 @@ import {
 } from './connectionState'
 
 interface StatePresentation {
-  label: string
+  /** i18n key (common ns) for the visible label. */
+  labelKey: string
   color: 'default' | 'success' | 'error'
   icon: React.ReactElement
-  /** Description appended to the accessible label for screen readers. */
-  srDescription: string
+  /** i18n key (common ns) for the screen-reader description. */
+  srKey: string
 }
 
 const PRESENTATION: Record<ConnectionState, StatePresentation> = {
   connecting: {
-    label: 'Connecting…',
+    labelKey: 'connection.connecting',
     color: 'default',
     icon: <CircularProgress size={14} thickness={5} color="inherit" />,
-    srDescription: 'Checking backend connection',
+    srKey: 'connection.srConnecting',
   },
   connected: {
-    label: 'Backend connected',
+    labelKey: 'connection.connected',
     color: 'success',
     icon: <CheckCircleOutlinedIcon fontSize="small" />,
-    srDescription: 'Backend connected',
+    srKey: 'connection.srConnected',
   },
   error: {
-    label: 'Backend unreachable',
+    labelKey: 'connection.unreachable',
     color: 'error',
     icon: <ErrorOutlinedIcon fontSize="small" />,
-    srDescription: 'Backend unreachable',
+    srKey: 'connection.srUnreachable',
   },
 }
 
@@ -46,20 +48,21 @@ const PRESENTATION: Record<ConnectionState, StatePresentation> = {
  * so assistive tech announces changes.
  */
 export function ConnectionStatus() {
+  const { t } = useTranslation('common')
   const query = useReadiness()
   const state = deriveConnectionState(query)
-  const { label, color, icon, srDescription } = PRESENTATION[state]
+  const { labelKey, color, icon, srKey } = PRESENTATION[state]
 
   return (
     <Chip
       icon={icon}
-      label={label}
+      label={t(labelKey)}
       color={color}
       variant="outlined"
       size="small"
       role="status"
       aria-live="polite"
-      aria-label={srDescription}
+      aria-label={t(srKey)}
       sx={{ fontWeight: 600 }}
     />
   )

@@ -1,0 +1,27 @@
+{
+  "nav": {
+    "primary": "Principal",
+    "home": "Inicio",
+    "transactions": "Movimientos",
+    "monotributo": "Monotributo",
+    "homeShort": "Inicio",
+    "transactionsShort": "Actividad",
+    "monotributoShort": "Mono"
+  },
+  "actions": {
+    "addTransaction": "Nuevo Movimiento",
+    "importStatement": "Importar resumen"
+  },
+  "olderHint": "Más de 6 meses — buscá en Movimientos",
+  "month": {
+    "previous": "Mes anterior",
+    "next": "Mes siguiente",
+    "olderRedirect": "Meses anteriores — buscá en Movimientos",
+    "selected": "Mes seleccionado: {{label}}",
+    "select": "Seleccionar mes",
+    "selectWithLabel": "Seleccionar mes, {{label}}",
+    "menuLabel": "Seleccionar mes",
+    "olderTitle": "Meses anteriores",
+    "olderSubtitle": "Buscá en Movimientos"
+  }
+}

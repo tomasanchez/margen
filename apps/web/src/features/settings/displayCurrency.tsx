@@ -26,6 +26,7 @@
  */
 
 import { useMemo, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import {
   fetchSuggestedMepRate,
@@ -60,6 +61,7 @@ export function DisplayCurrencyProvider({
 }: {
   children: ReactNode
 }) {
+  const { t } = useTranslation('settings')
   const settingsQuery = useSettings()
   const preferredCurrency: DisplayCurrency =
     settingsQuery.data?.preferredDisplayCurrency ?? 'ARS'
@@ -88,7 +90,7 @@ export function DisplayCurrencyProvider({
     // rate — never while it's still loading (that's just a transient ARS view).
     const fallbackNote =
       wantsUsd && !canConvert && !rateLoading
-        ? "Showing ARS — couldn't fetch a USD rate."
+        ? t('displayCurrency.fallback')
         : null
 
     const formatMoney = (ars: number | null | undefined): string => {
@@ -111,6 +113,7 @@ export function DisplayCurrencyProvider({
     wantsUsd,
     rateQuery.data,
     rateQuery.isPending,
+    t,
   ])
 
   return (

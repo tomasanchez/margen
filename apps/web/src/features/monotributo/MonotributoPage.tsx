@@ -21,6 +21,7 @@
  */
 
 import { useMemo, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
@@ -44,18 +45,8 @@ import { InvoiceDrilldown } from './InvoiceDrilldown'
 import { ScaleTable } from './ScaleTable'
 import { MonotributoControls } from './MonotributoControls'
 import { ComparisonRow } from './ComparisonRow'
-import type { StatusLevel } from '../../mock/types'
-
-/** Maps a status band to its short label word for the header pill (ADR-046). */
-const STATUS_WORD: Record<StatusLevel, string> = {
-  safe: 'Safe',
-  watch: 'Watch',
-  close: 'Close',
-  over: 'Over',
-  risk: 'Risk',
-}
-
 export function MonotributoPage() {
+  const { t } = useTranslation('monotributo')
   const snapshotQuery = useMonotributoSnapshot()
   const updateCategory = useUpdateMonotributoCategory()
 
@@ -90,8 +81,8 @@ export function MonotributoPage() {
     updateCategory.isError && updateCategory.error
       ? updateCategory.error instanceof SettingsApiError &&
         updateCategory.error.status === 422
-        ? "That category isn't recognized. Pick one from the list."
-        : "We couldn't update your category. Try again."
+        ? t('categoryError.unknown')
+        : t('categoryError.generic')
       : null
 
   function handleCategoryChange(letter: string) {
@@ -107,11 +98,11 @@ export function MonotributoPage() {
           sx={{ fontSize: { xs: '1.25rem', md: '1.375rem' }, fontWeight: 600, mb: 2.5 }}
           color="text.primary"
         >
-          Monotributo
+          {t('title')}
         </Typography>
         <ErrorState
-          title="Monotributo data unavailable"
-          description="We couldn't load your Monotributo standing. Check your connection and try again."
+          title={t('error.title')}
+          description={t('error.description')}
           onRetry={() => void snapshotQuery.refetch()}
         />
       </Box>
@@ -144,14 +135,15 @@ export function MonotributoPage() {
               sx={{ fontSize: { xs: '1.25rem', md: '1.375rem' }, fontWeight: 600 }}
               color="text.primary"
             >
-              Monotributo
+              {t('title')}
             </Typography>
             {monotributo ? (
               <StatusPill
                 status={monotributo.status}
-                label={`${STATUS_WORD[monotributo.status]} · ${formatPercent(
-                  monotributo.usedRatio,
-                )} used`}
+                label={t('header.pill', {
+                  status: t(`common:status.${monotributo.status}`),
+                  percent: formatPercent(monotributo.usedRatio),
+                })}
               />
             ) : null}
           </Box>
@@ -161,17 +153,31 @@ export function MonotributoPage() {
               sx={{ fontSize: 13.5, mt: 0.75 }}
               color="text.secondary"
             >
-              Category{' '}
-              <Box component="span" sx={{ color: 'var(--mg-text-mid)', fontWeight: 500 }}>
-                {monotributo.category}
-              </Box>{' '}
-              · services · monthly fee{' '}
-              <Box
-                component="span"
-                sx={{ fontFamily: monoFontFamily, color: 'var(--mg-text-mid)' }}
-              >
-                {formatCurrency(projection.currentCuota, 'ARS')}
-              </Box>
+              <Trans
+                t={t}
+                i18nKey="header.subtitle"
+                values={{
+                  category: monotributo.category,
+                  fee: formatCurrency(projection.currentCuota, 'ARS'),
+                }}
+                components={{
+                  category: (
+                    <Box
+                      component="span"
+                      sx={{ color: 'var(--mg-text-mid)', fontWeight: 500 }}
+                    />
+                  ),
+                  fee: (
+                    <Box
+                      component="span"
+                      sx={{
+                        fontFamily: monoFontFamily,
+                        color: 'var(--mg-text-mid)',
+                      }}
+                    />
+                  ),
+                }}
+              />
             </Typography>
           ) : null}
           <Box sx={{ mt: 1 }}>
@@ -238,6 +244,7 @@ export function MonotributoPage() {
 
 /** Loading scaffold mirroring the section rhythm so the page doesn't jump. */
 function PageSkeleton() {
+  const { t } = useTranslation('monotributo')
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: { xs: 1.75, md: 2.25 } }}>
       <SectionCard highlight padding={3.25}>
@@ -245,7 +252,7 @@ function PageSkeleton() {
         <Skeleton variant="rounded" height={16} sx={{ my: 2, borderRadius: '9px' }} />
         <Skeleton variant="text" width="60%" />
       </SectionCard>
-      <SectionCard title="Where you land on the scale">
+      <SectionCard title={t('ladder.title')}>
         <Skeleton variant="rounded" height={64} sx={{ borderRadius: '10px' }} />
       </SectionCard>
       <Box
@@ -255,18 +262,18 @@ function PageSkeleton() {
           gap: { xs: 1.75, md: 2.25 },
         }}
       >
-        <SectionCard title="The projection, broken down">
+        <SectionCard title={t('projection.title')}>
           <Skeleton variant="text" width="80%" />
           <Skeleton variant="text" width="70%" />
           <Skeleton variant="text" width="75%" />
         </SectionCard>
-        <SectionCard title="The invoices behind this">
+        <SectionCard title={t('invoices.title', { n: 0 })}>
           <Skeleton variant="text" width="90%" />
           <Skeleton variant="text" width="85%" />
           <Skeleton variant="text" width="88%" />
         </SectionCard>
       </Box>
-      <SectionCard title="Monotributo 2026 — full scale">
+      <SectionCard title={t('scale.title')}>
         <Skeleton variant="rounded" height={220} sx={{ borderRadius: '13px' }} />
       </SectionCard>
     </Box>

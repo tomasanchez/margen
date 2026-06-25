@@ -1,0 +1,78 @@
+{
+  "srHeading": "Your command center",
+  "error": {
+    "description": "We couldn't reach the server to load your data. Check your connection and try again.",
+    "summaryTitle": "Spending data unavailable",
+    "summaryDescription": "We couldn't load this month's spending trend and breakdown. Try again."
+  },
+  "hero": {
+    "headline": {
+      "safe": "You're within margin this month.",
+      "watch": "You're within margin this month.",
+      "close": "You're getting close to your Monotributo limit.",
+      "over": "You're over your Monotributo limit.",
+      "risk": "Spending is outrunning your income this month."
+    },
+    "statusLabel": {
+      "safe": "On track",
+      "watch": "Keep an eye on this",
+      "close": "Close to your limit",
+      "over": "Over your limit",
+      "risk": "Needs attention"
+    },
+    "supporting": {
+      "ahead": "Income is comfortably ahead of spending",
+      "behind": "Spending is running ahead of income",
+      "limit": ", and you're {{percent}} through your Monotributo limit",
+      "watch": " One thing to watch — spending is running {{percent}}% higher than last month, mostly Food.",
+      "sentence": "{{lead}}{{limit}}.{{watch}}"
+    },
+    "addExpense": "Expense",
+    "addInvoice": "Invoice"
+  },
+  "metrics": {
+    "income": "Income",
+    "expenses": "Expenses",
+    "savings": "Est. savings",
+    "monotributoMargin": "Monotributo margin",
+    "delta": "{{delta}} vs. {{month}}",
+    "savingsEquivalent": "≈ {{amount}} at MEP",
+    "savingsContext": "income − expenses",
+    "marginContext": "before Category {{category}}",
+    "marginEmpty": "set up your Monotributo category"
+  },
+  "trend": {
+    "title": "Spending trend",
+    "subtitle": "Monthly expenses · last 6 months",
+    "accessibleSummary": "Monthly expenses, last six months. {{summary}}.",
+    "accessibleItem": "{{month}}: {{amount}}"
+  },
+  "breakdown": {
+    "title": "Where it went",
+    "subtitle": "June · share of spending",
+    "empty": "No spending recorded for this month yet.",
+    "rowLabel": "{{category}}, {{amount}} — view transactions",
+    "rowLabelUp": "{{category}}, {{amount}}, up {{up}} — view transactions"
+  },
+  "monotributo": {
+    "title": "Monotributo",
+    "titleWithCategory": "Monotributo · Category {{category}}",
+    "usedOfLimit": "used of {{limit}} annual limit",
+    "percentUsed": "{{percent}} used",
+    "margin": "{{amount}} margin",
+    "projectedCategory": "Projected category",
+    "projectionNote": "Projection assumes your current invoicing pace continues.",
+    "drillIn_one": "See the {{count}} invoice behind this →",
+    "drillIn_other": "See the {{count}} invoices behind this →",
+    "limitAriaLabel": "Monotributo limit used: {{percent}}",
+    "emptyBody": "Set up your Monotributo category to track how close you are to the next AFIP threshold and how much margin you have left.",
+    "setUp": "Set up category"
+  },
+  "recent": {
+    "title": "Recent activity",
+    "viewAll": "View all →",
+    "empty": "No activity yet. Add your first transaction to see it here.",
+    "recurringBadge": "recurring",
+    "subline": "{{category}} · {{bank}}"
+  }
+}

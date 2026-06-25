@@ -15,6 +15,7 @@
  */
 
 import { useId, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -50,15 +51,12 @@ import {
 } from '../../api/invoicesClient'
 import { useMonotributoSnapshot } from '../monotributo/queries'
 import type { AddPrefill } from './addContext'
+import { bankLabel, categoryLabel } from './presentation'
 import {
   EXPENSE_CATEGORIES,
   useAddEditFormState,
 } from './useAddEditFormState'
 import type { FxSource } from './useAddEditFormState'
-
-/** Calm copy shown under the upload control when a PDF can't be read (ADR-072/037). */
-const GENERIC_PARSE_ERROR =
-  "Couldn't read this as an ARCA invoice — enter the details manually."
 
 /** Uppercase eyebrow heading shared by the form sections (token-driven). */
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -124,6 +122,8 @@ export function AddEditForm({
   onCancel,
   titleId,
 }: AddEditFormProps) {
+  const { t } = useTranslation('transactions')
+  const genericParseError = t('form.upload.parseError')
   const form = useAddEditFormState(prefill)
   const [moreOpen, setMoreOpen] = useState(false)
 
@@ -168,7 +168,7 @@ export function AddEditForm({
       .then((parsed) => {
         if (parsed.status === 'unparseable') {
           // A valid-but-unreadable PDF: calm inline message, stay in the form.
-          setParseError(GENERIC_PARSE_ERROR)
+          setParseError(genericParseError)
           return
         }
         // Carry the picked file's name so the attached-file row can show it.
@@ -177,7 +177,7 @@ export function AddEditForm({
       .catch((error: unknown) => {
         // 415 / 413 / 422 (or any failure) → calm inline message; keep editing.
         setParseError(
-          error instanceof InvoicesApiError ? error.message : GENERIC_PARSE_ERROR,
+          error instanceof InvoicesApiError ? error.message : genericParseError,
         )
       })
       .finally(() => setIsParsing(false))
@@ -212,10 +212,10 @@ export function AddEditForm({
 
   const title =
     form.mode === 'edit'
-      ? 'Edit transaction'
+      ? t('form.title.edit')
       : isExpense
-        ? 'New expense'
-        : 'New invoice · income'
+        ? t('form.title.newExpense')
+        : t('form.title.newInvoice')
 
   const handleTypeChange = (_: unknown, next: TxType | null) => {
     if (next) form.setType(next)
@@ -253,23 +253,30 @@ export function AddEditForm({
   // dollar".
   const sourceLabel = fxSourceLabel(form.fxRateType)
   const fxConvertedLabel = form.usdRateMissing
-    ? '≈ ARS — · enter a rate'
+    ? t('form.fx.convertedMissing')
     : Number.isFinite(form.amountArs)
-      ? `≈ ARS ${formatARS(form.amountArs)} at ${sourceLabel} ${formatARS(form.rate)}`
-      : `Enter an amount · ${sourceLabel} ${formatARS(form.rate)}`
+      ? t('form.fx.converted', {
+          amount: formatARS(form.amountArs),
+          source: sourceLabel,
+          rate: formatARS(form.rate),
+        })
+      : t('form.fx.convertedNoAmount', {
+          source: sourceLabel,
+          rate: formatARS(form.rate),
+        })
 
   // Suggestion hint under the rate field (ADR-045): loading / suggested / failed.
   const isFetchingRate = form.rateSuggestionStatus === 'loading'
   const rateFetchFailed = form.rateSuggestionStatus === 'failed'
   const rateHelperText = form.usdRateMissing
     ? rateFetchFailed
-      ? "Couldn't fetch a rate — enter it manually."
-      : 'A rate is required to convert this USD amount.'
+      ? t('form.fx.helperFetchFailed')
+      : t('form.fx.helperRequired')
     : form.fxSource === 'manual'
-      ? 'Manual rate — edit anytime.'
+      ? t('form.fx.helperManual')
       : form.fxSource === 'official'
-        ? 'Suggested official rate — confirm or edit.'
-        : 'Suggested MEP rate — confirm or edit.'
+        ? t('form.fx.helperOfficial')
+        : t('form.fx.helperMep')
 
   // Compact label for each non-manual source option, showing its suggested value
   // (e.g. "MEP 1.245"). The currently-selected source falls back to the live
@@ -285,9 +292,13 @@ export function AddEditForm({
   const mepValue = optionValue('MEP')
   const officialValue = optionValue('official')
   const mepOptionLabel =
-    mepValue !== null ? `MEP ${formatARS(mepValue)}` : 'MEP —'
+    mepValue !== null
+      ? t('form.fx.mepOption', { rate: formatARS(mepValue) })
+      : t('form.fx.mepOptionEmpty')
   const officialOptionLabel =
-    officialValue !== null ? `Official ${formatARS(officialValue)}` : 'Official —'
+    officialValue !== null
+      ? t('form.fx.officialOption', { rate: formatARS(officialValue) })
+      : t('form.fx.officialOptionEmpty')
 
   return (
     <Box component="form" onSubmit={handleSubmit} noValidate>
@@ -310,7 +321,7 @@ export function AddEditForm({
         </Typography>
         <IconButton
           onClick={onCancel}
-          aria-label="Close"
+          aria-label={t('form.close')}
           size="small"
           sx={{
             border: '1px solid var(--mg-border-2)',
@@ -334,8 +345,7 @@ export function AddEditForm({
             '& .MuiAlert-message': { fontSize: 13 },
           }}
         >
-          Looks like you already imported this invoice. You can still save it if
-          this is intentional.
+          {t('form.duplicate')}
         </Alert>
       ) : null}
 
@@ -345,7 +355,7 @@ export function AddEditForm({
         exclusive
         onChange={handleTypeChange}
         fullWidth
-        aria-label="Transaction type"
+        aria-label={t('form.type.ariaLabel')}
         sx={{
           mb: 2.5,
           gap: 0.75,
@@ -368,8 +378,8 @@ export function AddEditForm({
           },
         }}
       >
-        <ToggleButton value="expense">Expense</ToggleButton>
-        <ToggleButton value="income">Invoice / income</ToggleButton>
+        <ToggleButton value="expense">{t('form.type.expense')}</ToggleButton>
+        <ToggleButton value="income">{t('form.type.income')}</ToggleButton>
       </ToggleButtonGroup>
 
       {/* Upload-to-autofill, on the invoice/income input only (ADR-072). Picking
@@ -413,12 +423,12 @@ export function AddEditForm({
                   whiteSpace: 'nowrap',
                 }}
               >
-                {form.attachedFileName ?? 'Attached invoice'}
+                {form.attachedFileName ?? t('form.upload.attachedFallback')}
               </Typography>
               <IconButton
                 type="button"
                 onClick={handleRemoveAttachment}
-                aria-label="Remove attached invoice"
+                aria-label={t('form.upload.remove')}
                 size="small"
                 sx={{ flex: 'none', color: 'text.secondary' }}
               >
@@ -450,8 +460,8 @@ export function AddEditForm({
               }}
             >
               {isParsing
-                ? 'Reading your invoice…'
-                : 'Upload ARCA invoice PDF to autofill'}
+                ? t('form.upload.reading')
+                : t('form.upload.cta')}
             </Button>
           )}
 
@@ -491,17 +501,17 @@ export function AddEditForm({
           / the Monotributo cuota autofill populate it, still editable here. */}
       <TextField
         id={nameInputId}
-        label="Name"
+        label={t('form.name.label')}
         value={form.name}
         onChange={(e) => form.setName(e.target.value)}
-        placeholder="e.g. Sushiclub (optional)"
+        placeholder={t('form.name.placeholder')}
         size="small"
         fullWidth
         sx={{ mb: 2.5 }}
       />
 
       {/* Amount. */}
-      <SectionLabel>Amount</SectionLabel>
+      <SectionLabel>{t('form.amount.section')}</SectionLabel>
       <Box
         sx={{
           display: 'flex',
@@ -527,10 +537,10 @@ export function AddEditForm({
           id={amountInputId}
           value={form.amountText}
           onChange={(e) => form.setAmountText(e.target.value)}
-          placeholder="0"
+          placeholder={t('form.amount.placeholder')}
           inputProps={{
             inputMode: 'decimal',
-            'aria-label': `Amount in ${currencySymbol}`,
+            'aria-label': t('form.amount.ariaLabel', { currency: currencySymbol }),
           }}
           sx={{
             flex: 1,
@@ -547,7 +557,7 @@ export function AddEditForm({
         value={form.currency}
         exclusive
         onChange={handleCurrencyChange}
-        aria-label="Currency"
+        aria-label={t('form.currency.ariaLabel')}
         sx={{
           gap: 1,
           '& .MuiToggleButton-root': {
@@ -618,7 +628,7 @@ export function AddEditForm({
               }
               onClick={form.refreshSuggestedRate}
               disabled={isFetchingRate}
-              aria-label="Refresh suggested FX rates"
+              aria-label={t('form.fx.refreshAriaLabel')}
               sx={{
                 fontSize: 12,
                 color: 'text.secondary',
@@ -626,7 +636,7 @@ export function AddEditForm({
                 px: 1,
               }}
             >
-              {isFetchingRate ? 'Fetching…' : 'Refresh rate'}
+              {isFetchingRate ? t('form.fx.fetching') : t('form.fx.refresh')}
             </Button>
           </Box>
 
@@ -637,7 +647,7 @@ export function AddEditForm({
             value={form.fxSource}
             exclusive
             onChange={handleFxSourceChange}
-            aria-label="FX rate source"
+            aria-label={t('form.fx.sourceAriaLabel')}
             size="small"
             sx={{
               mt: 1.25,
@@ -672,12 +682,12 @@ export function AddEditForm({
             <ToggleButton value="official" disabled={officialValue === null}>
               {officialOptionLabel}
             </ToggleButton>
-            <ToggleButton value="manual">Manual</ToggleButton>
+            <ToggleButton value="manual">{t('form.fx.manual')}</ToggleButton>
           </ToggleButtonGroup>
 
           <TextField
             id={rateInputId}
-            label="FX rate (ARS per USD)"
+            label={t('form.fx.rateLabel')}
             value={form.rateText}
             onChange={(e) => form.setRateText(e.target.value)}
             size="small"
@@ -685,9 +695,16 @@ export function AddEditForm({
             required
             error={form.usdRateMissing}
             helperText={rateHelperText}
-            placeholder={isFetchingRate ? 'Fetching suggested rate…' : '0'}
+            placeholder={
+              isFetchingRate
+                ? t('form.fx.ratePlaceholderFetching')
+                : t('form.fx.ratePlaceholder')
+            }
             slotProps={{
-              htmlInput: { inputMode: 'decimal', 'aria-label': 'FX rate' },
+              htmlInput: {
+                inputMode: 'decimal',
+                'aria-label': t('form.fx.rateAriaLabel'),
+              },
             }}
             sx={{
               mt: 1.25,
@@ -708,7 +725,7 @@ export function AddEditForm({
               gap: 1,
             }}
           >
-            <SectionLabel>Category</SectionLabel>
+            <SectionLabel>{t('form.category.section')}</SectionLabel>
             {/* Expense-only shortcut: load the user's monthly Monotributo cuota
                 as an ARS Taxes expense, autofilled from their configured category
                 (the income/invoice path has the upload control instead). Calmly
@@ -733,8 +750,10 @@ export function AddEditForm({
               }}
             >
               {typeof monotributoCuota === 'number'
-                ? `Load Monotributo cuota (ARS ${formatARS(monotributoCuota)})`
-                : 'Load Monotributo cuota'}
+                ? t('form.category.loadCuotaAmount', {
+                    amount: formatARS(monotributoCuota),
+                  })
+                : t('form.category.loadCuota')}
             </Button>
           </Box>
           <Stack
@@ -746,7 +765,7 @@ export function AddEditForm({
             {EXPENSE_CATEGORIES.map((category) => (
               <SelectChip
                 key={category}
-                label={category}
+                label={categoryLabel(category)}
                 selected={form.category === category}
                 onClick={() => form.setCategory(category)}
               />
@@ -757,12 +776,12 @@ export function AddEditForm({
 
       {/* Bank / card chips (single select). */}
       <Box sx={{ mt: 2.5 }}>
-        <SectionLabel>Bank / card</SectionLabel>
+        <SectionLabel>{t('form.bank.section')}</SectionLabel>
         <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
           {BANKS.map((bank: Bank) => (
             <SelectChip
               key={bank}
-              label={bank}
+              label={bankLabel(bank)}
               selected={form.bank === bank}
               onClick={() => form.setBank(bank)}
             />
@@ -787,7 +806,7 @@ export function AddEditForm({
           htmlFor={dateInputId}
           sx={{ fontSize: 13.5, color: 'text.secondary' }}
         >
-          Date
+          {t('form.date.label')}
         </Typography>
         <TextField
           id={dateInputId}
@@ -798,7 +817,7 @@ export function AddEditForm({
           slotProps={{
             htmlInput: {
               max: form.maxOccurredOn,
-              'aria-label': 'Transaction date',
+              'aria-label': t('form.date.ariaLabel'),
             },
           }}
           sx={{
@@ -840,10 +859,10 @@ export function AddEditForm({
             label={
               <Box>
                 <Typography sx={{ fontSize: 13.5, color: 'text.primary' }}>
-                  Counts toward Monotributo
+                  {t('form.monotributo.label')}
                 </Typography>
                 <Typography sx={{ fontSize: 11.5, color: 'text.disabled' }}>
-                  Adds to your annual invoiced total
+                  {t('form.monotributo.description')}
                 </Typography>
               </Box>
             }
@@ -873,16 +892,16 @@ export function AddEditForm({
           justifyContent: 'flex-start',
         }}
       >
-        More details
+        {t('form.more')}
       </Button>
       <Collapse in={moreOpen} unmountOnExit>
         <Stack spacing={1.5} sx={{ mt: 1 }}>
           <TextField
             id={notesInputId}
-            label="Notes"
+            label={t('form.notes.label')}
             value={form.notes}
             onChange={(e) => form.setNotes(e.target.value)}
-            placeholder="Optional"
+            placeholder={t('form.notes.placeholder')}
             size="small"
             fullWidth
             multiline
@@ -906,7 +925,7 @@ export function AddEditForm({
             borderColor: 'var(--mg-border-2)',
           }}
         >
-          Cancel
+          {t('form.actions.cancel')}
         </Button>
         {/* Reset all fields to blank new-entry defaults (issue #26). Clears the
             inputs + any attachment; it does NOT submit or close the form. */}
@@ -915,7 +934,7 @@ export function AddEditForm({
           variant="text"
           color="secondary"
           onClick={handleResetAll}
-          aria-label="Reset all fields"
+          aria-label={t('form.actions.resetAriaLabel')}
           sx={{
             flex: 'none',
             px: 2,
@@ -923,7 +942,7 @@ export function AddEditForm({
             color: 'text.secondary',
           }}
         >
-          Reset
+          {t('form.actions.reset')}
         </Button>
         <Button
           type="submit"
@@ -933,10 +952,10 @@ export function AddEditForm({
           sx={{ flex: 1, py: 1.25, fontWeight: 600 }}
         >
           {isSaving
-            ? 'Saving…'
+            ? t('form.actions.saving')
             : form.mode === 'edit'
-              ? 'Save changes'
-              : 'Save'}
+              ? t('form.actions.saveChanges')
+              : t('form.actions.save')}
         </Button>
       </Box>
     </Box>

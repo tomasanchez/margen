@@ -10,6 +10,7 @@
  * One shared component so the later real-data features (#6/#7/#8) can reuse it.
  */
 
+import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Paper from '@mui/material/Paper'
@@ -30,15 +31,20 @@ export interface ErrorStateProps {
 
 /**
  * A bordered, centered panel for a failed data load. Supplies sensible defaults
- * for the common "backend unreachable" case; callers override the copy when a
- * more specific message helps.
+ * for the common "backend unreachable" case (resolved through the `common`
+ * namespace); callers override the copy when a more specific message helps.
  */
 export function ErrorState({
-  title = "Can't reach the server",
-  description = 'We could not load your data. Check your connection and try again.',
-  retryLabel = 'Retry',
+  title,
+  description,
+  retryLabel,
   onRetry,
 }: ErrorStateProps) {
+  const { t } = useTranslation('common')
+  const resolvedTitle = title ?? t('errorState.title')
+  const resolvedDescription = description ?? t('errorState.description')
+  const resolvedRetryLabel = retryLabel ?? t('actions.retry')
+
   return (
     <Paper
       component="section"
@@ -79,7 +85,7 @@ export function ErrorState({
         sx={{ fontSize: 16, fontWeight: 600 }}
         color="text.primary"
       >
-        {title}
+        {resolvedTitle}
       </Typography>
 
       <Typography
@@ -87,7 +93,7 @@ export function ErrorState({
         sx={{ fontSize: 13.5, maxWidth: 360 }}
         color="text.secondary"
       >
-        {description}
+        {resolvedDescription}
       </Typography>
 
       {onRetry ? (
@@ -105,7 +111,7 @@ export function ErrorState({
             color: 'text.primary',
           }}
         >
-          {retryLabel}
+          {resolvedRetryLabel}
         </Button>
       ) : null}
     </Paper>
