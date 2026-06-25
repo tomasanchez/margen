@@ -76,3 +76,4 @@ Related: ADR-030 (ResponseModel envelope), ADR-025 (Decimal/string money), ADR-0
 ## Notes
 
 - 2026-06-14: This ADR amends and supersedes ADR-048 in its storage decision. The `monotributo_config` table is replaced by `app_settings`; `PATCH /api/v1/monotributo/config` is removed. See ADR-055 for the migration details.
+- 2026-06-25: **Amended by ADR-110**. The single-row assumption in this ADR is partially superseded: `app_settings` becomes per-user (one row per user, `UNIQUE(user_id)`, lazy get-or-create). The endpoint contract (`GET`/`PATCH /api/v1/settings`) is unchanged; it now operates on the authenticated user's row. See ADR-110 for details.
