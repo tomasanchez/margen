@@ -147,7 +147,7 @@ export function ImportStatement() {
   )
 
   return (
-    <Box component="section" sx={{ maxWidth: 920, mx: 'auto' }}>
+    <Box component="section" sx={{ width: '100%', maxWidth: '920px', mx: 'auto' }}>
       <Box sx={{ mb: 2.5 }}>
         <Typography component="h1" sx={{ fontSize: 22, fontWeight: 600 }}>
           {t('import.title')}
