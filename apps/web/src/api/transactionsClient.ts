@@ -174,8 +174,9 @@ function asFxRateType(
  *
  * Parses Decimal-string money to numbers (ADR-034), keeps the UUID string id,
  * carries `occurredOn` (ISO date) so Home can filter by year+month (ADR-040),
- * and drops the contract-only fields the UI does not consume (notes, FX rate
- * metadata, timestamps) — the screens stay untouched.
+ * carries the optional free-text `notes` (ADR-088, mirrors `name`), and drops the
+ * contract-only fields the UI does not consume (FX rate metadata, timestamps) —
+ * the screens stay untouched.
  */
 export function adaptTransaction(dto: TransactionDto): Transaction {
   const usd = parseMoney(dto.usd)
@@ -201,6 +202,7 @@ export function adaptTransaction(dto: TransactionDto): Transaction {
     ...(fxRateType !== undefined ? { fxRateType } : {}),
     ...(fxRateAsOf !== undefined ? { fxRateAsOf } : {}),
     ...(dto.recurring ? { recurring: dto.recurring } : {}),
+    ...(dto.notes ? { notes: dto.notes } : {}),
   }
 }
 

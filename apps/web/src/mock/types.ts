@@ -103,6 +103,11 @@ export interface Transaction {
    */
   fxRateAsOf?: string
   recurring?: boolean
+  /**
+   * Optional free-text note carried from the backend contract (ADR-088, mirrors
+   * `name`). Seeded back into the Add/Edit form on edit so it survives a re-save.
+   */
+  notes?: string
 }
 
 /** Input accepted by the add-transaction mutation (id + month derived by the API). */

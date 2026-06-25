@@ -402,7 +402,7 @@ export function useAddEditFormState(
   // falls back to the category-derived label. This field subsumes the old
   // `importedName` — invoice parse + Monotributo autofills now write here.
   const [name, setName] = useState<string>(prefill?.name ?? '')
-  const [notes, setNotes] = useState<string>('')
+  const [notes, setNotes] = useState<string>(prefill?.notes ?? '')
 
   // In-form ARCA invoice upload (ADR-072). The parse autofills the fields above
   // via `applyParsedInvoice`; the base64 `document` is stashed here so saving

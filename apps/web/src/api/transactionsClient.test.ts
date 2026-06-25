@@ -86,6 +86,16 @@ describe('adaptTransaction', () => {
     expect('fxRateType' in t).toBe(false)
     expect('fxRateAsOf' in t).toBe(false)
   })
+
+  test('carries the free-text notes when the DTO has them (ADR-088)', () => {
+    const t = adaptTransaction({ ...usdDto, notes: 'Paid via wire' })
+    expect(t.notes).toBe('Paid via wire')
+  })
+
+  test('omits notes when the DTO carries them null/empty (ADR-088)', () => {
+    expect(adaptTransaction(usdDto).notes).toBeUndefined()
+    expect('notes' in adaptTransaction({ ...usdDto, notes: '' })).toBe(false)
+  })
 })
 
 describe('toCreateBody', () => {

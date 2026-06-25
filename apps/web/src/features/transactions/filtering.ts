@@ -317,5 +317,7 @@ export function buildEditPrefill(
     ...(t.fxRateType !== undefined ? { fxRateType: t.fxRateType } : {}),
     ...(t.fxRateAsOf !== undefined ? { fxRateAsOf: t.fxRateAsOf } : {}),
     ...(t.recurring !== undefined ? { recurring: t.recurring } : {}),
+    // Carry the existing free-text note so it survives a re-save on edit (ADR-088).
+    ...(t.notes ? { notes: t.notes } : {}),
   }
 }
