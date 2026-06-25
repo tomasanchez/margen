@@ -8,27 +8,50 @@
  *
  * Dark is the default (declared on :root). Light mode is applied by setting
  * data-color-mode="light" on <html>, which overrides the surface/text tokens.
- * Brand and semantic hues also shift slightly for adequate contrast on light.
+ *
+ * Brand and semantic hues shift slightly for adequate contrast on light.
+ *
+ * Product direction:
+ * Margen should feel calm, precise, adult, and trustworthy. Gold is intentional,
+ * not decorative. Semantic colors are reserved for financial state only.
  */
 
 :root {
-  /* Brand — gold accent */
+  /* Brand — restrained gold accent */
   --mg-gold: #c7a253;
   --mg-gold-hover: #cf9a35;
   --mg-on-gold: #141310;
+
+  /* Brand support — logo / protected margin language */
+  --mg-brand-mark: #cfcabf;
+  --mg-brand-mark-soft: #9fb6a0;
 
   /* Semantic — Safe / Watch / Risk */
   --mg-safe: #6dae8d;
   --mg-watch: #d8a23f;
   --mg-risk: #c8694f;
 
-  /* Surfaces */
-  --mg-bg: #1a191c;
-  --mg-paper: #181610;
-  --mg-paper-2: #1a1813;
-  --mg-raised: #1b1812;
-  --mg-border: #211f19;
-  --mg-border-2: #2c2922;
+  /* Semantic text — explicit variants for clarity/accessibility */
+  --mg-safe-text: #8bc3a4;
+  --mg-watch-text: #e0b05b;
+  --mg-risk-text: #d9856d;
+
+  /* Semantic surfaces — subtle status chips, banners, and meters */
+  --mg-safe-bg: rgba(109, 174, 141, 0.14);
+  --mg-watch-bg: rgba(216, 162, 63, 0.14);
+  --mg-risk-bg: rgba(200, 105, 79, 0.14);
+
+  --mg-safe-border: rgba(109, 174, 141, 0.36);
+  --mg-watch-border: rgba(216, 162, 63, 0.38);
+  --mg-risk-border: rgba(200, 105, 79, 0.38);
+
+  /* Surfaces — dark mode default, with clearer layering */
+  --mg-bg: #151416;
+  --mg-paper: #1b1915;
+  --mg-paper-2: #211e18;
+  --mg-raised: #272219;
+  --mg-border: #302b22;
+  --mg-border-2: #3d3528;
 
   /* Text */
   --mg-text: #f1eee6;
@@ -39,6 +62,16 @@
   /* Money — neutral expense amount */
   --mg-amount: #d8d3c8;
 
+  /* Interaction */
+  --mg-focus: #d6b15f;
+  --mg-hover: rgba(241, 238, 230, 0.06);
+  --mg-active: rgba(199, 162, 83, 0.14);
+  --mg-disabled: rgba(241, 238, 230, 0.32);
+
+  /* Dividers / overlays */
+  --mg-divider: rgba(241, 238, 230, 0.08);
+  --mg-overlay: rgba(0, 0, 0, 0.52);
+
   color-scheme: dark;
 }
 
@@ -48,18 +81,36 @@
   --mg-gold-hover: #74601f;
   --mg-on-gold: #ffffff;
 
+  /* Brand support */
+  --mg-brand-mark: #4a463e;
+  --mg-brand-mark-soft: #6f8f75;
+
   /* Semantic */
   --mg-safe: #4e8a6b;
   --mg-watch: #a9791d;
   --mg-risk: #b9543c;
 
+  /* Semantic text — darker than fill hues for small text on light surfaces */
+  --mg-safe-text: #356b50;
+  --mg-watch-text: #7a5615;
+  --mg-risk-text: #9b3f2d;
+
+  /* Semantic surfaces */
+  --mg-safe-bg: rgba(78, 138, 107, 0.12);
+  --mg-watch-bg: rgba(169, 121, 29, 0.12);
+  --mg-risk-bg: rgba(185, 84, 60, 0.12);
+
+  --mg-safe-border: rgba(78, 138, 107, 0.30);
+  --mg-watch-border: rgba(169, 121, 29, 0.32);
+  --mg-risk-border: rgba(185, 84, 60, 0.32);
+
   /* Surfaces */
   --mg-bg: #f3f0e9;
   --mg-paper: #ffffff;
-  --mg-paper-2: #ffffff;
+  --mg-paper-2: #fbfaf7;
   --mg-raised: #ffffff;
   --mg-border: #e6e0d4;
-  --mg-border-2: #e3d9c2;
+  --mg-border-2: #d8ccb5;
 
   /* Text */
   --mg-text: #23211c;
@@ -69,6 +120,16 @@
 
   /* Money — neutral expense amount */
   --mg-amount: #3a372f;
+
+  /* Interaction */
+  --mg-focus: #8c7026;
+  --mg-hover: rgba(35, 33, 28, 0.055);
+  --mg-active: rgba(140, 112, 38, 0.12);
+  --mg-disabled: rgba(35, 33, 28, 0.32);
+
+  /* Dividers / overlays */
+  --mg-divider: rgba(35, 33, 28, 0.10);
+  --mg-overlay: rgba(20, 19, 16, 0.38);
 
   color-scheme: light;
 }
