@@ -19,6 +19,15 @@ owner. Required PROD rollout order:
    ADR-108).
 3. Run THIS migration to set ``NOT NULL`` once no NULLs remain.
 
+Before tightening ``app_settings`` this migration deletes any owner-less
+``user_id IS NULL`` row. That row is the obsolete global default seeded by
+``cde5505de5cd``; under the per-user model (ADR-110) it has no owner and the
+get-or-create path recreates per-user rows lazily. In PROD the ADR-109 backfill has
+already claimed it (so it is non-null and survives); on a fresh DB / CI it is an
+orphan whose removal lets the constraint apply. The cleanup is intentionally scoped to
+``app_settings`` only -- a NULL ``user_id`` on the other owned tables means the
+backfill was skipped and the tightening SHOULD fail loudly.
+
 In the hermetic SQLite e2e tier there are no legacy rows and every API-created row
 sets ``user_id``, so the constraint holds in tests. Per ADR-094 the column stays a
 plain UUID with no ForeignKey to ``auth.users`` (Supabase-only schema; would break
@@ -69,6 +78,22 @@ def _index_name(table: str) -> str:
 
 def upgrade() -> None:
     """Set ``user_id`` NOT NULL on all owned tables and index the three lacking one."""
+    # Remove the obsolete owner-less global-default ``app_settings`` row(s) before
+    # tightening. ``cde5505de5cd`` seeded one global settings row that predates the
+    # ``user_id`` column (added nullable in ``a1b2c3d4e5f6``), so it carries
+    # ``user_id IS NULL``. Under the per-user model (ADR-110, get-or-create per user)
+    # there is no global default: each user lazily creates their own row. In PROD the
+    # ADR-109 backfill has already assigned that seeded row to the owner, so its
+    # ``user_id`` is non-null and it survives this DELETE. On a fresh DB / CI the
+    # seeded row is an unowned orphan the per-user code recreates lazily, so dropping
+    # it is correct and lets the NOT NULL tightening below succeed.
+    #
+    # Scoped to ``app_settings`` ONLY. The other owned tables (transactions,
+    # invoice_document, statement_document, monotributo_snapshot) must NOT be cleaned
+    # this way: a NULL ``user_id`` there means the ADR-109 backfill was skipped, and
+    # the SET NOT NULL below SHOULD fail loudly to force a backfill-first rollout.
+    op.execute("DELETE FROM app_settings WHERE user_id IS NULL")
+
     for table in _OWNED_TABLES:
         op.alter_column(
             table,
