@@ -77,17 +77,19 @@ PSQL_URL="$(uv run --env-file "$ENV_FILE" python -c 'import os;print(os.environ[
 # -v variable and inlined as a quoted literal (:'owner'); ON_ERROR_STOP + the
 # single transaction means any failure (e.g. a unique violation) rolls back the
 # whole backfill — it is all-or-nothing.
-SQL="BEGIN;"
+SQL="BEGIN;"$'\n'
 for t in "${TABLES[@]}"; do
-  SQL+=" \\echo '== ${t} =='"$'\n'
+  SQL+="\\echo '== ${t} =='"$'\n'
   SQL+="UPDATE ${t} SET user_id = :'owner' WHERE user_id IS NULL;"$'\n'
 done
-SQL+="COMMIT;"
+SQL+="COMMIT;"$'\n'
 
 echo "==> Backfilling owner-less rows to the provided owner across ${#TABLES[@]} tables..."
 echo "    (each 'UPDATE n' below is the number of NULL rows assigned in that table)"
-docker compose exec -T db \
-  psql "$PSQL_URL" -v ON_ERROR_STOP=1 -v owner="$OWNER_ID" -c "$SQL"
+# Feed the script over stdin (-f -): psql meta-commands like \echo are only valid
+# in script mode, not inside -c.
+printf '%s' "$SQL" | docker compose exec -T db \
+  psql "$PSQL_URL" -v ON_ERROR_STOP=1 -v owner="$OWNER_ID" -f -
 
 echo "==> Verifying no owner-less rows remain..."
 ok=1
