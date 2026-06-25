@@ -195,4 +195,15 @@ describe('buildEditPrefill', () => {
     expect(prefill.usd).toBe(usd.usd)
     expect(prefill.rate).toBe(usd.rate)
   })
+
+  test('carries the row notes through so an edit can re-save them (ADR-088)', () => {
+    const base = SEED_TRANSACTIONS[0]
+    const withNotes: Transaction = { ...base, notes: 'Reimbursed by client' }
+    expect(buildEditPrefill(withNotes).notes).toBe('Reimbursed by client')
+  })
+
+  test('omits notes from the prefill when the row has none (ADR-088)', () => {
+    const noNotes: Transaction = { ...SEED_TRANSACTIONS[0], notes: undefined }
+    expect('notes' in buildEditPrefill(noNotes)).toBe(false)
+  })
 })
