@@ -346,31 +346,6 @@ export function AddEditForm({
         </IconButton>
       </Box>
 
-      {/* Mobile-reachable entry to the routed statement-import flow (ADR-017).
-          The desktop sidebar's "Import statement" button is hidden on mobile, so
-          this low-key sibling in the Add flow surfaces the same destination on
-          every viewport. It navigates and closes this dialog/sheet; it reuses the
-          shell label so the wording matches the sidebar (ADR-019: native Button,
-          keyboard-operable, descriptive accessible name). */}
-      <Button
-        type="button"
-        variant="outlined"
-        color="secondary"
-        fullWidth
-        onClick={handleImportStatement}
-        startIcon={<UploadFileIcon fontSize="small" />}
-        sx={{
-          mb: 2.5,
-          py: 1.1,
-          fontWeight: 600,
-          textTransform: 'none',
-          color: 'text.secondary',
-          borderColor: 'var(--mg-border-2)',
-        }}
-      >
-        {tShell('actions.importStatement')}
-      </Button>
-
       {/* Calm, non-blocking duplicate warning for an imported invoice (ADR-072).
           The user can still review and save; the create path is not blocked. */}
       {form.duplicate ? (
@@ -419,6 +394,33 @@ export function AddEditForm({
         <ToggleButton value="expense">{t('form.type.expense')}</ToggleButton>
         <ToggleButton value="income">{t('form.type.income')}</ToggleButton>
       </ToggleButtonGroup>
+
+      {/* Mobile-reachable entry to the routed statement-import flow, Expense-only
+          (ADR-017). The desktop sidebar's "Import statement" button is hidden on
+          mobile; this low-key sibling sits right under the type switch. Shown only
+          on the Expense tab — invoices use the upload-to-autofill control instead.
+          Navigates + closes the dialog/sheet; reuses the shell label (ADR-019:
+          native Button, keyboard-operable, descriptive accessible name). */}
+      {isExpense ? (
+        <Button
+          type="button"
+          variant="outlined"
+          color="secondary"
+          fullWidth
+          onClick={handleImportStatement}
+          startIcon={<UploadFileIcon fontSize="small" />}
+          sx={{
+            mb: 2.5,
+            py: 1.1,
+            fontWeight: 600,
+            textTransform: 'none',
+            color: 'text.secondary',
+            borderColor: 'var(--mg-border-2)',
+          }}
+        >
+          {tShell('actions.importStatement')}
+        </Button>
+      ) : null}
 
       {/* Upload-to-autofill, on the invoice/income input only (ADR-072). Picking
           an ARCA PDF parses it and autofills the fields below; the user reviews
