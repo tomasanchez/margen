@@ -35,6 +35,7 @@ import {
   type StatementParse,
 } from '../../api/statementsClient'
 import { ImportStatement } from './ImportStatement'
+import { clearParseCache } from './parseCache'
 
 // Mock the statements client so the flow never touches a real backend. Keep
 // StatementsApiError real (the flow does `instanceof` on it); only the network
@@ -61,17 +62,23 @@ vi.mock('../../api/statementsClient', async () => {
   }
 })
 
-// The page navigates on "Done"; stub useNavigate so it renders without a router.
+// The page navigates on "Done" / "Cancel"; stub useNavigate so it renders
+// without a router and expose the spy so tests can assert navigation.
+const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }))
+
 vi.mock('@tanstack/react-router', async () => {
   const actual =
     await vi.importActual<typeof import('@tanstack/react-router')>(
       '@tanstack/react-router',
     )
-  return { ...actual, useNavigate: () => vi.fn() }
+  return { ...actual, useNavigate: () => navigateMock }
 })
 
 afterEach(() => {
   vi.clearAllMocks()
+  // The parse cache is module-level + session-scoped; reset it between tests so
+  // a result keyed by a filename in one test never leaks into the next.
+  clearParseCache()
 })
 
 /** A picked PDF File (the multipart `file` the upload would carry). */
@@ -516,5 +523,76 @@ describe('Import statement — reconciler flags likely duplicates', () => {
         name: 'Imported 1 expense, merged 1 into existing transaction',
       }),
     ).toBeInTheDocument()
+  })
+})
+
+describe('Import statement — Cancel discards the review and leaves the flow', () => {
+  test('Cancel resets the parsed review back to the picker and navigates away', async () => {
+    parseStatementMock.mockResolvedValueOnce(okParse)
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile())
+    // We're on the review step.
+    await screen.findByText('Galicia VISA ·5771')
+    expect(screen.getByText('Carrefour')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    // The review is discarded — back to the empty/upload state.
+    expect(
+      await screen.findByRole('button', { name: 'Choose statement PDF' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Carrefour')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Import 2 expenses' }),
+    ).not.toBeInTheDocument()
+    // And it leaves the import flow.
+    expect(navigateMock).toHaveBeenCalledWith({ to: '/transactions' })
+  })
+})
+
+describe('Import statement — re-uploading the same file uses the cached parse', () => {
+  test('re-picking the identical file does NOT trigger a second parse call', async () => {
+    // Only ONE mocked resolution is queued — a second parse call would reject
+    // (undefined), so the assertion below also guards against an extra call.
+    parseStatementMock.mockResolvedValueOnce(okParse)
+    const { user, fileInput } = renderImport()
+
+    // The SAME File identity (name + size + lastModified) on both uploads.
+    const file = pdfFile('same-statement.pdf')
+
+    await user.upload(fileInput, file)
+    await screen.findByText('Galicia VISA ·5771')
+
+    // Leave the review, then re-pick the very same file.
+    await user.click(
+      screen.getByRole('button', { name: 'Upload a different statement' }),
+    )
+    await screen.findByRole('button', { name: 'Choose statement PDF' })
+    await user.upload(fileInput, file)
+
+    // The cached parse is shown again the same way — no second network parse.
+    expect(await screen.findByText('Galicia VISA ·5771')).toBeInTheDocument()
+    expect(screen.getByText('Carrefour')).toBeInTheDocument()
+    expect(parseStatementMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('uploading a different file DOES trigger a fresh parse', async () => {
+    parseStatementMock.mockResolvedValue(okParse)
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile('first.pdf'))
+    await screen.findByText('Galicia VISA ·5771')
+
+    await user.click(
+      screen.getByRole('button', { name: 'Upload a different statement' }),
+    )
+    await screen.findByRole('button', { name: 'Choose statement PDF' })
+
+    // A DIFFERENT file identity → cache miss → a second parse call.
+    await user.upload(fileInput, pdfFile('second.pdf'))
+    await screen.findByText('Galicia VISA ·5771')
+
+    expect(parseStatementMock).toHaveBeenCalledTimes(2)
   })
 })

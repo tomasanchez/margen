@@ -16,6 +16,7 @@
 
 import { useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from '@tanstack/react-router'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -123,9 +124,21 @@ export function AddEditForm({
   titleId,
 }: AddEditFormProps) {
   const { t } = useTranslation('transactions')
+  // The "Import statement" affordance reuses the shell namespace's existing label
+  // (it mirrors the desktop sidebar button); the rest of the form is `transactions`.
+  const { t: tShell } = useTranslation('shell')
+  const navigate = useNavigate()
   const genericParseError = t('form.upload.parseError')
   const form = useAddEditFormState(prefill)
   const [moreOpen, setMoreOpen] = useState(false)
+
+  // Mobile-reachable entry to the routed statement-import flow (ADR-017): the
+  // sidebar button is desktop-only, so surface the SAME destination here in the
+  // Add flow (present on every viewport). Navigate, then close this dialog/sheet.
+  const handleImportStatement = () => {
+    void navigate({ to: '/import-statement' })
+    onCancel()
+  }
 
   // Monotributo cuota shortcut (expense path only): load the user's monthly tax
   // as a plain ARS expense, autofilled from their configured category. The cuota
@@ -381,6 +394,33 @@ export function AddEditForm({
         <ToggleButton value="expense">{t('form.type.expense')}</ToggleButton>
         <ToggleButton value="income">{t('form.type.income')}</ToggleButton>
       </ToggleButtonGroup>
+
+      {/* Mobile-reachable entry to the routed statement-import flow, Expense-only
+          (ADR-017). The desktop sidebar's "Import statement" button is hidden on
+          mobile; this low-key sibling sits right under the type switch. Shown only
+          on the Expense tab — invoices use the upload-to-autofill control instead.
+          Navigates + closes the dialog/sheet; reuses the shell label (ADR-019:
+          native Button, keyboard-operable, descriptive accessible name). */}
+      {isExpense ? (
+        <Button
+          type="button"
+          variant="outlined"
+          color="secondary"
+          fullWidth
+          onClick={handleImportStatement}
+          startIcon={<UploadFileIcon fontSize="small" />}
+          sx={{
+            mb: 2.5,
+            py: 1.1,
+            fontWeight: 600,
+            textTransform: 'none',
+            color: 'text.secondary',
+            borderColor: 'var(--mg-border-2)',
+          }}
+        >
+          {tShell('actions.importStatement')}
+        </Button>
+      ) : null}
 
       {/* Upload-to-autofill, on the invoice/income input only (ADR-072). Picking
           an ARCA PDF parses it and autofills the fields below; the user reviews

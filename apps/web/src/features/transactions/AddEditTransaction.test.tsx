@@ -22,14 +22,14 @@ import { useAddTransaction } from './addContext'
 // Mock the HTTP client so the flow never touches a real backend (ADR-038), and
 // the dolarapi FX adapter so no real network is hit (ADR-044). The suggested
 // MEP + official rates are controllable per-test via `fxMock`.
-const { createMock, fxMock, fetchSettingsMock, monotributoMock } = vi.hoisted(
-  () => ({
+const { createMock, fxMock, fetchSettingsMock, monotributoMock, navigateMock } =
+  vi.hoisted(() => ({
     createMock: vi.fn(),
     fxMock: vi.fn(),
     fetchSettingsMock: vi.fn(),
     monotributoMock: vi.fn(),
-  }),
-)
+    navigateMock: vi.fn(),
+  }))
 
 vi.mock('../../api/transactionsClient', () => ({
   transactionsClient: {
@@ -63,6 +63,16 @@ vi.mock('../../api/settingsClient', async () => {
     ...actual,
     fetchSettings: fetchSettingsMock,
   }
+})
+
+// The form's "Import statement" entry navigates via TanStack Router; stub
+// useNavigate so the form renders standalone (renderWithProviders has no router).
+vi.mock('@tanstack/react-router', async () => {
+  const actual =
+    await vi.importActual<typeof import('@tanstack/react-router')>(
+      '@tanstack/react-router',
+    )
+  return { ...actual, useNavigate: () => navigateMock }
 })
 
 beforeEach(() => {
@@ -185,6 +195,25 @@ describe('Add flow — type toggles required fields', () => {
     expect(
       form.queryByText('Counts toward Monotributo'),
     ).not.toBeInTheDocument()
+  })
+})
+
+describe('Add flow — mobile-reachable statement-import entry (ADR-017)', () => {
+  test('the form exposes an "Import statement" button that navigates and closes the flow', async () => {
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    const importButton = form.getByRole('button', { name: 'Import statement' })
+    expect(importButton).toBeEnabled()
+
+    await user.click(importButton)
+
+    // It navigates to the routed import flow...
+    expect(navigateMock).toHaveBeenCalledWith({ to: '/import-statement' })
+    // ...and closes the Add dialog (so the user lands on the import page).
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
+    )
   })
 })
 

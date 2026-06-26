@@ -621,7 +621,7 @@ export function StatementReviewTable({
       : t('review.cta.import', { count: newCount })
 
   return (
-    <Box>
+    <Box sx={{ width: '100%', minWidth: 0 }}>
       {/* Header strip: detected identity + period + a duplicate advisory. */}
       <Box
         sx={{
@@ -696,6 +696,12 @@ export function StatementReviewTable({
       {/* The editable line table. */}
       <TableContainer
         sx={{
+          width: '100%',
+          // The review table is intrinsically wider than a phone viewport (it has
+          // min-width cells). Keep the wide content scrolling INSIDE this bordered
+          // container so the page body never scrolls horizontally (ADR-017; the
+          // numeric-sx percentage gotcha is fixed separately on the page section).
+          overflowX: 'auto',
           border: '1px solid var(--mg-border-2)',
           borderRadius: 2.5,
           maxHeight: { xs: 'none', md: '52vh' },
