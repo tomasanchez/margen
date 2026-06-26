@@ -33,7 +33,8 @@
     "roleCurrent": "current category",
     "roleProjected": "projected category",
     "roleCategory": "category",
-    "cellAriaLabel": "Category {{letter}}, {{role}}, ceiling {{ceiling}}"
+    "cellAriaLabel": "Category {{letter}}, {{role}}, ceiling {{ceiling}}",
+    "gapNote": "Intermediate categories omitted on this view"
   },
   "scale": {
     "title": "Monotributo 2026 — full scale",

@@ -33,7 +33,8 @@
     "roleCurrent": "categoría actual",
     "roleProjected": "categoría proyectada",
     "roleCategory": "categoría",
-    "cellAriaLabel": "Categoría {{letter}}, {{role}}, techo {{ceiling}}"
+    "cellAriaLabel": "Categoría {{letter}}, {{role}}, techo {{ceiling}}",
+    "gapNote": "Categorías intermedias omitidas en esta vista"
   },
   "scale": {
     "title": "Monotributo 2026 — escala completa",
