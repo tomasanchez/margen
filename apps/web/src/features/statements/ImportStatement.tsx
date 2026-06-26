@@ -35,12 +35,12 @@ import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 import {
   StatementsApiError,
-  parseStatement,
   type StatementImportRequest,
   type StatementImportResult,
   type StatementParse,
 } from '../../api/statementsClient'
 import { StatementReviewTable } from './StatementReviewTable'
+import { parseStatementCached } from './parseCache'
 import { useImportStatement } from './queries'
 
 /**
@@ -56,6 +56,7 @@ type Phase =
 
 export function ImportStatement() {
   const { t } = useTranslation('statements')
+  const { t: tCommon } = useTranslation('common')
   const genericParseMessage = t('import.parseMessage')
   const unsupportedMessage = t('import.unsupportedMessage')
   const navigate = useNavigate()
@@ -77,7 +78,9 @@ export function ImportStatement() {
     if (!file) return
     setFallbackMessage(null)
     setPhase({ kind: 'parsing' })
-    void parseStatement(file)
+    // Re-picking the SAME file returns the cached parse — no second slow
+    // `POST /statements/parse` round-trip (ADR-070/078).
+    void parseStatementCached(file)
       .then((parse) => {
         if (parse.status === 'unsupported') {
           setFallbackMessage(unsupportedMessage)
@@ -115,6 +118,20 @@ export function ImportStatement() {
   }
 
   const handleDone = () => {
+    void navigate({ to: '/transactions' })
+  }
+
+  /**
+   * Cancel the in-progress review: discard the parsed lines + clear any picked
+   * file, reset the mutation, and leave the flow cleanly (ADR-019/037). The
+   * parsed review state is owned by the keyed {@link StatementReviewTable}, so
+   * returning to `idle` and navigating away drops it entirely.
+   */
+  const handleCancel = () => {
+    importMutation.reset()
+    setFallbackMessage(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    setPhase({ kind: 'idle' })
     void navigate({ to: '/transactions' })
   }
 
@@ -245,7 +262,11 @@ export function ImportStatement() {
               {t('import.importError')}
             </Alert>
           ) : null}
-          <Box sx={{ mt: 1.5 }}>
+          <Stack
+            direction="row"
+            spacing={2}
+            sx={{ mt: 1.5, alignItems: 'center' }}
+          >
             <Button
               type="button"
               variant="text"
@@ -256,7 +277,18 @@ export function ImportStatement() {
             >
               {t('import.uploadDifferent')}
             </Button>
-          </Box>
+            {/* Calm escape hatch: discard the review and leave the flow (ADR-037/019). */}
+            <Button
+              type="button"
+              variant="text"
+              color="secondary"
+              onClick={handleCancel}
+              disabled={importMutation.isPending}
+              sx={{ px: 0, color: 'text.secondary', textTransform: 'none' }}
+            >
+              {tCommon('actions.cancel')}
+            </Button>
+          </Stack>
         </>
       ) : (
         <Paper
