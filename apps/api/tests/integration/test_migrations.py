@@ -117,26 +117,33 @@ class TestMigrations:
 
     def test_accounts_seed_and_account_id_backfill(self, integration_database_url: str):
         """
-        GIVEN legacy bank-tagged transactions for two users at the pre-accounts revision
+        GIVEN legacy bank-tagged, mixed-currency transactions for two users
         WHEN Alembic upgrades through the accounts migration (ADR-124)
-        THEN one account is seeded per distinct (user, bank) and each row is linked,
-            with the card-detail bank seeded as type 'card' and the rest as 'bank'
+        THEN one account is seeded per distinct (user, bank, currency) group and each
+            row is linked to its same-currency account, with the card-detail group
+            seeded as type 'card' and the rest as 'bank'
 
-        Proves the in-place accounts seed + ``account_id`` backfill rewrites existing
-        rows on the production PostgreSQL dialect, partitioned per user (ADR-122/124).
+        Proves the corrected per-currency accounts seed + ``account_id`` backfill
+        rewrites existing rows on the production PostgreSQL dialect: a bank holding
+        both ARS and USD movements yields two accounts (one per currency), so USD
+        balances stay USD-authoritative (ADR-123). Partitioned per user (ADR-130).
         """
         # GIVEN — upgrade to the split revision (which has ``card``), then seed rows.
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", integration_database_url)
         command.upgrade(config, _SPLIT)
-        # {label: (user_id, bank, card, expected account type)}.
-        seeded: dict[str, tuple[str, str, str | None, str]] = {
-            # User A: Galicia carried card detail -> a 'card' account.
-            "a_galicia": (_OWNER, "Galicia", "VISA ·5771", "card"),
-            # User A: Mercado Pago, no card -> a 'bank' account.
-            "a_mp": (_OWNER, "Mercado Pago", None, "bank"),
-            # User B: their own Galicia, no card -> independent 'bank' account.
-            "b_galicia": (_OWNER_B, "Galicia", None, "bank"),
+        # {label: (user_id, bank, currency, card, expected account type)}.
+        seeded: dict[str, tuple[str, str, str, str | None, str]] = {
+            # User A: Galicia in ARS (card detail) -> a 'card' ARS account.
+            "a_galicia_ars": (_OWNER, "Galicia", "ARS", "VISA ·5771", "card"),
+            # User A: Galicia in USD, no card -> a separate 'bank' USD account, same name.
+            "a_galicia_usd": (_OWNER, "Galicia", "USD", None, "bank"),
+            # User A: Deel USD only, no card -> a single 'bank' USD account.
+            "a_deel_usd": (_OWNER, "Deel", "USD", None, "bank"),
+            # User A: Mercado Pago ARS, no card -> a 'bank' ARS account.
+            "a_mp_ars": (_OWNER, "Mercado Pago", "ARS", None, "bank"),
+            # User B: their own Galicia ARS, no card -> independent 'bank' account.
+            "b_galicia_ars": (_OWNER_B, "Galicia", "ARS", None, "bank"),
         }
         ids = {label: uuid.uuid4() for label in seeded}
         try:
@@ -145,22 +152,27 @@ class TestMigrations:
             # WHEN
             command.upgrade(config, _ACCOUNTS)
 
-            # THEN — three accounts seeded (one per distinct user+bank pair).
+            # THEN — five accounts seeded (one per distinct user+bank+currency group).
             accounts = asyncio.run(_read_accounts(integration_database_url))
-            assert len(accounts) == 3
-            by_owner_bank = {(str(owner), name): acc_type for owner, name, acc_type in accounts}
-            assert by_owner_bank[(_OWNER, "Galicia")] == "card"
-            assert by_owner_bank[(_OWNER, "Mercado Pago")] == "bank"
-            assert by_owner_bank[(_OWNER_B, "Galicia")] == "bank"
+            assert len(accounts) == 5
+            by_key = {(str(owner), name, currency): acc_type for owner, name, currency, acc_type in accounts}
+            # Galicia splits into an ARS 'card' account and a USD 'bank' account, same name.
+            assert by_key[(_OWNER, "Galicia", "ARS")] == "card"
+            assert by_key[(_OWNER, "Galicia", "USD")] == "bank"
+            assert by_key[(_OWNER, "Deel", "USD")] == "bank"
+            assert by_key[(_OWNER, "Mercado Pago", "ARS")] == "bank"
+            assert by_key[(_OWNER_B, "Galicia", "ARS")] == "bank"
 
-            # THEN — every seeded transaction is linked to its owner's matching account.
+            # THEN — every seeded transaction is linked to its same-(owner,bank,currency) account.
             links = asyncio.run(_read_account_links(integration_database_url, ids))
-            for label, (owner, bank, _card, _type) in seeded.items():
+            for label, (owner, bank, currency, _card, _type) in seeded.items():
                 account_id = links[ids[label]]
                 assert account_id is not None
-                # The linked account belongs to the same owner and bank name.
-                owner_of, name_of = asyncio.run(_account_owner_and_name(integration_database_url, account_id))
-                assert (str(owner_of), name_of) == (owner, bank)
+                # The linked account belongs to the same owner, bank name, AND currency.
+                owner_of, name_of, currency_of = asyncio.run(
+                    _account_owner_name_currency(integration_database_url, account_id)
+                )
+                assert (str(owner_of), name_of, currency_of) == (owner, bank, currency)
         finally:
             asyncio.run(_drop_everything(integration_database_url))
 
@@ -241,16 +253,16 @@ async def _read_bank_and_card(
 async def _seed_bank_tagged(
     url: str,
     ids: dict[str, uuid.UUID],
-    seeded: dict[str, tuple[str, str, str | None, str]],
+    seeded: dict[str, tuple[str, str, str, str | None, str]],
 ) -> None:
-    """Insert legacy bank-tagged transactions for the accounts-seed backfill test."""
+    """Insert legacy bank-tagged, mixed-currency transactions for the accounts-seed test."""
     engine = create_async_engine(url)
     insert = text(
         "INSERT INTO transactions (id, user_id, occurred_on, name, kind, amount, currency, payment_method, card) "
         "VALUES (:id, :user_id, :occurred_on, :name, :kind, :amount, :currency, :payment_method, :card)"
     )
     async with engine.begin() as connection:
-        for label, (owner, bank, card, _type) in seeded.items():
+        for label, (owner, bank, currency, card, _type) in seeded.items():
             await connection.execute(
                 insert,
                 {
@@ -260,7 +272,7 @@ async def _seed_bank_tagged(
                     "name": f"row-{label}",
                     "kind": "expense",
                     "amount": Decimal("1000.00"),
-                    "currency": "ARS",
+                    "currency": currency,
                     "payment_method": bank,
                     "card": card,
                 },
@@ -268,12 +280,12 @@ async def _seed_bank_tagged(
     await engine.dispose()
 
 
-async def _read_accounts(url: str) -> list[tuple[uuid.UUID, str, str]]:
-    """Return the seeded accounts as ``(user_id, name, type)`` tuples."""
+async def _read_accounts(url: str) -> list[tuple[uuid.UUID, str, str, str]]:
+    """Return the seeded accounts as ``(user_id, name, currency, type)`` tuples."""
     engine = create_async_engine(url)
     async with engine.connect() as connection:
-        result = await connection.execute(text("SELECT user_id, name, type FROM accounts"))
-        rows = [(row.user_id, row.name, row.type) for row in result]
+        result = await connection.execute(text("SELECT user_id, name, currency, type FROM accounts"))
+        rows = [(row.user_id, row.name, row.currency, row.type) for row in result]
     await engine.dispose()
     return rows
 
@@ -294,17 +306,17 @@ async def _read_account_links(
     return rows
 
 
-async def _account_owner_and_name(url: str, account_id: uuid.UUID) -> tuple[uuid.UUID, str]:
-    """Return the ``(user_id, name)`` of the account with ``account_id``."""
+async def _account_owner_name_currency(url: str, account_id: uuid.UUID) -> tuple[uuid.UUID, str, str]:
+    """Return the ``(user_id, name, currency)`` of the account with ``account_id``."""
     engine = create_async_engine(url)
     async with engine.connect() as connection:
         result = await connection.execute(
-            text("SELECT user_id, name FROM accounts WHERE id = :id"),
+            text("SELECT user_id, name, currency FROM accounts WHERE id = :id"),
             {"id": account_id},
         )
         row = result.one()
     await engine.dispose()
-    return row.user_id, row.name
+    return row.user_id, row.name, row.currency
 
 
 async def _seed_app_settings(url: str, settings_id: uuid.UUID) -> None:
