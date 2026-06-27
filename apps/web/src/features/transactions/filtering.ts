@@ -20,8 +20,17 @@ import type {
   MonthName,
   Transaction,
 } from '../../mock/types'
-import { ALL_MONTHS, type MonthSelection } from '../../components/months'
-import { occurredInMonth } from '../home/homeMetrics'
+import {
+  ALL_MONTHS,
+  LAST_12_MONTHS,
+  THIS_YEAR,
+  type MonthSelection,
+} from '../../components/months'
+import {
+  occurredInLast12Months,
+  occurredInMonth,
+  occurredInYearToDate,
+} from '../home/homeMetrics'
 
 /** Type segment options (concept: All / Expenses / Income / Invoices). */
 export type TypeFilter = 'all' | 'expense' | 'income' | 'invoice'
@@ -157,6 +166,24 @@ function amountInRange(range: AmountRange, n: number): boolean {
   }
 }
 
+/**
+ * True when an ISO `occurredOn` satisfies the month filter. Exhaustive over the
+ * {@link MonthFilter} union: `'all'` matches everything (no scope), the two
+ * range sentinels match their windows (reusing the Home date helpers so ISO
+ * parsing is never duplicated), and a {@link ViewingMonth} matches that exact
+ * calendar month. Pure and unit-testable; `now` is injectable for tests.
+ */
+export function matchesMonth(
+  month: MonthFilter,
+  occurredOn: string,
+  now: Date = new Date(),
+): boolean {
+  if (month === ALL_MONTHS) return true
+  if (month === LAST_12_MONTHS) return occurredInLast12Months(occurredOn, now)
+  if (month === THIS_YEAR) return occurredInYearToDate(occurredOn, now)
+  return occurredInMonth(occurredOn, month)
+}
+
 /** True when a transaction passes every active filter and the search query. */
 function matchesFilters(t: Transaction, f: TransactionFilters): boolean {
   const q = f.q.trim().toLowerCase()
@@ -174,9 +201,11 @@ function matchesFilters(t: Transaction, f: TransactionFilters): boolean {
   if (f.type === 'income' && t.kind !== 'income') return false
   if (f.type === 'invoice' && t.kind !== 'invoice') return false
   if (f.currency !== 'all' && t.currency !== f.currency) return false
-  // Year-aware month match against the ISO `occurredOn` (ADR-040), reusing the
-  // exact parse Home uses — never the bare `t.month` name. `'all'` = All time.
-  if (f.month !== ALL_MONTHS && !occurredInMonth(t.occurredOn, f.month)) {
+  // Year-aware date match against the ISO `occurredOn` (ADR-040), reusing the
+  // exact parse Home uses — never the bare `t.month` name. `'all'` is no scope;
+  // the two range sentinels match a rolling/year-to-date window; otherwise it's
+  // a specific year+month.
+  if (!matchesMonth(f.month, t.occurredOn)) {
     return false
   }
   if (f.categories.length && !f.categories.includes(t.category)) return false

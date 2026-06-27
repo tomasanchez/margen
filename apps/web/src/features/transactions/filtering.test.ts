@@ -6,10 +6,43 @@ import {
   buildEditPrefill,
   filterTransactions,
   hasActiveFilters,
+  matchesMonth,
   presentMonths,
   type TransactionFilters,
 } from './filtering'
+import {
+  ALL_MONTHS,
+  LAST_12_MONTHS,
+  THIS_YEAR,
+} from '../../components/months'
 import type { Transaction } from '../../mock/types'
+
+describe('matchesMonth (named-range sentinels)', () => {
+  const now = new Date(2026, 5, 15) // 2026-06-15
+
+  test('"all" matches every date (no scope)', () => {
+    expect(matchesMonth(ALL_MONTHS, '2020-01-01', now)).toBe(true)
+  })
+
+  test('"last12" includes 5 months ago, excludes 13 months ago', () => {
+    expect(matchesMonth(LAST_12_MONTHS, '2026-01-10', now)).toBe(true)
+    expect(matchesMonth(LAST_12_MONTHS, '2025-05-31', now)).toBe(false)
+    // First-of-month floor (June 2025) is inclusive.
+    expect(matchesMonth(LAST_12_MONTHS, '2025-06-01', now)).toBe(true)
+  })
+
+  test('"thisYear" includes the Jan 1 boundary, excludes the prior Dec 31', () => {
+    expect(matchesMonth(THIS_YEAR, '2026-01-01', now)).toBe(true)
+    expect(matchesMonth(THIS_YEAR, '2025-12-31', now)).toBe(false)
+  })
+
+  test('a specific ViewingMonth matches that exact year+month only', () => {
+    const may2026 = { year: 2026, month: 4 }
+    expect(matchesMonth(may2026, '2026-05-20', now)).toBe(true)
+    expect(matchesMonth(may2026, '2026-06-20', now)).toBe(false)
+    expect(matchesMonth(may2026, '2025-05-20', now)).toBe(false)
+  })
+})
 
 /** Build a filter set from overrides on top of the neutral default. */
 function withFilters(over: Partial<TransactionFilters>): TransactionFilters {

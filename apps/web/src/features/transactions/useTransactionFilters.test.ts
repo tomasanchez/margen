@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { ALL_MONTHS, currentViewingMonth } from '../../components/months'
+import {
+  ALL_MONTHS,
+  LAST_12_MONTHS,
+  currentViewingMonth,
+} from '../../components/months'
 import { DEFAULT_FILTERS } from './filtering'
 import { filtersReducer, useTransactionFilters } from './useTransactionFilters'
 
@@ -56,11 +60,19 @@ describe('useTransactionFilters seeding (ADR-062 drilldown)', () => {
     expect(result.current.filters.categories).toEqual([])
   })
 
-  test('initialType seeds the type segment AND opens at All time', () => {
+  test('initialType seeds the type segment AND opens at Last 12 months', () => {
     const { result } = renderHook(() =>
       useTransactionFilters({ initialType: 'invoice' }),
     )
     expect(result.current.filters.type).toBe('invoice')
+    expect(result.current.filters.month).toBe(LAST_12_MONTHS)
+  })
+
+  test('initialCategories alone still opens at All time (full category history)', () => {
+    const { result } = renderHook(() =>
+      useTransactionFilters({ initialCategories: ['Rent'] }),
+    )
+    expect(result.current.filters.categories).toEqual(['Rent'])
     expect(result.current.filters.month).toBe(ALL_MONTHS)
   })
 
@@ -72,7 +84,7 @@ describe('useTransactionFilters seeding (ADR-062 drilldown)', () => {
     expect(result.current.filters.month).toEqual(currentViewingMonth())
   })
 
-  test('initialType composes with initialCategories, both seeded at All time', () => {
+  test('initialType composes with initialCategories; type seed wins the window (Last 12 months)', () => {
     const { result } = renderHook(() =>
       useTransactionFilters({
         initialType: 'invoice',
@@ -81,7 +93,7 @@ describe('useTransactionFilters seeding (ADR-062 drilldown)', () => {
     )
     expect(result.current.filters.type).toBe('invoice')
     expect(result.current.filters.categories).toEqual(['Income'])
-    expect(result.current.filters.month).toBe(ALL_MONTHS)
+    expect(result.current.filters.month).toBe(LAST_12_MONTHS)
   })
 
   test('seeded type stays overridable by the user afterward', () => {

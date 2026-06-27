@@ -11,7 +11,9 @@
 import { describe, expect, test } from 'vitest'
 import {
   deriveMonthMetrics,
+  occurredInLast12Months,
   occurredInMonth,
+  occurredInYearToDate,
   recentTransactions,
   transactionsForMonth,
 } from './homeMetrics'
@@ -58,6 +60,46 @@ describe('occurredInMonth', () => {
     expect(occurredInMonth('2026-06-12', { year: 2026, month: 5 })).toBe(true)
     expect(occurredInMonth('2025-06-12', { year: 2026, month: 5 })).toBe(false)
     expect(occurredInMonth('2026-05-12', { year: 2026, month: 5 })).toBe(false)
+  })
+})
+
+describe('occurredInLast12Months (rolling trailing window)', () => {
+  // Fixed "today" so the window is deterministic: 2026-06-15.
+  const now = new Date(2026, 5, 15)
+
+  test('includes a transaction 5 months ago', () => {
+    // 5 months before June 2026 = January 2026, well inside the window.
+    expect(occurredInLast12Months('2026-01-10', now)).toBe(true)
+  })
+
+  test('excludes a transaction 13 months ago', () => {
+    // 13 months before June 2026 = May 2025 — before the first-of-month floor.
+    expect(occurredInLast12Months('2025-05-31', now)).toBe(false)
+  })
+
+  test('lower boundary is the first day of the month 12 months back (inclusive)', () => {
+    // 12 months before June 2026 = June 2025; the window starts at 2025-06-01.
+    expect(occurredInLast12Months('2025-06-01', now)).toBe(true)
+    expect(occurredInLast12Months('2025-05-31', now)).toBe(false)
+  })
+
+  test('includes today (upper bound, inclusive) and excludes the future', () => {
+    expect(occurredInLast12Months('2026-06-15', now)).toBe(true)
+    expect(occurredInLast12Months('2026-06-16', now)).toBe(false)
+  })
+})
+
+describe('occurredInYearToDate (current calendar year)', () => {
+  const now = new Date(2026, 5, 15) // 2026-06-15
+
+  test('includes the Jan 1 boundary and excludes Dec 31 of the prior year', () => {
+    expect(occurredInYearToDate('2026-01-01', now)).toBe(true)
+    expect(occurredInYearToDate('2025-12-31', now)).toBe(false)
+  })
+
+  test('includes today and excludes the future', () => {
+    expect(occurredInYearToDate('2026-06-15', now)).toBe(true)
+    expect(occurredInYearToDate('2026-06-16', now)).toBe(false)
   })
 })
 

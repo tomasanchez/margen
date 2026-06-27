@@ -10,7 +10,11 @@
 
 import { useMemo, useReducer } from 'react'
 import type { Bank, Category } from '../../mock/types'
-import { ALL_MONTHS, currentViewingMonth } from '../../components/months'
+import {
+  ALL_MONTHS,
+  LAST_12_MONTHS,
+  currentViewingMonth,
+} from '../../components/months'
 import {
   DEFAULT_FILTERS,
   type AmountRange,
@@ -110,14 +114,18 @@ export function useTransactionFilters(
     (): TransactionFilters => {
       const hasCategorySeed = !!initialCategories && initialCategories.length > 0
       const hasTypeSeed = !!initialType && initialType !== 'all'
-      // A drilldown (ADR-062) — by category and/or type — should reveal the
-      // FULL history for the seed rather than just the current month, so it
-      // opens at "All time". The Monotributo invoices feed the *annual* total,
-      // so they span the fiscal year, not the current month. Seeds compose.
+      // A drilldown (ADR-062) widens the month scope past the current-month
+      // default so the seed reveals more than one month of history. The windows
+      // differ on purpose: the Monotributo invoice drill-in (`initialType`)
+      // opens at "Last 12 months" so the visible invoices line up with the
+      // card's annual/trailing total (matches the backend trailing window); a
+      // category drilldown (`initialCategories`) opens at "All time" for the
+      // full category history. Seeds compose; when both are present, type's
+      // Last-12 window wins (the invoice list should stay bounded).
       if (hasCategorySeed || hasTypeSeed) {
         return {
           ...DEFAULT_FILTERS,
-          month: ALL_MONTHS,
+          month: hasTypeSeed ? LAST_12_MONTHS : ALL_MONTHS,
           ...(hasCategorySeed ? { categories: [...initialCategories] } : {}),
           ...(hasTypeSeed ? { type: initialType } : {}),
         }

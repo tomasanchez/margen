@@ -78,7 +78,10 @@
     "gt1m": "Más de ARS 1.000.000"
   },
   "month": {
-    "allTime": "Todo el período",
+    "thisMonth": "Este mes",
+    "last12Months": "Últimos 12 meses",
+    "thisYear": "Este año",
+    "allTime": "Todo el tiempo",
     "triggerAriaLabel": "Mes: {{label}}",
     "menuAriaLabel": "Seleccionar mes"
   },

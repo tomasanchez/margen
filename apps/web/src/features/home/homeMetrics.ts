@@ -47,6 +47,63 @@ export function occurredInMonth(
   return year === view.year && month === view.month
 }
 
+/**
+ * A `YYYY-MM-DD` ISO date as a comparable ordinal (`year*10000 + month*100 +
+ * day`, month 1-based). Parses the leading date fields directly — no `Date`
+ * construction, so no timezone day-rollover — to compare day-precise ranges.
+ */
+function dateOrdinal(year: number, month1: number, day: number): number {
+  return year * 10_000 + month1 * 100 + day
+}
+
+/** The ISO `occurredOn`'s date ordinal (see {@link dateOrdinal}). */
+function occurredOrdinal(occurredOn: string): number {
+  const year = Number.parseInt(occurredOn.slice(0, 4), 10)
+  const month1 = Number.parseInt(occurredOn.slice(5, 7), 10)
+  const day = Number.parseInt(occurredOn.slice(8, 10), 10)
+  return dateOrdinal(year, month1, day)
+}
+
+/**
+ * True when `occurredOn` (`YYYY-MM-DD`) falls in the rolling "Last 12 months"
+ * window: from the FIRST DAY of the month twelve months before `now` through
+ * `now` (today), inclusive. Replicates the backend Monotributo trailing window
+ * (`monotributo.py::trailing_window` — `add_months(today, -12)` first-of-month
+ * → today) using local date math, not a `Date` round-trip on the row.
+ */
+export function occurredInLast12Months(
+  occurredOn: string,
+  now: Date = new Date(),
+): boolean {
+  const startYear = now.getFullYear()
+  const startMonth = now.getMonth() // 0-based
+  // First day of the month twelve months back (crossing the year boundary).
+  const startTotal = startYear * 12 + startMonth - 12
+  const lower = dateOrdinal(
+    Math.floor(startTotal / 12),
+    (((startTotal % 12) + 12) % 12) + 1,
+    1,
+  )
+  const upper = dateOrdinal(now.getFullYear(), now.getMonth() + 1, now.getDate())
+  const ord = occurredOrdinal(occurredOn)
+  return ord >= lower && ord <= upper
+}
+
+/**
+ * True when `occurredOn` (`YYYY-MM-DD`) falls in the current calendar year to
+ * date: January 1 of `now`'s year through `now` (today), inclusive.
+ */
+export function occurredInYearToDate(
+  occurredOn: string,
+  now: Date = new Date(),
+): boolean {
+  const year = now.getFullYear()
+  const lower = dateOrdinal(year, 1, 1)
+  const upper = dateOrdinal(year, now.getMonth() + 1, now.getDate())
+  const ord = occurredOrdinal(occurredOn)
+  return ord >= lower && ord <= upper
+}
+
 /** Keep only the transactions whose `occurredOn` falls in the viewing month. */
 export function transactionsForMonth(
   transactions: readonly Transaction[],

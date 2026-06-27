@@ -162,8 +162,35 @@ export function boundedMonthsWindow(now: Date = new Date()): ViewingMonth[] {
  */
 export const ALL_MONTHS = 'all' as const
 
-/** Either a specific viewing month or the "All time" sentinel. */
-export type MonthSelection = ViewingMonth | typeof ALL_MONTHS
+/**
+ * Sentinel for the rolling "Last 12 months" range — the first day of the month
+ * twelve months before "today" through today, inclusive. Matches the backend's
+ * Monotributo trailing window (`monotributo.py::trailing_window`:
+ * `add_months(today, -12)` first-of-month → today). The Home Monotributo
+ * drill-in opens Transactions at this window so the visible invoices line up
+ * with the annual total the card reports.
+ */
+export const LAST_12_MONTHS = 'last12' as const
+
+/**
+ * Sentinel for the "This year" range — January 1 of the current calendar year
+ * through today, inclusive (year-to-date).
+ */
+export const THIS_YEAR = 'thisYear' as const
+
+/**
+ * The Transactions month filter: a specific {@link ViewingMonth}, or one of the
+ * three named-range sentinels — `'all'` ("All time", no scope), `'last12'`
+ * (rolling Last-12-months), `'thisYear'` (current calendar year to date). The
+ * global Home navigator (ADR-040/041) is always bounded to a real month, so it
+ * only ever uses a {@link ViewingMonth}; only the per-screen Transactions picker
+ * uses the sentinels.
+ */
+export type MonthSelection =
+  | ViewingMonth
+  | typeof ALL_MONTHS
+  | typeof LAST_12_MONTHS
+  | typeof THIS_YEAR
 
 /**
  * Newest-first month options for the Transactions month picker (ADR-040: the
