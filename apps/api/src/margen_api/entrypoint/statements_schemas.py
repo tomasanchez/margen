@@ -247,10 +247,10 @@ class StatementParseResponse(CamelCaseModel):
 
     status: ParseStatus = Field(description="Parse outcome: ok / unsupported / unparseable.")
     duplicate: bool = Field(description="Advisory flag: a statement with this natural key already exists (ADR-077).")
-    bank_name: str | None = Field(default=None, description="Issuing bank name, or null when unsupported.")
+    bank_name: str | None = Field(default=None, description="Normalized issuing bank name, or null (ADR-117).")
     network: str | None = Field(default=None, description="Card network, or null.")
     card_last4: str | None = Field(default=None, description="Last four digits of the card, or null.")
-    payment_method: str | None = Field(default=None, description="Composed bank/network/last4 label, or null.")
+    card: str | None = Field(default=None, description="Card / detail label, e.g. 'VISA ·5771', or null (ADR-117).")
     statement_number: str | None = Field(default=None, description="The statement's printed number, or null.")
     issuer_cuit: str | None = Field(default=None, description="Issuing bank CUIT, or null.")
     period_close: date | None = Field(default=None, description="Current-statement closing date, or null.")
@@ -308,7 +308,7 @@ class StatementParseResponse(CamelCaseModel):
             bank_name=parsed.bank_name,
             network=parsed.network,
             card_last4=parsed.card_last4,
-            payment_method=parsed.payment_method,
+            card=parsed.card,
             statement_number=parsed.statement_number,
             issuer_cuit=parsed.issuer_cuit,
             period_close=parsed.period_close,
@@ -407,7 +407,11 @@ class StatementLineRequest(CamelCaseModel):
         default=None,
         validation_alias="bank",
         serialization_alias="bank",
-        description="Bank / card / channel label. Aliased to the mock's 'bank'.",
+        description="Normalized bank / channel label. Aliased to 'bank' (ADR-117).",
+    )
+    card: str | None = Field(
+        default=None,
+        description="Card / detail label for display, e.g. 'VISA ·5771'; null when none (ADR-117).",
     )
     notes: str | None = Field(default=None, description="Free-form note, distinct from name.")
     cuota: str | None = Field(default=None, description="Installment marker such as '3/3'; folded into notes.")
@@ -450,6 +454,7 @@ class StatementLineRequest(CamelCaseModel):
             fx_rate_as_of=self.fx_rate_as_of,
             category=self.category,
             payment_method=self.payment_method,
+            card=self.card,
             notes=notes,
             resolution=self.resolution,
             match_transaction_id=self.match_transaction_id,

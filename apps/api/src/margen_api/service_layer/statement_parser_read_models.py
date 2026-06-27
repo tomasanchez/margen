@@ -130,11 +130,12 @@ class ParsedStatement:
 
     Attributes:
         status: The parse outcome (:class:`ParseStatus`).
-        bank_name: The issuing bank name (e.g. ``"Galicia"``), or ``None``.
+        bank_name: The normalized issuing bank name (e.g. ``"Galicia"``,
+            ``"Santander"``), or ``None`` (ADR-117).
         network: The card network (e.g. ``"VISA"``), or ``None``.
         card_last4: Last four digits of the card, or ``None``.
-        payment_method: The composed bank/network/last4 label (e.g.
-            ``"Galicia VISA ·5771"``), or ``None``.
+        card: The card / detail label for display (e.g. ``"VISA ·5771"``,
+            ``"AMEX ·1234"``), or ``None`` (ADR-117).
         statement_number: The statement's printed number, or ``None``.
         issuer_cuit: Issuing bank CUIT, or ``None``.
         period_close: The current-statement closing date, or ``None``.
@@ -150,7 +151,7 @@ class ParsedStatement:
     bank_name: str | None = None
     network: str | None = None
     card_last4: str | None = None
-    payment_method: str | None = None
+    card: str | None = None
     statement_number: str | None = None
     issuer_cuit: str | None = None
     period_close: date | None = None

@@ -5,7 +5,9 @@ This is the adapter-layer mapping for the pure domain aggregate at
 (AGENTS.md); the domain object remains plain Python. Column conventions follow
 ADR-025 (NUMERIC money), ADR-026 (UUID pk, ``occurred_on`` DATE, server-managed
 timestamps), ADR-027 (``kind`` persisted, ``type`` derived; category and
-payment method as plain validated strings) and ADR-029 (nullable FX block).
+payment method as plain validated strings), ADR-029 (nullable FX block) and
+ADR-117 (``payment_method`` holds the normalized bank; ``card`` is the optional
+display-only card / detail label).
 """
 
 from __future__ import annotations
@@ -67,7 +69,11 @@ class TransactionRecord(Base):
         nullable=True,
     )
     category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # ``payment_method`` now holds the NORMALIZED bank (JSON ``bank``); the card /
+    # detail label is split into the optional ``card`` column (JSON ``card``,
+    # display-only, ADR-117).
     payment_method: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    card: Mapped[str | None] = mapped_column(String(100), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text(), nullable=True)
     recurring: Mapped[bool] = mapped_column(
         Boolean(),

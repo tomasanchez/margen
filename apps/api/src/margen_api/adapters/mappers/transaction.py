@@ -41,6 +41,7 @@ def to_domain(record: TransactionRecord) -> Transaction:
         fx_rate_as_of=record.fx_rate_as_of,
         category=record.category,
         payment_method=record.payment_method,
+        card=record.card,
         notes=record.notes,
         recurring=record.recurring,
         counts_toward_monotributo=record.counts_toward_monotributo,
@@ -92,6 +93,7 @@ def update_record(record: TransactionRecord, transaction: Transaction) -> None:
     record.fx_rate_as_of = transaction.fx_rate_as_of
     record.category = transaction.category
     record.payment_method = transaction.payment_method
+    record.card = transaction.card
     record.notes = transaction.notes
     record.recurring = transaction.recurring
     record.counts_toward_monotributo = transaction.counts_toward_monotributo

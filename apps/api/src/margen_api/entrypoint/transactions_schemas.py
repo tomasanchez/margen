@@ -9,7 +9,8 @@ between the mock names and the backend-native names is:
 - ``amountNum`` -> ``amount`` (the positive ARS-equivalent magnitude)
 - ``usd``       -> ``usd_amount``
 - ``rate``      -> ``fx_rate``
-- ``bank``      -> ``payment_method``
+- ``bank``      -> ``payment_method`` (the normalized bank — ADR-117)
+- ``card``      -> ``card`` (the card / detail label for display — ADR-117)
 - ``name``      -> ``name`` (the required display label is a first-class field on
   the durable model — ADR-024 KEEP)
 - ``notes``     -> ``notes`` (the optional free-text note #3 adds, distinct from
@@ -136,7 +137,11 @@ class TransactionResponse(CamelCaseModel):
     payment_method: str | None = Field(
         default=None,
         serialization_alias="bank",
-        description="Bank / card / channel label. Aliased to the mock's 'bank'.",
+        description="Normalized bank / channel label. Aliased to the JSON 'bank' (ADR-117).",
+    )
+    card: str | None = Field(
+        default=None,
+        description="Card / detail label for display, e.g. 'VISA ·5771'; null when none (ADR-117).",
     )
     currency: Currency = Field(description="ARS (base) or USD.")
     type: TxType = Field(description="High-level direction derived from 'kind' (ADR-027).")
@@ -182,6 +187,7 @@ class TransactionResponse(CamelCaseModel):
             notes=model.notes,
             category=model.category,
             payment_method=model.payment_method,
+            card=model.card,
             currency=model.currency,
             type=model.type,
             kind=model.kind,
@@ -244,7 +250,11 @@ class TransactionCreateRequest(CamelCaseModel):
         default=None,
         validation_alias="bank",
         serialization_alias="bank",
-        description="Bank / card / channel label. Aliased to 'bank'.",
+        description="Normalized bank / channel label. Aliased to 'bank' (ADR-117).",
+    )
+    card: str | None = Field(
+        default=None,
+        description="Card / detail label for display, e.g. 'VISA ·5771'; null when none (ADR-117).",
     )
     recurring: bool = Field(default=False, description="Whether the movement repeats.")
     counts_toward_monotributo: bool = Field(
@@ -284,6 +294,7 @@ class TransactionCreateRequest(CamelCaseModel):
             fx_rate_as_of=self.fx_rate_as_of,
             category=self.category,
             payment_method=self.payment_method,
+            card=self.card,
             notes=self.notes,
             recurring=self.recurring,
             counts_toward_monotributo=self.counts_toward_monotributo,
@@ -295,7 +306,9 @@ class TransactionPatchRequest(CamelCaseModel):
     """Request body for ``PATCH /transactions/{id}`` (maps to :class:`UpdateTransaction`).
 
     Every field is optional; an omitted field leaves the stored value unchanged
-    (ADR-028). Accepts the mock's camelCase field names.
+    (ADR-028). Accepts the mock's camelCase field names. ``card`` is intentionally
+    NOT patchable: the edit form never sends it, and the handler preserves the
+    existing card so an edit never wipes the imported detail (ADR-117).
     """
 
     occurred_on: date | None = Field(default=None, description="New movement date (ISO 8601).")
@@ -339,7 +352,7 @@ class TransactionPatchRequest(CamelCaseModel):
         default=None,
         validation_alias="bank",
         serialization_alias="bank",
-        description="New bank / card / channel label. Aliased to 'bank'.",
+        description="New normalized bank / channel label. Aliased to 'bank' (ADR-117).",
     )
     recurring: bool | None = Field(default=None, description="New recurring flag.")
     counts_toward_monotributo: bool | None = Field(default=None, description="New Monotributo counting hint.")

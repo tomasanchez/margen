@@ -105,7 +105,7 @@ branch = true
 # routes in a thread pool. Track both so coverage records branches that resume
 # after an awaited database call (e.g. error-handling paths).
 concurrency = ["thread", "greenlet"]
-omit = ['tests/*', 'src/margen_api/asgi.py', 'src/margen_api/main.py', 'src/**/__init__.py']
+omit = ['tests/*', 'migrations/*', 'src/margen_api/asgi.py', 'src/margen_api/main.py', 'src/**/__init__.py']
 
 [tool.coverage.report]
 show_missing = true

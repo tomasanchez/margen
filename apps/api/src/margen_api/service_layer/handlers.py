@@ -85,6 +85,7 @@ async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork
         fx_rate_as_of=command.fx_rate_as_of,
         category=command.category,
         payment_method=command.payment_method,
+        card=command.card,
         notes=command.notes,
         recurring=command.recurring,
         counts_toward_monotributo=command.counts_toward_monotributo,
@@ -230,6 +231,7 @@ def _create_statement_line(
         fx_rate_as_of=line.fx_rate_as_of,
         category=line.category,
         payment_method=line.payment_method,
+        card=line.card,
         notes=line.notes,
         statement_document_id=document_id,
         user_id=user_id,
@@ -250,9 +252,9 @@ async def _merge_statement_line(
     The user's manual entry is the source of truth, so ``name``, ``amount``,
     ``occurred_on``, ``currency`` and any existing ``notes`` are preserved. The merge
     only adds statement-derived facts: it links the statement document, sets the
-    statement card as ``payment_method``, fills ``category`` ONLY when the existing
-    one is empty, and writes the line's cuota-derived ``notes`` ONLY when the existing
-    notes are empty. The aggregate is rebuilt through the domain so invariants re-run
+    statement bank as ``payment_method`` and the statement card detail as ``card``
+    (ADR-117), fills ``category`` ONLY when the existing one is empty, and writes the
+    line's cuota-derived ``notes`` ONLY when the existing notes are empty. The aggregate is rebuilt through the domain so invariants re-run
     while ``id`` and ``created_at`` are preserved and ``updated_at`` is refreshed
     (ADR-026, ADR-031), then persisted.
 
@@ -291,6 +293,7 @@ async def _merge_statement_line(
         fx_rate_as_of=existing.fx_rate_as_of,
         category=existing.category if existing.category else line.category,
         payment_method=line.payment_method,
+        card=line.card,
         notes=existing.notes if existing.notes else line.notes,
         recurring=existing.recurring,
         counts_toward_monotributo=existing.counts_toward_monotributo,
@@ -393,7 +396,9 @@ def _apply_patch(existing: Transaction, command: UpdateTransaction) -> Transacti
     so the patched state is validated and normalized, while preserving identity,
     ``created_at`` and ownership (``user_id``) and bumping ``updated_at`` to now
     (ADR-026, ADR-031, ADR-108). Ownership is never patchable — a patch must not
-    move a row to another tenant.
+    move a row to another tenant. ``card`` is not a patchable field: the edit form
+    never sends it, so it is carried over unchanged from the existing row so an edit
+    that changes other fields never wipes the imported card detail (ADR-117).
     """
     fields = {name: getattr(existing, name) for name in _PATCHABLE_FIELDS}
     for name in _PATCHABLE_FIELDS:
@@ -405,5 +410,6 @@ def _apply_patch(existing: Transaction, command: UpdateTransaction) -> Transacti
         created_at=existing.created_at,
         updated_at=datetime.now(UTC),
         user_id=existing.user_id,
+        card=existing.card,
         **fields,
     )

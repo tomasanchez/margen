@@ -34,7 +34,9 @@ class TransactionReadModel:
         fx_rate_type: Rate family, else ``None``.
         fx_rate_as_of: Timestamp the rate was observed, else ``None``.
         category: Validated category string, optional.
-        payment_method: Bank / card / channel label, optional.
+        payment_method: Normalized bank / channel label, optional (ADR-117).
+        card: Optional card / detail label for display (e.g. ``"VISA ·5771"``);
+            ``None`` when there is no card (ADR-117).
         notes: Free-form optional note, distinct from ``name`` (ADR-024).
         recurring: Whether the movement repeats.
         counts_toward_monotributo: Monotributo counting hint.
@@ -59,6 +61,7 @@ class TransactionReadModel:
     fx_rate_as_of: datetime | None
     category: str | None
     payment_method: str | None
+    card: str | None
     notes: str | None
     recurring: bool
     counts_toward_monotributo: bool

@@ -87,6 +87,7 @@ class CreateTransaction(Command):
     fx_rate_as_of: datetime | None = None
     category: str | None = None
     payment_method: str | None = None
+    card: str | None = None
     notes: str | None = None
     recurring: bool = False
     counts_toward_monotributo: bool = False

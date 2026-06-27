@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from margen_api.domain.commands.transaction import CreateTransaction
 from margen_api.domain.models.transaction import build_transaction
 from margen_api.domain.models.value_objects import (
@@ -138,22 +140,24 @@ class TestKnownCategory:
 
 
 class TestKnownPaymentMethod:
-    """Membership in the known prototype payment-method set."""
+    """Membership in the known normalized bank set (ADR-024, ADR-117)."""
 
-    async def test_known_value(self):
+    @pytest.mark.parametrize("bank", ["Galicia", "Santander", "Mercado Pago", "Brubank", "Deel", "Transfer"])
+    async def test_known_value(self, bank: str):
         """
-        GIVEN a payment method from the known set
+        GIVEN a normalized bank from the amended known set (ADR-117)
         WHEN membership is checked
         THEN it reports True
         """
         # WHEN / THEN
-        assert is_known_payment_method("Mercado Pago") is True
+        assert is_known_payment_method(bank) is True
 
-    async def test_unknown_value(self):
+    @pytest.mark.parametrize("value", ["Cash", "Galicia · Visa", "Santander VISA ·5771"])
+    async def test_unknown_value(self, value: str):
         """
-        GIVEN a payment method outside the known set
+        GIVEN a value outside the amended bank set — incl. old composed labels (ADR-117)
         WHEN membership is checked
         THEN it reports False
         """
         # WHEN / THEN
-        assert is_known_payment_method("Cash") is False
+        assert is_known_payment_method(value) is False

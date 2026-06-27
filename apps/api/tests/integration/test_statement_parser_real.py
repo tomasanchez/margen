@@ -115,7 +115,7 @@ class TestRealStatementDecode:
         assert parsed.bank_name == "Galicia"
         assert parsed.network == "VISA"
         assert parsed.card_last4 == "5771"
-        assert parsed.payment_method == "Galicia VISA ·5771"
+        assert parsed.card == "VISA ·5771"  # card detail split from the bank (ADR-117).
         assert parsed.issuer_cuit == "30-50000173-5"
         assert parsed.statement_number == "VI00000000069436867"
         assert parsed.period_close == date(2026, 6, 11)

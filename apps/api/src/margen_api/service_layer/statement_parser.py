@@ -344,7 +344,7 @@ class GaliciaVisaParser(StatementParser):
         card_last4 = self._first_group(self._CARD_LAST4, text)
         period_close, period_due = self._periods(text)
         total_amount = self._total(text)
-        payment_method = self._payment_method(card_last4)
+        card = self._card(card_last4)
 
         tokens = [raw.strip() for raw in text.splitlines()]
         # ADR-089: every line's occurred_on is the statement pay/due date. When the
@@ -364,7 +364,7 @@ class GaliciaVisaParser(StatementParser):
             bank_name="Galicia",
             network="VISA",
             card_last4=card_last4,
-            payment_method=payment_method,
+            card=card,
             statement_number=statement_number,
             issuer_cuit=_GALICIA_CUIT,
             period_close=period_close,
@@ -381,10 +381,14 @@ class GaliciaVisaParser(StatementParser):
         return match.group(1) if match is not None else None
 
     @staticmethod
-    def _payment_method(card_last4: str | None) -> str:
-        """Compose the ``"Galicia VISA ·5771"`` payment-method label (ADR-079)."""
+    def _card(card_last4: str | None) -> str:
+        """Compose the ``"VISA ·5771"`` card detail label (ADR-117).
+
+        The bank (``"Galicia"``) is reported separately as ``bank_name``; the card
+        carries only the network and last-4, never the bank (ADR-117).
+        """
         suffix = f" {_MIDDOT}{card_last4}" if card_last4 else ""
-        return f"Galicia VISA{suffix}"
+        return f"VISA{suffix}"
 
     def _periods(self, text: str) -> tuple[date | None, date | None]:
         """Pull (period_close, period_due) from the six dd-Mon-yy header tokens.
@@ -701,11 +705,6 @@ class _SantanderBaseParser(StatementParser, ABC):
     def _network(self) -> str:
         """Network brand returned in ParsedStatement (e.g. 'VISA', 'AMEX')."""
 
-    @property
-    @abstractmethod
-    def _payment_prefix(self) -> str:
-        """Payment method label prefix (e.g. 'Santander VISA')."""
-
     def parse(self, text: str) -> ParsedStatement:
         """Extract statement metadata and line drafts (ADR-079)."""
         statement_number = self._extract_statement_no(text)
@@ -713,8 +712,10 @@ class _SantanderBaseParser(StatementParser, ABC):
         period_close = self._extract_period_date(self._CIERRE_RE, text)
         period_due = self._extract_period_date(self._VENC_RE, text)
         total_amount = self._extract_total(text)
+        # The bank ("Santander") is reported separately as ``bank_name``; the card
+        # carries only the network and last-4, never the bank (ADR-117).
         suffix = f" {_MIDDOT}{card_last4}" if card_last4 else ""
-        payment_method = f"{self._payment_prefix}{suffix}"
+        card = f"{self._network}{suffix}"
 
         period_year = period_close.year if period_close is not None else 2000
         lines_text = text.splitlines()
@@ -734,7 +735,7 @@ class _SantanderBaseParser(StatementParser, ABC):
             bank_name="Santander",
             network=self._network,
             card_last4=card_last4,
-            payment_method=payment_method,
+            card=card,
             statement_number=statement_number,
             issuer_cuit=_SANTANDER_CUIT,
             period_close=period_close,
@@ -910,10 +911,6 @@ class SantanderAmexParser(_SantanderBaseParser):
     def _network(self) -> str:
         return "AMEX"
 
-    @property
-    def _payment_prefix(self) -> str:
-        return "Santander AMEX"
-
     def fingerprint(self, text: str) -> bool:
         """Detect a Santander AMEX statement by CUIT and AMEX header (ADR-076).
 
@@ -933,10 +930,6 @@ class SantanderVisaParser(_SantanderBaseParser):
     @property
     def _network(self) -> str:
         return "VISA"
-
-    @property
-    def _payment_prefix(self) -> str:
-        return "Santander VISA"
 
     def fingerprint(self, text: str) -> bool:
         """Detect a Santander VISA statement by CUIT and VISA branding (ADR-076).

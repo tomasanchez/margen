@@ -146,6 +146,31 @@ class TestCreateTransaction:
         # The handler actually persisted the aggregate through the fake unit of work.
         assert len(uow.committed_aggregates) == 1
 
+    async def test_creates_with_bank_and_card(self, client: httpx.AsyncClient):
+        """
+        GIVEN a create body carrying a normalized bank and a card detail
+        WHEN the create endpoint is posted
+        THEN both round-trip on the response: 'bank' is normalized, 'card' is the detail (ADR-117)
+        """
+        # WHEN
+        response = await client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": A_DATE,
+                "name": "Coto",
+                "kind": "expense",
+                "amountNum": "1500.00",
+                "bank": "Galicia",
+                "card": "VISA ·5771",
+            },
+        )
+
+        # THEN
+        assert response.status_code == status.HTTP_201_CREATED
+        body = response.json()["data"]
+        assert body["bank"] == "Galicia"  # normalized bank (ADR-117).
+        assert body["card"] == "VISA ·5771"  # card detail kept separate (ADR-117).
+
     async def test_usd_without_rate_is_accepted(self, client: httpx.AsyncClient):
         """
         GIVEN a USD create body with no rate
@@ -330,6 +355,27 @@ class TestUpdateTransaction:
         # THEN
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["data"]["name"] == "Updated"
+
+    async def test_patch_preserves_existing_card(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN an imported transaction carrying a card detail
+        WHEN a patch changes another field and never sends 'card'
+        THEN the existing card is preserved, not wiped (ADR-117)
+        """
+        # GIVEN
+        transaction = _seed(uow, name="Express Cordoba", payment_method="Galicia", card="VISA ·5771")
+
+        # WHEN — the edit form changes the name and bank but never sends card.
+        response = await client.patch(
+            f"{TRANSACTIONS}/{transaction.id}",
+            json={"name": "Express Cordoba dinner", "bank": "Galicia"},
+        )
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()["data"]
+        assert body["name"] == "Express Cordoba dinner"
+        assert body["card"] == "VISA ·5771"  # untouched by the edit (ADR-117).
 
     async def test_missing_id_returns_404(self, client: httpx.AsyncClient):
         """

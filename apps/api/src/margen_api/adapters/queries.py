@@ -70,6 +70,7 @@ def _to_read_model(record: TransactionRecord) -> TransactionReadModel:
         fx_rate_as_of=record.fx_rate_as_of,
         category=record.category,
         payment_method=record.payment_method,
+        card=record.card,
         notes=record.notes,
         recurring=record.recurring,
         counts_toward_monotributo=record.counts_toward_monotributo,
