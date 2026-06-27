@@ -1,55 +1,88 @@
 /**
- * Accounts + net-worth API client + DTO boundary (ADR-122/123/130/133).
+ * Institutions + Accounts + net-worth API client + DTO boundary
+ * (ADR-122/123/130/133, restructured by ADR-134).
  *
- * The single boundary between the backend's `/accounts` REST contract
- * (`GET|POST|PUT /api/v1/accounts`, `GET /api/v1/accounts/net-worth`, a `{ data }`
- * envelope, camelCase fields, UUID string ids, Decimal-string money) and the
- * frontend's {@link Account} shape. Mirrors {@link settingsClient} /
- * {@link transactionsClient} (ADR-033): `apiUrl()` for the versioned URL,
- * `authedFetch` for the bearer token (ADR-092), and a status-carrying error on
- * any non-2xx so TanStack Query treats it as a failure and the Accounts page can
- * show a calm error state (ADR-037).
+ * The single boundary between the backend's REST contract and the frontend's
+ * {@link Institution} / {@link Account} shapes. ADR-134 splits the old flat
+ * account into a two-level model:
  *
- * Money stays a Decimal STRING end-to-end (ADR-025/034): `openingBalance` and the
- * net-worth balances cross the boundary as strings and are parsed to numbers only
- * at the display edge (the net-worth card / formatters). This client renames
- * nothing on the account itself (the contract is already camelCase + flat); it
- * unwraps the envelope and forwards the typed shapes.
+ * - `Institution` = `{ id, name, type: bank|card|cash|wallet }` — CRUD at
+ *   `/institutions` (list/create/update).
+ * - `Account` = a per-currency leaf `{ id, institutionId, institutionName, type,
+ *   currency, openingBalance }` — `/accounts` create `{ institutionId, currency,
+ *   openingBalance }`, list, update. `institutionName` + `type` are denormalized
+ *   into the account response for display.
+ *
+ * Mirrors {@link settingsClient} / {@link transactionsClient} (ADR-033):
+ * `apiUrl()` for the versioned URL, `authedFetch` for the bearer token (ADR-092),
+ * a `{ data }` envelope (ADR-030), and a status-carrying error on any non-2xx so
+ * TanStack Query treats it as a failure and the page can show a calm error state
+ * (ADR-037). Money stays a Decimal STRING end-to-end (ADR-025/034) and is parsed
+ * to a number only at the display edge.
  *
  * Net worth (ADR-123/133): the reader returns the user's total in their display
  * currency plus a per-account breakdown carrying each account's native `balance`
- * AND a `balanceConverted` in the display currency. When the user has no USD row
- * to derive a MEP rate from, the backend degrades to native and
- * `balanceConverted === balance` (ADR-133); the UI just renders whatever the API
- * returns and never computes FX client-side for net worth.
+ * AND a `balanceConverted` in the display currency. When there is no USD row to
+ * derive a MEP rate from, the backend degrades to native and
+ * `balanceConverted === balance` (ADR-133); the UI renders what the API returns
+ * and never computes FX client-side for net worth. The breakdown carries the
+ * institution name + type + currency (ADR-134), not a single account name.
  */
 
 import { apiUrl } from '../config'
 import { authedFetch } from './http'
-import type { Account, AccountType, Currency } from '../mock/types'
+import type {
+  Account,
+  AccountType,
+  Currency,
+  Institution,
+  InstitutionWriteBody,
+} from '../mock/types'
 
 /** The backend `{ data: T }` response envelope (ADR-030). */
 interface ResponseEnvelope<T> {
   data: T
 }
 
+/** The institution DTO as serialized by the backend (ADR-134). */
+export interface InstitutionDto {
+  id: string
+  name: string
+  type: string
+}
+
+/** Request body accepted by `POST` / `PUT /institutions` (camelCase, ADR-134). */
+export interface InstitutionWriteDto {
+  name: string
+  type: AccountType
+}
+
+/** Input the Add-institution flow produces. Mirrors {@link InstitutionWriteBody}. */
+export type NewInstitutionInput = InstitutionWriteBody
+/** Input for an institution update — the writable fields (id is the path param). */
+export type InstitutionUpdateInput = InstitutionWriteBody
+
 /**
- * The account DTO as serialized by the backend (ADR-122). Already camelCase +
- * flat and matching {@link Account} (money as a Decimal string), so the adapter
- * narrows the enum-ish fields and forwards the rest unchanged.
+ * The account DTO as serialized by the backend (ADR-134). Denormalizes the
+ * owning institution's `institutionName` + `type` for display; money is a
+ * Decimal string.
  */
 export interface AccountDto {
   id: string
-  name: string
+  institutionId: string
+  institutionName: string
   type: string
   currency: string
   openingBalance: string
 }
 
-/** Request body accepted by `POST` / `PUT /accounts` (camelCase, ADR-122). */
+/**
+ * Request body accepted by `POST /accounts` (ADR-134): the institution to attach
+ * to, the native currency, and the opening balance as a Decimal string. The
+ * account's name + type come from the institution, so they are NOT sent here.
+ */
 export interface AccountWriteBody {
-  name: string
-  type: AccountType
+  institutionId: string
   currency: Currency
   /** Opening balance as a Decimal string (ADR-025/034), e.g. "150000.00". */
   openingBalance: string
@@ -57,20 +90,25 @@ export interface AccountWriteBody {
 
 /** Input the Accounts form produces for a create. Mirrors {@link AccountWriteBody}. */
 export type NewAccountInput = AccountWriteBody
-
-/** Input for an update — the writable account fields (id is the path param). */
+/** Input for an account update — the writable fields (id is the path param). */
 export type AccountUpdateInput = AccountWriteBody
 
 /**
- * One account row in the net-worth breakdown (ADR-123/133). `balance` is the
- * account's NATIVE balance (in its own `currency`); `balanceConverted` is that
- * balance expressed in the user's display currency. They are EQUAL when the
- * backend degraded to native (no MEP rate available, ADR-133) — the card renders
- * whatever the API returns and never converts client-side.
+ * One account row in the net-worth breakdown (ADR-123/133/134). Carries the
+ * institution name + type + native `currency`; `balance` is the account's NATIVE
+ * balance and `balanceConverted` is that balance expressed in the user's display
+ * currency. They are EQUAL when the backend degraded to native (no MEP rate
+ * available, ADR-133) — the card renders what the API returns and never converts
+ * client-side.
  */
 export interface NetWorthAccount {
   id: string
-  name: string
+  /** The owning institution's id (for the account drilldown link, ADR-134). */
+  institutionId: string
+  /** The owning institution's name, for the breakdown row label. */
+  institutionName: string
+  /** The owning institution's type (bank/card/cash/wallet). */
+  type: string
   /** The account's native currency (ARS / USD). */
   currency: string
   /** Native balance as a Decimal string. */
@@ -80,8 +118,9 @@ export interface NetWorthAccount {
 }
 
 /**
- * The net-worth read model (ADR-122/123/133): the user's total in their display
- * `currency` plus the per-account breakdown. Money fields are Decimal strings.
+ * The net-worth read model (ADR-122/123/133/134): the user's total in their
+ * display `currency` plus the per-account breakdown. Money fields are Decimal
+ * strings.
  */
 export interface NetWorth {
   /** Total net worth as a Decimal string, in the display `currency`. */
@@ -120,9 +159,11 @@ async function ensureOk(response: Response): Promise<void> {
   )
 }
 
-/** Narrow the backend account `type` string to {@link AccountType} (default bank). */
+/** Narrow the backend institution/account `type` string to {@link AccountType}. */
 function asAccountType(value: string): AccountType {
-  return value === 'cash' || value === 'card' ? value : 'bank'
+  return value === 'cash' || value === 'card' || value === 'wallet'
+    ? value
+    : 'bank'
 }
 
 /** Narrow the backend `currency` string to {@link Currency} (default ARS). */
@@ -130,34 +171,86 @@ function asCurrency(value: string): Currency {
   return value === 'USD' ? 'USD' : 'ARS'
 }
 
+/** Adapt a backend {@link InstitutionDto} to the frontend {@link Institution}. */
+export function adaptInstitution(dto: InstitutionDto): Institution {
+  return { id: dto.id, name: dto.name, type: asAccountType(dto.type) }
+}
+
 /**
  * Adapt a backend {@link AccountDto} to the frontend {@link Account}.
  *
  * Narrows the enum-ish `type` / `currency` to their unions and keeps the money
  * field as the Decimal STRING it arrived as (ADR-025/034) — the form edits it as
- * a string and only the net-worth card parses balances to numbers for display.
+ * a string and only the display edge parses balances to numbers.
  */
 export function adaptAccount(dto: AccountDto): Account {
   return {
     id: dto.id,
-    name: dto.name,
+    institutionId: dto.institutionId,
+    institutionName: dto.institutionName,
     type: asAccountType(dto.type),
     currency: asCurrency(dto.currency),
     openingBalance: dto.openingBalance,
   }
 }
 
-/** Build the create/update body from a form input (currency + type already narrowed). */
-export function toWriteBody(input: AccountWriteBody): AccountWriteBody {
+/** Build the institution create/update body from a form input. */
+export function toInstitutionWriteBody(
+  input: InstitutionWriteBody,
+): InstitutionWriteDto {
+  return { name: input.name, type: input.type }
+}
+
+/** Build the account create/update body from a form input. */
+export function toAccountWriteBody(input: AccountWriteBody): AccountWriteBody {
   return {
-    name: input.name,
-    type: input.type,
+    institutionId: input.institutionId,
     currency: input.currency,
     openingBalance: input.openingBalance,
   }
 }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' } as const
+
+/** GET all institutions (owner-scoped), adapted to the frontend shape. */
+async function listInstitutions(): Promise<Institution[]> {
+  const response = await authedFetch(apiUrl('/institutions'), {
+    headers: { Accept: 'application/json' },
+  })
+  await ensureOk(response)
+  const envelope =
+    (await response.json()) as ResponseEnvelope<InstitutionDto[]>
+  return envelope.data.map(adaptInstitution)
+}
+
+/** POST a new institution; returns the persisted, adapted institution. */
+async function createInstitution(
+  input: NewInstitutionInput,
+): Promise<Institution> {
+  const response = await authedFetch(apiUrl('/institutions'), {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify(toInstitutionWriteBody(input)),
+  })
+  await ensureOk(response)
+  const envelope = (await response.json()) as ResponseEnvelope<InstitutionDto>
+  return adaptInstitution(envelope.data)
+}
+
+/** PUT an institution update by UUID; returns the refreshed institution. */
+async function updateInstitution(
+  id: string,
+  input: InstitutionUpdateInput,
+): Promise<Institution> {
+  const response = await authedFetch(apiUrl(`/institutions/${id}`), {
+    method: 'PUT',
+    headers: JSON_HEADERS,
+    body: JSON.stringify(toInstitutionWriteBody(input)),
+  })
+  await ensureOk(response)
+  const envelope = (await response.json()) as ResponseEnvelope<InstitutionDto>
+  return adaptInstitution(envelope.data)
+}
 
 /** GET all accounts (owner-scoped), adapted to the frontend shape. */
 async function list(): Promise<Account[]> {
@@ -174,7 +267,7 @@ async function create(input: NewAccountInput): Promise<Account> {
   const response = await authedFetch(apiUrl('/accounts'), {
     method: 'POST',
     headers: JSON_HEADERS,
-    body: JSON.stringify(toWriteBody(input)),
+    body: JSON.stringify(toAccountWriteBody(input)),
   })
   await ensureOk(response)
   const envelope = (await response.json()) as ResponseEnvelope<AccountDto>
@@ -189,7 +282,7 @@ async function update(
   const response = await authedFetch(apiUrl(`/accounts/${id}`), {
     method: 'PUT',
     headers: JSON_HEADERS,
-    body: JSON.stringify(toWriteBody(input)),
+    body: JSON.stringify(toAccountWriteBody(input)),
   })
   await ensureOk(response)
   const envelope = (await response.json()) as ResponseEnvelope<AccountDto>
@@ -209,8 +302,11 @@ async function netWorth(): Promise<NetWorth> {
   return envelope.data
 }
 
-/** The accounts API client, grouped for ergonomic import. */
+/** The accounts + institutions API client, grouped for ergonomic import. */
 export const accountsClient = {
+  listInstitutions,
+  createInstitution,
+  updateInstitution,
   list,
   create,
   update,

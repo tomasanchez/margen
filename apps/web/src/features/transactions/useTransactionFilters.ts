@@ -46,6 +46,8 @@ export interface FilterControls {
   setMonth: (value: MonthFilter) => void
   toggleCategory: (value: Category) => void
   toggleBank: (value: Bank) => void
+  /** Add/remove an account id from the Account multi-select filter (ADR-134). */
+  toggleAccount: (value: string) => void
   setAmount: (value: AmountRange) => void
   clear: () => void
 }
@@ -109,6 +111,11 @@ export function useTransactionFilters(): UseTransactionFilters {
         pushFilters((current) => ({
           ...current,
           banks: toggle(current.banks, value),
+        })),
+      toggleAccount: (value) =>
+        pushFilters((current) => ({
+          ...current,
+          accounts: toggle(current.accounts, value),
         })),
       setAmount: (value) => patch({ amount: value }),
       // "Clear filters" widens to the neutral baseline: every filter off and the

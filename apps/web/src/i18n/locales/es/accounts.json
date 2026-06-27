@@ -1,27 +1,39 @@
 {
   "title": "Cuentas",
-  "subtitle": "Tus cuentas bancarias, de efectivo y de tarjeta, y sus saldos.",
-  "addAccount": "Agregar cuenta",
+  "subtitle": "Tus entidades y los saldos de sus cuentas por moneda.",
+  "addInstitution": "Agregar entidad",
   "type": {
     "bank": "Banco",
+    "card": "Tarjeta",
     "cash": "Efectivo",
-    "card": "Tarjeta"
+    "wallet": "Billetera"
   },
   "list": {
-    "title": "Tus cuentas",
+    "title": "Tus entidades",
     "openingBalance": "Saldo inicial",
-    "empty": "Todavía no tenés cuentas. Agregá tu primera cuenta para seguir su saldo y tu patrimonio.",
-    "editAria": "Editar {{name}}"
+    "empty": "Todavía no tenés entidades. Agregá tu primera entidad para seguir sus cuentas y tu patrimonio.",
+    "noAccounts": "Todavía no hay cuentas. Agregá una abajo.",
+    "addAccount": "Agregar cuenta",
+    "editInstitutionAria": "Editar {{name}}",
+    "editAccountAria": "Editar la cuenta {{currency}} de {{institution}}",
+    "drilldownAria": "Ver los movimientos de {{institution}} {{currency}}"
   },
-  "form": {
-    "addTitle": "Agregar cuenta",
-    "editTitle": "Editar cuenta",
+  "institutionForm": {
+    "addTitle": "Agregar entidad",
+    "editTitle": "Editar entidad",
     "name": {
       "label": "Nombre"
     },
     "type": {
       "label": "Tipo"
     },
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "saveError": "No pudimos guardar esta entidad. Verificá tu conexión e intentá de nuevo."
+  },
+  "form": {
+    "addTitle": "Agregar cuenta a {{institution}}",
+    "editTitle": "Editar la cuenta de {{institution}}",
     "currency": {
       "label": "Moneda",
       "ars": "ARS — pesos argentinos",
@@ -47,6 +59,7 @@
     "converted": "≈ {{amount}}",
     "empty": "Agregá una cuenta para ver tu patrimonio acá.",
     "degradeNote": "Sumado en la moneda de cada cuenta — agregá un movimiento en USD con cotización para convertir.",
+    "drilldownAria": "Ver los movimientos de {{institution}} {{currency}}",
     "errorTitle": "Patrimonio no disponible",
     "errorDescription": "No pudimos cargar tu patrimonio ahora. Intentá de nuevo."
   }

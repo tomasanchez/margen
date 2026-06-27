@@ -1,36 +1,51 @@
 /**
- * TanStack Query hooks for accounts + net worth (ADR-122/123/130/133, ADR-036).
+ * TanStack Query hooks for institutions + accounts + net worth
+ * (ADR-122/123/130/133/134, ADR-036).
  *
- * Reads/mutates through {@link accountsClient}, which adapts the backend DTO to
- * the frontend {@link Account} shape. The accounts list and the net-worth read
- * are separate queries; a create/update invalidates BOTH (a new opening balance
- * changes net worth) plus the transactions-derived queries are unaffected here.
+ * Reads/mutates through {@link accountsClient}, which adapts the backend DTOs to
+ * the frontend {@link Institution} / {@link Account} shapes. ADR-134 splits the
+ * model into institutions (the provider rows) and per-currency account leaves.
+ * The institutions list, the accounts list, and the net-worth read are separate
+ * queries; ANY write (institution or account) invalidates the whole `accounts`
+ * key family — a new institution unlocks an Add-account flow, and a new opening
+ * balance / account changes net worth.
  *
  * Net worth also depends on the transactions store (balances = opening +
  * transaction deltas, ADR-122) and on the latest USD row's MEP rate (ADR-133), so
- * a transaction mutation should refresh net worth too. That is wired from the
- * transactions invalidation (it invalidates `accounts` net-worth there); here we
- * own the account-write path. Mutation hooks return TanStack Query's full result
- * so callers can surface `isError` / `error` for the calm failure UX (ADR-037).
+ * a transaction mutation refreshes net worth too (wired from the transactions
+ * invalidation, which invalidates `accountsKeys.all`). Mutation hooks return
+ * TanStack Query's full result so callers can surface `isError` / `error` for the
+ * calm failure UX (ADR-037).
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   accountsClient,
   type AccountUpdateInput,
+  type InstitutionUpdateInput,
   type NewAccountInput,
+  type NewInstitutionInput,
   type NetWorth,
 } from '../../api/accountsClient'
-import type { Account } from '../../mock/types'
+import type { Account, Institution } from '../../mock/types'
 
 /** Stable query-key factory for the accounts domain. */
 export const accountsKeys = {
   all: ['accounts'] as const,
+  institutions: () => [...accountsKeys.all, 'institutions'] as const,
   list: () => [...accountsKeys.all, 'list'] as const,
   netWorth: () => [...accountsKeys.all, 'net-worth'] as const,
 }
 
-/** Read the owner-scoped accounts list (the source the page + selector read). */
+/** Read the owner-scoped institutions list (the provider rows, ADR-134). */
+export function useInstitutions() {
+  return useQuery<Institution[]>({
+    queryKey: accountsKeys.institutions(),
+    queryFn: () => accountsClient.listInstitutions(),
+  })
+}
+
+/** Read the owner-scoped accounts list (the per-currency leaves + the selector). */
 export function useAccounts() {
   return useQuery<Account[]>({
     queryKey: accountsKeys.list(),
@@ -46,12 +61,34 @@ export function useNetWorth() {
   })
 }
 
-/** Invalidate every accounts query (list + net worth) after an account write. */
+/** Invalidate every accounts query (institutions + list + net worth) after a write. */
 function useInvalidateAccounts() {
   const queryClient = useQueryClient()
   return () => {
     void queryClient.invalidateQueries({ queryKey: accountsKeys.all })
   }
+}
+
+/** Create an institution, then refresh the whole accounts family. */
+export function useCreateInstitution() {
+  const invalidate = useInvalidateAccounts()
+  return useMutation<Institution, Error, NewInstitutionInput>({
+    mutationFn: (input) => accountsClient.createInstitution(input),
+    onSuccess: invalidate,
+  })
+}
+
+/** Update an institution by id, then refresh the whole accounts family. */
+export function useUpdateInstitution() {
+  const invalidate = useInvalidateAccounts()
+  return useMutation<
+    Institution,
+    Error,
+    { id: string; input: InstitutionUpdateInput }
+  >({
+    mutationFn: ({ id, input }) => accountsClient.updateInstitution(id, input),
+    onSuccess: invalidate,
+  })
 }
 
 /** Create an account, then refresh the list + net worth. */

@@ -100,6 +100,26 @@ describe('useTransactionFilters (URL-synced)', () => {
     )
   })
 
+  test('toggleAccount writes the account id to the URL (ADR-134)', async () => {
+    const { router, captured } = renderFiltersAt('/transactions')
+    await vi.waitFor(() => expect(captured.current).not.toBeNull())
+
+    act(() => {
+      captured.current!.controls.toggleAccount('acc-1')
+    })
+    await vi.waitFor(() =>
+      expect(router.state.location.search).toMatchObject({ account: 'acc-1' }),
+    )
+
+    // Toggling the same id off drops the param.
+    act(() => {
+      captured.current!.controls.toggleAccount('acc-1')
+    })
+    await vi.waitFor(() =>
+      expect(router.state.location.search).not.toHaveProperty('account'),
+    )
+  })
+
   test('clear widens to All time (month=all) and drops every other param', async () => {
     const { router, captured } = renderFiltersAt(
       '/transactions?type=invoice&category=Food',

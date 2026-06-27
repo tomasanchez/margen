@@ -57,7 +57,7 @@ import {
 import { useMonotributoSnapshot } from '../monotributo/queries'
 import { useAccounts } from '../accounts/queries'
 import type { AddPrefill } from './addContext'
-import { bankLabel, categoryLabel } from './presentation'
+import { accountOptionLabel, bankLabel, categoryLabel } from './presentation'
 import {
   EXPENSE_CATEGORIES,
   useAddEditFormState,
@@ -863,7 +863,7 @@ export function AddEditForm({
             </MenuItem>
             {accounts.map((account) => (
               <MenuItem key={account.id} value={account.id}>
-                {account.name}
+                {accountOptionLabel(account)}
               </MenuItem>
             ))}
           </Select>

@@ -112,8 +112,22 @@ beforeEach(() => {
     invoices: [],
   })
   accountsListMock.mockResolvedValue([
-    { id: 'acc-1', name: 'Galicia ARS', type: 'bank', currency: 'ARS', openingBalance: '0.00' },
-    { id: 'acc-2', name: 'Deel USD', type: 'cash', currency: 'USD', openingBalance: '0.00' },
+    {
+      id: 'acc-1',
+      institutionId: 'inst-1',
+      institutionName: 'Galicia',
+      type: 'bank',
+      currency: 'ARS',
+      openingBalance: '0.00',
+    },
+    {
+      id: 'acc-2',
+      institutionId: 'inst-2',
+      institutionName: 'Deel',
+      type: 'wallet',
+      currency: 'USD',
+      openingBalance: '0.00',
+    },
   ])
 })
 
@@ -150,9 +164,9 @@ describe('transaction account selector (ADR-122/133)', () => {
     // Enter an ARS amount so the form can save.
     await user.type(form.getByLabelText(/^Amount in /), '5000')
 
-    // Open the Account select and pick "Deel USD".
+    // Open the Account select and pick "Deel · USD" (institution · currency).
     await user.click(form.getByRole('combobox', { name: 'Account' }))
-    const option = await screen.findByRole('option', { name: 'Deel USD' })
+    const option = await screen.findByRole('option', { name: 'Deel · USD' })
     await user.click(option)
 
     // Save.
@@ -180,9 +194,9 @@ describe('transaction account selector (ADR-122/133)', () => {
     const form = within(dialog)
     await waitFor(() => expect(accountsListMock).toHaveBeenCalled())
 
-    // The selector is seeded to the row's account.
+    // The selector is seeded to the row's account (institution · currency).
     expect(form.getByRole('combobox', { name: 'Account' })).toHaveTextContent(
-      'Galicia ARS',
+      'Galicia · ARS',
     )
 
     await user.click(form.getByRole('button', { name: 'Save changes' }))

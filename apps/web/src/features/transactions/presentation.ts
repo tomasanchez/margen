@@ -11,7 +11,7 @@
 
 import i18n from 'i18next'
 
-import type { Bank, Category, Transaction } from '../../mock/types'
+import type { Account, Bank, Category, Transaction } from '../../mock/types'
 
 /**
  * Color token for a category's dot. The concept tints Income with the Safe
@@ -60,4 +60,14 @@ export function bankCardLabel(
   const detail = card?.trim()
   const base = bankLabel(bank)
   return detail ? `${base} · ${detail}` : base
+}
+
+/**
+ * Label for an account in the selector / Account filter (ADR-134):
+ * "{institutionName} · {currency}", e.g. "Galicia · ARS". The institution name
+ * is a brand string kept as-is; the currency code is a canonical identifier. Pure
+ * (no React) so the form, filter, and tests can share it.
+ */
+export function accountOptionLabel(account: Account): string {
+  return `${account.institutionName} · ${account.currency}`
 }

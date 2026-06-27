@@ -42,6 +42,7 @@
     "currencyAriaLabel": "Currency",
     "categoryLabel": "Category",
     "bankLabel": "Bank / card",
+    "accountLabel": "Account",
     "amountLabel": "Amount",
     "trigger": "Filters",
     "triggerCount": "Filters · {{count}}",
@@ -51,6 +52,7 @@
     "currencySection": "Currency",
     "categorySection": "Category",
     "bankSection": "Bank / card",
+    "accountSection": "Account",
     "amountSection": "Amount",
     "showResults_one": "Show {{count}} transaction",
     "showResults_other": "Show {{count}} transactions"

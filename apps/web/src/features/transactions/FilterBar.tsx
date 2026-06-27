@@ -30,11 +30,13 @@ import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown'
 import SearchIcon from '@mui/icons-material/Search'
 import { monoFontFamily } from '../../theme'
 import { BANKS, CATEGORIES } from '../../mock/seed'
-import type { Bank, Category, Transaction } from '../../mock/types'
+import type { Account, Bank, Category, Transaction } from '../../mock/types'
+import { useAccounts } from '../accounts/queries'
 import {
   AMOUNT_RANGES,
   CURRENCY_OPTIONS,
   TYPE_OPTIONS,
+  countByAccount,
   countByBank,
   countByCategory,
   hasActiveFilters,
@@ -44,7 +46,7 @@ import {
   type TypeFilter,
 } from './filtering'
 import { MonthPicker } from './MonthPicker'
-import { bankLabel, categoryLabel } from './presentation'
+import { accountOptionLabel, bankLabel, categoryLabel } from './presentation'
 import type { FilterControls } from './useTransactionFilters'
 
 /**
@@ -287,6 +289,18 @@ export function FilterBar({
   const { t } = useTranslation('transactions')
   const showClear = hasActiveFilters(filters)
 
+  // The Account filter options (ADR-134) come from the user's accounts list,
+  // labeled "{institutionName} · {currency}". Read non-blockingly: while pending
+  // or absent the menu simply has no options (the bank filter is unaffected).
+  const accountsQuery = useAccounts()
+  const accounts = accountsQuery.data ?? []
+  const accountById = new Map<string, Account>(accounts.map((a) => [a.id, a]))
+  const accountIds = accounts.map((a) => a.id)
+  const labelForAccount = (id: string) => {
+    const account = accountById.get(id)
+    return account ? accountOptionLabel(account) : id
+  }
+
   return (
     <Box sx={{ display: { xs: 'none', md: 'block' } }}>
       <TextField
@@ -378,6 +392,18 @@ export function FilterBar({
           onToggle={controls.toggleBank}
           formatOption={bankLabel}
         />
+
+        {accountIds.length > 0 ? (
+          <MultiSelectMenu<string>
+            buttonLabel={t('filters.accountLabel')}
+            baseLabel={t('filters.accountLabel')}
+            options={accountIds}
+            selected={filters.accounts}
+            countOf={(id) => countByAccount(allTransactions, id)}
+            onToggle={controls.toggleAccount}
+            formatOption={labelForAccount}
+          />
+        ) : null}
 
         <AmountMenu value={filters.amount} onChange={controls.setAmount} />
 

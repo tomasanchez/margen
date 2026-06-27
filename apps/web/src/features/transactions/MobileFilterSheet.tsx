@@ -22,6 +22,7 @@ import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { BANKS, CATEGORIES } from '../../mock/seed'
 import type { Bank, Category } from '../../mock/types'
+import { useAccounts } from '../accounts/queries'
 import {
   AMOUNT_RANGES,
   CURRENCY_OPTIONS,
@@ -30,7 +31,7 @@ import {
   type CurrencyFilter,
   type TransactionFilters,
 } from './filtering'
-import { bankLabel, categoryLabel } from './presentation'
+import { accountOptionLabel, bankLabel, categoryLabel } from './presentation'
 import type { FilterControls } from './useTransactionFilters'
 
 /** A selectable filter chip (gold-tinted when active), token-driven. */
@@ -105,6 +106,12 @@ export function MobileFilterSheet({
   const showClear = hasActiveFilters(filters)
   const currencyLabel = (id: CurrencyFilter) =>
     id === 'all' ? t('currency.all') : id
+
+  // Account filter options (ADR-134) from the user's accounts list, labeled
+  // "{institutionName} · {currency}". Read non-blockingly; while pending the
+  // section simply renders no chips (the bank section is unaffected).
+  const accountsQuery = useAccounts()
+  const accounts = accountsQuery.data ?? []
 
   return (
     <Drawer
@@ -195,6 +202,19 @@ export function MobileFilterSheet({
           />
         ))}
       </ChipSection>
+
+      {accounts.length > 0 ? (
+        <ChipSection title={t('filters.accountSection')}>
+          {accounts.map((account) => (
+            <FilterChip
+              key={account.id}
+              label={accountOptionLabel(account)}
+              selected={filters.accounts.includes(account.id)}
+              onClick={() => controls.toggleAccount(account.id)}
+            />
+          ))}
+        </ChipSection>
+      ) : null}
 
       <ChipSection title={t('filters.amountSection')}>
         {AMOUNT_RANGES.map((range) => (

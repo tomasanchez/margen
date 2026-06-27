@@ -11,11 +11,12 @@ import i18n from 'i18next'
 
 import type { AccountType } from '../../mock/types'
 
-/** The account types in display order (the form's option list). */
+/** The institution types in display order (the Add-institution form's options). */
 export const ACCOUNT_TYPES: readonly AccountType[] = [
   'bank',
-  'cash',
   'card',
+  'cash',
+  'wallet',
 ] as const
 
 /**

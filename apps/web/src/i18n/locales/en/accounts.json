@@ -1,27 +1,39 @@
 {
   "title": "Accounts",
-  "subtitle": "Your bank, cash, and card accounts and their balances.",
-  "addAccount": "Add account",
+  "subtitle": "Your institutions and their per-currency account balances.",
+  "addInstitution": "Add institution",
   "type": {
     "bank": "Bank",
+    "card": "Card",
     "cash": "Cash",
-    "card": "Card"
+    "wallet": "Wallet"
   },
   "list": {
-    "title": "Your accounts",
+    "title": "Your institutions",
     "openingBalance": "Opening balance",
-    "empty": "No accounts yet. Add your first account to track its balance and your net worth.",
-    "editAria": "Edit {{name}}"
+    "empty": "No institutions yet. Add your first institution to track its accounts and your net worth.",
+    "noAccounts": "No accounts yet. Add one below.",
+    "addAccount": "Add account",
+    "editInstitutionAria": "Edit {{name}}",
+    "editAccountAria": "Edit {{institution}} {{currency}} account",
+    "drilldownAria": "View {{institution}} {{currency}} transactions"
   },
-  "form": {
-    "addTitle": "Add account",
-    "editTitle": "Edit account",
+  "institutionForm": {
+    "addTitle": "Add institution",
+    "editTitle": "Edit institution",
     "name": {
       "label": "Name"
     },
     "type": {
       "label": "Type"
     },
+    "cancel": "Cancel",
+    "save": "Save",
+    "saveError": "We couldn't save this institution. Check your connection and try again."
+  },
+  "form": {
+    "addTitle": "Add account to {{institution}}",
+    "editTitle": "Edit {{institution}} account",
     "currency": {
       "label": "Currency",
       "ars": "ARS — Argentine pesos",
@@ -47,6 +59,7 @@
     "converted": "≈ {{amount}}",
     "empty": "Add an account to see your net worth here.",
     "degradeNote": "Totalled in each account's own currency — add a USD transaction with a rate to convert.",
+    "drilldownAria": "View {{institution}} {{currency}} transactions",
     "errorTitle": "Net worth unavailable",
     "errorDescription": "We couldn't load your net worth right now. Try again."
   }

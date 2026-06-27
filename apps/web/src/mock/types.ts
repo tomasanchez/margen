@@ -60,27 +60,57 @@ export type Bank =
   | 'Transfer'
 
 /**
- * The kind of account a balance lives in (ADR-122). `bank` is a bank account,
- * `cash` is physical/uncarded money, `card` is a card-only account. Drives the
- * account's icon + label; not used for net-worth math (every liquid type counts).
+ * The kind of financial provider an institution represents (ADR-134). `bank` is
+ * a bank, `cash` is physical/uncarded money, `card` is a card-only provider, and
+ * `wallet` covers payment platforms (Deel, Payoneer, Mercado Pago) that are
+ * neither banks nor cards. Drives the institution's icon + label; not used for
+ * net-worth math (every liquid type counts). Lives on {@link Institution} now —
+ * the old flat `Account.type` (ADR-122) was moved up a level by ADR-134.
  */
-export type AccountType = 'bank' | 'cash' | 'card'
+export type AccountType = 'bank' | 'cash' | 'card' | 'wallet'
 
 /**
- * A first-class money account (ADR-122/123). Each account carries its own native
- * `currency` (ARS or USD): a USD account stores and reports balances in USD, and
- * net worth aggregates across currencies via the MEP rate (ADR-123/133). Money
- * crosses the API boundary as a Decimal string (ADR-025/034), so `openingBalance`
- * is a string here and is parsed to a number only at the display edge.
+ * A first-class financial provider (ADR-134). One row per provider per user; it
+ * carries the human-readable `name` and the `type`. An institution owns one or
+ * more per-currency {@link Account} leaves (e.g. Galicia with an ARS account and
+ * a USD account); the institution row is the label those sub-accounts share.
+ */
+export interface Institution {
+  /** Stable UUID identity issued by the backend (ADR-130/134). */
+  id: string
+  /** User-facing provider name, e.g. "Galicia" or "Deel". */
+  name: string
+  /** Provider kind (ADR-134): bank / cash / card / wallet. */
+  type: AccountType
+}
+
+/** Input the Add-institution flow produces for a create/update (ADR-134). */
+export interface InstitutionWriteBody {
+  name: string
+  type: AccountType
+}
+
+/**
+ * A per-currency money account leaf under an {@link Institution} (ADR-134).
+ *
+ * Each account holds a single native `currency` (ARS or USD): a USD account
+ * stores and reports balances in USD, and net worth aggregates across currencies
+ * via the MEP rate (ADR-123/133). The `name` + `type` live on the institution;
+ * responses denormalize `institutionName` + `type` onto the account for display
+ * so the UI never needs a second lookup. Money crosses the API boundary as a
+ * Decimal string (ADR-025/034), so `openingBalance` is a string here and is
+ * parsed to a number only at the display edge.
  */
 export interface Account {
-  /** Stable UUID identity issued by the backend (ADR-130). */
+  /** Stable UUID identity issued by the backend (ADR-130/134). */
   id: string
-  /** User-facing account name, e.g. "Galicia ARS" or "Deel USD". */
-  name: string
-  /** Account kind (ADR-122): bank / cash / card. */
+  /** The owning institution's id (ADR-134). */
+  institutionId: string
+  /** The owning institution's name, denormalized into the response for display. */
+  institutionName: string
+  /** The owning institution's type, denormalized into the response for display. */
   type: AccountType
-  /** Native currency the account holds (ADR-123): ARS or USD. */
+  /** Native currency the account holds (ADR-123/134): ARS or USD. */
   currency: Currency
   /**
    * Opening balance as a Decimal string (ADR-025/034), e.g. "150000.00". The

@@ -16,7 +16,9 @@
  */
 
 import { useTranslation } from 'react-i18next'
+import { Link } from '@tanstack/react-router'
 import Box from '@mui/material/Box'
+import Chip from '@mui/material/Chip'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import { SectionCard } from '../../components/SectionCard'
@@ -24,6 +26,9 @@ import { ErrorState } from '../../components/ErrorState'
 import { formatCurrency } from '../../lib/format'
 import type { Currency } from '../../mock/types'
 import type { NetWorth, NetWorthAccount } from '../../api/accountsClient'
+
+/** Shared class for the clickable net-worth breakdown rows (account drilldown). */
+const breakdownRowLinkClass = 'mg-networth-row-link'
 
 /** Parse a Decimal string to a finite number for the formatter (0 on garbage). */
 function num(value: string): number {
@@ -36,7 +41,13 @@ function asCurrency(value: string): Currency {
   return value === 'USD' ? 'USD' : 'ARS'
 }
 
-/** One breakdown row: name + native balance, with the converted value when it differs. */
+/**
+ * One breakdown row (ADR-134): institution name + currency chip on the left,
+ * native balance (and the converted value when it differs) on the right. The row
+ * is a clickable drilldown to the account's transactions
+ * (`/transactions?account=<id>`, ADR-116/134) — a bare TanStack {@link Link} so
+ * the typed `to` / `search` inference is checked against the route schema.
+ */
 function BreakdownRow({
   account,
   displayCurrency,
@@ -55,39 +66,64 @@ function BreakdownRow({
     nativeCurrency !== displayCurrency && account.balanceConverted !== account.balance
 
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 1.5,
-        py: 1.25,
-        borderBottom: '1px solid var(--mg-border)',
-        '&:last-of-type': { borderBottom: 'none' },
-      }}
+    <Link
+      to="/transactions"
+      search={{ account: account.id, month: 'all' as const }}
+      aria-label={t('netWorth.drilldownAria', {
+        institution: account.institutionName,
+        currency: account.currency,
+      })}
+      className={breakdownRowLinkClass}
+      style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
     >
-      <Typography sx={{ fontSize: 14, fontWeight: 500 }} color="text.primary" noWrap>
-        {account.name}
-      </Typography>
-      <Box sx={{ textAlign: 'right', flex: 'none' }}>
-        <Typography
-          sx={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
-          color="text.primary"
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 1.5,
+          py: 1.25,
+          borderBottom: '1px solid var(--mg-border)',
+          '&:last-of-type': { borderBottom: 'none' },
+        }}
+      >
+        <Box
+          sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}
         >
-          {formatCurrency(native, nativeCurrency)}
-        </Typography>
-        {showConverted ? (
           <Typography
-            sx={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}
-            color="text.secondary"
+            sx={{ fontSize: 14, fontWeight: 500 }}
+            color="text.primary"
+            noWrap
           >
-            {t('netWorth.converted', {
-              amount: formatCurrency(converted, displayCurrency),
-            })}
+            {account.institutionName}
           </Typography>
-        ) : null}
+          <Chip
+            label={account.currency}
+            size="small"
+            variant="outlined"
+            sx={{ borderRadius: '8px', fontSize: 11, height: 20, flex: 'none' }}
+          />
+        </Box>
+        <Box sx={{ textAlign: 'right', flex: 'none' }}>
+          <Typography
+            sx={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
+            color="text.primary"
+          >
+            {formatCurrency(native, nativeCurrency)}
+          </Typography>
+          {showConverted ? (
+            <Typography
+              sx={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}
+              color="text.secondary"
+            >
+              {t('netWorth.converted', {
+                amount: formatCurrency(converted, displayCurrency),
+              })}
+            </Typography>
+          ) : null}
+        </Box>
       </Box>
-    </Box>
+    </Link>
   )
 }
 
