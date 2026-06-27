@@ -255,6 +255,22 @@ class TestTransactionAccountLink:
 class TestNetWorth:
     """Net worth = Σ (opening + signed deltas) converted via MEP FX (ADR-122, ADR-123)."""
 
+    async def test_no_accounts_returns_zero_total_and_empty_breakdown(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an owner with no accounts (the table starts empty, ADR-124 amended)
+        WHEN net worth is read
+        THEN it returns 200 with a zero total, the default display currency, and no accounts
+        """
+        # WHEN
+        response = await test_client.get(NET_WORTH)
+
+        # THEN — accounts are not auto-seeded, so net worth degrades gracefully to zero.
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["data"]
+        assert data["total"] == "0.00"
+        assert data["currency"] == "ARS"
+        assert data["accounts"] == []
+
     async def test_balance_reconciles_opening_plus_signed_deltas(self, test_client: httpx.AsyncClient):
         """
         GIVEN an ARS account with an opening balance and one income + one expense

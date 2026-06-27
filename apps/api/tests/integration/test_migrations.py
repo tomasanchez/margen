@@ -115,35 +115,29 @@ class TestMigrations:
         finally:
             asyncio.run(_drop_everything(integration_database_url))
 
-    def test_accounts_seed_and_account_id_backfill(self, integration_database_url: str):
+    def test_accounts_migration_seeds_nothing(self, integration_database_url: str):
         """
         GIVEN legacy bank-tagged, mixed-currency transactions for two users
-        WHEN Alembic upgrades through the accounts migration (ADR-124)
-        THEN one account is seeded per distinct (user, bank, currency) group and each
-            row is linked to its same-currency account, with the card-detail group
-            seeded as type 'card' and the rest as 'bank'
+        WHEN Alembic upgrades through the accounts migration (ADR-124, amended)
+        THEN the accounts table is empty and every transaction's account_id is NULL
 
-        Proves the corrected per-currency accounts seed + ``account_id`` backfill
-        rewrites existing rows on the production PostgreSQL dialect: a bank holding
-        both ARS and USD movements yields two accounts (one per currency), so USD
-        balances stay USD-authoritative (ADR-123). Partitioned per user (ADR-130).
+        Proves the accounts migration adds schema only — no data migration — on the
+        production PostgreSQL dialect: the ``accounts`` table starts empty (the owner
+        creates accounts manually) and existing transactions stay unlinked
+        (``account_id`` NULL) until the owner assigns them (ADR-124, amended; ADR-130).
         """
         # GIVEN — upgrade to the split revision (which has ``card``), then seed rows.
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", integration_database_url)
         command.upgrade(config, _SPLIT)
-        # {label: (user_id, bank, currency, card, expected account type)}.
-        seeded: dict[str, tuple[str, str, str, str | None, str]] = {
-            # User A: Galicia in ARS (card detail) -> a 'card' ARS account.
-            "a_galicia_ars": (_OWNER, "Galicia", "ARS", "VISA ·5771", "card"),
-            # User A: Galicia in USD, no card -> a separate 'bank' USD account, same name.
-            "a_galicia_usd": (_OWNER, "Galicia", "USD", None, "bank"),
-            # User A: Deel USD only, no card -> a single 'bank' USD account.
-            "a_deel_usd": (_OWNER, "Deel", "USD", None, "bank"),
-            # User A: Mercado Pago ARS, no card -> a 'bank' ARS account.
-            "a_mp_ars": (_OWNER, "Mercado Pago", "ARS", None, "bank"),
-            # User B: their own Galicia ARS, no card -> independent 'bank' account.
-            "b_galicia_ars": (_OWNER_B, "Galicia", "ARS", None, "bank"),
+        # {label: (user_id, bank, currency, card)} — bank-tagged rows that, under the
+        # original decision, would have seeded accounts; now they must seed nothing.
+        seeded: dict[str, tuple[str, str, str, str | None]] = {
+            "a_galicia_ars": (_OWNER, "Galicia", "ARS", "VISA ·5771"),
+            "a_galicia_usd": (_OWNER, "Galicia", "USD", None),
+            "a_deel_usd": (_OWNER, "Deel", "USD", None),
+            "a_mp_ars": (_OWNER, "Mercado Pago", "ARS", None),
+            "b_galicia_ars": (_OWNER_B, "Galicia", "ARS", None),
         }
         ids = {label: uuid.uuid4() for label in seeded}
         try:
@@ -152,27 +146,13 @@ class TestMigrations:
             # WHEN
             command.upgrade(config, _ACCOUNTS)
 
-            # THEN — five accounts seeded (one per distinct user+bank+currency group).
+            # THEN — the migration seeds no accounts.
             accounts = asyncio.run(_read_accounts(integration_database_url))
-            assert len(accounts) == 5
-            by_key = {(str(owner), name, currency): acc_type for owner, name, currency, acc_type in accounts}
-            # Galicia splits into an ARS 'card' account and a USD 'bank' account, same name.
-            assert by_key[(_OWNER, "Galicia", "ARS")] == "card"
-            assert by_key[(_OWNER, "Galicia", "USD")] == "bank"
-            assert by_key[(_OWNER, "Deel", "USD")] == "bank"
-            assert by_key[(_OWNER, "Mercado Pago", "ARS")] == "bank"
-            assert by_key[(_OWNER_B, "Galicia", "ARS")] == "bank"
+            assert accounts == []
 
-            # THEN — every seeded transaction is linked to its same-(owner,bank,currency) account.
+            # THEN — every existing transaction stays unlinked (account_id NULL).
             links = asyncio.run(_read_account_links(integration_database_url, ids))
-            for label, (owner, bank, currency, _card, _type) in seeded.items():
-                account_id = links[ids[label]]
-                assert account_id is not None
-                # The linked account belongs to the same owner, bank name, AND currency.
-                owner_of, name_of, currency_of = asyncio.run(
-                    _account_owner_name_currency(integration_database_url, account_id)
-                )
-                assert (str(owner_of), name_of, currency_of) == (owner, bank, currency)
+            assert all(account_id is None for account_id in links.values())
         finally:
             asyncio.run(_drop_everything(integration_database_url))
 
@@ -253,16 +233,16 @@ async def _read_bank_and_card(
 async def _seed_bank_tagged(
     url: str,
     ids: dict[str, uuid.UUID],
-    seeded: dict[str, tuple[str, str, str, str | None, str]],
+    seeded: dict[str, tuple[str, str, str, str | None]],
 ) -> None:
-    """Insert legacy bank-tagged, mixed-currency transactions for the accounts-seed test."""
+    """Insert legacy bank-tagged, mixed-currency transactions for the accounts-migration test."""
     engine = create_async_engine(url)
     insert = text(
         "INSERT INTO transactions (id, user_id, occurred_on, name, kind, amount, currency, payment_method, card) "
         "VALUES (:id, :user_id, :occurred_on, :name, :kind, :amount, :currency, :payment_method, :card)"
     )
     async with engine.begin() as connection:
-        for label, (owner, bank, currency, card, _type) in seeded.items():
+        for label, (owner, bank, currency, card) in seeded.items():
             await connection.execute(
                 insert,
                 {
@@ -304,19 +284,6 @@ async def _read_account_links(
         rows = {row.id: row.account_id for row in result}
     await engine.dispose()
     return rows
-
-
-async def _account_owner_name_currency(url: str, account_id: uuid.UUID) -> tuple[uuid.UUID, str, str]:
-    """Return the ``(user_id, name, currency)`` of the account with ``account_id``."""
-    engine = create_async_engine(url)
-    async with engine.connect() as connection:
-        result = await connection.execute(
-            text("SELECT user_id, name, currency FROM accounts WHERE id = :id"),
-            {"id": account_id},
-        )
-        row = result.one()
-    await engine.dispose()
-    return row.user_id, row.name, row.currency
 
 
 async def _seed_app_settings(url: str, settings_id: uuid.UUID) -> None:
