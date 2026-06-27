@@ -18,8 +18,9 @@ import pytest
 from margen_api.domain.commands.transaction import CreateTransaction, UpdateTransaction
 from margen_api.domain.models.account import build_account
 from margen_api.domain.models.exceptions import AccountNotFoundError
+from margen_api.domain.models.institution import build_institution
 from margen_api.domain.models.transaction import build_transaction
-from margen_api.domain.models.value_objects import AccountType, Currency, Kind
+from margen_api.domain.models.value_objects import Currency, InstitutionType, Kind
 from margen_api.service_layer.handlers import create_transaction, update_transaction
 from tests.fakes.persistence import FakeUnitOfWork
 
@@ -29,11 +30,19 @@ ANOTHER_USER = "00000000-0000-4000-8000-000000000002"
 
 
 def _seed_account(uow: FakeUnitOfWork, *, user_id: str = A_USER) -> UUID:
-    """Place a committed account in the unit of work's store and return its id."""
+    """Place a committed account (and its institution) in the unit of work's store."""
+    institution = build_institution(
+        institution_id=uuid4(),
+        name="Galicia",
+        type=InstitutionType.BANK,
+        user_id=user_id,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    uow.committed_institutions[institution.id] = institution
     account = build_account(
         account_id=uuid4(),
-        name="Galicia",
-        type=AccountType.BANK,
+        institution_id=institution.id,
         currency=Currency.ARS,
         user_id=user_id,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),

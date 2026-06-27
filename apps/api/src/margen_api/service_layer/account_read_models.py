@@ -1,10 +1,11 @@
-"""Read models for the account + net-worth query side (ADR-122, ADR-123).
+"""Read models for the account + net-worth query side (ADR-122, ADR-123, ADR-134).
 
 Purpose-built, immutable DTOs for the accounts list and the net-worth surface —
 deliberately separate from the write aggregate so the two evolve independently
 (AGENTS.md reader ports + read models). Money is :class:`~decimal.Decimal`
 (ADR-025); the API boundary serializes it as the same Decimal style the rest of
-the app uses (ADR-030).
+the app uses (ADR-030). Each account carries its owning institution's ``name`` and
+``type`` denormalized for the client (ADR-134).
 """
 
 from __future__ import annotations
@@ -13,35 +14,39 @@ from dataclasses import dataclass
 from decimal import Decimal
 from uuid import UUID
 
-from margen_api.domain.models.value_objects import AccountType, Currency
+from margen_api.domain.models.value_objects import Currency, InstitutionType
 
 
 @dataclass(frozen=True, slots=True)
 class AccountReadModel:
-    """Query-optimized projection of a persisted account (ADR-122).
+    """Query-optimized projection of a persisted account (ADR-122, ADR-134).
 
     Attributes:
         id: Stable UUID identity.
-        name: Required human display label.
-        type: Account kind — bank / cash / card.
+        institution_id: The owning institution's UUID (ADR-134).
+        institution_name: The owning institution's display label (denormalized).
+        type: The owning institution's kind — bank / card / cash / wallet.
         currency: The account's native currency, ARS or USD (ADR-123).
         opening_balance: The native-currency balance before any transaction.
     """
 
     id: UUID
-    name: str
-    type: AccountType
+    institution_id: UUID
+    institution_name: str
+    type: InstitutionType
     currency: Currency
     opening_balance: Decimal
 
 
 @dataclass(frozen=True, slots=True)
 class AccountBalance:
-    """One account's derived balance for the net-worth breakdown (ADR-122, ADR-123).
+    """One account's derived balance for the net-worth breakdown (ADR-122, ADR-123, ADR-134).
 
     Attributes:
         id: The account's stable UUID identity.
-        name: The account's display label.
+        institution_id: The owning institution's UUID (ADR-134).
+        institution_name: The owning institution's display label (denormalized).
+        type: The owning institution's kind — bank / card / cash / wallet.
         currency: The account's native currency (ADR-123).
         balance: The native-currency balance: ``opening_balance + Σ signed deltas``
             of the account's transactions (ADR-122).
@@ -52,7 +57,9 @@ class AccountBalance:
     """
 
     id: UUID
-    name: str
+    institution_id: UUID
+    institution_name: str
+    type: InstitutionType
     currency: Currency
     balance: Decimal
     balance_converted: Decimal

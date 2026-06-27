@@ -1,11 +1,12 @@
-"""SQLAlchemy reader for the account + net-worth query side (ADR-122, ADR-123).
+"""SQLAlchemy reader for the account + net-worth query side (ADR-122, ADR-123, ADR-134).
 
 Runs read-only queries against an ``AsyncSession`` and projects rows into the
 account read models. The per-account balance aggregation runs server-side SQL
 (SUM of signed deltas grouped by account); the cross-currency conversion and the
 total sum live in the pure :mod:`margen_api.service_layer.net_worth` so SQLAlchemy
-stays in this adapter (AGENTS.md). Every query is owner-scoped (ADR-130). All I/O
-is awaited.
+stays in this adapter (AGENTS.md). Each account is joined to its owning institution
+so the list and breakdown carry the institution ``name`` + ``type`` denormalized
+(ADR-134). Every query is owner-scoped (ADR-130). All I/O is awaited.
 """
 
 from __future__ import annotations
@@ -18,9 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from margen_api.adapters.models.account import AccountRecord
 from margen_api.adapters.models.app_settings import AppSettingsRecord
+from margen_api.adapters.models.institution import InstitutionRecord
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.adapters.settings_repository import DEFAULT_DISPLAY_CURRENCY
-from margen_api.domain.models.value_objects import AccountType, Currency, Kind
+from margen_api.domain.models.value_objects import Currency, InstitutionType, Kind
 from margen_api.service_layer.account_read_models import AccountReadModel, NetWorth
 from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.net_worth import AccountBalanceInput, build_net_worth
@@ -68,14 +70,32 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
         self.session = session
 
     async def list_accounts(self, user_id: str) -> list[AccountReadModel]:
-        """List the owner's accounts newest-first by creation (ADR-130)."""
+        """List the owner's accounts newest-first by creation, with institution data (ADR-130, ADR-134)."""
         statement = (
-            select(AccountRecord)
+            select(
+                AccountRecord.id,
+                AccountRecord.institution_id,
+                InstitutionRecord.name,
+                InstitutionRecord.type,
+                AccountRecord.currency,
+                AccountRecord.opening_balance,
+            )
+            .join(InstitutionRecord, InstitutionRecord.id == AccountRecord.institution_id)
             .where(AccountRecord.user_id == UUID(user_id))
             .order_by(AccountRecord.created_at.desc(), AccountRecord.id.desc())
         )
         result = await self.session.execute(statement)
-        return [_to_read_model(record) for record in result.scalars().all()]
+        return [
+            AccountReadModel(
+                id=row.id,
+                institution_id=row.institution_id,
+                institution_name=row.name,
+                type=InstitutionType.parse(row.type),
+                currency=Currency.parse(row.currency),
+                opening_balance=row.opening_balance,
+            )
+            for row in result.all()
+        ]
 
     async def net_worth(self, user_id: str) -> NetWorth:
         """Compute the owner's net worth and per-account breakdown (ADR-122, ADR-123)."""
@@ -86,27 +106,33 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
         return build_net_worth(balances, display_currency=display_currency, mep_rate=mep_rate)
 
     async def _account_balances(self, owner: UUID) -> list[AccountBalanceInput]:
-        """Return each of the owner's accounts with its native balance (ADR-122).
+        """Return each of the owner's accounts with its native balance (ADR-122, ADR-134).
 
         Balance = ``opening_balance + Σ signed deltas`` of the account's
         transactions. A ``LEFT OUTER JOIN`` keeps accounts with no transactions
-        (their balance is just the opening balance). Ordered newest-first to match
+        (their balance is just the opening balance); the institution join supplies
+        the denormalized ``name`` + ``type``. Ordered newest-first to match
         :meth:`list_accounts`.
         """
         statement = (
             select(
                 AccountRecord.id,
-                AccountRecord.name,
+                AccountRecord.institution_id,
+                InstitutionRecord.name,
+                InstitutionRecord.type,
                 AccountRecord.currency,
                 AccountRecord.opening_balance,
                 _DELTA_SUM.label("delta"),
             )
             .select_from(AccountRecord)
+            .join(InstitutionRecord, InstitutionRecord.id == AccountRecord.institution_id)
             .outerjoin(TransactionRecord, TransactionRecord.account_id == AccountRecord.id)
             .where(AccountRecord.user_id == owner)
             .group_by(
                 AccountRecord.id,
-                AccountRecord.name,
+                AccountRecord.institution_id,
+                InstitutionRecord.name,
+                InstitutionRecord.type,
                 AccountRecord.currency,
                 AccountRecord.opening_balance,
             )
@@ -116,7 +142,9 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
         return [
             AccountBalanceInput(
                 id=row.id,
-                name=row.name,
+                institution_id=row.institution_id,
+                institution_name=row.name,
+                type=InstitutionType.parse(row.type),
                 currency=Currency.parse(row.currency),
                 balance=_as_decimal(row.opening_balance) + _as_decimal(row.delta),
             )
@@ -151,14 +179,3 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
         )
         rate = (await self.session.execute(statement)).scalar_one_or_none()
         return None if rate is None else _as_decimal(rate)
-
-
-def _to_read_model(record: AccountRecord) -> AccountReadModel:
-    """Project a persisted account row into a read model (ADR-122)."""
-    return AccountReadModel(
-        id=record.id,
-        name=record.name,
-        type=AccountType.parse(record.type),
-        currency=Currency.parse(record.currency),
-        opening_balance=record.opening_balance,
-    )

@@ -1,4 +1,4 @@
-"""Mapping between the ``Account`` aggregate and its SQLAlchemy record (ADR-122).
+"""Mapping between the ``Account`` aggregate and its SQLAlchemy record (ADR-122, ADR-134).
 
 The domain aggregate stays plain Python while the ``AccountRecord`` holds the
 relational shape. This module is the single place that translates between the two,
@@ -12,7 +12,7 @@ from uuid import UUID
 
 from margen_api.adapters.models.account import AccountRecord
 from margen_api.domain.models.account import Account
-from margen_api.domain.models.value_objects import AccountType, Currency
+from margen_api.domain.models.value_objects import Currency
 
 
 def to_domain(record: AccountRecord) -> Account:
@@ -29,8 +29,7 @@ def to_domain(record: AccountRecord) -> Account:
     """
     return Account(
         id=record.id,
-        name=record.name,
-        type=AccountType.parse(record.type),
+        institution_id=record.institution_id,
         currency=Currency.parse(record.currency),
         opening_balance=record.opening_balance,
         user_id=str(record.user_id) if record.user_id is not None else None,
@@ -42,8 +41,8 @@ def to_domain(record: AccountRecord) -> Account:
 def to_record(account: Account) -> AccountRecord:
     """Build a fresh persistence record from a domain :class:`Account`.
 
-    Used when adding a new aggregate. ``type`` and ``currency`` are stored as their
-    string values since the columns are plain strings (ADR-027 style).
+    Used when adding a new aggregate. ``currency`` is stored as its string value
+    since the column is a plain string (ADR-027 style).
 
     Args:
         account: The aggregate to persist.
@@ -73,8 +72,7 @@ def update_record(record: AccountRecord, account: Account) -> None:
             programming error rather than a persistable state.
     """
     record.id = account.id
-    record.name = account.name
-    record.type = account.type.value
+    record.institution_id = account.institution_id
     record.currency = account.currency.value
     record.opening_balance = account.opening_balance
     if account.user_id is None:

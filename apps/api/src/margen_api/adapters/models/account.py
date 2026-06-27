@@ -1,11 +1,13 @@
-"""SQLAlchemy persistence model for the ``Account`` aggregate (ADR-122, ADR-123).
+"""SQLAlchemy persistence model for the ``Account`` aggregate (ADR-122, ADR-123, ADR-134).
 
 The adapter-layer mapping for the pure domain aggregate at
 ``margen_api.domain.models.account``. SQLAlchemy stays in the adapters
 (AGENTS.md); the domain object remains plain Python. Column conventions mirror
 ``TransactionRecord``: UUID pk via ``gen_random_uuid`` (ADR-026), NUMERIC money
 (ADR-025), server-managed timestamps, and a NOT NULL ``user_id`` ownership column
-with no cross-schema FK to Supabase ``auth.users`` (ADR-094, ADR-130).
+with no cross-schema FK to Supabase ``auth.users`` (ADR-094, ADR-130). The account
+is a per-currency leaf under an institution (ADR-134): ``name`` and ``type`` moved
+to ``InstitutionRecord`` and a NOT NULL ``institution_id`` FK was added.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import datetime
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Numeric, String, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,10 +28,11 @@ class AccountRecord(Base):
 
     ``opening_balance`` is stored as ``NUMERIC(18, 2)`` in the account's own
     ``currency`` (ADR-123) and may be negative (a card account opened with a
-    balance). ``type`` and ``currency`` are plain validated strings (the values of
-    the domain enums), consistent with how the transaction model stores ``kind`` /
-    ``currency`` (ADR-027). The derived balance is computed by the query side and
-    is intentionally NOT a column (ADR-122).
+    balance). ``currency`` is a plain validated string (the value of the domain
+    enum), consistent with how the transaction model stores ``currency`` (ADR-027).
+    ``institution_id`` is a NOT NULL FK to ``institutions`` (ADR-134); deleting an
+    institution cascades to its accounts. The derived balance is computed by the
+    query side and is intentionally NOT a column (ADR-122).
     """
 
     __tablename__ = "accounts"
@@ -44,8 +47,16 @@ class AccountRecord(Base):
     # hermetic SQLite e2e tier has no such table (ADR-094). Indexed for the
     # owner-scoped reads (ADR-108/130).
     user_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
-    name: Mapped[str] = mapped_column(String(200), nullable=False)
-    type: Mapped[str] = mapped_column(String(20), nullable=False)
+    # The owning institution (ADR-134). NOT NULL: every account belongs to one
+    # institution. ``ondelete=CASCADE`` so removing an institution removes its
+    # currency leaves. A user may only reference one of their own institutions --
+    # enforced at the application layer (ADR-130), not by the FK.
+    institution_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("institutions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     opening_balance: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(

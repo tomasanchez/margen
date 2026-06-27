@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict
 
 from margen_api.adapters.account_queries import SqlAlchemyAccountReader
 from margen_api.adapters.document_store import SqlAlchemyDocumentStore
+from margen_api.adapters.institution_queries import SqlAlchemyInstitutionReader
 from margen_api.adapters.queries import (
     SqlAlchemyInsightsReader,
     SqlAlchemyMonotributoReader,
@@ -30,6 +31,7 @@ from margen_api.bootstrap import ApplicationContainer
 from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
+from margen_api.service_layer.institution_reader import AbstractInstitutionReader
 from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.monotributo_reader import AbstractMonotributoReader
 from margen_api.service_layer.reader import AbstractTransactionReader
@@ -375,3 +377,20 @@ async def get_account_reader(container: Container) -> AsyncIterator[AbstractAcco
 
 
 AccountReader = Annotated[AbstractAccountReader, Depends(get_account_reader)]
+
+
+async def get_institution_reader(container: Container) -> AsyncIterator[AbstractInstitutionReader]:
+    """Yield an institution reader over a request-scoped read-only session (ADR-134).
+
+    Query paths bypass the unit of work by design (ADR-028); the session opened
+    here is closed when the request finishes. Institution writes go through the
+    message bus / unit of work instead, keeping this reader read-only.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemyInstitutionReader(session)
+    finally:
+        await session.close()
+
+
+InstitutionReader = Annotated[AbstractInstitutionReader, Depends(get_institution_reader)]

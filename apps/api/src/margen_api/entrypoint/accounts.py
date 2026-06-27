@@ -1,14 +1,17 @@
-"""Accounts + net-worth REST entrypoint (ADR-122, ADR-123, ADR-130).
+"""Accounts + net-worth REST entrypoint (ADR-122, ADR-123, ADR-130, ADR-134).
 
 Owner-scoped CRUD over the account aggregate (list / create / update) plus a
 read-only net-worth endpoint, exposed under ``/accounts`` with the
 ``ResponseModel[T]`` envelope and camelCase JSON (ADR-030). Writes go through the
 message bus as commands; reads use the query-side :class:`AbstractAccountReader`
-(ADR-028). Domain invariant violations (ADR-031) are translated to HTTP here:
+(ADR-028). An account is a per-currency leaf under an institution (ADR-134), so a
+create carries the ``institutionId``. Domain invariant violations (ADR-031) are
+translated to HTTP here:
 
 - :class:`AccountNotFoundError` -> ``404 Not Found`` (incl. cross-tenant, ADR-111)
-- :class:`UnknownAccountTypeError` / :class:`UnknownCurrencyError` /
-  :class:`EmptyNameError` -> ``422 Unprocessable Entity``
+- :class:`InstitutionNotFoundError` -> ``404 Not Found`` (an account links one of the
+  caller's institutions; a missing/foreign one is a 404, ADR-130/111)
+- :class:`UnknownCurrencyError` -> ``422 Unprocessable Entity``
 """
 
 from __future__ import annotations
@@ -19,8 +22,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from margen_api.domain.models.exceptions import (
     AccountNotFoundError,
-    EmptyNameError,
-    UnknownAccountTypeError,
+    InstitutionNotFoundError,
     UnknownCurrencyError,
 )
 from margen_api.entrypoint.accounts_schemas import (
@@ -35,7 +37,9 @@ from margen_api.entrypoint.schemas import ResponseModel
 router = APIRouter(prefix="/accounts", tags=["Accounts"])
 
 # Invariant violations the domain raises that map to HTTP 422 (ADR-031).
-_INVARIANT_VIOLATIONS = (UnknownAccountTypeError, UnknownCurrencyError, EmptyNameError)
+_INVARIANT_VIOLATIONS = (UnknownCurrencyError,)
+# Domain not-found errors that map to HTTP 404 (ADR-111, ADR-130, ADR-134).
+_NOT_FOUND_ERRORS = (AccountNotFoundError, InstitutionNotFoundError)
 
 
 def _not_found(account_id: UUID) -> HTTPException:
@@ -91,15 +95,20 @@ async def create_account(
     reader: AccountReader,
     user: AuthUser,
 ) -> ResponseModel[AccountResponse]:
-    """Create an account owned by the caller and return it (ADR-122, ADR-130).
+    """Create an account under one of the caller's institutions and return it (ADR-130, ADR-134).
 
     Dispatches a ``CreateAccount`` command (stamped with ``user.id``) through the
     message bus, then re-reads the owner's accounts to return the created one.
-    Lenient validation applies (ADR-031): an empty ``name`` or an unknown ``type`` /
-    ``currency`` yields ``422``.
+    Linking an institution the caller does not own is a ``404`` (ADR-111); an
+    unknown ``currency`` is a ``422`` (lenient validation, ADR-031).
     """
     try:
         account_id = await bus.handle(body.to_command(user.id))
+    except _NOT_FOUND_ERRORS as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
     except _INVARIANT_VIOLATIONS as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
 
@@ -126,16 +135,16 @@ async def update_account(
     reader: AccountReader,
     user: AuthUser,
 ) -> ResponseModel[AccountResponse]:
-    """Partially update the caller's account and return it (ADR-122, ADR-130).
+    """Partially update the caller's account and return it (ADR-122, ADR-130, ADR-134).
 
     Omitted fields are left unchanged (ADR-028); ``updatedAt`` is bumped by the
-    handler. The patch is scoped to ``user.id``: a missing id OR another user's id
-    both surface :class:`AccountNotFoundError` mapped to ``404`` (ADR-111);
-    invariant violations (ADR-031) map to ``422``.
+    handler. The patch is scoped to ``user.id``: a missing id, another user's id, or
+    a linked institution the caller does not own all surface a not-found mapped to
+    ``404`` (ADR-111); invariant violations (ADR-031) map to ``422``.
     """
     try:
         await bus.handle(body.to_command(account_id, user.id))
-    except AccountNotFoundError as error:
+    except _NOT_FOUND_ERRORS as error:
         raise _not_found(account_id) from error
     except _INVARIANT_VIOLATIONS as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error

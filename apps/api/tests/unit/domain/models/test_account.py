@@ -1,8 +1,10 @@
-"""Unit tests for the ``Account`` aggregate and ``build_account`` (ADR-122, ADR-123).
+"""Unit tests for the ``Account`` aggregate and ``build_account`` (ADR-122, ADR-123, ADR-134).
 
-These exercise the domain invariants (non-empty name, known type/currency), the
-lenient opening-balance normalization (may be zero or negative, ADR-122) and the
-value-object parsing. They use plain Python objects only — no database, no I/O.
+These exercise the domain invariants (known currency), the lenient opening-balance
+normalization (may be zero or negative, ADR-122) and the currency value-object
+parsing. An account is a per-currency leaf under an institution (ADR-134): it
+carries ``institution_id`` and no longer holds a name or type. They use plain
+Python objects only — no database, no I/O.
 """
 
 from __future__ import annotations
@@ -14,21 +16,17 @@ from uuid import UUID, uuid4
 import pytest
 
 from margen_api.domain.models.account import ZERO, Account, build_account
-from margen_api.domain.models.exceptions import (
-    EmptyNameError,
-    UnknownAccountTypeError,
-    UnknownCurrencyError,
-)
-from margen_api.domain.models.value_objects import AccountType, Currency
+from margen_api.domain.models.exceptions import UnknownCurrencyError
+from margen_api.domain.models.value_objects import Currency
 
 A_USER = "00000000-0000-4000-8000-000000000001"
+AN_INSTITUTION = UUID("00000000-0000-4000-8000-0000000000ff")
 
 
 def _build(**overrides: object) -> Account:
     """Build a valid account, letting individual tests override fields."""
     defaults: dict[str, object] = {
-        "name": "Galicia",
-        "type": AccountType.BANK,
+        "institution_id": AN_INSTITUTION,
         "currency": Currency.ARS,
         "user_id": A_USER,
     }
@@ -36,57 +34,24 @@ def _build(**overrides: object) -> Account:
     return build_account(**defaults)  # type: ignore[arg-type]
 
 
-class TestNameInvariant:
-    """The display name must be a non-empty label (mirrors ADR-024)."""
+class TestInstitutionLink:
+    """An account belongs to exactly one institution (ADR-134)."""
 
-    async def test_empty_name_is_rejected(self):
+    async def test_carries_institution_id(self):
         """
-        GIVEN a build request with an empty name
+        GIVEN a build request with an institution id
         WHEN the account is built
-        THEN an EmptyNameError is raised
-        """
-        # WHEN / THEN
-        with pytest.raises(EmptyNameError):
-            _build(name="   ")
-
-    async def test_name_is_trimmed(self):
-        """
-        GIVEN a build request whose name has surrounding whitespace
-        WHEN the account is built
-        THEN the stored name is trimmed
+        THEN the institution id is carried verbatim
         """
         # WHEN
-        account = _build(name="  Cash  ")
+        account = _build()
 
         # THEN
-        assert account.name == "Cash"
+        assert account.institution_id == AN_INSTITUTION
 
 
-class TestTypeAndCurrencyParsing:
-    """``type`` and ``currency`` parse known strings and reject unknown ones."""
-
-    async def test_type_parses_from_string(self):
-        """
-        GIVEN a build request whose type arrives as a string
-        WHEN the account is built
-        THEN the type is the matching AccountType member
-        """
-        # WHEN
-        account = _build(type="cash")
-
-        # THEN
-        assert account.type is AccountType.CASH
-
-    async def test_unknown_type_is_rejected(self):
-        """
-        GIVEN a build request with an unknown type
-        WHEN the account is built
-        THEN an UnknownAccountTypeError carrying the value is raised
-        """
-        # WHEN / THEN
-        with pytest.raises(UnknownAccountTypeError) as exc_info:
-            _build(type="crypto")
-        assert exc_info.value.account_type == "crypto"
+class TestCurrencyParsing:
+    """``currency`` parses known strings and rejects unknown ones (ADR-123)."""
 
     async def test_currency_parses_from_string(self):
         """
@@ -133,7 +98,7 @@ class TestOpeningBalance:
         THEN no invariant rejects it (ADR-122)
         """
         # WHEN
-        account = _build(type=AccountType.CARD, opening_balance=Decimal("-5000.00"))
+        account = _build(opening_balance=Decimal("-5000.00"))
 
         # THEN
         assert account.opening_balance == Decimal("-5000.00")
@@ -186,16 +151,3 @@ class TestIdentityAndTimestamps:
         assert account.id == account_id
         assert account.created_at == moment
         assert account.updated_at == moment
-
-
-class TestAccountTypeParse:
-    """``AccountType.parse`` is idempotent on members and rejects unknowns."""
-
-    async def test_parse_passes_through_member(self):
-        """
-        GIVEN an AccountType member
-        WHEN it is parsed
-        THEN the same member is returned
-        """
-        # WHEN / THEN
-        assert AccountType.parse(AccountType.CARD) is AccountType.CARD

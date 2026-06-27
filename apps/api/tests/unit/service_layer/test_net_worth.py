@@ -11,7 +11,7 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import uuid4
 
-from margen_api.domain.models.value_objects import Currency
+from margen_api.domain.models.value_objects import Currency, InstitutionType
 from margen_api.service_layer.net_worth import (
     AccountBalanceInput,
     build_net_worth,
@@ -20,6 +20,18 @@ from margen_api.service_layer.net_worth import (
 
 # 1 USD = 1000 ARS (MEP), a round figure that keeps the arithmetic obvious.
 _MEP = Decimal("1000")
+
+
+def _balance(*, name: str, currency: Currency, balance: Decimal) -> AccountBalanceInput:
+    """Build an account-balance input carrying denormalized institution data (ADR-134)."""
+    return AccountBalanceInput(
+        id=uuid4(),
+        institution_id=uuid4(),
+        institution_name=name,
+        type=InstitutionType.BANK,
+        currency=currency,
+        balance=balance,
+    )
 
 
 class TestConvert:
@@ -81,8 +93,8 @@ class TestBuildNetWorth:
         THEN the USD balance is converted and added to the ARS balance (ADR-123)
         """
         # GIVEN — 100,000 ARS + 50 USD; at 1000 ARS/USD the USD account is 50,000 ARS.
-        ars = AccountBalanceInput(id=uuid4(), name="Galicia", currency=Currency.ARS, balance=Decimal("100000"))
-        usd = AccountBalanceInput(id=uuid4(), name="Deel USD", currency=Currency.USD, balance=Decimal("50"))
+        ars = _balance(name="Galicia", currency=Currency.ARS, balance=Decimal("100000"))
+        usd = _balance(name="Deel USD", currency=Currency.USD, balance=Decimal("50"))
 
         # WHEN
         net_worth = build_net_worth([ars, usd], display_currency=Currency.ARS, mep_rate=_MEP)
@@ -90,10 +102,12 @@ class TestBuildNetWorth:
         # THEN
         assert net_worth.currency is Currency.ARS
         assert net_worth.total == Decimal("150000")
-        # The breakdown keeps each account's native balance and its converted value.
+        # The breakdown keeps each account's native balance, converted value and institution.
         by_id = {item.id: item for item in net_worth.accounts}
         assert by_id[ars.id].balance == Decimal("100000")
         assert by_id[ars.id].balance_converted == Decimal("100000")
+        assert by_id[ars.id].institution_name == "Galicia"
+        assert by_id[ars.id].institution_id == ars.institution_id
         assert by_id[usd.id].balance == Decimal("50")
         assert by_id[usd.id].balance_converted == Decimal("50000")
 
@@ -104,7 +118,7 @@ class TestBuildNetWorth:
         THEN the ARS balance is converted to USD in the total (ADR-123)
         """
         # GIVEN
-        ars = AccountBalanceInput(id=uuid4(), name="Galicia", currency=Currency.ARS, balance=Decimal("100000"))
+        ars = _balance(name="Galicia", currency=Currency.ARS, balance=Decimal("100000"))
 
         # WHEN
         net_worth = build_net_worth([ars], display_currency=Currency.USD, mep_rate=_MEP)
@@ -120,8 +134,8 @@ class TestBuildNetWorth:
         THEN each balance contributes its native figure (degrade-to-native, ADR-132)
         """
         # GIVEN
-        ars = AccountBalanceInput(id=uuid4(), name="Galicia", currency=Currency.ARS, balance=Decimal("100"))
-        usd = AccountBalanceInput(id=uuid4(), name="Deel USD", currency=Currency.USD, balance=Decimal("5"))
+        ars = _balance(name="Galicia", currency=Currency.ARS, balance=Decimal("100"))
+        usd = _balance(name="Deel USD", currency=Currency.USD, balance=Decimal("5"))
 
         # WHEN
         net_worth = build_net_worth([ars, usd], display_currency=Currency.ARS, mep_rate=None)

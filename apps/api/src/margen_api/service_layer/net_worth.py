@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
-from margen_api.domain.models.value_objects import Currency
+from margen_api.domain.models.value_objects import Currency, InstitutionType
 from margen_api.service_layer.account_read_models import AccountBalance, NetWorth
 
 _ZERO = Decimal(0)
@@ -41,13 +41,17 @@ class AccountBalanceInput:
 
     Attributes:
         id: The account's identity.
-        name: The account's display label.
+        institution_id: The owning institution's UUID (ADR-134).
+        institution_name: The owning institution's display label (denormalized).
+        type: The owning institution's kind — bank / card / cash / wallet.
         currency: The account's native currency (ADR-123).
         balance: The native-currency balance ``opening_balance + Σ signed deltas``.
     """
 
     id: UUID
-    name: str
+    institution_id: UUID
+    institution_name: str
+    type: InstitutionType
     currency: Currency
     balance: Decimal
 
@@ -112,7 +116,9 @@ def build_net_worth(
         accounts.append(
             AccountBalance(
                 id=item.id,
-                name=item.name,
+                institution_id=item.institution_id,
+                institution_name=item.institution_name,
+                type=item.type,
                 currency=item.currency,
                 balance=_money(item.balance),
                 balance_converted=converted,

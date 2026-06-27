@@ -28,6 +28,11 @@ _ACCOUNTS = "f7a8b9c0d1e2"
 # add + back-fill of existing rows to TRUE on real PostgreSQL.
 _MONOTRIBUTO_FLAG = "a8b9c0d1e2f3"
 
+# The Institution -> Account hierarchy migration (ADR-134): chains after the
+# monotributo_enabled flag. It creates ``institutions``, adds the NOT NULL
+# ``accounts.institution_id`` FK and drops ``accounts.name`` / ``accounts.type``.
+_INSTITUTION_HIERARCHY = "c0d1e2f3a4b5"
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
 # A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
@@ -184,6 +189,37 @@ class TestMigrations:
         finally:
             asyncio.run(_drop_everything(integration_database_url))
 
+    def test_institution_hierarchy_restructures_accounts(self, integration_database_url: str):
+        """
+        GIVEN a database at the monotributo-flag revision (flat accounts, empty table)
+        WHEN Alembic upgrades through the Institution -> Account hierarchy migration (ADR-134)
+        THEN the institutions table exists, accounts gains institution_id, and name/type are gone
+
+        Proves the schema restructure on the production PostgreSQL dialect: a new
+        ``institutions`` table is created, ``accounts.institution_id`` is added (the
+        table is empty so the NOT NULL FK is safe) and the ``name`` / ``type``
+        columns move off the account (ADR-134). No data migration is involved.
+        """
+        # GIVEN — upgrade to the flag revision (the flat-account head before ADR-134).
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _MONOTRIBUTO_FLAG)
+        try:
+            # WHEN
+            command.upgrade(config, _INSTITUTION_HIERARCHY)
+
+            # THEN — the institutions table now exists.
+            tables = asyncio.run(_table_names(integration_database_url))
+            assert "institutions" in tables
+
+            # THEN — accounts gained institution_id and lost name/type (ADR-134).
+            account_columns = asyncio.run(_columns(integration_database_url, "accounts"))
+            assert "institution_id" in account_columns
+            assert "name" not in account_columns
+            assert "type" not in account_columns
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
 
 async def _seed_transactions(
     url: str,
@@ -308,6 +344,17 @@ async def _seed_app_settings(url: str, settings_id: uuid.UUID) -> None:
             },
         )
     await engine.dispose()
+
+
+async def _columns(url: str, table: str) -> list[str]:
+    """Return the column names on ``table``."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        names = await connection.run_sync(
+            lambda sync_conn: [col["name"] for col in inspect(sync_conn).get_columns(table)]
+        )
+    await engine.dispose()
+    return names
 
 
 async def _app_settings_columns(url: str) -> list[str]:

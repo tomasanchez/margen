@@ -1,12 +1,13 @@
-"""Route tests for the accounts + net-worth entrypoint (ADR-122, ADR-123, ADR-131).
+"""Route tests for the accounts + net-worth entrypoint (ADR-122, ADR-123, ADR-134).
 
 These drive the **REAL** application container on **in-memory async SQLite**
-(ADR-019/032) so accounts and transactions are genuinely persisted and net worth
-aggregates through real SQL — the slice's core behavior (per-account balance,
-mixed-currency MEP conversion, balance reconciliation) is exercised end to end, not
-mocked. User A is the default stub (``STUB_USER_ID``); the cross-tenant checks use
-the second stub (``STUB_USER_ID_B``) on a separate app over the SAME container via
-the shared ``client_for_user`` factory.
+(ADR-019/032) so institutions, accounts and transactions are genuinely persisted
+and net worth aggregates through real SQL — the slice's core behavior (per-account
+balance, mixed-currency MEP conversion, balance reconciliation) is exercised end to
+end, not mocked. An account is a per-currency leaf under an institution (ADR-134),
+so each test first creates an institution. User A is the default stub
+(``STUB_USER_ID``); the cross-tenant checks use the second stub (``STUB_USER_ID_B``)
+on a separate app over the SAME container via the shared ``client_for_user`` factory.
 """
 
 from __future__ import annotations
@@ -20,21 +21,36 @@ from fastapi import status
 
 from margen_api.asgi import get_application
 from margen_api.bootstrap import ApplicationContainer, bootstrap
-from margen_api.domain.models.exceptions import UnknownAccountTypeError, UnknownCurrencyError
+from margen_api.domain.models.exceptions import InstitutionNotFoundError, UnknownCurrencyError
 from margen_api.entrypoint.dependencies import get_account_reader, get_bus
 from margen_api.settings.database_settings import DatabaseSettings
 from tests.conftest import STUB_AUTH_USER_B
 from tests.fakes.persistence import FakeAccountReader
 
 ACCOUNTS = "/api/v1/accounts"
+INSTITUTIONS = "/api/v1/institutions"
 NET_WORTH = "/api/v1/accounts/net-worth"
 TRANSACTIONS = "/api/v1/transactions"
 A_DATE = "2026-06-12"
 
 
-async def _create_account(client: httpx.AsyncClient, **body: object) -> dict:
-    """POST an account and return the created resource, asserting 201."""
-    defaults: dict[str, object] = {"name": "Galicia", "type": "bank", "currency": "ARS", "openingBalance": "0"}
+async def _create_institution(client: httpx.AsyncClient, **body: object) -> dict:
+    """POST an institution and return the created resource, asserting 201."""
+    defaults: dict[str, object] = {"name": "Galicia", "type": "bank"}
+    defaults.update(body)
+    response = await client.post(INSTITUTIONS, json=defaults)
+    assert response.status_code == status.HTTP_201_CREATED, response.text
+    return response.json()["data"]
+
+
+async def _create_account(client: httpx.AsyncClient, *, institution_id: str | None = None, **body: object) -> dict:
+    """POST an account under an institution and return the created resource, asserting 201.
+
+    Creates a default institution first when ``institution_id`` is not supplied.
+    """
+    if institution_id is None:
+        institution_id = (await _create_institution(client))["id"]
+    defaults: dict[str, object] = {"institutionId": institution_id, "currency": "ARS", "openingBalance": "0"}
     defaults.update(body)
     response = await client.post(ACCOUNTS, json=defaults)
     assert response.status_code == status.HTTP_201_CREATED, response.text
@@ -42,73 +58,109 @@ async def _create_account(client: httpx.AsyncClient, **body: object) -> dict:
 
 
 class TestAccountCrud:
-    """List / create / update over the account aggregate (ADR-122)."""
+    """List / create / update over the account aggregate (ADR-122, ADR-134)."""
 
-    async def test_create_returns_201_with_decimal_string_opening_balance(self, test_client: httpx.AsyncClient):
+    async def test_create_returns_201_with_denormalized_institution_and_decimal_balance(
+        self, test_client: httpx.AsyncClient
+    ):
         """
-        GIVEN a valid create body
+        GIVEN an institution and a valid create body
         WHEN the account is created
-        THEN it returns 201 with the pinned JSON shape and a decimal-string balance
+        THEN it returns 201 with the institution name/type denormalized and a decimal-string balance
         """
-        # WHEN
-        created = await _create_account(test_client, name="Cash ARS", type="cash", openingBalance="25000.00")
+        # GIVEN
+        institution = await _create_institution(test_client, name="Deel", type="wallet")
 
-        # THEN
-        assert created["name"] == "Cash ARS"
-        assert created["type"] == "cash"
-        assert created["currency"] == "ARS"
+        # WHEN
+        created = await _create_account(
+            test_client, institution_id=institution["id"], currency="USD", openingBalance="25000.00"
+        )
+
+        # THEN — the account carries the institution's name + type plus its own currency (ADR-134).
+        assert created["institutionId"] == institution["id"]
+        assert created["institutionName"] == "Deel"
+        assert created["type"] == "wallet"
+        assert created["currency"] == "USD"
         assert created["openingBalance"] == "25000.00"
 
     async def test_list_returns_owned_accounts_newest_first(self, test_client: httpx.AsyncClient):
         """
-        GIVEN two created accounts
+        GIVEN two created accounts under the same institution
         WHEN the list endpoint is called
         THEN both are returned, newest-first (ADR-130)
         """
         # GIVEN
-        await _create_account(test_client, name="First")
-        await _create_account(test_client, name="Second")
+        institution = await _create_institution(test_client, name="Galicia")
+        await _create_account(test_client, institution_id=institution["id"], currency="ARS")
+        await _create_account(test_client, institution_id=institution["id"], currency="USD")
 
         # WHEN
         response = await test_client.get(ACCOUNTS)
 
         # THEN
         assert response.status_code == status.HTTP_200_OK
-        names = [item["name"] for item in response.json()["data"]]
-        assert names == ["Second", "First"]
+        currencies = [item["currency"] for item in response.json()["data"]]
+        assert currencies == ["USD", "ARS"]
+        assert all(item["institutionName"] == "Galicia" for item in response.json()["data"])
 
     async def test_patch_updates_present_fields(self, test_client: httpx.AsyncClient):
         """
         GIVEN an existing account
-        WHEN it is patched with a new name and opening balance
+        WHEN it is patched with a new opening balance
         THEN the updated resource reflects the change
         """
         # GIVEN
-        created = await _create_account(test_client, name="Galicia", openingBalance="0")
+        created = await _create_account(test_client, openingBalance="0")
 
         # WHEN
         response = await test_client.patch(
             f"{ACCOUNTS}/{created['id']}",
-            json={"name": "Galicia Pesos", "openingBalance": "100.50"},
+            json={"openingBalance": "100.50"},
         )
 
         # THEN
         assert response.status_code == status.HTTP_200_OK
         data = response.json()["data"]
-        assert data["name"] == "Galicia Pesos"
         assert data["openingBalance"] == "100.50"
 
-    async def test_unknown_type_returns_422(self, test_client: httpx.AsyncClient):
+    async def test_patch_reassigns_to_another_owned_institution(self, test_client: httpx.AsyncClient):
         """
-        GIVEN a create body with an unknown account type
-        WHEN the account is created
-        THEN it returns 422 (lenient validation rejects only true invariants, ADR-031)
+        GIVEN an account under one owned institution and a second owned institution
+        WHEN the account is patched to link the second institution
+        THEN the updated resource reflects the new institution (ownership re-checked, ADR-134)
         """
+        # GIVEN
+        first = await _create_institution(test_client, name="Galicia")
+        second = await _create_institution(test_client, name="Deel", type="wallet")
+        account = await _create_account(test_client, institution_id=first["id"])
+
         # WHEN
-        response = await test_client.post(ACCOUNTS, json={"name": "X", "type": "crypto"})
+        response = await test_client.patch(
+            f"{ACCOUNTS}/{account['id']}",
+            json={"institutionId": second["id"]},
+        )
 
         # THEN
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["data"]
+        assert data["institutionId"] == second["id"]
+        assert data["institutionName"] == "Deel"
+        assert data["type"] == "wallet"
+
+    async def test_create_with_unknown_institution_returns_404(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a create body referencing an institution that does not exist
+        WHEN the account is created
+        THEN it returns 404 (ADR-130, ADR-134)
+        """
+        # WHEN
+        response = await test_client.post(
+            ACCOUNTS,
+            json={"institutionId": "00000000-0000-4000-8000-0000000000dd", "currency": "ARS"},
+        )
+
+        # THEN
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_patch_missing_account_returns_404(self, test_client: httpx.AsyncClient):
         """
@@ -119,7 +171,7 @@ class TestAccountCrud:
         # WHEN
         response = await test_client.patch(
             f"{ACCOUNTS}/00000000-0000-4000-8000-0000000000aa",
-            json={"name": "X"},
+            json={"openingBalance": "1"},
         )
 
         # THEN
@@ -141,14 +193,14 @@ class TestCrossTenant:
         THEN B's list is empty and B's patch is a 404 — existence is never leaked
         """
         # GIVEN — user A (the default stub) creates an account.
-        created = await _create_account(test_client, name="A's Galicia")
+        created = await _create_account(test_client)
 
         # WHEN / THEN — user B sees none of A's accounts.
         async with client_for_user(container, STUB_AUTH_USER_B) as client_b:
             list_b = await client_b.get(ACCOUNTS)
             assert list_b.json()["data"] == []
 
-            patch_b = await client_b.patch(f"{ACCOUNTS}/{created['id']}", json={"name": "hijack"})
+            patch_b = await client_b.patch(f"{ACCOUNTS}/{created['id']}", json={"openingBalance": "1"})
             assert patch_b.status_code == status.HTTP_404_NOT_FOUND
 
 
@@ -162,7 +214,7 @@ class TestTransactionAccountLink:
         THEN the response carries the accountId
         """
         # GIVEN
-        account = await _create_account(test_client, name="Galicia")
+        account = await _create_account(test_client)
 
         # WHEN
         response = await test_client.post(
@@ -235,7 +287,7 @@ class TestTransactionAccountLink:
         THEN it returns 404 — existence is never leaked (ADR-130, ADR-111)
         """
         # GIVEN — A creates an account.
-        account = await _create_account(test_client, name="A's account")
+        account = await _create_account(test_client)
 
         # WHEN / THEN — B tries to link it.
         async with client_for_user(container, STUB_AUTH_USER_B) as client_b:
@@ -275,10 +327,11 @@ class TestNetWorth:
         """
         GIVEN an ARS account with an opening balance and one income + one expense
         WHEN net worth is read
-        THEN the account balance is opening + income - expense (ADR-122)
+        THEN the account balance is opening + income - expense and carries the institution (ADR-122, ADR-134)
         """
         # GIVEN — opening 10000; +5000 income; -2000 expense => balance 13000.
-        account = await _create_account(test_client, name="Galicia", openingBalance="10000")
+        institution = await _create_institution(test_client, name="Galicia")
+        account = await _create_account(test_client, institution_id=institution["id"], openingBalance="10000")
         await test_client.post(
             TRANSACTIONS,
             json={
@@ -311,17 +364,20 @@ class TestNetWorth:
         only = data["accounts"][0]
         assert only["balance"] == "13000.00"
         assert only["balanceConverted"] == "13000.00"
+        assert only["institutionName"] == "Galicia"
+        assert only["type"] == "bank"
 
-    async def test_mixed_currency_net_worth_uses_mep_rate_from_usd_row(self, test_client: httpx.AsyncClient):
+    async def test_mixed_currency_under_one_institution_uses_mep_rate(self, test_client: httpx.AsyncClient):
         """
-        GIVEN an ARS account and a USD account, with a USD transaction carrying a MEP rate
+        GIVEN one institution holding an ARS account and a USD account, with a USD MEP rate
         WHEN net worth is read in ARS
-        THEN the USD balance is converted at the row's MEP rate and added (ADR-123)
+        THEN the USD balance is converted at the row's MEP rate and added (ADR-123, ADR-134)
         """
-        # GIVEN — an ARS account holding 100000.
-        await _create_account(test_client, name="Galicia", currency="ARS", openingBalance="100000")
-        # A USD account; its only movement is a +50 USD income carrying a 1000 ARS/USD MEP rate.
-        usd = await _create_account(test_client, name="Deel USD", currency="USD", openingBalance="0")
+        # GIVEN — a single "Galicia" institution with an ARS leaf holding 100000.
+        institution = await _create_institution(test_client, name="Galicia")
+        await _create_account(test_client, institution_id=institution["id"], currency="ARS", openingBalance="100000")
+        # ...and a USD leaf; its only movement is a +50 USD income carrying a 1000 ARS/USD MEP rate.
+        usd = await _create_account(test_client, institution_id=institution["id"], currency="USD", openingBalance="0")
         await test_client.post(
             TRANSACTIONS,
             json={
@@ -339,17 +395,19 @@ class TestNetWorth:
         # WHEN
         response = await test_client.get(NET_WORTH)
 
-        # THEN — 100000 ARS + (50 USD * 1000) = 150000 ARS.
+        # THEN — 100000 ARS + (50 USD * 1000) = 150000 ARS, both under "Galicia".
         data = response.json()["data"]
         assert data["total"] == "150000.00"
         by_currency = {item["currency"]: item for item in data["accounts"]}
         assert by_currency["USD"]["balance"] == "50.00"
         assert by_currency["USD"]["balanceConverted"] == "50000.00"
+        assert by_currency["USD"]["institutionName"] == "Galicia"
         assert by_currency["ARS"]["balanceConverted"] == "100000.00"
+        assert by_currency["ARS"]["institutionName"] == "Galicia"
 
 
 class TestDomainInvariantToHttp:
-    """A domain invariant surfacing from the bus maps to 422 (ADR-031).
+    """A domain invariant surfacing from the bus maps to the right status (ADR-031, ADR-134).
 
     Pydantic catches the obvious violations at the boundary, so to exercise the
     router's handler-level translation we drive the app with a bus whose ``handle``
@@ -375,28 +433,33 @@ class TestDomainInvariantToHttp:
             yield client
         await container.shutdown()
 
-    @pytest.mark.parametrize(
-        "raising_client",
-        [UnknownAccountTypeError("crypto"), UnknownCurrencyError("EUR")],
-        indirect=True,
-    )
-    async def test_create_maps_invariant_to_422(self, raising_client: httpx.AsyncClient):
+    @pytest.mark.parametrize("raising_client", [UnknownCurrencyError("EUR")], indirect=True)
+    async def test_create_maps_unknown_currency_to_422(self, raising_client: httpx.AsyncClient):
         """
-        GIVEN a bus whose create handler raises a domain invariant violation
+        GIVEN a bus whose create handler raises an unknown-currency invariant violation
         WHEN a syntactically valid create body is posted
         THEN the router maps it to 422
         """
         # WHEN
-        response = await raising_client.post(ACCOUNTS, json={"name": "X", "type": "bank"})
+        response = await raising_client.post(ACCOUNTS, json={"institutionId": str(uuid4()), "currency": "ARS"})
 
         # THEN
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-    @pytest.mark.parametrize(
-        "raising_client",
-        [UnknownAccountTypeError("crypto"), UnknownCurrencyError("EUR")],
-        indirect=True,
-    )
+    @pytest.mark.parametrize("raising_client", [InstitutionNotFoundError(uuid4())], indirect=True)
+    async def test_create_maps_missing_institution_to_404(self, raising_client: httpx.AsyncClient):
+        """
+        GIVEN a bus whose create handler raises a missing-institution error
+        WHEN a syntactically valid create body is posted
+        THEN the router maps it to 404 (ADR-111, ADR-134)
+        """
+        # WHEN
+        response = await raising_client.post(ACCOUNTS, json={"institutionId": str(uuid4()), "currency": "ARS"})
+
+        # THEN
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    @pytest.mark.parametrize("raising_client", [UnknownCurrencyError("EUR")], indirect=True)
     async def test_update_maps_invariant_to_422(self, raising_client: httpx.AsyncClient):
         """
         GIVEN a bus whose update handler raises a domain invariant violation
@@ -404,7 +467,7 @@ class TestDomainInvariantToHttp:
         THEN the router maps it to 422
         """
         # WHEN
-        response = await raising_client.patch(f"{ACCOUNTS}/{uuid4()}", json={"name": "X"})
+        response = await raising_client.patch(f"{ACCOUNTS}/{uuid4()}", json={"currency": "ARS"})
 
         # THEN
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY

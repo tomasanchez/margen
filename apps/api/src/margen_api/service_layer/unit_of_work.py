@@ -9,6 +9,7 @@ from types import TracebackType
 from margen_api.domain.messages import Event
 from margen_api.service_layer.account_repository import AbstractAccountRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore
+from margen_api.service_layer.institution_repository import AbstractInstitutionRepository
 from margen_api.service_layer.monotributo_repository import AbstractMonotributoSnapshotRepository
 from margen_api.service_layer.repository import AbstractTransactionRepository
 from margen_api.service_layer.settings_repository import AbstractSettingsRepository
@@ -39,6 +40,9 @@ class AbstractUnitOfWork(ABC):
         accounts: Repository for the ``Account`` aggregate, written by the
             account create/update handlers and read by the transaction handlers'
             ownership check (ADR-122, ADR-130).
+        institutions: Repository for the ``Institution`` aggregate, written by the
+            institution create/update handlers and read by the account handlers'
+            ownership check (ADR-130, ADR-134).
     """
 
     transactions: AbstractTransactionRepository
@@ -47,6 +51,7 @@ class AbstractUnitOfWork(ABC):
     documents: AbstractDocumentStore
     statements: AbstractStatementStore
     accounts: AbstractAccountRepository
+    institutions: AbstractInstitutionRepository
 
     async def __aenter__(self) -> AbstractUnitOfWork:
         """Enter the transaction boundary."""

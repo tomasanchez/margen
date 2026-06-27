@@ -12,8 +12,8 @@ from __future__ import annotations
 from enum import StrEnum
 
 from margen_api.domain.models.exceptions import (
-    UnknownAccountTypeError,
     UnknownCurrencyError,
+    UnknownInstitutionTypeError,
     UnknownKindError,
 )
 
@@ -84,38 +84,41 @@ class Currency(StrEnum):
             raise UnknownCurrencyError(value) from exc
 
 
-class AccountType(StrEnum):
-    """The kind of account in the net-worth model; a closed enum (ADR-122).
+class InstitutionType(StrEnum):
+    """The kind of financial institution in the net-worth model (ADR-122, ADR-134).
 
-    MVP net worth covers liquid accounts only: ``bank`` (a bank account),
-    ``cash`` (physical cash or a wallet) and ``card`` (a credit-card account whose
-    balance is the outstanding charges). Investments, property and liabilities are
-    deferred (ADR-122).
+    An institution is the money holder a user names once; its currency-specific
+    balances live on child accounts (ADR-134). A closed enum: ``bank`` (a bank),
+    ``card`` (a credit-card issuer whose balance is the outstanding charges),
+    ``cash`` (physical cash) and ``wallet`` (a digital wallet / payout provider
+    such as Deel, Payoneer or Mercado Pago). Investments, property and liabilities
+    are deferred (ADR-122).
     """
 
     BANK = "bank"
     CASH = "cash"
     CARD = "card"
+    WALLET = "wallet"
 
     @classmethod
-    def parse(cls, value: object) -> AccountType:
-        """Coerce a value to an ``AccountType`` or raise ``UnknownAccountTypeError``.
+    def parse(cls, value: object) -> InstitutionType:
+        """Coerce a value to an ``InstitutionType`` or raise ``UnknownInstitutionTypeError``.
 
         Args:
-            value: An ``AccountType`` member or a string such as ``"bank"``.
+            value: An ``InstitutionType`` member or a string such as ``"bank"``.
 
         Returns:
-            The matching ``AccountType`` member.
+            The matching ``InstitutionType`` member.
 
         Raises:
-            UnknownAccountTypeError: When ``value`` is not a known account type.
+            UnknownInstitutionTypeError: When ``value`` is not a known institution type.
         """
         if isinstance(value, cls):
             return value
         try:
             return cls(value)
         except ValueError as exc:
-            raise UnknownAccountTypeError(value) from exc
+            raise UnknownInstitutionTypeError(value) from exc
 
 
 class FxRateType(StrEnum):

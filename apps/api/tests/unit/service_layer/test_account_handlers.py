@@ -1,9 +1,11 @@
-"""Unit tests for the account application handlers (ADR-122, ADR-130).
+"""Unit tests for the account application handlers (ADR-122, ADR-130, ADR-134).
 
 Driven through the in-memory :class:`FakeUnitOfWork` so they run with no database.
-They verify the create handler injects identity/timestamps and commits (ADR-026),
-the update handler patches while preserving ``created_at`` and ownership and raises
-``AccountNotFoundError`` for missing/cross-tenant ids (ADR-111).
+They verify the create handler checks institution ownership, injects
+identity/timestamps and commits (ADR-026, ADR-134), and the update handler patches
+while preserving ``created_at`` and ownership and raises ``AccountNotFoundError``
+for missing/cross-tenant ids and ``InstitutionNotFoundError`` for foreign
+institution links (ADR-111, ADR-130).
 """
 
 from __future__ import annotations
@@ -16,8 +18,9 @@ import pytest
 
 from margen_api.domain.commands.account import CreateAccount, UpdateAccount
 from margen_api.domain.models.account import build_account
-from margen_api.domain.models.exceptions import AccountNotFoundError
-from margen_api.domain.models.value_objects import AccountType, Currency
+from margen_api.domain.models.exceptions import AccountNotFoundError, InstitutionNotFoundError
+from margen_api.domain.models.institution import build_institution
+from margen_api.domain.models.value_objects import Currency, InstitutionType
 from margen_api.service_layer.account_handlers import create_account, update_account
 from tests.fakes.persistence import FakeUnitOfWork
 
@@ -25,11 +28,26 @@ A_USER = "00000000-0000-4000-8000-000000000001"
 ANOTHER_USER = "00000000-0000-4000-8000-000000000002"
 
 
-def _seed(uow: FakeUnitOfWork, **overrides: object) -> UUID:
+def _seed_institution(
+    uow: FakeUnitOfWork, *, user_id: str = A_USER, type_: InstitutionType = InstitutionType.BANK
+) -> UUID:
+    """Place a committed institution in the unit of work's store and return its id."""
+    institution = build_institution(
+        institution_id=uuid4(),
+        name="Galicia",
+        type=type_,
+        user_id=user_id,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    uow.committed_institutions[institution.id] = institution
+    return institution.id
+
+
+def _seed_account(uow: FakeUnitOfWork, institution_id: UUID, **overrides: object) -> UUID:
     """Place a committed account directly in the unit of work's store."""
     defaults: dict[str, object] = {
-        "name": "Galicia",
-        "type": AccountType.BANK,
+        "institution_id": institution_id,
         "currency": Currency.ARS,
         "opening_balance": Decimal("0"),
         "account_id": uuid4(),
@@ -44,20 +62,20 @@ def _seed(uow: FakeUnitOfWork, **overrides: object) -> UUID:
 
 
 class TestCreateAccountHandler:
-    """The create handler persists a new account and returns its identity."""
+    """The create handler persists a new account under an owned institution."""
 
     async def test_persists_and_commits(self):
         """
-        GIVEN a valid create command
+        GIVEN a valid create command referencing an owned institution
         WHEN the create handler runs
         THEN the account is committed, owned by the caller, and its id returned
         """
         # GIVEN
         uow = FakeUnitOfWork()
+        institution_id = _seed_institution(uow)
         command = CreateAccount(
             user_id=A_USER,
-            name="Cash ARS",
-            type=AccountType.CASH,
+            institution_id=institution_id,
             currency=Currency.ARS,
             opening_balance=Decimal("25000"),
         )
@@ -69,8 +87,36 @@ class TestCreateAccountHandler:
         assert uow.committed is True
         stored = uow.committed_accounts[account_id]
         assert stored.user_id == A_USER
-        assert stored.type is AccountType.CASH
+        assert stored.institution_id == institution_id
         assert stored.opening_balance == Decimal("25000")
+
+    async def test_unknown_institution_raises_not_found(self):
+        """
+        GIVEN no institution with the referenced id
+        WHEN a create command links it
+        THEN InstitutionNotFoundError is raised and nothing is committed (ADR-130, ADR-134)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+
+        # WHEN / THEN
+        with pytest.raises(InstitutionNotFoundError):
+            await create_account(CreateAccount(user_id=A_USER, institution_id=uuid4()), uow)
+        assert uow.committed_accounts == {}
+
+    async def test_foreign_institution_is_not_found(self):
+        """
+        GIVEN an institution owned by another user
+        WHEN the caller creates an account under it
+        THEN InstitutionNotFoundError is raised — existence is never leaked (ADR-111)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        foreign = _seed_institution(uow, user_id=ANOTHER_USER)
+
+        # WHEN / THEN
+        with pytest.raises(InstitutionNotFoundError):
+            await create_account(CreateAccount(user_id=A_USER, institution_id=foreign), uow)
 
 
 class TestUpdateAccountHandler:
@@ -84,21 +130,40 @@ class TestUpdateAccountHandler:
         """
         # GIVEN
         uow = FakeUnitOfWork()
-        account_id = _seed(uow, name="Galicia", opening_balance=Decimal("0"))
+        institution_id = _seed_institution(uow)
+        account_id = _seed_account(uow, institution_id, opening_balance=Decimal("0"))
 
         # WHEN
         await update_account(
-            UpdateAccount(id=account_id, user_id=A_USER, name="Galicia Pesos", opening_balance=Decimal("123.45")),
+            UpdateAccount(id=account_id, user_id=A_USER, opening_balance=Decimal("123.45")),
             uow,
         )
 
         # THEN
         updated = uow.committed_accounts[account_id]
-        assert updated.name == "Galicia Pesos"
         assert updated.opening_balance == Decimal("123.45")
-        assert updated.type is AccountType.BANK  # left unchanged
+        assert updated.institution_id == institution_id  # left unchanged
         assert updated.created_at == datetime(2026, 1, 1, tzinfo=UTC)
         assert updated.user_id == A_USER
+
+    async def test_reassigning_to_foreign_institution_is_not_found(self):
+        """
+        GIVEN an owned account and an institution owned by another user
+        WHEN the caller patches the account to link the foreign institution
+        THEN InstitutionNotFoundError is raised (ADR-130, ADR-134)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        institution_id = _seed_institution(uow)
+        account_id = _seed_account(uow, institution_id)
+        foreign = _seed_institution(uow, user_id=ANOTHER_USER)
+
+        # WHEN / THEN
+        with pytest.raises(InstitutionNotFoundError):
+            await update_account(
+                UpdateAccount(id=account_id, user_id=A_USER, institution_id=foreign),
+                uow,
+            )
 
     async def test_missing_account_raises_not_found(self):
         """
@@ -111,7 +176,7 @@ class TestUpdateAccountHandler:
 
         # WHEN / THEN
         with pytest.raises(AccountNotFoundError):
-            await update_account(UpdateAccount(id=uuid4(), user_id=A_USER, name="X"), uow)
+            await update_account(UpdateAccount(id=uuid4(), user_id=A_USER, opening_balance=Decimal("1")), uow)
 
     async def test_cross_tenant_update_is_not_found(self):
         """
@@ -121,8 +186,9 @@ class TestUpdateAccountHandler:
         """
         # GIVEN
         uow = FakeUnitOfWork()
-        account_id = _seed(uow, user_id=A_USER)
+        institution_id = _seed_institution(uow)
+        account_id = _seed_account(uow, institution_id, user_id=A_USER)
 
         # WHEN / THEN
         with pytest.raises(AccountNotFoundError):
-            await update_account(UpdateAccount(id=account_id, user_id=ANOTHER_USER, name="Hijack"), uow)
+            await update_account(UpdateAccount(id=account_id, user_id=ANOTHER_USER, opening_balance=Decimal("1")), uow)

@@ -9,6 +9,7 @@ register their handlers in one obvious place. No domain events exist yet
 from __future__ import annotations
 
 from margen_api.domain.commands.account import CreateAccount, UpdateAccount
+from margen_api.domain.commands.institution import CreateInstitution, UpdateInstitution
 from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
 from margen_api.domain.commands.settings import UpdateSettings
 from margen_api.domain.commands.statement import ImportStatement
@@ -24,6 +25,7 @@ from margen_api.service_layer.handlers import (
     import_statement,
     update_transaction,
 )
+from margen_api.service_layer.institution_handlers import create_institution, update_institution
 from margen_api.service_layer.messagebus import CommandHandler, EventHandler
 from margen_api.service_layer.monotributo_handlers import capture_monotributo_snapshot
 from margen_api.service_layer.settings_handlers import update_settings
@@ -37,6 +39,8 @@ COMMAND_HANDLERS: dict[type, CommandHandler] = {
     UpdateSettings: update_settings,
     CreateAccount: create_account,
     UpdateAccount: update_account,
+    CreateInstitution: create_institution,
+    UpdateInstitution: update_institution,
 }
 
 EVENT_HANDLERS: dict[type, list[EventHandler]] = {}
