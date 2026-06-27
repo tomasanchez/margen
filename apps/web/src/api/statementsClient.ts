@@ -126,7 +126,7 @@ interface StatementParseDto {
   bankName?: string | null
   network?: string | null
   cardLast4?: string | null
-  paymentMethod?: string | null
+  card?: string | null
   statementNumber?: string | null
   issuerCuit?: string | null
   periodClose?: string | null
@@ -208,14 +208,14 @@ export interface StatementParse {
   status: StatementParseStatus
   /** Advisory: a statement with this natural key already exists (ADR-077). */
   duplicate: boolean
-  /** Detected bank, e.g. "Galicia". */
+  /** Normalized issuing bank, e.g. "Galicia" — the value stored as a row's `bank` (ADR-117). */
   bankName?: string
   /** Card network, e.g. "VISA". */
   network?: string
   /** Last 4 of the card, e.g. "5771". */
   cardLast4?: string
-  /** Display label for the card, e.g. "Galicia VISA ·5771"; carried as `bank`. */
-  paymentMethod?: string
+  /** Card / detail label for display, e.g. "VISA ·5771"; carried as each line's `card` (ADR-117). */
+  card?: string
   statementNumber?: string
   issuerCuit?: string
   /** Statement close date (ISO `YYYY-MM-DD`). */
@@ -255,8 +255,10 @@ export interface StatementLineRequest {
   fxRate?: string
   fxRateType?: FxRateType
   category?: string
-  /** The card payment method carried as the transaction's bank (ADR-078). */
+  /** The normalized issuing bank stored as the transaction's `bank` (e.g. "Galicia" — ADR-117). */
   bank?: string
+  /** The card / detail label stored as the transaction's `card` (e.g. "VISA ·5771" — ADR-117). */
+  card?: string
   cuota?: string
   notes?: string
   /** How this line resolves on import (ADR-085); defaults to `import`. */
@@ -452,9 +454,7 @@ function adaptParse(
     ...(nonEmpty(dto.bankName) ? { bankName: dto.bankName as string } : {}),
     ...(nonEmpty(dto.network) ? { network: dto.network as string } : {}),
     ...(nonEmpty(dto.cardLast4) ? { cardLast4: dto.cardLast4 as string } : {}),
-    ...(nonEmpty(dto.paymentMethod)
-      ? { paymentMethod: dto.paymentMethod as string }
-      : {}),
+    ...(nonEmpty(dto.card) ? { card: dto.card as string } : {}),
     ...(nonEmpty(dto.statementNumber)
       ? { statementNumber: dto.statementNumber as string }
       : {}),

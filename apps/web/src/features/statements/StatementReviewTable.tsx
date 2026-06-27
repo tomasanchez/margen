@@ -598,7 +598,12 @@ export function StatementReviewTable({
   const { t } = useTranslation('statements')
   const review = useStatementReviewState(parse)
 
-  const cardLabel = parse.paymentMethod ?? t('review.cardFallback')
+  // The detected card identity as "Galicia · VISA ·5771" — the normalized bank
+  // joined with the card detail (ADR-117). Falls back gracefully when a part is
+  // missing, and to a calm generic label when neither was parsed.
+  const cardLabel =
+    [parse.bankName, parse.card].filter(Boolean).join(' · ') ||
+    t('review.cardFallback')
   const periodLabel =
     parse.periodClose || parse.periodDue
       ? `${parse.periodClose ? isoToDispDateLike(parse.periodClose) : '—'} → ${

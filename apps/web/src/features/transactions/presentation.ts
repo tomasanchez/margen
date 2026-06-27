@@ -11,7 +11,7 @@
 
 import i18n from 'i18next'
 
-import type { Bank, Category } from '../../mock/types'
+import type { Bank, Category, Transaction } from '../../mock/types'
 
 /**
  * Color token for a category's dot. The concept tints Income with the Safe
@@ -36,11 +36,28 @@ export function categoryLabel(category: Category): string {
 }
 
 /**
- * Localized label for a transaction's bank / card (ADR-103). Mirrors
+ * Localized label for a transaction's normalized bank (ADR-103/ADR-117). Mirrors
  * {@link categoryLabel}: looks up `common:banks.<value>` and falls back to the
- * raw enum value when unmapped. Brand names (e.g. "Galicia · Visa") stay as-is
- * across locales; only generic values like "Transfer" localize.
+ * raw enum value when unmapped. Brand names (e.g. "Galicia", "Santander") stay
+ * as-is across locales; only generic values like "Transfer" localize.
  */
 export function bankLabel(bank: Bank): string {
   return i18n.t(`common:banks.${bank}`, { defaultValue: bank })
+}
+
+/**
+ * The calm, secondary "bank · card" detail line for a row (ADR-037/ADR-117).
+ *
+ * Composes the localized {@link bankLabel} with the import-set card detail when
+ * present (e.g. "Santander · VISA ·5771"); when there is no card it is just the
+ * bank label. The card string is a display detail provided verbatim by the
+ * import (not translated). Pure (no React) so the row + tests can share it.
+ */
+export function bankCardLabel(
+  bank: Bank,
+  card: Transaction['card'],
+): string {
+  const detail = card?.trim()
+  const base = bankLabel(bank)
+  return detail ? `${base} · ${detail}` : base
 }

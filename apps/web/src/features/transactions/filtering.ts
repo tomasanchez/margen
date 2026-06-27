@@ -530,6 +530,9 @@ export function buildEditPrefill(
     currency: t.currency,
     category: t.category === 'Income' ? 'Food' : t.category,
     bank: t.bank,
+    // Card detail is import-set, not user-editable (ADR-117); carry it through so
+    // editing an imported row preserves its card on save (omitted when absent).
+    ...(t.card ? { card: t.card } : {}),
     amountNum: t.amountNum,
     // The date picker prefills from the row's ISO occurredOn (ADR-041).
     occurredOn: t.occurredOn,

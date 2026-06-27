@@ -145,6 +145,19 @@ describe('filterTransactions', () => {
     expect(transfer.rows.every((t) => t.bank === 'Transfer')).toBe(true)
   })
 
+  test('a normalized bank matches every row for that bank regardless of card (ADR-117)', () => {
+    const santander = filterTransactions(
+      SEED_TRANSACTIONS,
+      withFilters({ banks: ['Santander'] }),
+    )
+    // Two Santander rows in the fixture carry DIFFERENT cards — both must match.
+    expect(santander.rows.every((t) => t.bank === 'Santander')).toBe(true)
+    expect(santander.filteredCount).toBe(2)
+    expect(new Set(santander.rows.map((t) => t.card))).toEqual(
+      new Set(['AMEX ·1234', 'VISA ·5771']),
+    )
+  })
+
   test('amount ranges bucket by ARS-equivalent magnitude', () => {
     const big = filterTransactions(
       SEED_TRANSACTIONS,
@@ -209,7 +222,7 @@ describe('buildEditPrefill', () => {
       name: 'Coto supermarket',
       type: 'expense',
       category: 'Food',
-      bank: 'Galicia · Visa',
+      bank: 'Galicia',
       currency: 'ARS',
       amountNum: 38400,
     })
@@ -242,6 +255,18 @@ describe('buildEditPrefill', () => {
   test('omits notes from the prefill when the row has none (ADR-088)', () => {
     const noNotes: Transaction = { ...SEED_TRANSACTIONS[0], notes: undefined }
     expect('notes' in buildEditPrefill(noNotes)).toBe(false)
+  })
+
+  test('carries the import-set card through so an edit preserves it (ADR-117)', () => {
+    const imported = SEED_TRANSACTIONS.find(
+      (t): t is Transaction => t.card !== undefined,
+    )!
+    expect(buildEditPrefill(imported).card).toBe(imported.card)
+  })
+
+  test('omits card from the prefill when the row has none (ADR-117)', () => {
+    const noCard: Transaction = { ...SEED_TRANSACTIONS[0], card: undefined }
+    expect('card' in buildEditPrefill(noCard)).toBe(false)
   })
 })
 
@@ -314,6 +339,23 @@ describe('validateTransactionsSearch (ADR-116)', () => {
     expect(
       validateTransactionsSearch({ bank: 'Brubank,Brubank,Deel' }),
     ).toEqual({ bank: 'Brubank,Deel' })
+  })
+
+  test('accepts each of the six normalized banks and drops legacy composites (ADR-117)', () => {
+    expect(
+      validateTransactionsSearch({
+        bank: 'Galicia,Santander,Mercado Pago,Brubank,Deel,Transfer',
+      }),
+    ).toEqual({
+      bank: 'Galicia,Santander,Mercado Pago,Brubank,Deel,Transfer',
+    })
+    // Old composite values are no longer in the known set → dropped.
+    expect(
+      validateTransactionsSearch({ bank: 'Galicia · Visa,Santander' }),
+    ).toEqual({ bank: 'Santander' })
+    expect(
+      validateTransactionsSearch({ bank: 'Galicia · Visa' }),
+    ).toEqual({})
   })
 
   test('back-compatible single category drilldown still validates', () => {

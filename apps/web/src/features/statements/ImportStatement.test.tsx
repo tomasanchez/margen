@@ -14,7 +14,8 @@
  *   - an `unsupported`/`unparseable` result shows the calm fallback message and
  *     the picker stays usable;
  *   - importing calls the client with ONLY the included lines, the document echo,
- *     and the card payment method carried as each line's `bank`;
+ *     and the statement's normalized `bank` + `card` detail carried on each line
+ *     (ADR-117);
  *   - a flagged (reconciler) line renders the "Possible duplicate" chip + the
  *     matched transaction inline, defaults to Merge (sending `resolution: 'merge'`
  *     + `matchTransactionId`), can switch to Keep both (`resolution: 'keep_both'`),
@@ -106,7 +107,7 @@ const okParse: StatementParse = {
   bankName: 'Galicia',
   network: 'VISA',
   cardLast4: '5771',
-  paymentMethod: 'Galicia VISA ·5771',
+  card: 'VISA ·5771',
   statementNumber: 'A-1000',
   issuerCuit: '20304050607',
   periodClose: '2026-05-20',
@@ -214,7 +215,7 @@ describe('Import statement — a successful parse renders the review table', () 
     await user.upload(fileInput, pdfFile())
 
     // The detected card identity appears in the header strip.
-    expect(await screen.findByText('Galicia VISA ·5771')).toBeInTheDocument()
+    expect(await screen.findByText('Galicia · VISA ·5771')).toBeInTheDocument()
     // A row per parsed line.
     expect(screen.getByText('Carrefour')).toBeInTheDocument()
     expect(screen.getByText('Netflix')).toBeInTheDocument()
@@ -233,7 +234,7 @@ describe('Import statement — a successful parse renders the review table', () 
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
 
     // The line is dated on the statement pay date (ADR-089); all three lines share it.
     expect(screen.getAllByText('paid Jun 19')).toHaveLength(3)
@@ -255,7 +256,7 @@ describe('Import statement — only the included lines are sent on import', () =
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
 
     // Toggle Netflix off (it defaults included). Its switch is labelled by name.
     await user.click(
@@ -274,8 +275,10 @@ describe('Import statement — only the included lines are sent on import', () =
     const [payload] = importStatementMock.mock.calls[0]
     expect(payload.lines).toHaveLength(1)
     expect(payload.lines[0].name).toBe('Carrefour')
-    // The card payment method is carried as the line's bank.
-    expect(payload.lines[0].bank).toBe('Galicia VISA ·5771')
+    // The normalized bank + card detail are carried per line (ADR-117): `bank`
+    // is the normalized bank ("Galicia", NOT the composite), `card` the detail.
+    expect(payload.lines[0].bank).toBe('Galicia')
+    expect(payload.lines[0].card).toBe('VISA ·5771')
     // Money is re-encoded as a Decimal string at the boundary.
     expect(payload.lines[0].amount).toBe('45000')
     // occurredOn stays the statement pay date; the original purchase date is echoed
@@ -295,7 +298,7 @@ describe('Import statement — only the included lines are sent on import', () =
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
 
     // Change Carrefour's category from Food to Shopping via its labelled Select.
     const carrefourSelect = screen.getByLabelText('Category for Carrefour')
@@ -397,7 +400,7 @@ describe('Import statement — success shows a calm confirmation', () => {
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
 
     await user.click(screen.getByRole('button', { name: 'Import 2 expenses' }))
 
@@ -416,7 +419,7 @@ describe('Import statement — reconciler flags likely duplicates', () => {
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
 
     // The non-color cue: a "Possible duplicate" chip on the flagged row (ADR-019/086).
     expect(screen.getByText('Possible duplicate')).toBeInTheDocument()
@@ -436,7 +439,7 @@ describe('Import statement — reconciler flags likely duplicates', () => {
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
 
     // Merge is pre-selected for the flagged row (ADR-086).
     expect(
@@ -469,7 +472,7 @@ describe('Import statement — reconciler flags likely duplicates', () => {
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
 
     // Switch Netflix to Keep both.
     await user.click(
@@ -495,7 +498,7 @@ describe('Import statement — reconciler flags likely duplicates', () => {
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
 
     // Carrefour (new) + Netflix (merge by default); the fee defaults excluded.
     expect(screen.getByText('1 new · 1 merged')).toBeInTheDocument()
@@ -514,7 +517,7 @@ describe('Import statement — reconciler flags likely duplicates', () => {
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
 
     await user.click(screen.getByRole('button', { name: 'Import 1 · merge 1' }))
 
@@ -533,7 +536,7 @@ describe('Import statement — Cancel discards the review and leaves the flow', 
 
     await user.upload(fileInput, pdfFile())
     // We're on the review step.
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
     expect(screen.getByText('Carrefour')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -562,7 +565,7 @@ describe('Import statement — re-uploading the same file uses the cached parse'
     const file = pdfFile('same-statement.pdf')
 
     await user.upload(fileInput, file)
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
 
     // Leave the review, then re-pick the very same file.
     await user.click(
@@ -572,7 +575,7 @@ describe('Import statement — re-uploading the same file uses the cached parse'
     await user.upload(fileInput, file)
 
     // The cached parse is shown again the same way — no second network parse.
-    expect(await screen.findByText('Galicia VISA ·5771')).toBeInTheDocument()
+    expect(await screen.findByText('Galicia · VISA ·5771')).toBeInTheDocument()
     expect(screen.getByText('Carrefour')).toBeInTheDocument()
     expect(parseStatementMock).toHaveBeenCalledTimes(1)
   })
@@ -582,7 +585,7 @@ describe('Import statement — re-uploading the same file uses the cached parse'
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile('first.pdf'))
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
 
     await user.click(
       screen.getByRole('button', { name: 'Upload a different statement' }),
@@ -591,7 +594,7 @@ describe('Import statement — re-uploading the same file uses the cached parse'
 
     // A DIFFERENT file identity → cache miss → a second parse call.
     await user.upload(fileInput, pdfFile('second.pdf'))
-    await screen.findByText('Galicia VISA ·5771')
+    await screen.findByText('Galicia · VISA ·5771')
 
     expect(parseStatementMock).toHaveBeenCalledTimes(2)
   })

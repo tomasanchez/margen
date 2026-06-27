@@ -59,8 +59,8 @@ export const EXPENSE_CATEGORIES: readonly Category[] = [
 
 /** Default category when none is supplied (matches the concept's `Food`). */
 const DEFAULT_CATEGORY: Category = 'Food'
-/** Default bank/card when none is supplied. */
-const DEFAULT_BANK: Bank = 'Galicia · Visa'
+/** Default bank when none is supplied (ADR-117 normalized name). */
+const DEFAULT_BANK: Bank = 'Galicia'
 
 /** Today's short display date, e.g. "Jun 13" (the concept's "Today · …" label). */
 export function todayDispDate(): string {
@@ -669,6 +669,9 @@ export function useAddEditFormState(
       amountNum: round2(amountArs),
       countsTowardMonotributo: type === 'income' && countsTowardMonotributo,
       ...(notes.trim() ? { notes: notes.trim() } : {}),
+      // Card detail is import-set, not user-editable (ADR-117): carry the prefill's
+      // value straight through so editing an imported row keeps its card on save.
+      ...(prefill?.card ? { card: prefill.card } : {}),
       ...(prefill?.recurring !== undefined
         ? { recurring: prefill.recurring }
         : {}),
