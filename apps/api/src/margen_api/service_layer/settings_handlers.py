@@ -63,6 +63,7 @@ async def update_settings(command: UpdateSettings, uow: AbstractUnitOfWork) -> A
             fx_default_rate_type=fx_default,
             monotributo_current_category=category,
             monotributo_activity_type=activity_type,
+            monotributo_enabled=command.monotributo_enabled,
         )
         await uow.commit()
     return settings

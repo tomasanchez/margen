@@ -23,6 +23,11 @@ _SPLIT = "e5f6a7b8c9d0"
 # account_id backfill on real PostgreSQL.
 _ACCOUNTS = "f7a8b9c0d1e2"
 
+# The monotributo_enabled migration (ADR-126): chains after the accounts migration.
+# Seeding an app_settings row at ``_ACCOUNTS`` lets the test exercise the boolean
+# add + back-fill of existing rows to TRUE on real PostgreSQL.
+_MONOTRIBUTO_FLAG = "a8b9c0d1e2f3"
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
 # A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
@@ -159,6 +164,34 @@ class TestMigrations:
         finally:
             asyncio.run(_drop_everything(integration_database_url))
 
+    def test_monotributo_enabled_backfills_existing_rows_to_true(self, integration_database_url: str):
+        """
+        GIVEN an existing app_settings row at the pre-flag revision
+        WHEN Alembic upgrades through the monotributo_enabled migration (ADR-126)
+        THEN the column exists and the existing row is back-filled to monotributo_enabled=true
+
+        Proves the in-place back-fill preserves Monotributo access for current users on
+        the production PostgreSQL dialect, while new rows default to FALSE (ADR-126).
+        """
+        # GIVEN — upgrade to the accounts revision (just before the flag), then seed a row.
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _ACCOUNTS)
+        settings_id = uuid.uuid4()
+        try:
+            asyncio.run(_seed_app_settings(integration_database_url, settings_id))
+
+            # WHEN
+            command.upgrade(config, _MONOTRIBUTO_FLAG)
+
+            # THEN — the column exists and the pre-existing row was flipped to TRUE.
+            columns = asyncio.run(_app_settings_columns(integration_database_url))
+            assert "monotributo_enabled" in columns
+            enabled = asyncio.run(_read_monotributo_enabled(integration_database_url, settings_id))
+            assert enabled is True
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
 
 async def _seed_transactions(
     url: str,
@@ -272,3 +305,51 @@ async def _account_owner_and_name(url: str, account_id: uuid.UUID) -> tuple[uuid
         row = result.one()
     await engine.dispose()
     return row.user_id, row.name
+
+
+async def _seed_app_settings(url: str, settings_id: uuid.UUID) -> None:
+    """Insert one existing app_settings row before the monotributo_enabled flag (ADR-126)."""
+    engine = create_async_engine(url)
+    insert = text(
+        "INSERT INTO app_settings "
+        "(id, user_id, preferred_display_currency, fx_default_rate_type, "
+        "monotributo_current_category, monotributo_activity_type) "
+        "VALUES (:id, :user_id, :currency, :fx, :category, :activity)"
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            insert,
+            {
+                "id": settings_id,
+                "user_id": uuid.UUID(_OWNER),
+                "currency": "ARS",
+                "fx": "MEP",
+                "category": "C",
+                "activity": "services",
+            },
+        )
+    await engine.dispose()
+
+
+async def _app_settings_columns(url: str) -> list[str]:
+    """Return the column names on the ``app_settings`` table."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        names = await connection.run_sync(
+            lambda sync_conn: [col["name"] for col in inspect(sync_conn).get_columns("app_settings")]
+        )
+    await engine.dispose()
+    return names
+
+
+async def _read_monotributo_enabled(url: str, settings_id: uuid.UUID) -> bool:
+    """Return the ``monotributo_enabled`` value of the app_settings row after the back-fill."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        result = await connection.execute(
+            text("SELECT monotributo_enabled FROM app_settings WHERE id = :id"),
+            {"id": settings_id},
+        )
+        value = result.scalar_one()
+    await engine.dispose()
+    return bool(value)

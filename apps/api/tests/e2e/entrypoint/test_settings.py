@@ -90,11 +90,14 @@ class TestGetSettings:
             "fxDefaultRateType",
             "monotributoCurrentCategory",
             "monotributoActivityType",
+            "monotributoEnabled",
         }
         assert data["preferredDisplayCurrency"] == "ARS"
         assert data["fxDefaultRateType"] == "MEP"
         assert data["monotributoCurrentCategory"] == "C"
         assert data["monotributoActivityType"] == "services"
+        # New users default to the Monotributo module OFF (ADR-126).
+        assert data["monotributoEnabled"] is False
 
     async def test_reflects_persisted_values(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
         """
@@ -109,6 +112,7 @@ class TestGetSettings:
                 "fx_default_rate_type": "official",
                 "current_category": "H",
                 "activity_type": "bienes",
+                "monotributo_enabled": True,
             }
         )
 
@@ -120,6 +124,7 @@ class TestGetSettings:
         assert data["fxDefaultRateType"] == "official"
         assert data["monotributoCurrentCategory"] == "H"
         assert data["monotributoActivityType"] == "bienes"
+        assert data["monotributoEnabled"] is True
 
 
 class TestPatchSettings:
@@ -169,6 +174,21 @@ class TestPatchSettings:
         data = (await client.get(SETTINGS)).json()["data"]
         assert data["monotributoCurrentCategory"] == "K"
         assert data["fxDefaultRateType"] == "official"
+
+    async def test_enabling_monotributo_round_trips(self, client: httpx.AsyncClient):
+        """
+        GIVEN a new user with the Monotributo module off by default (ADR-126)
+        WHEN a PATCH enables the module
+        THEN the PATCH echoes monotributoEnabled true and a later GET reflects it
+        """
+        # WHEN — enable the optional module via PATCH.
+        patched = await client.patch(SETTINGS, json={"monotributoEnabled": True})
+
+        # THEN — the PATCH echoes the toggle, and the subsequent GET sees it committed.
+        assert patched.status_code == status.HTTP_200_OK
+        assert patched.json()["data"]["monotributoEnabled"] is True
+        data = (await client.get(SETTINGS)).json()["data"]
+        assert data["monotributoEnabled"] is True
 
     @pytest.mark.parametrize(
         ("body", "label"),

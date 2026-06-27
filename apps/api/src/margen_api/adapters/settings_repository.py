@@ -25,6 +25,9 @@ DEFAULT_DISPLAY_CURRENCY = "ARS"
 DEFAULT_FX_RATE_TYPE = "MEP"
 DEFAULT_MONOTRIBUTO_CATEGORY = "C"
 DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE = "services"
+# Brand-new users default to the Monotributo module OFF (ADR-126); existing rows
+# were back-filled to ``True`` by the data migration so current users keep access.
+DEFAULT_MONOTRIBUTO_ENABLED = False
 
 
 def _to_read_model(record: AppSettingsRecord) -> AppSettings:
@@ -34,16 +37,18 @@ def _to_read_model(record: AppSettingsRecord) -> AppSettings:
         fx_default_rate_type=record.fx_default_rate_type,
         monotributo_current_category=record.monotributo_current_category,
         monotributo_activity_type=record.monotributo_activity_type,
+        monotributo_enabled=record.monotributo_enabled,
     )
 
 
 def _defaults() -> AppSettings:
-    """Return the documented default settings (ADR-054)."""
+    """Return the documented default settings (ADR-054, ADR-126)."""
     return AppSettings(
         preferred_display_currency=DEFAULT_DISPLAY_CURRENCY,
         fx_default_rate_type=DEFAULT_FX_RATE_TYPE,
         monotributo_current_category=DEFAULT_MONOTRIBUTO_CATEGORY,
         monotributo_activity_type=DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
+        monotributo_enabled=DEFAULT_MONOTRIBUTO_ENABLED,
     )
 
 
@@ -73,6 +78,7 @@ class SqlAlchemySettingsRepository(AbstractSettingsRepository):
         fx_default_rate_type: str | None = None,
         monotributo_current_category: str | None = None,
         monotributo_activity_type: str | None = None,
+        monotributo_enabled: bool | None = None,
     ) -> AppSettings:
         """Merge the provided fields onto the owner's settings row (ADR-054, ADR-110)."""
         record = await self._load_owned(user_id)
@@ -86,6 +92,8 @@ class SqlAlchemySettingsRepository(AbstractSettingsRepository):
             record.monotributo_current_category = monotributo_current_category
         if monotributo_activity_type is not None:
             record.monotributo_activity_type = monotributo_activity_type
+        if monotributo_enabled is not None:
+            record.monotributo_enabled = monotributo_enabled
         return _to_read_model(record)
 
     def _insert_from_defaults(self, user_id: str) -> AppSettingsRecord:
@@ -96,6 +104,7 @@ class SqlAlchemySettingsRepository(AbstractSettingsRepository):
             fx_default_rate_type=DEFAULT_FX_RATE_TYPE,
             monotributo_current_category=DEFAULT_MONOTRIBUTO_CATEGORY,
             monotributo_activity_type=DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
+            monotributo_enabled=DEFAULT_MONOTRIBUTO_ENABLED,
         )
         self.session.add(record)
         return record

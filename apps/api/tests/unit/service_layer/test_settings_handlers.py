@@ -67,6 +67,7 @@ class TestPartialMerge:
                 fx_default_rate_type="official",
                 monotributo_current_category="K",
                 monotributo_activity_type="bienes",
+                monotributo_enabled=True,
             ),
             uow,
         )
@@ -76,6 +77,23 @@ class TestPartialMerge:
         assert result.fx_default_rate_type == "official"
         assert result.monotributo_current_category == "K"
         assert result.monotributo_activity_type == "bienes"
+        assert result.monotributo_enabled is True
+
+    async def test_toggles_monotributo_enabled_without_validation(self):
+        """
+        GIVEN an empty unit of work
+        WHEN only ``monotributo_enabled`` is set
+        THEN the boolean flag is applied (no validation) and the write commits (ADR-126)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+
+        # WHEN
+        result = await update_settings(UpdateSettings(user_id=OWNER, monotributo_enabled=True), uow)
+
+        # THEN
+        assert result.monotributo_enabled is True
+        assert uow.committed is True
 
     async def test_empty_update_returns_defaults_and_commits(self):
         """
@@ -94,6 +112,8 @@ class TestPartialMerge:
         assert result.fx_default_rate_type == "MEP"
         assert result.monotributo_current_category == "C"
         assert result.monotributo_activity_type == "services"
+        # New users default to the Monotributo module OFF (ADR-126).
+        assert result.monotributo_enabled is False
         assert uow.committed is True
 
 

@@ -37,6 +37,9 @@ class UpdateSettings(Command):
             leaves it unchanged.
         monotributo_activity_type: The activity type (``"services"`` or
             ``"bienes"``) to set; ``None`` leaves it unchanged.
+        monotributo_enabled: Whether to enable the optional Monotributo module
+            (ADR-126); ``None`` leaves it unchanged. A boolean toggle, so no
+            validation is needed.
     """
 
     user_id: str
@@ -44,3 +47,4 @@ class UpdateSettings(Command):
     fx_default_rate_type: str | None = None
     monotributo_current_category: str | None = None
     monotributo_activity_type: str | None = None
+    monotributo_enabled: bool | None = None

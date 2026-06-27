@@ -47,6 +47,8 @@ _DEFAULT_DISPLAY_CURRENCY = "ARS"
 _DEFAULT_FX_RATE_TYPE = "MEP"
 _DEFAULT_MONOTRIBUTO_CATEGORY = "C"
 _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE = "services"
+# Brand-new users default to the Monotributo module OFF (ADR-126).
+_DEFAULT_MONOTRIBUTO_ENABLED = False
 
 
 class FakeTransactionRepository(AbstractTransactionRepository):
@@ -152,7 +154,7 @@ class FakeMonotributoSnapshotRepository(AbstractMonotributoSnapshotRepository):
     def __init__(
         self,
         committed: dict[tuple[str, date], MonotributoStanding],
-        config: dict[str, str],
+        config: dict[str, str | bool],
         used_by_window: dict[tuple[str, date, date], Decimal],
     ) -> None:
         """Initialize the repository over the unit of work's stores."""
@@ -169,7 +171,7 @@ class FakeMonotributoSnapshotRepository(AbstractMonotributoSnapshotRepository):
         """
         if not self._config:
             return None
-        return self._config["current_category"], self._config["activity_type"]
+        return str(self._config["current_category"]), str(self._config["activity_type"])
 
     async def used_in_window(self, window_start: date, window_end: date, user_id: str) -> Decimal:
         """Return the canned SUM of the owner's included income for a window, else 0 (ADR-112)."""
@@ -197,7 +199,7 @@ class FakeSettingsRepository(AbstractSettingsRepository):
     for the category.
     """
 
-    def __init__(self, settings: dict[str, str]) -> None:
+    def __init__(self, settings: dict[str, str | bool]) -> None:
         """Initialize over a shared settings dict."""
         self._settings = settings
 
@@ -213,8 +215,9 @@ class FakeSettingsRepository(AbstractSettingsRepository):
         fx_default_rate_type: str | None = None,
         monotributo_current_category: str | None = None,
         monotributo_activity_type: str | None = None,
+        monotributo_enabled: bool | None = None,
     ) -> AppSettings:
-        """Merge only the provided fields onto the owner's settings row (ADR-110)."""
+        """Merge only the provided fields onto the owner's settings row (ADR-110, ADR-126)."""
         if preferred_display_currency is not None:
             self._settings["preferred_display_currency"] = preferred_display_currency
         if fx_default_rate_type is not None:
@@ -223,15 +226,18 @@ class FakeSettingsRepository(AbstractSettingsRepository):
             self._settings["current_category"] = monotributo_current_category
         if monotributo_activity_type is not None:
             self._settings["activity_type"] = monotributo_activity_type
+        if monotributo_enabled is not None:
+            self._settings["monotributo_enabled"] = monotributo_enabled
         return self._as_read_model()
 
     def _as_read_model(self) -> AppSettings:
         """Project the shared dict into an :class:`AppSettings`, applying defaults."""
         return AppSettings(
-            preferred_display_currency=self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY),
-            fx_default_rate_type=self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE),
-            monotributo_current_category=self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY),
-            monotributo_activity_type=self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE),
+            preferred_display_currency=str(self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY)),
+            fx_default_rate_type=str(self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE)),
+            monotributo_current_category=str(self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY)),
+            monotributo_activity_type=str(self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE)),
+            monotributo_enabled=bool(self._settings.get("monotributo_enabled", _DEFAULT_MONOTRIBUTO_ENABLED)),
         )
 
 
@@ -427,7 +433,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.committed_accounts: dict[UUID, Account] = {}
         self._staged_accounts: dict[UUID, Account] = {}
         self.snapshots: dict[tuple[str, date], MonotributoStanding] = {}
-        self.config: dict[str, str] = {}
+        self.config: dict[str, str | bool] = {}
         self.used_by_window: dict[tuple[str, date, date], Decimal] = {}
         self.documents_store: dict[UUID, InvoiceDocument] = {}
         self.document_owners: dict[UUID, str | None] = {}
@@ -651,17 +657,18 @@ class FakeSettingsReader(AbstractSettingsReader):
     single shared dict, so route tests drive one owner at a time.
     """
 
-    def __init__(self, settings: dict[str, str]) -> None:
+    def __init__(self, settings: dict[str, str | bool]) -> None:
         """Initialize over a shared settings dict."""
         self._settings = settings
 
     async def get_settings(self, user_id: str) -> AppSettings:
         """Project the owner's shared dict into an :class:`AppSettings`, applying defaults."""
         return AppSettings(
-            preferred_display_currency=self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY),
-            fx_default_rate_type=self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE),
-            monotributo_current_category=self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY),
-            monotributo_activity_type=self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE),
+            preferred_display_currency=str(self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY)),
+            fx_default_rate_type=str(self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE)),
+            monotributo_current_category=str(self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY)),
+            monotributo_activity_type=str(self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE)),
+            monotributo_enabled=bool(self._settings.get("monotributo_enabled", _DEFAULT_MONOTRIBUTO_ENABLED)),
         )
 
 

@@ -38,6 +38,7 @@ class AbstractSettingsRepository(ABC):
         fx_default_rate_type: str | None = None,
         monotributo_current_category: str | None = None,
         monotributo_activity_type: str | None = None,
+        monotributo_enabled: bool | None = None,
     ) -> AppSettings:
         """Merge the provided fields onto the owner's settings row (ADR-054, ADR-110).
 
@@ -57,6 +58,8 @@ class AbstractSettingsRepository(ABC):
                 ``None`` to leave it unchanged.
             monotributo_activity_type: The activity type to persist, or ``None`` to
                 leave it unchanged.
+            monotributo_enabled: Whether the optional Monotributo module is enabled
+                (ADR-126), or ``None`` to leave it unchanged.
 
         Returns:
             The resulting :class:`AppSettings` after the merge.
