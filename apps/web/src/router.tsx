@@ -10,7 +10,7 @@ import { AddTransactionProvider } from './features/transactions/AddTransactionPr
 import { HomePage } from './features/home/HomePage'
 import { AccountsPage } from './features/accounts/AccountsPage'
 import { ImportStatement } from './features/statements/ImportStatement'
-import { MonotributoPage } from './features/monotributo/MonotributoPage'
+import { MonotributoRoute } from './features/monotributo/MonotributoRoute'
 import { SettingsPage } from './features/settings/SettingsPage'
 import { LoginPage } from './features/auth/LoginPage'
 import { validateTransactionsSearch } from './features/transactions/filtering'
@@ -118,7 +118,9 @@ const importStatementRoute = createRoute({
 const monotributoRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/monotributo',
-  component: MonotributoPage,
+  // Settings-gated: the route renders the page only when the optional module is
+  // enabled, otherwise redirects to Home (ADR-126). See {@link MonotributoRoute}.
+  component: MonotributoRoute,
 })
 
 const settingsRoute = createRoute({

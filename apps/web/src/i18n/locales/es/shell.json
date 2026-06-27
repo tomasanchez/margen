@@ -5,10 +5,13 @@
     "transactions": "Movimientos",
     "accounts": "Cuentas",
     "monotributo": "Monotributo",
+    "import": "Importar resumen",
+    "toolsGroup": "Herramientas",
     "homeShort": "Inicio",
     "transactionsShort": "Actividad",
     "accountsShort": "Cuentas",
-    "monotributoShort": "Mono"
+    "monotributoShort": "Mono",
+    "importShort": "Importar"
   },
   "actions": {
     "addTransaction": "Nuevo Movimiento",

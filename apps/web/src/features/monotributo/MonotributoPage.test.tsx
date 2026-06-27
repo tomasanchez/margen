@@ -196,6 +196,7 @@ beforeEach(() => {
     fxDefaultRateType: 'MEP',
     monotributoCurrentCategory: 'D',
     monotributoActivityType: 'services',
+    monotributoEnabled: true,
   })
 })
 

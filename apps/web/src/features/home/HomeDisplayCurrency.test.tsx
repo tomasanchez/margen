@@ -170,6 +170,7 @@ describe('USD preferred with a live rate', () => {
       fxDefaultRateType: 'MEP',
       monotributoCurrentCategory: 'C',
       monotributoActivityType: 'services',
+      monotributoEnabled: true,
     } satisfies Settings)
 
     renderHome({ year: 2026, month: 5 }) // June 2026
@@ -195,6 +196,7 @@ describe('USD preferred but the rate is unavailable', () => {
       fxDefaultRateType: 'MEP',
       monotributoCurrentCategory: 'C',
       monotributoActivityType: 'services',
+      monotributoEnabled: true,
     } satisfies Settings)
     mepMock.mockResolvedValue(null)
 

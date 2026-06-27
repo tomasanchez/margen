@@ -36,9 +36,11 @@ import { useViewingMonth } from '../../components/monthContext'
 import { type ViewingMonth } from '../../components/months'
 import { HomePage } from './HomePage'
 import { homeQueryKeys } from './queries'
+import { settingsQueryKeys } from '../settings/queries'
 import { AddTransactionProvider } from '../transactions/AddTransactionProvider'
 import { transactionsKeys } from '../transactions/queries'
 import type { Summary } from '../../api/summariesClient'
+import type { Settings } from '../../api/settingsClient'
 import type { MonotributoSnapshot, Transaction } from '../../mock/types'
 
 /**
@@ -150,6 +152,15 @@ function renderHome(initialMonth: ViewingMonth) {
   // skeletons, which these assertions don't touch).
   queryClient.setQueryData(transactionsKeys.list(), ROWS)
   queryClient.setQueryData(homeQueryKeys.monotributo(), MONOTRIBUTO_SNAPSHOT)
+  // Seed settings with the Monotributo module ENABLED so its Home card renders
+  // (ADR-126). The flag gates the card; without a seeded row it would be hidden.
+  queryClient.setQueryData(settingsQueryKeys.detail(), {
+    preferredDisplayCurrency: 'ARS',
+    fxDefaultRateType: 'MEP',
+    monotributoCurrentCategory: 'C',
+    monotributoActivityType: 'services',
+    monotributoEnabled: true,
+  } satisfies Settings)
   // Seed the per-month real summaries so the trend + breakdown cards resolve
   // without a fetch; stepping the navigator switches to the other month's key.
   for (const [month, summary] of Object.entries(SUMMARIES)) {

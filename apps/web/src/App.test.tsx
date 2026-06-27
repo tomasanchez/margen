@@ -16,6 +16,8 @@ import { currentViewingMonth, formatViewingMonth } from './components/months'
 import { AddTransactionProvider } from './features/transactions/AddTransactionProvider'
 import { HomePage } from './features/home/HomePage'
 import { TransactionsPage } from './features/transactions/TransactionsPage'
+import { settingsQueryKeys } from './features/settings/queries'
+import type { Settings } from './api/settingsClient'
 import {
   AddTransactionContext,
   type AddTransactionContextValue,
@@ -28,6 +30,17 @@ import {
  * renders, that navigating to Transactions swaps the routed content, and that
  * the active route is marked accessibly (aria-current="page").
  */
+
+/** A complete settings row with the Monotributo module flag set as given. */
+function settings(monotributoEnabled: boolean): Settings {
+  return {
+    preferredDisplayCurrency: 'ARS',
+    fxDefaultRateType: 'MEP',
+    monotributoCurrentCategory: 'C',
+    monotributoActivityType: 'services',
+    monotributoEnabled,
+  }
+}
 
 function buildTestRouter() {
   const rootRoute = createRootRoute({
@@ -47,17 +60,29 @@ function buildTestRouter() {
     path: '/transactions',
     component: TransactionsPage,
   })
-  const routeTree = rootRoute.addChildren([homeRoute, transactionsRoute])
+  const monotributoRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/monotributo',
+    component: () => <div>monotributo route</div>,
+  })
+  const routeTree = rootRoute.addChildren([
+    homeRoute,
+    transactionsRoute,
+    monotributoRoute,
+  ])
   return createRouter({
     routeTree,
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
 }
 
-function renderShell() {
+function renderShell(seed?: Settings) {
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   })
+  // Seed the settings flag (ADR-126) so the nav reads a deterministic value
+  // without a fetch; when omitted, the module stays hidden (flag unknown).
+  if (seed) queryClient.setQueryData(settingsQueryKeys.detail(), seed)
   const router = buildTestRouter()
   return render(
     <QueryClientProvider client={queryClient}>
@@ -176,4 +201,31 @@ test('the Add-transaction seam opens via the FAB / CTA trigger', async () => {
   await user.click(addTriggers[0])
 
   expect(opened).toBeGreaterThan(0)
+})
+
+test('shows the Monotributo nav item when the module is enabled (ADR-126/127)', async () => {
+  renderShell(settings(true))
+
+  await screen.findByRole('heading', { name: 'Your command center' })
+
+  // The Tools group heading + the gated Monotributo nav link are present.
+  expect(screen.getByRole('heading', { name: 'Tools' })).toBeInTheDocument()
+  expect(
+    screen.getAllByRole('link', { name: /Monotributo|Mono/ }).length,
+  ).toBeGreaterThan(0)
+})
+
+test('hides the Monotributo nav item when the module is disabled (ADR-126/127)', async () => {
+  renderShell(settings(false))
+
+  await screen.findByRole('heading', { name: 'Your command center' })
+
+  // The Tools group still hosts Import, but Monotributo is gone.
+  expect(
+    screen.queryAllByRole('link', { name: /Monotributo|Mono/ }),
+  ).toHaveLength(0)
+  // Import statement remains (a demoted Tool, not gated).
+  expect(
+    screen.getAllByRole('link', { name: /Import/ }).length,
+  ).toBeGreaterThan(0)
 })

@@ -29,6 +29,10 @@
   },
   "monotributo": {
     "title": "Monotributo",
+    "module": {
+      "label": "Módulo Monotributo",
+      "helper": "Activá el seguimiento de Monotributo para monotributistas. Cuando está apagado, se ocultan su ítem de menú, la tarjeta del Inicio y la página."
+    },
     "category": {
       "label": "Categoría",
       "helper": "Tu categoría actual de Monotributo. Define el medidor de límite y la proyección en la página de Monotributo.",

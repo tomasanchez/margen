@@ -29,6 +29,10 @@
   },
   "monotributo": {
     "title": "Monotributo",
+    "module": {
+      "label": "Monotributo module",
+      "helper": "Turn on the Monotributo tracker for Argentine freelancers. When off, its nav item, Home card, and page are hidden."
+    },
     "category": {
       "label": "Category",
       "helper": "Your current Monotributo category. Drives the limit meter and projection on the Monotributo page.",

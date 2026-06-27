@@ -32,6 +32,7 @@ import Typography from '@mui/material/Typography'
 import { visuallyHidden } from '@mui/utils'
 import { ErrorState } from '../../components/ErrorState'
 import { useDisplayCurrency } from '../settings/displayCurrencyContext'
+import { useMonotributoEnabled } from '../settings/queries'
 import { useInsights, useMonotributo, useSummary } from './queries'
 import { useTransactions } from '../transactions/queries'
 import { useViewingMonth } from '../../components/monthContext'
@@ -71,6 +72,11 @@ export function HomePage() {
   // Calm note when USD is preferred but the live rate couldn't be fetched, so
   // the cards + summaries fall back to ARS (ADR-056/037). Null otherwise.
   const { fallbackNote } = useDisplayCurrency()
+
+  // The Monotributo Home card is part of the optional module (ADR-126): hide it
+  // when the module is disabled. Treated as hidden until settings resolve so it
+  // never flashes then disappears.
+  const { enabled: monotributoEnabled } = useMonotributoEnabled()
 
   // The selected viewing month (top-bar navigator), shared via context (ADR-040).
   const { viewingMonth } = useViewingMonth()
@@ -234,11 +240,13 @@ export function HomePage() {
             minWidth: 0,
           }}
         >
-          <MonotributoCard
-            monotributo={monotributoQuery.data}
-            invoiceCount={invoiceCount}
-            loading={monotributoQuery.isPending}
-          />
+          {monotributoEnabled ? (
+            <MonotributoCard
+              monotributo={monotributoQuery.data}
+              invoiceCount={invoiceCount}
+              loading={monotributoQuery.isPending}
+            />
+          ) : null}
           <Insights
             insights={insightsQuery.data}
             loading={insightsQuery.isPending}

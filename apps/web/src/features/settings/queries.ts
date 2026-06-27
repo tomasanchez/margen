@@ -45,6 +45,31 @@ export function useSettings() {
 }
 
 /**
+ * Read whether the optional Monotributo module is enabled for the current user
+ * (ADR-126). Mirrors the display-currency provider's read pattern (ADR-056): a
+ * thin selector over the single {@link useSettings} query so every gate (nav
+ * item, Home card, route) reads ONE source of truth.
+ *
+ * To avoid a flash-then-hide flicker, the flag is treated as DISABLED until
+ * settings have resolved: `enabled` is only `true` once the query has loaded a
+ * row with `monotributoEnabled === true`. `settled` tells callers whether the
+ * settings query has produced a value yet (loaded or errored), so a route guard
+ * can wait for a definitive answer before deciding to block — while nav/cards
+ * simply treat "not yet settled" as hidden.
+ */
+export function useMonotributoEnabled(): {
+  enabled: boolean
+  settled: boolean
+} {
+  const settingsQuery = useSettings()
+  // Settled once the query is no longer pending (success or error). On error we
+  // fall back to hidden — a calm degradation that never flashes the module.
+  const settled = !settingsQuery.isPending
+  const enabled = settingsQuery.data?.monotributoEnabled === true
+  return { enabled, settled }
+}
+
+/**
  * Apply a partial settings update, then invalidate every dependent query so the
  * dependent screens reflect the change at once: the settings query itself, the
  * Home domain (cards + summaries currency, ADR-056), and the Monotributo domain

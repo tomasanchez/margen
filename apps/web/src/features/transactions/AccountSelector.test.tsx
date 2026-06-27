@@ -90,6 +90,7 @@ beforeEach(() => {
     fxDefaultRateType: 'MEP',
     monotributoCurrentCategory: 'C',
     monotributoActivityType: 'services',
+    monotributoEnabled: true,
   })
   monotributoMock.mockResolvedValue({
     current: {

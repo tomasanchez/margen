@@ -59,12 +59,13 @@ vi.mock('../../api/settingsClient', async () => {
   }
 })
 
-/** A complete settings row, ARS / MEP / Category C. */
+/** A complete settings row, ARS / MEP / Category C, Monotributo enabled. */
 const SETTINGS: Settings = {
   preferredDisplayCurrency: 'ARS',
   fxDefaultRateType: 'MEP',
   monotributoCurrentCategory: 'C',
   monotributoActivityType: 'services',
+  monotributoEnabled: true,
 }
 
 function renderPage() {
@@ -164,6 +165,58 @@ describe('changing a control PATCHes the right partial', () => {
       monotributoCurrentCategory: 'E',
       monotributoActivityType: 'services',
     })
+  })
+})
+
+describe('the Monotributo module toggle (ADR-126)', () => {
+  test('renders ON (checked) and shows the category control when enabled', async () => {
+    renderPage()
+
+    const toggle = await screen.findByRole('switch', {
+      name: 'Monotributo module',
+    })
+    expect(toggle).toBeChecked()
+    // The category control is part of the enabled module.
+    expect(
+      screen.getByRole('combobox', { name: 'Category' }),
+    ).toBeInTheDocument()
+  })
+
+  test('toggling OFF PATCHes { monotributoEnabled: false }', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(
+      await screen.findByRole('switch', { name: 'Monotributo module' }),
+    )
+
+    expect(updateMock).toHaveBeenCalledWith({ monotributoEnabled: false })
+  })
+
+  test('renders OFF (unchecked) and hides the category control when disabled', async () => {
+    fetchMock.mockResolvedValue({ ...SETTINGS, monotributoEnabled: false })
+    renderPage()
+
+    const toggle = await screen.findByRole('switch', {
+      name: 'Monotributo module',
+    })
+    expect(toggle).not.toBeChecked()
+    // The category control is hidden while the module is off.
+    expect(
+      screen.queryByRole('combobox', { name: 'Category' }),
+    ).not.toBeInTheDocument()
+  })
+
+  test('toggling ON from a disabled state PATCHes { monotributoEnabled: true }', async () => {
+    fetchMock.mockResolvedValue({ ...SETTINGS, monotributoEnabled: false })
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(
+      await screen.findByRole('switch', { name: 'Monotributo module' }),
+    )
+
+    expect(updateMock).toHaveBeenCalledWith({ monotributoEnabled: true })
   })
 })
 

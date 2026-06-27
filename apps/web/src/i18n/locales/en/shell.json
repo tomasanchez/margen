@@ -5,10 +5,13 @@
     "transactions": "Transactions",
     "accounts": "Accounts",
     "monotributo": "Monotributo",
+    "import": "Import statement",
+    "toolsGroup": "Tools",
     "homeShort": "Home",
     "transactionsShort": "Activity",
     "accountsShort": "Accounts",
-    "monotributoShort": "Mono"
+    "monotributoShort": "Mono",
+    "importShort": "Import"
   },
   "actions": {
     "addTransaction": "Add transaction",
