@@ -15,7 +15,7 @@
  * duplicated formatting.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -43,18 +43,66 @@ import {
 import { FilterBar } from './FilterBar'
 import { MonthPicker } from './MonthPicker'
 import { MobileFilterSheet } from './MobileFilterSheet'
-import { useTransactionFilters } from './useTransactionFilters'
 import {
+  type FilterControls,
+  type UseTransactionFilters,
+} from './useTransactionFilters'
+import {
+  DEFAULT_FILTERS,
   TYPE_OPTIONS,
   activeFilterCount,
   buildEditPrefill,
   filterTransactions,
   hasActiveFilters,
+  type TransactionFilters,
   type TransactionGroup,
   type TypeFilter,
 } from './filtering'
+import { currentViewingMonth } from '../../components/months'
 import { useDeleteTransaction, useTransactions } from './queries'
-import type { Category } from '../../mock/types'
+
+/** Search-box debounce before the query `q` is pushed to the URL (ADR-116). */
+const SEARCH_DEBOUNCE_MS = 300
+
+/**
+ * Standalone fallback {@link UseTransactionFilters} for renders OUTSIDE a router
+ * (component tests that mount `<TransactionsPage />` bare). It mirrors the
+ * router-bound default — current-month scope (ADR-040) — with in-memory setters,
+ * so the page behaves identically without a route to navigate. The real app
+ * always passes the URL-synced bundle from `router.tsx`.
+ */
+function useStandaloneFilters(): UseTransactionFilters {
+  const [filters, setFilters] = useState<TransactionFilters>(() => ({
+    ...DEFAULT_FILTERS,
+    month: currentViewingMonth(),
+  }))
+  const controls = useMemo<FilterControls>(
+    () => ({
+      setSearch: (value) => setFilters((f) => ({ ...f, q: value })),
+      setType: (value) => setFilters((f) => ({ ...f, type: value })),
+      setCurrency: (value) => setFilters((f) => ({ ...f, currency: value })),
+      setMonth: (value) => setFilters((f) => ({ ...f, month: value })),
+      toggleCategory: (value) =>
+        setFilters((f) => ({
+          ...f,
+          categories: f.categories.includes(value)
+            ? f.categories.filter((c) => c !== value)
+            : [...f.categories, value],
+        })),
+      toggleBank: (value) =>
+        setFilters((f) => ({
+          ...f,
+          banks: f.banks.includes(value)
+            ? f.banks.filter((b) => b !== value)
+            : [...f.banks, value],
+        })),
+      setAmount: (value) => setFilters((f) => ({ ...f, amount: value })),
+      clear: () => setFilters(DEFAULT_FILTERS),
+    }),
+    [],
+  )
+  return { filters, controls }
+}
 
 /** Summary line: "<count> shown · <in> in · <out> out · net <net>". */
 function SummaryLine({
@@ -259,24 +307,58 @@ function ColumnHeader() {
 
 export interface TransactionsPageProps {
   /**
-   * Optional category drilldown seed (ADR-062), supplied by the route from the
-   * validated `/transactions?category=<name>` search param. It only seeds the
-   * filter on first mount; the user can change or clear it afterward. The route
-   * owns the router coupling so the page stays router-agnostic (and rendrable
-   * standalone in tests).
+   * The live, URL-derived filter state (ADR-116). Supplied by `router.tsx`,
+   * which owns the router coupling (`useTransactionFilters` reads the validated
+   * search params). Optional so the page can render STANDALONE in component
+   * tests — when omitted it falls back to an in-memory bundle that mirrors the
+   * default current-month scope (the page stays router-agnostic — ADR-062 note).
    */
-  initialCategory?: Category
+  filters?: TransactionFilters
+  /**
+   * The bound filter setters (ADR-116). In the app these navigate in `replace`
+   * mode so the URL stays the single source of truth; omit alongside `filters`
+   * for the standalone fallback. Both must be supplied together or both omitted.
+   */
+  controls?: FilterControls
 }
 
-export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}) {
+export function TransactionsPage({
+  filters: filtersProp,
+  controls: controlsProp,
+}: TransactionsPageProps = {}) {
   const { t } = useTranslation('transactions')
-  const { filters, controls } = useTransactionFilters({
-    initialCategories: initialCategory ? [initialCategory] : undefined,
-  })
+  // Controlled by the route in the app; falls back to a local bundle when the
+  // page is rendered bare in tests (the hook is unconditionally called to keep
+  // hook order stable — its state is simply ignored when props are provided).
+  const standalone = useStandaloneFilters()
+  const filters = filtersProp ?? standalone.filters
+  const controls = controlsProp ?? standalone.controls
   const { openAdd } = useAddTransaction()
   const transactionsQuery = useTransactions()
   const deleteMutation = useDeleteTransaction()
   const [sheetOpen, setSheetOpen] = useState(false)
+
+  // Search box: keep a local value so typing is instant, then debounce-push `q`
+  // to the URL (ADR-116). When the URL `q` changes externally (back/forward, or
+  // a drill-in), sync the local value back. We track the last value we pushed so
+  // an external change is distinguishable from our own echo (no update loop).
+  const [searchInput, setSearchInput] = useState(filters.q)
+  const lastPushedRef = useRef(filters.q)
+  useEffect(() => {
+    // External change (not our own debounce echo): adopt it into the input.
+    if (filters.q !== lastPushedRef.current) {
+      lastPushedRef.current = filters.q
+      setSearchInput(filters.q)
+    }
+  }, [filters.q])
+  useEffect(() => {
+    if (searchInput === filters.q) return
+    const id = setTimeout(() => {
+      lastPushedRef.current = searchInput
+      controls.setSearch(searchInput)
+    }, SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(id)
+  }, [searchInput, filters.q, controls])
 
   const allTransactions = useMemo(
     () => transactionsQuery.data ?? [],
@@ -345,13 +427,15 @@ export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}
           filters={filters}
           controls={controls}
           allTransactions={allTransactions}
+          searchValue={searchInput}
+          onSearchChange={setSearchInput}
         />
 
         {/* Mobile: search + type segmented + Filters (sheet) trigger. */}
         <Box sx={{ display: { xs: 'block', md: 'none' } }}>
           <TextField
-            value={filters.q}
-            onChange={(e) => controls.setSearch(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             placeholder={t('search.placeholderShort')}
             fullWidth
             size="small"

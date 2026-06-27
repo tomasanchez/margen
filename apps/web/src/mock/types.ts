@@ -42,10 +42,18 @@ export type Category =
   | 'Fee'
   | 'Other'
 
-/** Banks / cards a transaction can be attributed to. */
+/**
+ * Normalized bank / payment-method name a transaction is attributed to (ADR-117).
+ *
+ * This is the FILTERABLE identity: one bank value catches every transaction for
+ * that bank regardless of which card was used. The card-level detail (e.g. the
+ * network + last4) lives separately in {@link Transaction.card} for display only.
+ * The backend normalizes `bank` to exactly one of these six; unknown legacy
+ * strings are still tolerated by the client adapter (`asBank`).
+ */
 export type Bank =
-  | 'Galicia · Visa'
-  | 'Santander · Mastercard'
+  | 'Galicia'
+  | 'Santander'
   | 'Mercado Pago'
   | 'Brubank'
   | 'Deel'
@@ -83,6 +91,13 @@ export interface Transaction {
   name: string
   category: Category
   bank: Bank
+  /**
+   * Optional card-level detail for display (ADR-117), e.g. "AMEX ·1234",
+   * "VISA ·5771", "Visa", "Mastercard". Set on import (statement parser); manual
+   * entries leave it undefined. NOT filterable — the filterable identity is
+   * {@link Transaction.bank}. Rendered as `bank · card` when present.
+   */
+  card?: string
   currency: Currency
   type: TxType
   kind: TxKind
@@ -123,6 +138,12 @@ export interface NewTransactionInput {
   name: string
   category: Category
   bank: Bank
+  /**
+   * Optional card-level display detail (ADR-117), e.g. "VISA ·5771". Import-set,
+   * not user-editable; carried through an edit's prefill + save so editing an
+   * imported row never drops its card. Omitted for manual entries.
+   */
+  card?: string
   currency: Currency
   type: TxType
   kind: TxKind

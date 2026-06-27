@@ -55,6 +55,12 @@ export interface TransactionDto {
   notes?: string | null
   category?: string | null
   bank?: string | null
+  /**
+   * Card-level display detail (ADR-117), e.g. "AMEX ·1234" / "Visa"; `null` when
+   * none. Distinct from the normalized, filterable `bank`. May be absent on
+   * legacy rows.
+   */
+  card?: string | null
   currency: Currency
   type: TxType
   kind: TxKind
@@ -96,6 +102,8 @@ interface TransactionCreateBody {
   name: string
   category?: string
   bank?: string
+  /** Card-level display detail (ADR-117); import-set, preserved on edit. */
+  card?: string
   usd?: number
   rate?: number
   fxRateType?: FxRateType
@@ -150,7 +158,11 @@ function asCategory(value: string | null | undefined): Category {
   return (value ?? 'Other') as Category
 }
 
-/** Narrow an arbitrary string to one of the prototype's known banks. */
+/**
+ * Narrow an arbitrary string to one of the six normalized banks (ADR-117). The
+ * backend normalizes `bank` to the known set, but unknown legacy strings are
+ * still tolerated (cast through) and absent values default to `'Transfer'`.
+ */
 function asBank(value: string | null | undefined): Bank {
   return (value ?? 'Transfer') as Bank
 }
@@ -191,6 +203,9 @@ export function adaptTransaction(dto: TransactionDto): Transaction {
     name: dto.name,
     category: asCategory(dto.category),
     bank: asBank(dto.bank),
+    // Card-level display detail (ADR-117); only present on imported rows. Kept off
+    // rows with no card so the shape stays clean (null/empty → absent).
+    ...(dto.card ? { card: dto.card } : {}),
     currency: dto.currency,
     type: dto.type,
     kind: dto.kind,
@@ -226,6 +241,7 @@ export function toCreateBody(input: NewTransactionInput): TransactionCreateBody 
     bank: input.bank,
     countsTowardMonotributo: input.countsTowardMonotributo ?? false,
   }
+  if (input.card !== undefined) body.card = input.card
   if (input.usd !== undefined) body.usd = input.usd
   if (input.rate !== undefined) body.rate = input.rate
   if (input.fxRateType !== undefined) body.fxRateType = input.fxRateType
@@ -257,6 +273,9 @@ export function toPatchBody(
   if (patch.name !== undefined) body.name = patch.name
   if (patch.category !== undefined) body.category = patch.category
   if (patch.bank !== undefined) body.bank = patch.bank
+  // Card detail is import-set (ADR-117); send it back unchanged on edit so an
+  // imported row's card survives a re-save (omitted when the patch carries none).
+  if (patch.card !== undefined) body.card = patch.card
   if (patch.usd !== undefined) body.usd = patch.usd
   if (patch.rate !== undefined) body.rate = patch.rate
   if (patch.fxRateType !== undefined) body.fxRateType = patch.fxRateType

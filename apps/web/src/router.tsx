@@ -8,39 +8,13 @@ import {
 import { AppShell } from './components/AppShell'
 import { AddTransactionProvider } from './features/transactions/AddTransactionProvider'
 import { HomePage } from './features/home/HomePage'
-import { TransactionsPage } from './features/transactions/TransactionsPage'
 import { ImportStatement } from './features/statements/ImportStatement'
 import { MonotributoPage } from './features/monotributo/MonotributoPage'
 import { SettingsPage } from './features/settings/SettingsPage'
 import { LoginPage } from './features/auth/LoginPage'
-import { CATEGORIES } from './mock/seed'
-import type { Category } from './mock/types'
+import { validateTransactionsSearch } from './features/transactions/filtering'
+import { TransactionsRoute } from './features/transactions/TransactionsRoute'
 import type { RouterContext } from './router/context'
-
-/**
- * Search params accepted by the `/transactions` route (ADR-062).
- *
- * `category` is an optional drilldown seed: a Home "Where it went" row links to
- * `/transactions?category=<name>` and the screen opens pre-filtered to it. The
- * value is validated against the known {@link Category} union so an absent or
- * unknown param is a no-op (`undefined`) rather than seeding a bogus filter.
- */
-export interface TransactionsSearch {
-  category?: Category
-}
-
-/** A Set of the known categories for O(1) validation of the search param. */
-const KNOWN_CATEGORIES = new Set<string>(CATEGORIES)
-
-/** Validate (and narrow) the `/transactions` search params (ADR-062). */
-function validateTransactionsSearch(
-  search: Record<string, unknown>,
-): TransactionsSearch {
-  const raw = search.category
-  return typeof raw === 'string' && KNOWN_CATEGORIES.has(raw)
-    ? { category: raw as Category }
-    : {}
-}
 
 /**
  * Search params accepted by the public `/login` route (ADR-096).
@@ -120,13 +94,12 @@ const transactionsRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/transactions',
   validateSearch: validateTransactionsSearch,
-  // Read the validated `category` search param here and seed the screen's
-  // category filter from it (ADR-062); this keeps TransactionsPage
-  // router-agnostic (rendrable standalone in tests).
-  component: () => {
-    const { category } = transactionsRoute.useSearch()
-    return <TransactionsPage initialCategory={category} />
-  },
+  // The route owns the router coupling (ADR-116): `TransactionsRoute` calls
+  // `useTransactionFilters` (filters DERIVED from the validated search params;
+  // controls navigate in `replace` mode) and passes the bundle to the
+  // router-agnostic TransactionsPage as props. It lives in its own module so
+  // this file keeps exporting only `router` (react-refresh components-only rule).
+  component: TransactionsRoute,
 })
 
 const importStatementRoute = createRoute({

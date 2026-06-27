@@ -100,8 +100,10 @@ class StatementLineInput(Message):
         fx_rate: The stated cotización for a USD line, else ``None`` (manual confirm).
         fx_rate_type: ``OFFICIAL`` when a rate is stated, else ``None``.
         category: A category label, editable in review, or ``None``.
-        payment_method: The composed bank/network/last4 label (e.g.
-            ``"Galicia VISA ·5771"``).
+        payment_method: The normalized bank label, e.g. ``"Galicia"`` or
+            ``"Santander"`` (ADR-117).
+        card: The card / detail label for display, e.g. ``"VISA ·5771"`` or
+            ``"AMEX ·1234"``; ``None`` when there is no card (ADR-117).
         notes: Free-form note, e.g. the installment marker ``"Cuota 3/3"`` (ADR-079).
         resolution: The per-line reconciliation choice (ADR-085); defaults to
             ``IMPORT``.
@@ -119,6 +121,7 @@ class StatementLineInput(Message):
     fx_rate_as_of: datetime | None = None
     category: str | None = None
     payment_method: str | None = None
+    card: str | None = None
     notes: str | None = None
     resolution: StatementLineResolution = StatementLineResolution.IMPORT
     match_transaction_id: UUID | None = None

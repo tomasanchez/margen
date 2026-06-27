@@ -78,6 +78,10 @@ function shownCount(): number {
 }
 
 describe('TransactionsPage filtering', () => {
+  // The search box debounces its push to the URL (~300ms, ADR-116), so the
+  // search-driven assertions wait a touch longer and the test gets extra
+  // headroom over the default 5s — under heavy parallel load the debounce can
+  // otherwise tip an already-slow test over the edge.
   test('a search query narrows the rows AND updates the header count', async () => {
     const user = userEvent.setup()
     renderWithProviders(<TransactionsPage />, { withAddProvider: true })
@@ -89,11 +93,11 @@ describe('TransactionsPage filtering', () => {
     const search = screen.getAllByRole('searchbox')[0]
     await user.type(search, 'Apartment')
 
-    await waitFor(() => expect(shownCount()).toBe(3))
+    await waitFor(() => expect(shownCount()).toBe(3), { timeout: 2000 })
 
     expect(screen.getAllByText('Apartment rent').length).toBeGreaterThan(0)
     expect(screen.queryByText('Coto supermarket')).not.toBeInTheDocument()
-  })
+  }, 10000)
 
   test('a type filter narrows rows and recomputes the totals', async () => {
     const user = userEvent.setup()
@@ -127,13 +131,15 @@ describe('TransactionsPage filtering', () => {
     await user.type(search, 'zzzznomatch')
 
     expect(
-      await screen.findByText('No transactions match these filters.'),
+      await screen.findByText('No transactions match these filters.', undefined, {
+        timeout: 2000,
+      }),
     ).toBeInTheDocument()
     expect(screen.queryByText('Coto supermarket')).not.toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: /clearing your filters/ }),
     ).toBeInTheDocument()
-  })
+  }, 10000)
 })
 
 describe('TransactionsPage delete', () => {
@@ -147,7 +153,8 @@ describe('TransactionsPage delete', () => {
 
     const search = screen.getAllByRole('searchbox')[0]
     await user.type(search, 'Farmacity')
-    await waitFor(() => expect(shownCount()).toBe(1))
+    // The search push is debounced (~300ms, ADR-116) before the list narrows.
+    await waitFor(() => expect(shownCount()).toBe(1), { timeout: 2000 })
 
     const deleteButton = screen.getAllByRole('button', {
       name: 'Delete Farmacity',
@@ -161,7 +168,7 @@ describe('TransactionsPage delete', () => {
     expect(
       screen.getByText('No transactions match these filters.'),
     ).toBeInTheDocument()
-  })
+  }, 10000)
 })
 
 describe('TransactionsPage error state', () => {

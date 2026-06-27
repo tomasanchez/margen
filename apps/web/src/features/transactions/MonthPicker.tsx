@@ -30,6 +30,9 @@ import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
 import { monoFontFamily } from '../../theme'
 import {
   ALL_MONTHS,
+  LAST_12_MONTHS,
+  THIS_YEAR,
+  currentViewingMonth,
   formatViewingMonth,
   isSameViewingMonth,
   monthsWithData,
@@ -55,9 +58,11 @@ export interface MonthPickerProps {
   fullWidth?: boolean
 }
 
-/** Whether a selection is a specific month (vs the "All time" sentinel). */
+/** Whether a selection is a specific calendar month (vs a named-range sentinel). */
 function isMonth(value: MonthSelection): value is ViewingMonth {
-  return value !== ALL_MONTHS
+  return (
+    value !== ALL_MONTHS && value !== LAST_12_MONTHS && value !== THIS_YEAR
+  )
 }
 
 /**
@@ -72,13 +77,33 @@ export function MonthPicker({
 }: MonthPickerProps) {
   const { t } = useTranslation('transactions')
   const allTimeLabel = t('month.allTime')
+  const thisMonthLabel = t('month.thisMonth')
+  const last12Label = t('month.last12Months')
+  const thisYearLabel = t('month.thisYear')
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const open = Boolean(anchorEl)
   const menuId = useId()
 
   const months = monthsWithData(occurredOns)
   const active = isMonth(value)
-  const label = active ? formatViewingMonth(value) : allTimeLabel
+  // "This month" is the current real calendar month; selecting it stores that
+  // specific ViewingMonth (not a sentinel), so it stays consistent with the
+  // specific-month list below and with how the rest of the app reads "today".
+  const thisMonth = currentViewingMonth()
+  const isThisMonth = active && isSameViewingMonth(value, thisMonth)
+
+  // Label shown on the trigger: a named range for the sentinels, the formatted
+  // month for a specific selection.
+  const label = isMonth(value)
+    ? formatViewingMonth(value)
+    : value === LAST_12_MONTHS
+      ? last12Label
+      : value === THIS_YEAR
+        ? thisYearLabel
+        : allTimeLabel
+  // The trigger reads as "active" (gold tint + mono) whenever a real scope is
+  // applied — a specific month OR a named range — but not for plain All-time.
+  const triggerActive = value !== ALL_MONTHS
 
   const handleOpen = (event: MouseEvent<HTMLElement>) =>
     setAnchorEl(event.currentTarget)
@@ -109,9 +134,9 @@ export function MonthPicker({
           whiteSpace: 'nowrap',
           justifyContent: 'space-between',
           width: fullWidth ? '100%' : 'auto',
-          color: active ? 'text.primary' : 'text.secondary',
+          color: triggerActive ? 'text.primary' : 'text.secondary',
           borderColor: 'var(--mg-border-2)',
-          bgcolor: active
+          bgcolor: triggerActive
             ? 'color-mix(in srgb, var(--mg-gold) 10%, transparent)'
             : 'var(--mg-paper)',
           '&:hover': {
@@ -120,7 +145,10 @@ export function MonthPicker({
           },
         }}
       >
-        <Box component="span" sx={{ fontFamily: active ? monoFontFamily : 'inherit' }}>
+        <Box
+          component="span"
+          sx={{ fontFamily: isMonth(value) ? monoFontFamily : 'inherit' }}
+        >
           {label}
         </Box>
       </Button>
@@ -149,23 +177,64 @@ export function MonthPicker({
           list: { sx: { py: 0.5 }, 'aria-label': t('month.menuAriaLabel') },
         }}
       >
-        {/* "All time" first: the escape hatch that shows every transaction. */}
-        <MenuItem
-          selected={!active}
-          aria-checked={!active}
-          onClick={() => handleSelect(ALL_MONTHS)}
-          sx={{ py: 1.25 }}
-        >
-          <ListItemText
-            primary={allTimeLabel}
-            slotProps={{
-              primary: { sx: { fontWeight: !active ? 600 : 400 } },
-            }}
-          />
-          <ListItemIcon sx={{ minWidth: 0, ml: 1.5, color: 'primary.main' }}>
-            {!active ? <CheckRoundedIcon fontSize="small" /> : null}
-          </ListItemIcon>
-        </MenuItem>
+        {/*
+         * Named ranges at the top (calm, scannable — ADR-037): This month ·
+         * Last 12 months · This year · All time. "This month" stores the
+         * current ViewingMonth; the others store their sentinel. Each is
+         * flagged by a trailing check (non-color cue, ADR-019) + aria-checked,
+         * and is keyboard-operable as a normal MenuItem.
+         */}
+        {(
+          [
+            {
+              key: 'thisMonth',
+              label: thisMonthLabel,
+              selected: isThisMonth,
+              value: thisMonth,
+            },
+            {
+              key: 'last12',
+              label: last12Label,
+              selected: value === LAST_12_MONTHS,
+              value: LAST_12_MONTHS,
+            },
+            {
+              key: 'thisYear',
+              label: thisYearLabel,
+              selected: value === THIS_YEAR,
+              value: THIS_YEAR,
+            },
+            {
+              key: 'allTime',
+              label: allTimeLabel,
+              selected: value === ALL_MONTHS,
+              value: ALL_MONTHS,
+            },
+          ] satisfies {
+            key: string
+            label: string
+            selected: boolean
+            value: MonthSelection
+          }[]
+        ).map((range) => (
+          <MenuItem
+            key={range.key}
+            selected={range.selected}
+            aria-checked={range.selected}
+            onClick={() => handleSelect(range.value)}
+            sx={{ py: 1.25 }}
+          >
+            <ListItemText
+              primary={range.label}
+              slotProps={{
+                primary: { sx: { fontWeight: range.selected ? 600 : 400 } },
+              }}
+            />
+            <ListItemIcon sx={{ minWidth: 0, ml: 1.5, color: 'primary.main' }}>
+              {range.selected ? <CheckRoundedIcon fontSize="small" /> : null}
+            </ListItemIcon>
+          </MenuItem>
+        ))}
 
         <Divider sx={{ my: 0.5 }} />
 

@@ -28,6 +28,15 @@ import { formatCurrency, formatPercent } from '../../lib/format'
 import type { MonotributoState } from '../../mock/types'
 import { SectionCard } from '../../components/SectionCard'
 
+/**
+ * Class for the invoice drill-in link's styling + a11y focus ring (defined in
+ * index.css). The link is a bare TanStack `Link` (not `Box component={Link}`)
+ * so the typed object `search` prop keeps its route inference — wrapping in
+ * `Box`/`styled` degrades it to `AnyRouter` and the typed search stops checking.
+ * This mirrors CategoryBreakdown's category drilldown link (ADR-062).
+ */
+const drillInLinkClass = 'mg-monotributo-drillin'
+
 export interface MonotributoCardProps {
   monotributo: MonotributoState | undefined
   /** How many invoices feed the annual total (for the drill-in link). */
@@ -209,26 +218,13 @@ export function MonotributoCard({
         {t('monotributo.projectionNote')}
       </Typography>
 
-      <Box
-        component={Link}
+      <Link
         to="/transactions"
-        sx={{
-          mt: 1.75,
-          fontSize: 13,
-          color: 'primary.main',
-          textDecoration: 'none',
-          alignSelf: 'flex-start',
-          borderRadius: 1,
-          '&:hover': { textDecoration: 'underline', textUnderlineOffset: 2 },
-          '&:focus-visible': {
-            outline: '2px solid',
-            outlineColor: 'primary.main',
-            outlineOffset: 2,
-          },
-        }}
+        search={{ type: 'invoice' as const, month: 'last12' as const }}
+        className={drillInLinkClass}
       >
         {t('monotributo.drillIn', { count: invoiceCount })}
-      </Box>
+      </Link>
     </SectionCard>
   )
 }

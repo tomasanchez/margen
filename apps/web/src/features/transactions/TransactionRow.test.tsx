@@ -81,6 +81,44 @@ test('an ARS row shows no FX badge or subline', () => {
   expect(screen.queryByText(/· (MEP|manual)/)).not.toBeInTheDocument()
 })
 
+// Bank · card detail (ADR-117, ADR-037): the description/card subline shows the
+// normalized bank and, when the import set a `card`, the card detail joined with
+// " · " (e.g. "Santander · VISA ·5771"). With no card it shows just the bank.
+describe('bank · card detail', () => {
+  test('renders "bank · card" when the row carries an import-set card', () => {
+    renderRow({
+      ...baseUsd,
+      currency: 'ARS',
+      type: 'expense',
+      kind: 'expense',
+      usd: undefined,
+      rate: undefined,
+      fxRateType: undefined,
+      bank: 'Santander',
+      card: 'VISA ·5771',
+    })
+    expect(screen.getByText('Santander · VISA ·5771')).toBeInTheDocument()
+  })
+
+  test('renders just the bank when the row has no card', () => {
+    renderRow({
+      ...baseUsd,
+      currency: 'ARS',
+      type: 'expense',
+      kind: 'expense',
+      usd: undefined,
+      rate: undefined,
+      fxRateType: undefined,
+      name: 'Coto supermarket',
+      bank: 'Galicia',
+      card: undefined,
+    })
+    // The bank subline is exactly the bank label — no " · card" suffix.
+    expect(screen.getByText('Galicia')).toBeInTheDocument()
+    expect(screen.queryByText(/Galicia ·/)).not.toBeInTheDocument()
+  })
+})
+
 // Invoice attachment badge (ADR-072, ADR-092): a kind === 'invoice' row surfaces
 // an accessible "PDF" button that fetches the stored document WITH the bearer
 // token (the routes are auth-gated, so a plain <a href> would 401) and opens the

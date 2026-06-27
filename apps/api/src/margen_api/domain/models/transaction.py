@@ -48,7 +48,9 @@ class Transaction:
         fx_rate_type: Rate family (defaults to MEP for USD rows), else ``None``.
         fx_rate_as_of: Timestamp the rate was observed, else ``None``.
         category: Validated category string, optional (ADR-027).
-        payment_method: Bank / card / channel label, optional.
+        payment_method: Normalized bank / channel label, optional (ADR-117).
+        card: Optional card / detail label for display (e.g. ``"VISA ·5771"``,
+            ``"AMEX ·1234"``); ``None`` when there is no card (ADR-117).
         notes: Free-form optional note, distinct from :attr:`name` (ADR-024).
         recurring: Whether the movement repeats.
         counts_toward_monotributo: Only meaningful for income / invoice; forced
@@ -77,6 +79,7 @@ class Transaction:
     fx_rate_as_of: datetime | None = None
     category: str | None = None
     payment_method: str | None = None
+    card: str | None = None
     notes: str | None = None
     recurring: bool = False
     counts_toward_monotributo: bool = False
@@ -152,6 +155,7 @@ def build_transaction(
     fx_rate_as_of: datetime | None = None,
     category: str | None = None,
     payment_method: str | None = None,
+    card: str | None = None,
     notes: str | None = None,
     recurring: bool = False,
     counts_toward_monotributo: bool = False,
@@ -179,7 +183,8 @@ def build_transaction(
         fx_rate_type: Rate family; defaults to MEP for USD rows when omitted.
         fx_rate_as_of: Timestamp the rate was observed.
         category: Optional category string.
-        payment_method: Optional bank / card / channel label.
+        payment_method: Optional normalized bank / channel label (ADR-117).
+        card: Optional card / detail label for display (ADR-117).
         notes: Optional free-form note.
         recurring: Whether the movement repeats.
         counts_toward_monotributo: Monotributo counting hint (income / invoice only).
@@ -215,6 +220,7 @@ def build_transaction(
         fx_rate_as_of=fx_rate_as_of,
         category=category,
         payment_method=payment_method,
+        card=card,
         notes=notes,
         recurring=recurring,
         counts_toward_monotributo=counts_toward_monotributo,

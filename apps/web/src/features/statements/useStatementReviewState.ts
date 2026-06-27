@@ -7,8 +7,9 @@
  * Merge / Keep both resolution — seeded once from a parsed statement, and derives
  * the split counts (new vs merged), the running total of the lines importing as
  * new, and the ready-to-send import payload (only the kept lines, money re-encoded
- * as Decimal strings, the statement's `paymentMethod` carried as each line's
- * `bank`, plus the per-line `resolution` + `matchTransactionId`).
+ * as Decimal strings, the statement's normalized `bankName` carried as each line's
+ * `bank` and the statement's `card` detail carried as each line's `card` (ADR-117),
+ * plus the per-line `resolution` + `matchTransactionId`).
  *
  * Resolution model (ADR-084/085): a line with a `match` defaults to `merge`
  * (treat as the same expense, enrich the existing transaction); the user may
@@ -83,10 +84,15 @@ function lineResolution(line: ReviewLine): StatementLineResolution {
   return line.resolution === 'keep_both' ? 'keep_both' : 'merge'
 }
 
-/** Build the per-line import payload, carrying edits + the card payment method. */
+/**
+ * Build the per-line import payload, carrying edits + the statement's bank/card
+ * identity (ADR-117). A statement is from one card, so the normalized `bank` and
+ * the `card` detail are statement-level and stamped onto every kept line.
+ */
 function toLineRequest(
   line: ReviewLine,
-  paymentMethod: string | undefined,
+  bank: string | undefined,
+  card: string | undefined,
 ): StatementLineRequest {
   const resolution = lineResolution(line)
   return {
@@ -104,7 +110,9 @@ function toLineRequest(
       : {}),
     ...(line.fxRateType !== undefined ? { fxRateType: line.fxRateType } : {}),
     ...(line.category ? { category: line.category } : {}),
-    ...(paymentMethod ? { bank: paymentMethod } : {}),
+    // The normalized bank + card detail are statement-level (ADR-117).
+    ...(bank ? { bank } : {}),
+    ...(card ? { card } : {}),
     ...(line.cuota ? { cuota: line.cuota } : {}),
     resolution,
     // matchTransactionId is REQUIRED for merge; carried only then (ADR-085).
@@ -191,9 +199,9 @@ export function useStatementReviewState(
     const kept = lines.filter((line) => line.keep)
     return {
       document: parse.document,
-      lines: kept.map((line) => toLineRequest(line, parse.paymentMethod)),
+      lines: kept.map((line) => toLineRequest(line, parse.bankName, parse.card)),
     }
-  }, [lines, parse.document, parse.paymentMethod])
+  }, [lines, parse.document, parse.bankName, parse.card])
 
   return {
     lines,

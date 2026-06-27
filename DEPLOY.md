@@ -24,11 +24,13 @@ respective dashboards.
 ## Deployment & CI/CD
 
 The API does **not** auto-deploy on a raw git push. Instead, a GitHub Actions
-deploy job triggers Render's **Deploy Hook** — but only *after* CI (lint,
-coverage, and the Postgres integration tier) passes on a push to `main`. Broken
-code can never deploy because the hook only fires once the test jobs are green
-([`.github/workflows/api.yml`](.github/workflows/api.yml), `deploy` job:
-`needs: [build, integration]`).
+pipeline runs CI (lint, coverage, and the Postgres integration tier), then
+applies Alembic migrations to Supabase, then triggers Render's **Deploy Hook** —
+all only on a push to `main`. Migrations run **before** the deploy
+(schema-before-code) so the new image never starts against an unmigrated
+database. Broken code can never deploy because each stage gates the next
+([`.github/workflows/api.yml`](.github/workflows/api.yml): `migrate` job
+`needs: [build, integration]`, `deploy` job `needs: [build, integration, migrate]`).
 
 ### One-time manual setup (you do this once)
 
@@ -52,10 +54,28 @@ code can never deploy because the hook only fires once the test jobs are green
    variables** > **Actions** > **Secrets** > **New repository secret**:
    - Name: `RENDER_DEPLOY_HOOK_URL`
    - Value: the Deploy Hook URL from step 3.
+5. **Add the migration target secret** (so CI applies Alembic migrations to
+   Supabase before each deploy): same screen > **New repository secret**:
+   - Name: `SUPABASE_DATABASE_URL`
+   - Value: the Supabase **direct / session-mode** connection string with the
+     asyncpg driver — `postgresql+asyncpg://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres`
+     (Supabase dashboard > Project Settings > Database > Connection string >
+     "Session pooler"; prefix the scheme with `+asyncpg`). Treat it as a secret —
+     it embeds the database password.
+   - **Use 5432, not the transaction pooler (port 6543).** The transaction
+     pooler (PgBouncer in transaction mode) does not support the prepared
+     statements / session state that Alembic's DDL transactions rely on, so
+     migrations can fail or misbehave on 6543. The migrate job needs the
+     direct/session connection; only this one env var (`DATABASE_URL`) is
+     required because Alembic's `migrations/env.py` resolves the URL solely from
+     `DatabaseSettings().URL`.
 
 That's it. Until `RENDER_DEPLOY_HOOK_URL` is set, the deploy job is a safe no-op
-(it logs a skip and passes), so the workflow is green for forks/contributors
-without deploy access — same pattern as the keep-alive and capture crons.
+(it logs a skip and passes); likewise, until `SUPABASE_DATABASE_URL` is set the
+migrate job is a safe no-op. A skipped migrate does not block deploy (a skipped
+`needs` dependency counts as satisfied), so the workflow is green for
+forks/contributors without access — same pattern as the keep-alive and capture
+crons.
 
 ### What's automated after that
 
@@ -63,18 +83,24 @@ without deploy access — same pattern as the keep-alive and capture crons.
 push to main (touching apps/api/**, render.yaml, DEPLOY.md, or api.yml)
   -> CI runs: build (lint + pip-audit + 100% coverage + docker build)
   -> CI runs: integration (real Postgres + Alembic + integration tests)
-  -> both green? deploy job POSTs the Render Deploy Hook
+  -> both green? migrate job runs `alembic upgrade head` against Supabase
+  -> migrate green? deploy job POSTs the Render Deploy Hook
   -> Render rebuilds the Docker image and redeploys margen-api
 ```
 
-A red lint/coverage/integration run skips the deploy job entirely — nothing
-reaches the live service. A `concurrency` guard (`api-deploy-${{ github.ref }}`)
-keeps overlapping pushes from stacking redundant Render rebuilds. Pull requests
-run `build` + `integration` but never deploy (`if: push && ref == main`).
+Migrations run **before** the deploy (schema-before-code): the Render rebuild
+fires only after Supabase is at `head`, so the new image never boots against an
+unmigrated schema. A red build/integration/migrate run skips the deploy job
+entirely — nothing reaches the live service. A `concurrency` guard keeps
+overlapping pushes from stacking redundant Render rebuilds. Pull requests run
+`build` + `integration` but never migrate or deploy (`if: push && ref == main`).
 
-> Database migrations are **not** run by the deploy hook (Render builds the image
-> only). Apply `make migrate` against the Supabase `DATABASE_URL` when a migration
-> ships — see the note at the end of section A.
+> Database migrations are now applied automatically by the `migrate` job on each
+> push to `main`, before the deploy fires — you no longer run `make migrate` by
+> hand for the deploy path (this amends the prior manual-migration note). The
+> job uses the `SUPABASE_DATABASE_URL` secret (the direct/session-mode connection
+> string; see the one-time setup step 5 and the port-6543 caveat). When that
+> secret is unset the migrate job is a safe no-op and does not block deploy.
 
 ### Frontend (no GitHub Actions needed)
 
@@ -91,10 +117,11 @@ frontend — the only one-time action is connecting the repo in the Pages dashbo
 | Set API runtime secrets in Render | You (Render dashboard) | Once (+ on change) |
 | Copy Render Deploy Hook URL | You (Render dashboard) | Once |
 | Add `RENDER_DEPLOY_HOOK_URL` GH secret | You (GitHub Settings) | Once |
+| Add `SUPABASE_DATABASE_URL` GH secret | You (GitHub Settings) | Once (+ on change) |
 | Connect repo to Cloudflare Pages | You (Pages dashboard) | Once |
-| Run DB migrations (`make migrate`) | You (local/CI) | On each migration |
 | API CI (lint + coverage + integration) | GitHub Actions | Every push/PR to `apps/api` |
-| API deploy (POST Render hook) | GitHub Actions | On green CI, push to `main` |
+| Apply DB migrations (`alembic upgrade head`) | GitHub Actions (`migrate` job) | On green CI, push to `main` |
+| API deploy (POST Render hook) | GitHub Actions | After migrate, push to `main` |
 | API rebuild + redeploy | Render (via hook) | When hook fires |
 | Frontend build + deploy | Cloudflare Pages | Every push to `main` |
 
@@ -124,9 +151,14 @@ frontend — the only one-time action is connecting the repo in the Pages dashbo
 5. **Copy the service URL**, e.g. `https://margen-api.onrender.com`. You need it
    in steps B and E.
 
-> Database migrations: this Blueprint does not run Alembic automatically. Apply
-> `make migrate` (or `uv run alembic upgrade head`) against the Supabase
-> `DATABASE_URL` once before/after the first deploy, from your machine or CI.
+> Database migrations: this Blueprint does not run Alembic during the Render
+> build. Instead the CI `migrate` job applies `alembic upgrade head` against
+> Supabase before each deploy (see "Deployment & CI/CD" above), using the
+> `SUPABASE_DATABASE_URL` secret. For the **very first** deploy — before any CI
+> run has migrated the fresh database — you may still want to apply
+> `uv run alembic upgrade head` once manually against the Supabase
+> direct/session connection (port 5432, not the 6543 transaction pooler) so
+> `/readiness` can come up.
 
 ---
 

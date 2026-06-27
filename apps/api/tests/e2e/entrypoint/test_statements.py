@@ -10,8 +10,8 @@ native PyMuPDF boundary (``statement_parser.extract_text``), monkeypatched to th
 canonical SANITIZED Galicia VISA vertical-token text so no native stack is needed
 (ADR-082).
 
-They assert: the parse envelope (identity, lines, ``document`` echo, the middot
-``paymentMethod``), the upload safety contract (415/413/422), the advisory
+They assert: the parse envelope (identity, lines, ``document`` echo, the split
+``bank`` + middot ``card`` — ADR-117), the upload safety contract (415/413/422), the advisory
 ``duplicate`` flag against a really-stored statement, the calm UNSUPPORTED and
 UNPARSEABLE outcomes at 200, the USD-line vs ARS-line serialization shapes, the
 real import (201 + persisted transactions + the linked document), the
@@ -187,7 +187,8 @@ def _import_body(*, pdf_base64: str, lines: list[dict] | None = None) -> dict:
                 "amount": "3641.66",
                 "currency": "ARS",
                 "category": "Entertainment",
-                "bank": "Galicia VISA ·5771",
+                "bank": "Galicia",
+                "card": "VISA ·5771",
                 "cuota": "03/03",
             },
             {
@@ -197,7 +198,8 @@ def _import_body(*, pdf_base64: str, lines: list[dict] | None = None) -> dict:
                 "amount": "10180.00",
                 "currency": "ARS",
                 "category": "Food",
-                "bank": "Galicia VISA ·5771",
+                "bank": "Galicia",
+                "card": "VISA ·5771",
             },
             {
                 "occurredOn": "2026-06-19",
@@ -206,7 +208,8 @@ def _import_body(*, pdf_base64: str, lines: list[dict] | None = None) -> dict:
                 "amount": "700.00",
                 "currency": "ARS",
                 "category": "Transport",
-                "bank": "Galicia VISA ·5771",
+                "bank": "Galicia",
+                "card": "VISA ·5771",
             },
         ],
     }
@@ -252,6 +255,7 @@ def _line(
     match_transaction_id: str | None = None,
     category: str | None = None,
     bank: str | None = None,
+    card: str | None = None,
 ) -> dict:
     """Build a single import-request line, with the optional reconciliation choice."""
     line: dict = {"occurredOn": occurred_on, "name": name, "amount": amount, "currency": "ARS"}
@@ -259,6 +263,8 @@ def _line(
         line["category"] = category
     if bank is not None:
         line["bank"] = bank
+    if card is not None:
+        line["card"] = card
     if resolution is not None:
         line["resolution"] = resolution
     if match_transaction_id is not None:
@@ -293,7 +299,7 @@ class TestParseStatement:
         assert data["bankName"] == "Galicia"
         assert data["network"] == "VISA"
         assert data["cardLast4"] == "5771"
-        assert data["paymentMethod"] == "Galicia VISA ·5771"  # middot composed label.
+        assert data["card"] == "VISA ·5771"  # card detail split from the normalized bank (ADR-117).
         assert data["statementNumber"] == "VI00000000069436867"
         assert data["issuerCuit"] == "30-50000173-5"
         assert data["periodClose"] == "2026-06-11"
@@ -714,7 +720,8 @@ class TestImportResolution:
                     name="Express Av Cordoba 3721",
                     amount="10180.00",
                     category="Food",
-                    bank="Galicia VISA ·5771",
+                    bank="Galicia",
+                    card="VISA ·5771",
                     resolution="merge",
                     match_transaction_id=match_id,
                 )
@@ -738,7 +745,8 @@ class TestImportResolution:
         assert len(rows) == 1
         enriched = rows[0]
         assert enriched["id"] == match_id  # same identity, not a new row.
-        assert enriched["bank"] == "Galicia VISA ·5771"  # card set from the statement line.
+        assert enriched["bank"] == "Galicia"  # normalized bank set from the statement line (ADR-117).
+        assert enriched["card"] == "VISA ·5771"  # card detail set from the statement line (ADR-117).
         assert enriched["category"] == "Food"  # filled because it was empty.
 
     async def test_merge_links_the_statement_document_so_a_reparse_no_longer_flags_it(
@@ -767,7 +775,8 @@ class TestImportResolution:
                         occurred_on="2026-05-08",
                         name="Express Av Cordoba 3721",
                         amount="10180.00",
-                        bank="Galicia VISA ·5771",
+                        bank="Galicia",
+                        card="VISA ·5771",
                         resolution="merge",
                         match_transaction_id=match_id,
                     )
@@ -805,7 +814,8 @@ class TestImportResolution:
                     occurred_on="2026-05-08",
                     name="Express Av Cordoba 3721",
                     amount="10180.00",
-                    bank="Galicia VISA ·5771",
+                    bank="Galicia",
+                    card="VISA ·5771",
                     resolution="keep_both",
                 )
             ],
@@ -900,13 +910,20 @@ class TestImportResolution:
             pdf_base64=encoded,
             lines=[
                 # plain import (no match) — a new row.
-                _line(occurred_on="2026-05-14", name="SUBE VIAJES - BUSES", amount="700.00", bank="Galicia VISA ·5771"),
+                _line(
+                    occurred_on="2026-05-14",
+                    name="SUBE VIAJES - BUSES",
+                    amount="700.00",
+                    bank="Galicia",
+                    card="VISA ·5771",
+                ),
                 # merge — enriches the existing manual expense.
                 _line(
                     occurred_on="2026-05-08",
                     name="Express Av Cordoba 3721",
                     amount="10180.00",
-                    bank="Galicia VISA ·5771",
+                    bank="Galicia",
+                    card="VISA ·5771",
                     resolution="merge",
                     match_transaction_id=merge_id,
                 ),
@@ -915,7 +932,8 @@ class TestImportResolution:
                     occurred_on="2026-03-20",
                     name="MERPAGO*PASSLINE",
                     amount="3641.66",
-                    bank="Galicia VISA ·5771",
+                    bank="Galicia",
+                    card="VISA ·5771",
                     resolution="keep_both",
                 ),
             ],
@@ -941,7 +959,8 @@ class TestImportResolution:
         for created_id in data["createdTransactionIds"]:
             assert created_id in ids
         merged_row = next(row for row in listed if row["id"] == merge_id)
-        assert merged_row["bank"] == "Galicia VISA ·5771"
+        assert merged_row["bank"] == "Galicia"  # normalized bank (ADR-117).
+        assert merged_row["card"] == "VISA ·5771"  # card detail split out (ADR-117).
 
 
 class TestDownloadStatementDocument:

@@ -150,10 +150,10 @@ class TestGaliciaVisaParserFullFixture:
         """
         # THEN
         assert parsed.status is ParseStatus.OK
-        assert parsed.bank_name == "Galicia"
+        assert parsed.bank_name == "Galicia"  # normalized bank, no card folded in (ADR-117).
         assert parsed.network == "VISA"
         assert parsed.card_last4 == "5771"
-        assert parsed.payment_method == "Galicia VISA ·5771"  # middot label.
+        assert parsed.card == "VISA ·5771"  # card detail split out, middot label (ADR-117).
         assert parsed.statement_number == "VI00000000069436867"
         assert parsed.issuer_cuit == "30-50000173-5"
         assert parsed.period_close == date(2026, 6, 11)
@@ -1084,10 +1084,10 @@ class TestSantanderAmexParserFullFixture:
         """
         # THEN
         assert parsed.status is ParseStatus.OK
-        assert parsed.bank_name == "Santander"
+        assert parsed.bank_name == "Santander"  # normalized bank, no card folded in (ADR-117).
         assert parsed.network == "AMEX"
         assert parsed.card_last4 == "5678"
-        assert parsed.payment_method == "Santander AMEX ·5678"  # middot label.
+        assert parsed.card == "AMEX ·5678"  # card detail split out, middot label (ADR-117).
         assert parsed.statement_number == "N319"
         assert parsed.issuer_cuit == "30-50000845-4"
         assert parsed.period_close == date(2026, 5, 28)
@@ -1175,17 +1175,17 @@ class TestSantanderVisaParser:
         """Parse the minimal sanitized Santander VISA text once for the class."""
         return SantanderVisaParser().parse(_SANTANDER_VISA_TEXT)
 
-    def test_reports_visa_network_and_payment_method(self, parsed: ParsedStatement):
+    def test_reports_visa_network_and_card(self, parsed: ParsedStatement):
         """
         GIVEN a Santander VISA statement
         WHEN it is parsed
-        THEN the network is VISA and the payment method uses the VISA prefix
+        THEN the bank is Santander and the card carries the VISA detail (ADR-117)
         """
         # THEN
         assert parsed.status is ParseStatus.OK
-        assert parsed.bank_name == "Santander"
+        assert parsed.bank_name == "Santander"  # normalized bank (ADR-117).
         assert parsed.network == "VISA"
-        assert parsed.payment_method == "Santander VISA ·5678"
+        assert parsed.card == "VISA ·5678"  # card detail split from the bank (ADR-117).
         assert parsed.statement_number == "N456"
         assert parsed.period_close == date(2026, 5, 15)
         assert parsed.period_due == date(2026, 6, 1)

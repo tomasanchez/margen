@@ -29,8 +29,9 @@ import { CategoryBreakdown } from './CategoryBreakdown'
 import { TransactionsPage } from '../transactions/TransactionsPage'
 import { AddTransactionProvider } from '../transactions/AddTransactionProvider'
 import { renderWithProviders } from '../../test/renderWithProviders'
-import { CATEGORIES } from '../../mock/seed'
-import type { Category, Transaction } from '../../mock/types'
+import { validateTransactionsSearch } from '../transactions/filtering'
+import { useTransactionFilters } from '../transactions/useTransactionFilters'
+import type { Transaction } from '../../mock/types'
 import type { CategorySpend } from '../../mock/types'
 import { TRANSACTIONS_FIXTURE } from '../transactions/__fixtures__/transactions'
 
@@ -94,8 +95,9 @@ describe('CategoryBreakdown drill-in links', () => {
     const link = await screen.findByRole('link', {
       name: 'Food, ARS 38.400, up +22% — view transactions',
     })
-    // Href carries the category query param so the screen opens pre-filtered.
-    expect(link).toHaveAttribute('href', '/transactions?category=Food')
+    // Href carries the category + explicit month=all window (ADR-062/ADR-116:
+    // the category drilldown opens at All-time) so the screen opens pre-filtered.
+    expect(link).toHaveAttribute('href', '/transactions?category=Food&month=all')
   })
 
   test('a row with no rise omits the "up" clause from the accessible name', async () => {
@@ -104,25 +106,31 @@ describe('CategoryBreakdown drill-in links', () => {
     const link = await screen.findByRole('link', {
       name: 'Rent, ARS 720.000 — view transactions',
     })
-    expect(link).toHaveAttribute('href', '/transactions?category=Rent')
+    expect(link).toHaveAttribute(
+      'href',
+      '/transactions?category=Rent&month=all',
+    )
   })
 })
 
-// --- Integration: the real validated search → initialCategory wiring ---
+// --- Integration: the real validated search → URL-synced filters (ADR-116) ---
 
-const KNOWN_CATEGORIES = new Set<string>(CATEGORIES)
-
-/** Mirror of router.tsx's validateTransactionsSearch (ADR-062). */
-function validateTransactionsSearch(
-  search: Record<string, unknown>,
-): { category?: Category } {
-  const raw = search.category
-  return typeof raw === 'string' && KNOWN_CATEGORIES.has(raw)
-    ? { category: raw as Category }
-    : {}
+/** The /transactions route component, wired exactly as router.tsx (ADR-116). */
+function TransactionsRouteForTest() {
+  const { filters, controls } = useTransactionFilters()
+  return (
+    <AddTransactionProvider>
+      <TransactionsPage filters={filters} controls={controls} />
+    </AddTransactionProvider>
+  )
 }
 
-/** Mount the real /transactions route at `entry`, wired exactly as router.tsx. */
+/**
+ * Mount the `/transactions` route at `entry`, wired EXACTLY as router.tsx: the
+ * real `validateTransactionsSearch`, the URL-synced `useTransactionFilters`, and
+ * the page consuming the resulting `{ filters, controls }`. This is the true
+ * deep-link path now that the URL is the single source of truth.
+ */
 function renderTransactionsAt(entry: string) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -134,14 +142,7 @@ function renderTransactionsAt(entry: string) {
     getParentRoute: () => rootRoute,
     path: '/transactions',
     validateSearch: validateTransactionsSearch,
-    component: () => {
-      const { category } = transactionsRoute.useSearch() as { category?: Category }
-      return (
-        <AddTransactionProvider>
-          <TransactionsPage initialCategory={category} />
-        </AddTransactionProvider>
-      )
-    },
+    component: TransactionsRouteForTest,
   })
   const router = createRouter({
     routeTree: rootRoute.addChildren([transactionsRoute]),
@@ -156,9 +157,11 @@ function renderTransactionsAt(entry: string) {
   )
 }
 
-describe('navigating to /transactions?category=Food', () => {
+describe('navigating to /transactions?category=Food&month=all', () => {
   test('opens the screen pre-filtered to Food (only Food rows, chip active)', async () => {
-    renderTransactionsAt('/transactions?category=Food')
+    // The category drilldown link carries month=all (All-time window, ADR-062),
+    // so all Food rows across months are visible.
+    renderTransactionsAt('/transactions?category=Food&month=all')
 
     // The three Food rows surface; non-Food rows are filtered out.
     expect((await screen.findAllByText('Coto supermarket')).length).toBeGreaterThan(0)
@@ -173,22 +176,26 @@ describe('navigating to /transactions?category=Food', () => {
   })
 
   test('an unknown category param is stripped by validateSearch (no-op)', () => {
-    // The route validator (mirror of router.tsx) drops any category not in the
-    // known set, so an unknown ?category= resolves to no initial filter.
+    // The real router validator drops any category not in the known set, so an
+    // unknown ?category= resolves to no filter param at all.
     expect(validateTransactionsSearch({ category: 'Bogus' })).toEqual({})
     expect(validateTransactionsSearch({ category: 'Food' })).toEqual({
       category: 'Food',
     })
   })
 
-  test('no initial category renders the screen unfiltered', async () => {
-    // initialCategory undefined (what a stripped/absent param yields) → the full
-    // list shows rows across categories and the Category chip stays the base.
-    renderWithProviders(<TransactionsPage initialCategory={undefined} />, {
-      withAddProvider: true,
-    })
+  test('no category param renders the screen unfiltered', async () => {
+    // A stripped/absent param → no category filter; the (standalone) page shows
+    // rows across categories and the Category chip stays the base.
+    renderWithProviders(<TransactionsPage />, { withAddProvider: true })
 
     expect((await screen.findAllByText('Coto supermarket')).length).toBeGreaterThan(0)
+    // Apartment rent is May-dated; widen to All time so it is in view regardless
+    // of the run month.
+    const monthTrigger = screen.getAllByRole('button', { name: /^Month:/ })[0]
+    const user = (await import('@testing-library/user-event')).default.setup()
+    await user.click(monthTrigger)
+    await user.click(await screen.findByRole('menuitem', { name: /All time/ }))
     expect(screen.getAllByText('Apartment rent').length).toBeGreaterThan(0)
     expect(
       screen.getByRole('button', { name: 'Category' }),

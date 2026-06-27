@@ -589,6 +589,7 @@ def _project(transaction: Transaction) -> TransactionReadModel:
         fx_rate_as_of=transaction.fx_rate_as_of,
         category=transaction.category,
         payment_method=transaction.payment_method,
+        card=transaction.card,
         notes=transaction.notes,
         recurring=transaction.recurring,
         counts_toward_monotributo=transaction.counts_toward_monotributo,

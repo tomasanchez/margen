@@ -30,7 +30,11 @@ import { monoFontFamily } from '../../theme'
 import type { Transaction } from '../../mock/types'
 import { fetchInvoiceDocument } from '../../api/invoicesClient'
 import { useDocumentOpener } from '../../api/useDocumentOpener'
-import { bankLabel, categoryDotColor, categoryLabel } from './presentation'
+import {
+  bankCardLabel,
+  categoryDotColor,
+  categoryLabel,
+} from './presentation'
 
 /**
  * Compact attachment control for an imported invoice (ADR-072). Imported ARCA
@@ -375,7 +379,7 @@ export function TransactionRow(props: TransactionRowProps) {
             whiteSpace: 'nowrap',
           }}
         >
-          {bankLabel(t.bank)}
+          {bankCardLabel(t.bank, t.card)}
         </Typography>
       </Box>
 
@@ -503,7 +507,7 @@ export function TransactionRowMobile(props: TransactionRowProps) {
               whiteSpace: 'nowrap',
             }}
           >
-            {categoryLabel(t.category)} · {bankLabel(t.bank)}
+            {categoryLabel(t.category)} · {bankCardLabel(t.bank, t.card)}
           </Box>
         </Box>
       </Box>

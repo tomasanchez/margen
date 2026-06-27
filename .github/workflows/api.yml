@@ -123,10 +123,101 @@ jobs:
       - name: Run the PostgreSQL integration tier
         run: make integration
 
+  # Apply Alembic migrations to Supabase — schema-before-code, so the live
+  # database is migrated to `head` BEFORE the Render deploy rebuilds the image.
+  # Ordering matters: the new image expects the new schema, so migrate must run
+  # (and succeed) first; `deploy` declares `needs: [..., migrate]` to enforce it.
+  # Running migrations from CI (rather than `make migrate` by hand) is the
+  # migrations-automation decision recorded in the new ADR (auto-migrate-in-CI);
+  # it amends the manual-migration note in ADR-099 and rides on the same CI gate
+  # as deploy (ADR-010): a red build/integration/migrate run never deploys.
+  #
+  # Same gate as deploy: `needs: [build, integration]` + push-to-main only, so a
+  # red lint/coverage/integration run skips this job and never touches the DB,
+  # and PRs/forks never migrate.
+  #
+  # Inert without access: the Supabase connection string is a repo secret. Forks
+  # and pushes before the secret is set hit the no-op skip path (mirrors the
+  # deploy job below), so CI stays green for them.
+  #
+  # Supabase connection caveat: `DATABASE_URL` here MUST be the Supabase
+  # direct/session-mode connection string (port 5432), NOT the transaction
+  # pooler (port 6543). The transaction pooler (PgBouncer in transaction mode)
+  # does not support the prepared statements / session state that Alembic's DDL
+  # and migration transactions rely on, so DDL can fail or misbehave on 6543.
+  # Use the direct/session connection for migrations; the runtime app may use the
+  # pooler. See DEPLOY.md and ADR-099.
+  migrate:
+    name: Apply migrations (Supabase)
+    runs-on: ubuntu-latest
+    # The `SUPABASE_DATABASE_URL` secret is an ENVIRONMENT secret on the `prod`
+    # environment, so this job must target that environment to read it (a job
+    # with `environment:` can read both the environment's secrets AND repo
+    # secrets). Add a required-reviewer rule on the `prod` environment to gate
+    # production migrations behind a manual approval. ADR-099 / ADR-118.
+    environment: prod
+    needs: [ build, integration ]
+    defaults:
+      run:
+        working-directory: apps/api
+    # Push-to-main only. PRs run build+integration but never migrate.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: make dev
+
+      # `secrets` can't be referenced in a step-level `if:`, so map the URL into
+      # env and emit a `configured` output. The connection string embeds a
+      # password and is never echoed — only checked for emptiness.
+      - name: Check configuration
+        id: check
+        env:
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+        run: |
+          if [ -n "$SUPABASE_DATABASE_URL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # No-op path: inert until the secret is set.
+      - name: Skip (not configured)
+        if: steps.check.outputs.configured != 'true'
+        run: |
+          echo "Supabase migration target not configured (set the SUPABASE_DATABASE_URL repo secret to the Supabase direct/session-mode connection string, postgresql+asyncpg://...:5432/postgres); skipping migrations."
+
+      # Apply migrations. Alembic's migrations/env.py resolves the target solely
+      # from DatabaseSettings().URL, i.e. the DATABASE_URL env var — no other app
+      # settings are needed, so this single secret is sufficient. The URL is
+      # passed via env, never interpolated onto the command line where it could
+      # be logged.
+      - name: Apply migrations (alembic upgrade head)
+        if: steps.check.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+        run: |
+          uv run alembic upgrade head
+          echo "Supabase migrations applied (upgrade head)."
+
   # Deploy to Render by triggering its Deploy Hook — ONLY after build (lint +
-  # coverage) AND integration both pass, and ONLY on a push to the default branch.
-  # `needs: [build, integration]` is the gate: if either fails, this job is skipped
-  # and no deploy fires, so broken code never reaches the live service.
+  # coverage), integration, AND migrate all pass, and ONLY on a push to the
+  # default branch. `needs: [build, integration, migrate]` is the gate: if any
+  # fails, this job is skipped and no deploy fires, so broken code never reaches
+  # the live service and the deploy never beats its schema migration.
+  #
+  # `migrate` is added to `needs` so the Render rebuild fires only AFTER the
+  # Supabase schema is at `head` (schema-before-code). When the SUPABASE_DATABASE_URL
+  # secret is unset, `migrate` SKIPS rather than fails — and a skipped `needs`
+  # dependency is treated as satisfied (not failed). The `if:` below therefore
+  # uses `!failure() && !cancelled()` so deploy still runs when migrate merely
+  # skipped, while a genuinely failed migrate (e.g. a bad migration against a
+  # configured DB) blocks deploy. The push-to-main check is preserved, so PRs and
+  # non-main pushes still never deploy.
   #
   # render.yaml sets `autoDeploy: false`, so Render does NOT redeploy on its own
   # native git push — this hook is the single deploy trigger.
@@ -137,9 +228,11 @@ jobs:
   deploy:
     name: Deploy (Render hook)
     runs-on: ubuntu-latest
-    needs: [ build, integration ]
-    # Push-to-main only. PRs run build+integration but never deploy.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [ build, integration, migrate ]
+    # Push-to-main only, and only when no upstream job failed/was cancelled. A
+    # skipped `migrate` (no secret) leaves !failure() && !cancelled() true, so the
+    # no-secret path stays green: build+integration run, migrate+deploy skip.
+    if: ${{ always() && !failure() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     # No checkout / repo contents needed — this job only makes one outbound call.
     permissions: {}
     steps:

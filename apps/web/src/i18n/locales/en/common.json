@@ -69,8 +69,8 @@
     "Other": "Other"
   },
   "banks": {
-    "Galicia · Visa": "Galicia · Visa",
-    "Santander · Mastercard": "Santander · Mastercard",
+    "Galicia": "Galicia",
+    "Santander": "Santander",
     "Mercado Pago": "Mercado Pago",
     "Brubank": "Brubank",
     "Deel": "Deel",

@@ -78,6 +78,9 @@
     "gt1m": "Over ARS 1.000.000"
   },
   "month": {
+    "thisMonth": "This month",
+    "last12Months": "Last 12 months",
+    "thisYear": "This year",
     "allTime": "All time",
     "triggerAriaLabel": "Month: {{label}}",
     "menuAriaLabel": "Select month"

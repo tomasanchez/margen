@@ -29,6 +29,7 @@ const usdDto: TransactionDto = {
   notes: null,
   category: 'Income',
   bank: 'Transfer',
+  card: null,
   currency: 'USD',
   type: 'income',
   kind: 'invoice',
@@ -85,6 +86,34 @@ describe('adaptTransaction', () => {
     const t = adaptTransaction({ ...usdDto, fxRateType: null, fxRateAsOf: null })
     expect('fxRateType' in t).toBe(false)
     expect('fxRateAsOf' in t).toBe(false)
+  })
+
+  test('maps the normalized bank and the card detail when present (ADR-117)', () => {
+    const t = adaptTransaction({
+      ...usdDto,
+      bank: 'Santander',
+      card: 'AMEX ·1234',
+    })
+    // `bank` is the normalized, filterable identity; `card` is the display detail.
+    expect(t.bank).toBe('Santander')
+    expect(t.card).toBe('AMEX ·1234')
+  })
+
+  test('omits card when the DTO carries it null/absent (ADR-117)', () => {
+    // usdDto.card is null → omitted.
+    expect('card' in adaptTransaction(usdDto)).toBe(false)
+    // Absent card key → also omitted.
+    expect('card' in adaptTransaction({ ...usdDto, card: undefined })).toBe(
+      false,
+    )
+  })
+
+  test('tolerates an unknown legacy bank string, defaulting absent to Transfer', () => {
+    // Backend normalizes, but legacy/unknown strings are still cast through.
+    expect(adaptTransaction({ ...usdDto, bank: 'LegacyBank' }).bank).toBe(
+      'LegacyBank',
+    )
+    expect(adaptTransaction({ ...usdDto, bank: null }).bank).toBe('Transfer')
   })
 
   test('carries the free-text notes when the DTO has them (ADR-088)', () => {

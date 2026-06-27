@@ -22,20 +22,27 @@ import { useAddTransaction } from './addContext'
 // Mock the HTTP client so the flow never touches a real backend (ADR-038), and
 // the dolarapi FX adapter so no real network is hit (ADR-044). The suggested
 // MEP + official rates are controllable per-test via `fxMock`.
-const { createMock, fxMock, fetchSettingsMock, monotributoMock, navigateMock } =
-  vi.hoisted(() => ({
-    createMock: vi.fn(),
-    fxMock: vi.fn(),
-    fetchSettingsMock: vi.fn(),
-    monotributoMock: vi.fn(),
-    navigateMock: vi.fn(),
-  }))
+const {
+  createMock,
+  updateMock,
+  fxMock,
+  fetchSettingsMock,
+  monotributoMock,
+  navigateMock,
+} = vi.hoisted(() => ({
+  createMock: vi.fn(),
+  updateMock: vi.fn(),
+  fxMock: vi.fn(),
+  fetchSettingsMock: vi.fn(),
+  monotributoMock: vi.fn(),
+  navigateMock: vi.fn(),
+}))
 
 vi.mock('../../api/transactionsClient', () => ({
   transactionsClient: {
     list: vi.fn(() => Promise.resolve([])),
     create: createMock,
-    update: vi.fn(),
+    update: updateMock,
     remove: vi.fn(),
   },
 }))
@@ -585,6 +592,37 @@ describe('Add flow — optional Name/merchant field (ADR-088)', () => {
 
     // The field reflects the existing name on edit.
     expect(form.getByLabelText('Name')).toHaveValue('Sushiclub')
+  })
+
+  test('editing an imported row preserves its card detail on save (ADR-117)', async () => {
+    updateMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openAddDialog({
+      id: 'edit-card-1',
+      name: 'YPF fuel',
+      type: 'expense',
+      kind: 'expense',
+      currency: 'ARS',
+      category: 'Transport',
+      bank: 'Santander',
+      // Import-set card detail — not editable in the form, but carried through.
+      card: 'VISA ·5771',
+      amountNum: 28000,
+      occurredOn: '2026-05-15',
+      dispDate: 'May 15',
+    })
+    const form = within(dialog)
+
+    // There is no card input — it is import-only (ADR-117).
+    expect(form.queryByLabelText(/card/i)).toBeNull()
+
+    await user.click(form.getByRole('button', { name: /^Save changes$/ }))
+
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
+    const [id, patch] = updateMock.mock.calls[0]
+    expect(id).toBe('edit-card-1')
+    // The card survives the re-save unchanged, and the normalized bank is sent.
+    expect(patch.card).toBe('VISA ·5771')
+    expect(patch.bank).toBe('Santander')
   })
 })
 

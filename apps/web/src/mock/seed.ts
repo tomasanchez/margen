@@ -27,10 +27,14 @@ export const CATEGORIES: readonly Category[] = [
   'Other',
 ] as const
 
-/** All banks / cards, in display order. */
+/**
+ * The six normalized banks, in display order (ADR-117). This is the filter's
+ * option list and the known-bank set for URL-sync validation (ADR-116);
+ * selecting one matches every transaction for that bank regardless of card.
+ */
 export const BANKS: readonly Bank[] = [
-  'Galicia · Visa',
-  'Santander · Mastercard',
+  'Galicia',
+  'Santander',
   'Mercado Pago',
   'Brubank',
   'Deel',

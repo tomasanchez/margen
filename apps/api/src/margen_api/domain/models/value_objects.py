@@ -113,13 +113,17 @@ KNOWN_CATEGORIES: frozenset[str] = frozenset(
     }
 )
 
-# Known prototype bank / card / channel labels (ADR-024). Unknown strings tolerated.
+# Known normalized bank / channel labels (ADR-024, ADR-117). The bank is the
+# filterable, normalized payment attribution; the card detail (e.g. "VISA ·5771")
+# now lives on a separate ``card`` field, never folded into the bank (ADR-117).
+# Unknown legacy strings are tolerated and kept as-is.
 KNOWN_PAYMENT_METHODS: frozenset[str] = frozenset(
     {
-        "Galicia · Visa",
-        "Santander · Mastercard",
+        "Galicia",
+        "Santander",
         "Mercado Pago",
         "Brubank",
+        "Deel",
         "Transfer",
     }
 )
@@ -131,5 +135,5 @@ def is_known_category(value: str) -> bool:
 
 
 def is_known_payment_method(value: str) -> bool:
-    """Return whether ``value`` belongs to the known prototype payment-method set."""
+    """Return whether ``value`` belongs to the known normalized bank set (ADR-117)."""
     return value in KNOWN_PAYMENT_METHODS
