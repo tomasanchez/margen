@@ -68,8 +68,9 @@ Accepted trade-offs:
   request); mitigated by the weekly keep-alive cron.
 - Supabase free tier pauses the database after 7 days of inactivity; mitigated by the
   same keep-alive cron (the `/readiness` `SELECT 1` counts as activity).
-- `render.yaml` does **not** auto-run Alembic migrations; migrations are applied
-  manually (`make migrate` against the Supabase URL) per `DEPLOY.md`.
+- `render.yaml` does **not** auto-run Alembic migrations; migrations were originally
+  applied manually (`make migrate` against the Supabase URL) per `DEPLOY.md` — this
+  is superseded by the automated CI migrate job introduced in ADR-118.
 - `UvicornSettings` now honors the unprefixed `PORT` env var — a project-wide settings
   default change covered by new unit tests; coverage stays at 100 %.
 - If RAM consumption (PyMuPDF rendering) or cold-start UX become problems, revisit
@@ -82,3 +83,4 @@ inactivity risk, now mitigated by keep-alive cron).
 ## Status History
 
 - 2026-06-23: accepted
+- 2026-06-27: migration step amended by ADR-118 (automated CI migrate job replaces manual apply)
