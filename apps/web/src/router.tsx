@@ -8,58 +8,13 @@ import {
 import { AppShell } from './components/AppShell'
 import { AddTransactionProvider } from './features/transactions/AddTransactionProvider'
 import { HomePage } from './features/home/HomePage'
-import { TransactionsPage } from './features/transactions/TransactionsPage'
 import { ImportStatement } from './features/statements/ImportStatement'
 import { MonotributoPage } from './features/monotributo/MonotributoPage'
 import { SettingsPage } from './features/settings/SettingsPage'
 import { LoginPage } from './features/auth/LoginPage'
-import { CATEGORIES } from './mock/seed'
-import type { Category } from './mock/types'
-import { TYPE_OPTIONS, type TypeFilter } from './features/transactions/filtering'
+import { validateTransactionsSearch } from './features/transactions/filtering'
+import { TransactionsRoute } from './features/transactions/TransactionsRoute'
 import type { RouterContext } from './router/context'
-
-/**
- * Search params accepted by the `/transactions` route (ADR-062).
- *
- * `category` is an optional drilldown seed: a Home "Where it went" row links to
- * `/transactions?category=<name>` and the screen opens pre-filtered to it. The
- * value is validated against the known {@link Category} union so an absent or
- * unknown param is a no-op (`undefined`) rather than seeding a bogus filter.
- *
- * `type` mirrors that drilldown for the type segment: the Home Monotributo card
- * links to `/transactions?type=invoice` so "See the N invoices behind this"
- * opens pre-filtered to invoices. It is validated against the known
- * {@link TypeFilter} values so an absent/unknown param is a no-op.
- */
-export interface TransactionsSearch {
-  category?: Category
-  type?: TypeFilter
-}
-
-/** A Set of the known categories for O(1) validation of the search param. */
-const KNOWN_CATEGORIES = new Set<string>(CATEGORIES)
-
-/**
- * A Set of the known {@link TypeFilter} values, derived from `TYPE_OPTIONS` so
- * there is no second hardcoded copy of the union to drift (filtering.ts owns it).
- */
-const KNOWN_TYPES = new Set<string>(TYPE_OPTIONS.map((o) => o.id))
-
-/** Validate (and narrow) the `/transactions` search params (ADR-062). */
-function validateTransactionsSearch(
-  search: Record<string, unknown>,
-): TransactionsSearch {
-  const result: TransactionsSearch = {}
-  const rawCategory = search.category
-  if (typeof rawCategory === 'string' && KNOWN_CATEGORIES.has(rawCategory)) {
-    result.category = rawCategory as Category
-  }
-  const rawType = search.type
-  if (typeof rawType === 'string' && KNOWN_TYPES.has(rawType)) {
-    result.type = rawType as TypeFilter
-  }
-  return result
-}
 
 /**
  * Search params accepted by the public `/login` route (ADR-096).
@@ -139,13 +94,12 @@ const transactionsRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/transactions',
   validateSearch: validateTransactionsSearch,
-  // Read the validated `category` / `type` search params here and seed the
-  // screen's filters from them (ADR-062); this keeps TransactionsPage
-  // router-agnostic (rendrable standalone in tests).
-  component: () => {
-    const { category, type } = transactionsRoute.useSearch()
-    return <TransactionsPage initialCategory={category} initialType={type} />
-  },
+  // The route owns the router coupling (ADR-116): `TransactionsRoute` calls
+  // `useTransactionFilters` (filters DERIVED from the validated search params;
+  // controls navigate in `replace` mode) and passes the bundle to the
+  // router-agnostic TransactionsPage as props. It lives in its own module so
+  // this file keeps exporting only `router` (react-refresh components-only rule).
+  component: TransactionsRoute,
 })
 
 const importStatementRoute = createRoute({

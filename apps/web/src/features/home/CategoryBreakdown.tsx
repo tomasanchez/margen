@@ -75,7 +75,7 @@ function CategoryRow({
   return (
     <Link
       to="/transactions"
-      search={{ category: row.category }}
+      search={{ category: row.category, month: 'all' as const }}
       aria-label={linkLabel}
       className={categoryRowLinkClass}
     >

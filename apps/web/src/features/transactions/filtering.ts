@@ -24,8 +24,14 @@ import {
   ALL_MONTHS,
   LAST_12_MONTHS,
   THIS_YEAR,
+  currentViewingMonth,
+  isSameViewingMonth,
+  parseMonthToken,
+  serializeMonth,
   type MonthSelection,
+  type ViewingMonth,
 } from '../../components/months'
+import { BANKS, CATEGORIES } from '../../mock/seed'
 import {
   occurredInLast12Months,
   occurredInMonth,
@@ -290,6 +296,196 @@ export function filterTransactions(
     outflow,
     net: inflow - outflow,
   }
+}
+
+// --- URL <-> filter mapping (ADR-116) -------------------------------------
+//
+// The URL is the single source of truth for the Transactions filters. The route
+// validates raw search params into a {@link TransactionsSearch}; the page derives
+// the live {@link TransactionFilters} from it via {@link searchToFilters} (applying
+// defaults — notably the current month when `month` is absent), and filter writes
+// go back through {@link filtersToSearch} (which omits every default so the URL
+// stays short and shareable). Both directions are pure and unit-testable.
+
+/**
+ * Validated `/transactions` search params (ADR-062 generalized by ADR-116).
+ *
+ * Param names are URL-friendly and back-compatible with the existing drilldown
+ * (`category` + `type` predate this change). All are optional; an absent param
+ * means "use the filter default". Encodings:
+ * - `q`: free-text query (omitted when empty).
+ * - `type`: one {@link TypeFilter} other than `all`.
+ * - `currency`: one {@link CurrencyFilter} other than `all`.
+ * - `month`: a month token — `all` / `last12` / `thisYear` / `YYYY-MM` (absent
+ *   means the current month, the per-screen default per ADR-040).
+ * - `category`: comma-joined {@link Category} list (drops unknown entries).
+ * - `bank`: comma-joined {@link Bank} list (drops unknown entries).
+ * - `amount`: one {@link AmountRange} other than `any`.
+ */
+export interface TransactionsSearch {
+  q?: string
+  type?: TypeFilter
+  currency?: CurrencyFilter
+  month?: string
+  category?: string
+  bank?: string
+  amount?: AmountRange
+}
+
+const KNOWN_TYPES = new Set<string>(TYPE_OPTIONS.map((o) => o.id))
+const KNOWN_CURRENCIES = new Set<string>(CURRENCY_OPTIONS.map((o) => o.id))
+const KNOWN_AMOUNTS = new Set<string>(AMOUNT_RANGES.map((o) => o.id))
+const KNOWN_CATEGORIES = new Set<string>(CATEGORIES)
+const KNOWN_BANKS = new Set<string>(BANKS)
+
+/**
+ * Parse a comma-separated multi-select param into its validated members, in
+ * order, dropping unknown entries and de-duplicating. A single unknown entry in
+ * an otherwise-valid list drops only that entry (the rest survive). Returns
+ * `undefined` when nothing valid remains so the param is omitted entirely.
+ */
+function parseCsv<T extends string>(
+  raw: unknown,
+  known: ReadonlySet<string>,
+): T[] | undefined {
+  if (typeof raw !== 'string') return undefined
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const part of raw.split(',')) {
+    const value = part.trim()
+    if (value && known.has(value) && !seen.has(value)) {
+      seen.add(value)
+      out.push(value as T)
+    }
+  }
+  return out.length > 0 ? out : undefined
+}
+
+/**
+ * Validate (and narrow) the raw `/transactions` search params (ADR-116). Every
+ * param is narrowed to its known set/shape; unknown or malformed values are
+ * ignored (omitted) rather than throwing, matching the lenient robustness of the
+ * original `category`/`type`-only validator (ADR-031/ADR-062). Default values
+ * (`type=all`, `currency=all`, `amount=any`, empty multi-selects, empty `q`) are
+ * dropped so the route never round-trips a redundant param.
+ */
+export function validateTransactionsSearch(
+  search: Record<string, unknown>,
+): TransactionsSearch {
+  const result: TransactionsSearch = {}
+
+  const rawQ = search.q
+  if (typeof rawQ === 'string' && rawQ.trim().length > 0) {
+    result.q = rawQ
+  }
+
+  const rawType = search.type
+  if (
+    typeof rawType === 'string' &&
+    rawType !== 'all' &&
+    KNOWN_TYPES.has(rawType)
+  ) {
+    result.type = rawType as TypeFilter
+  }
+
+  const rawCurrency = search.currency
+  if (
+    typeof rawCurrency === 'string' &&
+    rawCurrency !== 'all' &&
+    KNOWN_CURRENCIES.has(rawCurrency)
+  ) {
+    result.currency = rawCurrency as CurrencyFilter
+  }
+
+  const rawMonth = search.month
+  if (typeof rawMonth === 'string' && parseMonthToken(rawMonth) !== undefined) {
+    result.month = rawMonth
+  }
+
+  const categories = parseCsv<Category>(search.category, KNOWN_CATEGORIES)
+  if (categories) result.category = categories.join(',')
+
+  const banks = parseCsv<Bank>(search.bank, KNOWN_BANKS)
+  if (banks) result.bank = banks.join(',')
+
+  const rawAmount = search.amount
+  if (
+    typeof rawAmount === 'string' &&
+    rawAmount !== 'any' &&
+    KNOWN_AMOUNTS.has(rawAmount)
+  ) {
+    result.amount = rawAmount as AmountRange
+  }
+
+  return result
+}
+
+/**
+ * Derive the live {@link TransactionFilters} from validated search params
+ * (ADR-116). Absent params fall back to defaults; crucially, an absent `month`
+ * resolves to the CURRENT month (ADR-040 — the ledger owns its per-screen month),
+ * with `now` injectable for deterministic tests. The month token is re-parsed
+ * defensively (validateSearch already accepted it; a bad value still falls back).
+ */
+export function searchToFilters(
+  search: TransactionsSearch,
+  now: Date = new Date(),
+): TransactionFilters {
+  const month: MonthFilter =
+    search.month !== undefined
+      ? (parseMonthToken(search.month) ?? currentViewingMonth(now))
+      : currentViewingMonth(now)
+
+  return {
+    q: search.q ?? '',
+    type: search.type ?? 'all',
+    currency: search.currency ?? 'all',
+    month,
+    categories: search.category
+      ? (parseCsv<Category>(search.category, KNOWN_CATEGORIES) ?? [])
+      : [],
+    banks: search.bank
+      ? (parseCsv<Bank>(search.bank, KNOWN_BANKS) ?? [])
+      : [],
+    amount: search.amount ?? 'any',
+  }
+}
+
+/**
+ * Encode live {@link TransactionFilters} back into URL search params (ADR-116),
+ * OMITTING every default so the URL carries only what narrows the list: no
+ * `type=all` / `currency=all` / `amount=any`, no empty `q` / `categories` /
+ * `banks`, and no `month` when it equals the current-month default (the absence
+ * of `month` IS the current month, so writing it would be redundant). Specific
+ * months serialize to `YYYY-MM`; ranges to their sentinel.
+ */
+export function filtersToSearch(
+  filters: TransactionFilters,
+  now: Date = new Date(),
+): TransactionsSearch {
+  const search: TransactionsSearch = {}
+
+  const q = filters.q.trim()
+  if (q.length > 0) search.q = filters.q
+
+  if (filters.type !== 'all') search.type = filters.type
+  if (filters.currency !== 'all') search.currency = filters.currency
+  if (filters.amount !== 'any') search.amount = filters.amount
+
+  // Omit the current-month default; serialize any other month/range.
+  const isCurrentMonth =
+    filters.month !== ALL_MONTHS &&
+    filters.month !== LAST_12_MONTHS &&
+    filters.month !== THIS_YEAR &&
+    isSameViewingMonth(filters.month as ViewingMonth, currentViewingMonth(now))
+  if (!isCurrentMonth) search.month = serializeMonth(filters.month)
+
+  if (filters.categories.length > 0) {
+    search.category = filters.categories.join(',')
+  }
+  if (filters.banks.length > 0) search.bank = filters.banks.join(',')
+
+  return search
 }
 
 /** Count of transactions in `transactions` whose category equals `category`. */

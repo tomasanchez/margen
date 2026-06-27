@@ -193,6 +193,41 @@ export type MonthSelection =
   | typeof THIS_YEAR
 
 /**
+ * Serialize a {@link MonthSelection} to its URL token (ADR-116). The named
+ * ranges use their sentinel strings (`all` / `last12` / `thisYear`); a specific
+ * {@link ViewingMonth} encodes as `YYYY-MM` (1-based month, zero-padded) so the
+ * value is human-readable in the address bar and stable across reloads.
+ */
+export function serializeMonth(value: MonthSelection): string {
+  if (value === ALL_MONTHS) return ALL_MONTHS
+  if (value === LAST_12_MONTHS) return LAST_12_MONTHS
+  if (value === THIS_YEAR) return THIS_YEAR
+  const month = String(value.month + 1).padStart(2, '0')
+  return `${value.year}-${month}`
+}
+
+/**
+ * Parse a URL token back into a {@link MonthSelection} (ADR-116), or `undefined`
+ * when the token is malformed/unknown so the caller can fall back to its default
+ * (the current month). Accepts the three range sentinels and a strict `YYYY-MM`
+ * specific month (year 1900–9999, month 01–12); anything else is rejected.
+ */
+export function parseMonthToken(
+  token: string,
+): MonthSelection | undefined {
+  if (token === ALL_MONTHS) return ALL_MONTHS
+  if (token === LAST_12_MONTHS) return LAST_12_MONTHS
+  if (token === THIS_YEAR) return THIS_YEAR
+  const match = /^(\d{4})-(\d{2})$/.exec(token)
+  if (!match) return undefined
+  const year = Number.parseInt(match[1], 10)
+  const month1 = Number.parseInt(match[2], 10)
+  if (year < 1900 || year > 9999) return undefined
+  if (month1 < 1 || month1 > 12) return undefined
+  return { year, month: month1 - 1 }
+}
+
+/**
  * Newest-first month options for the Transactions month picker (ADR-040: the
  * ledger keeps its OWN per-screen month, NOT the Home navigator's 6-month
  * floor). Spans every month that actually has data — from the latest down to

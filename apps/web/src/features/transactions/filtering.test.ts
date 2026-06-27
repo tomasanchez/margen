@@ -5,15 +5,19 @@ import {
   activeFilterCount,
   buildEditPrefill,
   filterTransactions,
+  filtersToSearch,
   hasActiveFilters,
   matchesMonth,
   presentMonths,
+  searchToFilters,
+  validateTransactionsSearch,
   type TransactionFilters,
 } from './filtering'
 import {
   ALL_MONTHS,
   LAST_12_MONTHS,
   THIS_YEAR,
+  currentViewingMonth,
 } from '../../components/months'
 import type { Transaction } from '../../mock/types'
 
@@ -238,5 +242,190 @@ describe('buildEditPrefill', () => {
   test('omits notes from the prefill when the row has none (ADR-088)', () => {
     const noNotes: Transaction = { ...SEED_TRANSACTIONS[0], notes: undefined }
     expect('notes' in buildEditPrefill(noNotes)).toBe(false)
+  })
+})
+
+describe('validateTransactionsSearch (ADR-116)', () => {
+  test('accepts each valid param and narrows it', () => {
+    expect(
+      validateTransactionsSearch({
+        q: 'uber',
+        type: 'invoice',
+        currency: 'USD',
+        month: '2026-05',
+        category: 'Food,Rent',
+        bank: 'Brubank',
+        amount: 'gt1m',
+      }),
+    ).toEqual({
+      q: 'uber',
+      type: 'invoice',
+      currency: 'USD',
+      month: '2026-05',
+      category: 'Food,Rent',
+      bank: 'Brubank',
+      amount: 'gt1m',
+    })
+  })
+
+  test('drops default values so the URL never round-trips redundancy', () => {
+    expect(
+      validateTransactionsSearch({
+        q: '   ',
+        type: 'all',
+        currency: 'all',
+        amount: 'any',
+        category: '',
+        bank: '',
+      }),
+    ).toEqual({})
+  })
+
+  test('ignores garbage type / amount / currency / month', () => {
+    expect(validateTransactionsSearch({ type: 'bogus' })).toEqual({})
+    expect(validateTransactionsSearch({ amount: 'huge' })).toEqual({})
+    expect(validateTransactionsSearch({ currency: 'BTC' })).toEqual({})
+    expect(validateTransactionsSearch({ month: '2026-13' })).toEqual({})
+    expect(validateTransactionsSearch({ month: 'nope' })).toEqual({})
+  })
+
+  test('accepts the month range sentinels and a specific YYYY-MM', () => {
+    expect(validateTransactionsSearch({ month: 'all' })).toEqual({ month: 'all' })
+    expect(validateTransactionsSearch({ month: 'last12' })).toEqual({
+      month: 'last12',
+    })
+    expect(validateTransactionsSearch({ month: 'thisYear' })).toEqual({
+      month: 'thisYear',
+    })
+    expect(validateTransactionsSearch({ month: '2025-12' })).toEqual({
+      month: '2025-12',
+    })
+  })
+
+  test('a csv category with one unknown entry drops ONLY the unknown', () => {
+    expect(validateTransactionsSearch({ category: 'Food,Bogus,Rent' })).toEqual({
+      category: 'Food,Rent',
+    })
+    // All unknown → the param is omitted entirely.
+    expect(validateTransactionsSearch({ category: 'Bogus,Nope' })).toEqual({})
+  })
+
+  test('de-duplicates and validates the bank multi-select', () => {
+    expect(
+      validateTransactionsSearch({ bank: 'Brubank,Brubank,Deel' }),
+    ).toEqual({ bank: 'Brubank,Deel' })
+  })
+
+  test('back-compatible single category drilldown still validates', () => {
+    expect(validateTransactionsSearch({ category: 'Food' })).toEqual({
+      category: 'Food',
+    })
+    expect(validateTransactionsSearch({ category: 'Bogus' })).toEqual({})
+  })
+})
+
+describe('searchToFilters (ADR-116)', () => {
+  const now = new Date(2026, 5, 15) // 2026-06-15
+
+  test('an empty search defaults the month to the current month (ADR-040)', () => {
+    const f = searchToFilters({}, now)
+    expect(f.month).toEqual(currentViewingMonth(now))
+    expect(f.type).toBe('all')
+    expect(f.currency).toBe('all')
+    expect(f.q).toBe('')
+    expect(f.categories).toEqual([])
+    expect(f.banks).toEqual([])
+    expect(f.amount).toBe('any')
+  })
+
+  test('hydrates every param, parsing csv + month token', () => {
+    const f = searchToFilters(
+      {
+        q: 'rent',
+        type: 'invoice',
+        currency: 'ARS',
+        month: '2026-05',
+        category: 'Food,Rent',
+        bank: 'Brubank,Deel',
+        amount: '100_1m',
+      },
+      now,
+    )
+    expect(f).toEqual({
+      q: 'rent',
+      type: 'invoice',
+      currency: 'ARS',
+      month: { year: 2026, month: 4 },
+      categories: ['Food', 'Rent'],
+      banks: ['Brubank', 'Deel'],
+      amount: '100_1m',
+    })
+  })
+
+  test('the range sentinels round-trip through the month token', () => {
+    expect(searchToFilters({ month: 'all' }, now).month).toBe(ALL_MONTHS)
+    expect(searchToFilters({ month: 'last12' }, now).month).toBe(LAST_12_MONTHS)
+    expect(searchToFilters({ month: 'thisYear' }, now).month).toBe(THIS_YEAR)
+  })
+})
+
+describe('filtersToSearch (ADR-116, defaults omitted)', () => {
+  const now = new Date(2026, 5, 15) // 2026-06-15
+
+  test('the current-month default produces an EMPTY search', () => {
+    const f: TransactionFilters = {
+      ...DEFAULT_FILTERS,
+      month: currentViewingMonth(now),
+    }
+    expect(filtersToSearch(f, now)).toEqual({})
+  })
+
+  test('omits every default, serializing only what narrows the list', () => {
+    const f: TransactionFilters = {
+      q: 'uber',
+      type: 'invoice',
+      currency: 'USD',
+      month: { year: 2026, month: 4 },
+      categories: ['Food', 'Rent'],
+      banks: ['Brubank'],
+      amount: 'gt1m',
+    }
+    expect(filtersToSearch(f, now)).toEqual({
+      q: 'uber',
+      type: 'invoice',
+      currency: 'USD',
+      month: '2026-05',
+      category: 'Food,Rent',
+      bank: 'Brubank',
+      amount: 'gt1m',
+    })
+  })
+
+  test('round-trips back through searchToFilters', () => {
+    const f: TransactionFilters = {
+      q: 'cafe',
+      type: 'expense',
+      currency: 'ARS',
+      month: LAST_12_MONTHS,
+      categories: ['Transport'],
+      banks: [],
+      amount: 'lt10',
+    }
+    const restored = searchToFilters(
+      validateTransactionsSearch(
+        filtersToSearch(f, now) as Record<string, unknown>,
+      ),
+      now,
+    )
+    expect(restored).toEqual(f)
+  })
+
+  test('an empty/whitespace query is omitted', () => {
+    const f: TransactionFilters = {
+      ...DEFAULT_FILTERS,
+      month: ALL_MONTHS,
+      q: '   ',
+    }
+    expect(filtersToSearch(f, now)).toEqual({ month: 'all' })
   })
 })

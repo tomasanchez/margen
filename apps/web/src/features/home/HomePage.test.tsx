@@ -287,12 +287,12 @@ test('the Monotributo card shows the real standing and the invoice drill-in link
   expect(scoped.getByRole('status', { name: /watch/i })).toBeInTheDocument()
 
   // The drill-in link to the Transactions screen renders pre-filtered to
-  // invoices (ADR-062 pattern); the seed has no invoice-kind rows in June, so
-  // the count reads zero (the singular/plural copy is covered at the
-  // MonotributoCard component level).
+  // invoices over the last 12 months (ADR-062/ADR-116: the window is carried
+  // explicitly); the seed has no invoice-kind rows in June, so the count reads
+  // zero (the singular/plural copy is covered at the MonotributoCard level).
   expect(
     scoped.getByRole('link', { name: 'See the 0 invoices behind this →' }),
-  ).toHaveAttribute('href', '/transactions?type=invoice')
+  ).toHaveAttribute('href', '/transactions?type=invoice&month=last12')
 })
 
 test('a month with no transactions shows the calm empty state', async () => {

@@ -266,6 +266,14 @@ interface FilterBarProps {
   controls: FilterControls
   /** The unfiltered list, used for the per-option counts in the menus. */
   allTransactions: readonly Transaction[]
+  /**
+   * Controlled search-box value (ADR-116): the page keeps a local, instant
+   * input value and debounces the push to the URL, so the box reads from this
+   * rather than `filters.q` (which only updates after the debounce settles).
+   */
+  searchValue: string
+  /** Called on every keystroke with the raw input value (drives the debounce). */
+  onSearchChange: (value: string) => void
 }
 
 /** Desktop search + filter bar. Hidden on xs–sm (the sheet covers mobile). */
@@ -273,6 +281,8 @@ export function FilterBar({
   filters,
   controls,
   allTransactions,
+  searchValue,
+  onSearchChange,
 }: FilterBarProps) {
   const { t } = useTranslation('transactions')
   const showClear = hasActiveFilters(filters)
@@ -280,8 +290,8 @@ export function FilterBar({
   return (
     <Box sx={{ display: { xs: 'none', md: 'block' } }}>
       <TextField
-        value={filters.q}
-        onChange={(e) => controls.setSearch(e.target.value)}
+        value={searchValue}
+        onChange={(e) => onSearchChange(e.target.value)}
         placeholder={t('search.placeholderLong')}
         fullWidth
         size="small"

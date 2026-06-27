@@ -220,7 +220,7 @@ export function MonotributoCard({
 
       <Link
         to="/transactions"
-        search={{ type: 'invoice' as const }}
+        search={{ type: 'invoice' as const, month: 'last12' as const }}
         className={drillInLinkClass}
       >
         {t('monotributo.drillIn', { count: invoiceCount })}
