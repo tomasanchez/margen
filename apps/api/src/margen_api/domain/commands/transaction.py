@@ -91,6 +91,7 @@ class CreateTransaction(Command):
     notes: str | None = None
     recurring: bool = False
     counts_toward_monotributo: bool = False
+    account_id: UUID | None = None
     user_id: str
     document: TransactionDocumentPayload | None = None
 
@@ -121,6 +122,7 @@ class UpdateTransaction(Command):
     notes: str | None = None
     recurring: bool | None = None
     counts_toward_monotributo: bool | None = None
+    account_id: UUID | None = None
 
 
 class DeleteTransaction(Command):

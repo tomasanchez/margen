@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from types import TracebackType
 
 from margen_api.domain.messages import Event
+from margen_api.service_layer.account_repository import AbstractAccountRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.monotributo_repository import AbstractMonotributoSnapshotRepository
 from margen_api.service_layer.repository import AbstractTransactionRepository
@@ -35,6 +36,9 @@ class AbstractUnitOfWork(ABC):
             metadata, written by the create-with-attachment handler (ADR-071).
         statements: Storage port for the original statement PDF and its import
             metadata, written by the import-statement handler (ADR-077, ADR-078).
+        accounts: Repository for the ``Account`` aggregate, written by the
+            account create/update handlers and read by the transaction handlers'
+            ownership check (ADR-122, ADR-130).
     """
 
     transactions: AbstractTransactionRepository
@@ -42,6 +46,7 @@ class AbstractUnitOfWork(ABC):
     settings: AbstractSettingsRepository
     documents: AbstractDocumentStore
     statements: AbstractStatementStore
+    accounts: AbstractAccountRepository
 
     async def __aenter__(self) -> AbstractUnitOfWork:
         """Enter the transaction boundary."""

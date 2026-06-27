@@ -11,7 +11,11 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from margen_api.domain.models.exceptions import UnknownCurrencyError, UnknownKindError
+from margen_api.domain.models.exceptions import (
+    UnknownAccountTypeError,
+    UnknownCurrencyError,
+    UnknownKindError,
+)
 
 
 class Kind(StrEnum):
@@ -78,6 +82,40 @@ class Currency(StrEnum):
             return cls(value)
         except ValueError as exc:
             raise UnknownCurrencyError(value) from exc
+
+
+class AccountType(StrEnum):
+    """The kind of account in the net-worth model; a closed enum (ADR-122).
+
+    MVP net worth covers liquid accounts only: ``bank`` (a bank account),
+    ``cash`` (physical cash or a wallet) and ``card`` (a credit-card account whose
+    balance is the outstanding charges). Investments, property and liabilities are
+    deferred (ADR-122).
+    """
+
+    BANK = "bank"
+    CASH = "cash"
+    CARD = "card"
+
+    @classmethod
+    def parse(cls, value: object) -> AccountType:
+        """Coerce a value to an ``AccountType`` or raise ``UnknownAccountTypeError``.
+
+        Args:
+            value: An ``AccountType`` member or a string such as ``"bank"``.
+
+        Returns:
+            The matching ``AccountType`` member.
+
+        Raises:
+            UnknownAccountTypeError: When ``value`` is not a known account type.
+        """
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(value)
+        except ValueError as exc:
+            raise UnknownAccountTypeError(value) from exc
 
 
 class FxRateType(StrEnum):

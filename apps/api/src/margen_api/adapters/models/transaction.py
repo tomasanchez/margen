@@ -90,6 +90,18 @@ class TransactionRecord(Base):
         ForeignKey("statement_document.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # The owning account (ADR-122). Nullable: introduced nullable so the accounts
+    # migration can add the column then backfill it from the bank tag (ADR-124);
+    # ``ondelete=SET NULL`` so deleting an account orphans its transactions rather
+    # than cascading the delete. A user may only link a transaction to one of their
+    # own accounts -- enforced at the application layer (ADR-130), not by the FK,
+    # since the FK cannot express ownership.
+    account_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

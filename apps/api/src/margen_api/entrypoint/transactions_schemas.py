@@ -164,6 +164,10 @@ class TransactionResponse(CamelCaseModel):
     fx_rate_as_of: datetime | None = Field(default=None, description="Timestamp the FX rate was observed.")
     recurring: bool = Field(description="Whether the movement repeats.")
     counts_toward_monotributo: bool = Field(description="Monotributo counting hint (income / invoice only).")
+    account_id: UUID | None = Field(
+        default=None,
+        description="The owning account's id, or null when unattributed (ADR-122).",
+    )
     created_at: datetime = Field(description="Server-managed creation timestamp.")
     updated_at: datetime = Field(description="Server-managed last-update timestamp.")
 
@@ -198,6 +202,7 @@ class TransactionResponse(CamelCaseModel):
             fx_rate_as_of=model.fx_rate_as_of,
             recurring=model.recurring,
             counts_toward_monotributo=model.counts_toward_monotributo,
+            account_id=model.account_id,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -261,6 +266,10 @@ class TransactionCreateRequest(CamelCaseModel):
         default=False,
         description="Monotributo counting hint; forced False for expense (ADR-031).",
     )
+    account_id: UUID | None = Field(
+        default=None,
+        description="The owning account's id; must be one of the caller's accounts (ADR-122, ADR-130).",
+    )
     document: TransactionDocumentRequest | None = Field(
         default=None,
         description="Optional imported invoice PDF to store and link (ADR-070, ADR-071).",
@@ -298,6 +307,7 @@ class TransactionCreateRequest(CamelCaseModel):
             notes=self.notes,
             recurring=self.recurring,
             counts_toward_monotributo=self.counts_toward_monotributo,
+            account_id=self.account_id,
             document=self.document.to_payload() if self.document is not None else None,
         )
 
@@ -356,6 +366,10 @@ class TransactionPatchRequest(CamelCaseModel):
     )
     recurring: bool | None = Field(default=None, description="New recurring flag.")
     counts_toward_monotributo: bool | None = Field(default=None, description="New Monotributo counting hint.")
+    account_id: UUID | None = Field(
+        default=None,
+        description="New owning account id; must be one of the caller's accounts (ADR-122, ADR-130).",
+    )
 
     def to_command(self, transaction_id: UUID, user_id: str) -> UpdateTransaction:
         """Translate the patch into an :class:`UpdateTransaction` command.
@@ -387,4 +401,5 @@ class TransactionPatchRequest(CamelCaseModel):
             notes=self.notes,
             recurring=self.recurring,
             counts_toward_monotributo=self.counts_toward_monotributo,
+            account_id=self.account_id,
         )

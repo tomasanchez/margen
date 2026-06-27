@@ -75,6 +75,7 @@ def _to_read_model(record: TransactionRecord) -> TransactionReadModel:
         recurring=record.recurring,
         counts_toward_monotributo=record.counts_toward_monotributo,
         statement_document_id=record.statement_document_id,
+        account_id=record.account_id,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )

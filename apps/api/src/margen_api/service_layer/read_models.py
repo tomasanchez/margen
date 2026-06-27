@@ -44,6 +44,8 @@ class TransactionReadModel:
             credit-card expense, else ``None`` for a manually-entered transaction.
             Lets query paths distinguish manual expenses (the reconciliation candidate
             pool — ADR-084) from already-imported statement rows.
+        account_id: Link to the owning account, else ``None`` when the transaction
+            is not attributed to an account (ADR-122).
         created_at: Server-managed creation timestamp.
         updated_at: Server-managed last-update timestamp.
     """
@@ -66,5 +68,6 @@ class TransactionReadModel:
     recurring: bool
     counts_toward_monotributo: bool
     statement_document_id: UUID | None
+    account_id: UUID | None
     created_at: datetime
     updated_at: datetime

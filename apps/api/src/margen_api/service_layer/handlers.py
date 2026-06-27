@@ -25,7 +25,11 @@ from margen_api.domain.commands.transaction import (
     TransactionDocumentPayload,
     UpdateTransaction,
 )
-from margen_api.domain.models.exceptions import MergeTargetNotFoundError, TransactionNotFoundError
+from margen_api.domain.models.exceptions import (
+    AccountNotFoundError,
+    MergeTargetNotFoundError,
+    TransactionNotFoundError,
+)
 from margen_api.domain.models.transaction import Transaction, build_transaction
 from margen_api.domain.models.value_objects import Kind
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
@@ -47,7 +51,31 @@ _PATCHABLE_FIELDS = (
     "notes",
     "recurring",
     "counts_toward_monotributo",
+    "account_id",
 )
+
+
+async def _check_account_ownership(uow: AbstractUnitOfWork, account_id: UUID | None, user_id: str) -> None:
+    """Verify a linked ``account_id`` is one the caller owns (ADR-130).
+
+    A transaction may only be attached to an account the authenticated user owns.
+    When ``account_id`` is ``None`` there is nothing to link, so the check is a
+    no-op. Otherwise the account repository confirms ownership; a missing account or
+    one owned by another user raises :class:`AccountNotFoundError`, which the
+    boundary maps to 404 (ADR-111).
+
+    Args:
+        uow: The unit of work providing the account repository (inside its boundary).
+        account_id: The account being linked, or ``None`` when none.
+        user_id: The authenticated owner the account must belong to.
+
+    Raises:
+        AccountNotFoundError: When ``account_id`` is not an account owned by the user.
+    """
+    if account_id is None:
+        return
+    if not await uow.accounts.owns(account_id, user_id):
+        raise AccountNotFoundError(account_id)
 
 
 async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork) -> UUID:
@@ -89,9 +117,11 @@ async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork
         notes=command.notes,
         recurring=command.recurring,
         counts_toward_monotributo=command.counts_toward_monotributo,
+        account_id=command.account_id,
         user_id=command.user_id,
     )
     async with uow:
+        await _check_account_ownership(uow, command.account_id, command.user_id)
         uow.transactions.add(transaction)
         if command.document is not None:
             # Flush the transaction first so the document's foreign key resolves;
@@ -367,6 +397,9 @@ async def update_transaction(command: UpdateTransaction, uow: AbstractUnitOfWork
         if existing is None:
             raise TransactionNotFoundError(command.id)
         patched = _apply_patch(existing, command)
+        # When the patch (re)links an account, confirm the caller owns it (ADR-130).
+        if command.account_id is not None:
+            await _check_account_ownership(uow, command.account_id, command.user_id)
         await uow.transactions.persist(patched)
         await uow.commit()
     return patched.id

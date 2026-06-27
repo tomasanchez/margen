@@ -61,6 +61,27 @@ class TransactionNotFoundError(TransactionError):
         super().__init__(f"transaction not found: {transaction_id!r}")
 
 
+class UnknownAccountTypeError(TransactionError):
+    """Raised when an account type is not one of the known types (ADR-122)."""
+
+    def __init__(self, account_type: object) -> None:
+        self.account_type = account_type
+        super().__init__(f"unknown account type: {account_type!r}")
+
+
+class AccountNotFoundError(TransactionError):
+    """Raised when no account matches a referenced identity (ADR-122, ADR-130).
+
+    Update handlers raise this when the aggregate they target does not exist for
+    the owner, so the boundary can translate it into a 404 (ADR-111). The carried
+    ``account_id`` lets the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, account_id: object) -> None:
+        self.account_id = account_id
+        super().__init__(f"account not found: {account_id!r}")
+
+
 class MergeTargetNotFoundError(TransactionError):
     """Raised when a ``MERGE`` import line points at a missing transaction (ADR-085).
 

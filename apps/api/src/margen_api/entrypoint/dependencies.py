@@ -16,6 +16,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict
 
+from margen_api.adapters.account_queries import SqlAlchemyAccountReader
 from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.queries import (
     SqlAlchemyInsightsReader,
@@ -26,6 +27,7 @@ from margen_api.adapters.queries import (
 )
 from margen_api.adapters.statement_store import SqlAlchemyStatementStore
 from margen_api.bootstrap import ApplicationContainer
+from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
 from margen_api.service_layer.messagebus import MessageBus
@@ -356,3 +358,20 @@ async def get_statement_store(container: Container) -> AsyncIterator[AbstractSta
 
 
 StatementReader = Annotated[AbstractStatementStore, Depends(get_statement_store)]
+
+
+async def get_account_reader(container: Container) -> AsyncIterator[AbstractAccountReader]:
+    """Yield an account reader over a request-scoped read-only session (ADR-122).
+
+    Query paths bypass the unit of work by design (ADR-028); the session opened
+    here is closed when the request finishes. Account writes go through the message
+    bus / unit of work instead, keeping this reader read-only.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemyAccountReader(session)
+    finally:
+        await session.close()
+
+
+AccountReader = Annotated[AbstractAccountReader, Depends(get_account_reader)]

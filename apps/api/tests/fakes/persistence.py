@@ -14,8 +14,12 @@ from decimal import Decimal
 from types import TracebackType
 from uuid import UUID, uuid4
 
+from margen_api.domain.models.account import Account
 from margen_api.domain.models.transaction import Transaction
-from margen_api.domain.models.value_objects import Kind, TxType
+from margen_api.domain.models.value_objects import Currency, Kind, TxType
+from margen_api.service_layer.account_read_models import AccountReadModel, NetWorth
+from margen_api.service_layer.account_reader import AbstractAccountReader
+from margen_api.service_layer.account_repository import AbstractAccountRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore, InvoiceDocument
 from margen_api.service_layer.insights_read_models import MonthlyInsights
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
@@ -100,6 +104,39 @@ class FakeTransactionRepository(AbstractTransactionRepository):
         self._staged.pop(transaction_id, None)
         self._committed.pop(transaction_id, None)
         return True
+
+
+class FakeAccountRepository(AbstractAccountRepository):
+    """In-memory account repository over a committed store and a staging buffer.
+
+    Mirrors :class:`FakeTransactionRepository`: ``add``/``persist`` write to the
+    staging buffer, ``commit`` promotes it, ``rollback`` clears it, and every
+    lookup is owner-scoped (ADR-130).
+    """
+
+    def __init__(self, committed: dict[UUID, Account], staged: dict[UUID, Account]) -> None:
+        """Initialize the repository over the unit of work's stores."""
+        self._committed = committed
+        self._staged = staged
+
+    def add(self, account: Account) -> None:
+        """Stage a new aggregate until the unit of work commits (ADR-130)."""
+        self._staged[account.id] = account
+
+    async def get(self, account_id: UUID, user_id: str) -> Account | None:
+        """Return the owner's staged/committed aggregate, or ``None`` (ADR-130, ADR-111)."""
+        account = self._staged.get(account_id) or self._committed.get(account_id)
+        if account is None or account.user_id != user_id:
+            return None
+        return account
+
+    async def persist(self, account: Account) -> None:
+        """Stage a mutated aggregate for the next commit."""
+        self._staged[account.id] = account
+
+    async def owns(self, account_id: UUID, user_id: str) -> bool:
+        """Return whether the owner has an account with ``account_id`` (ADR-130)."""
+        return await self.get(account_id, user_id) is not None
 
 
 class FakeMonotributoSnapshotRepository(AbstractMonotributoSnapshotRepository):
@@ -387,6 +424,8 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         """Initialize an empty unit of work."""
         self.committed_aggregates: dict[UUID, Transaction] = {}
         self._staged: dict[UUID, Transaction] = {}
+        self.committed_accounts: dict[UUID, Account] = {}
+        self._staged_accounts: dict[UUID, Account] = {}
         self.snapshots: dict[tuple[str, date], MonotributoStanding] = {}
         self.config: dict[str, str] = {}
         self.used_by_window: dict[tuple[str, date, date], Decimal] = {}
@@ -399,17 +438,20 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.settings = FakeSettingsRepository(self.config)
         self.documents = FakeDocumentStore(self.documents_store, self.document_owners)
         self.statements = FakeStatementStore(self.statements_store, self.statement_owners)
+        self.accounts = FakeAccountRepository(self.committed_accounts, self._staged_accounts)
         self.committed = False
 
     async def __aenter__(self) -> FakeUnitOfWork:
         """Enter the transaction boundary with a fresh staging buffer."""
         self.committed = False
         self._staged = {}
+        self._staged_accounts = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
         self.settings = FakeSettingsRepository(self.config)
         self.documents = FakeDocumentStore(self.documents_store, self.document_owners)
         self.statements = FakeStatementStore(self.statements_store, self.statement_owners)
+        self.accounts = FakeAccountRepository(self.committed_accounts, self._staged_accounts)
         return self
 
     async def __aexit__(
@@ -424,7 +466,9 @@ class FakeUnitOfWork(AbstractUnitOfWork):
     async def commit(self) -> None:
         """Make staged aggregates visible to later reads."""
         self.committed_aggregates.update(self._staged)
+        self.committed_accounts.update(self._staged_accounts)
         self._staged.clear()
+        self._staged_accounts.clear()
         self.committed = True
 
     async def flush(self) -> None:
@@ -432,10 +476,12 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         # Mirror a real flush: staged rows become visible to later reads in the
         # same unit of work; commit still promotes + clears them.
         self.committed_aggregates.update(self._staged)
+        self.committed_accounts.update(self._staged_accounts)
 
     async def rollback(self) -> None:
         """Discard staged aggregates."""
         self._staged.clear()
+        self._staged_accounts.clear()
 
 
 class FakeTransactionReader(AbstractTransactionReader):
@@ -466,6 +512,52 @@ class FakeTransactionReader(AbstractTransactionReader):
         if transaction is None or transaction.user_id != user_id:
             return None
         return _project(transaction)
+
+
+class FakeAccountReader(AbstractAccountReader):
+    """In-memory account reader projecting committed accounts (ADR-122, ADR-130).
+
+    Mirrors :class:`FakeTransactionReader` for the accounts list (owner-scoped,
+    newest-first by creation). For net worth the route tests assert the wiring and
+    the HTTP contract, not the aggregation (covered by the pure-function and
+    integration tiers), so ``net_worth`` returns the canned value it was given and
+    records the requested owner.
+    """
+
+    def __init__(self, committed: dict[UUID, Account], net_worth: NetWorth | None = None) -> None:
+        """Initialize over a committed account store and an optional canned net worth.
+
+        Args:
+            committed: The accounts to project, keyed by id. Pass a unit of work's
+                ``committed_accounts`` to share state.
+            net_worth: The canned net-worth value ``net_worth`` returns; defaults to
+                an empty ARS net worth when omitted.
+        """
+        self._committed = committed
+        self._net_worth = (
+            net_worth if net_worth is not None else NetWorth(total=Decimal(0), currency=Currency.ARS, accounts=[])
+        )
+        self.requested_user_id: str | None = None
+
+    async def list_accounts(self, user_id: str) -> list[AccountReadModel]:
+        """List the owner's accounts newest-first by creation (ADR-130)."""
+        owned = [account for account in self._committed.values() if account.user_id == user_id]
+        ordered = sorted(owned, key=lambda account: (account.created_at, account.id), reverse=True)
+        return [
+            AccountReadModel(
+                id=account.id,
+                name=account.name,
+                type=account.type,
+                currency=account.currency,
+                opening_balance=account.opening_balance,
+            )
+            for account in ordered
+        ]
+
+    async def net_worth(self, user_id: str) -> NetWorth:
+        """Record the requested owner and return the canned net worth (ADR-108)."""
+        self.requested_user_id = user_id
+        return self._net_worth
 
 
 class FakeSummaryReader(AbstractSummaryReader):
@@ -594,6 +686,7 @@ def _project(transaction: Transaction) -> TransactionReadModel:
         recurring=transaction.recurring,
         counts_toward_monotributo=transaction.counts_toward_monotributo,
         statement_document_id=transaction.statement_document_id,
+        account_id=transaction.account_id,
         created_at=transaction.created_at,
         updated_at=transaction.updated_at,
     )

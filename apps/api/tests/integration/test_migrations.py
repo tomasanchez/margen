@@ -18,8 +18,15 @@ pytestmark = pytest.mark.integration
 _PRE_SPLIT = "d4e5f6a7b8c9"
 _SPLIT = "e5f6a7b8c9d0"
 
+# The accounts migration (ADR-122/124): chains after the split. Seeding at ``_SPLIT``
+# (which already has the ``card`` column) lets the test exercise the accounts seed +
+# account_id backfill on real PostgreSQL.
+_ACCOUNTS = "f7a8b9c0d1e2"
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
+# A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
+_OWNER_B = "00000000-0000-4000-8000-000000000002"
 
 
 async def _table_names(url: str) -> list[str]:
@@ -103,6 +110,55 @@ class TestMigrations:
         finally:
             asyncio.run(_drop_everything(integration_database_url))
 
+    def test_accounts_seed_and_account_id_backfill(self, integration_database_url: str):
+        """
+        GIVEN legacy bank-tagged transactions for two users at the pre-accounts revision
+        WHEN Alembic upgrades through the accounts migration (ADR-124)
+        THEN one account is seeded per distinct (user, bank) and each row is linked,
+            with the card-detail bank seeded as type 'card' and the rest as 'bank'
+
+        Proves the in-place accounts seed + ``account_id`` backfill rewrites existing
+        rows on the production PostgreSQL dialect, partitioned per user (ADR-122/124).
+        """
+        # GIVEN — upgrade to the split revision (which has ``card``), then seed rows.
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _SPLIT)
+        # {label: (user_id, bank, card, expected account type)}.
+        seeded: dict[str, tuple[str, str, str | None, str]] = {
+            # User A: Galicia carried card detail -> a 'card' account.
+            "a_galicia": (_OWNER, "Galicia", "VISA ·5771", "card"),
+            # User A: Mercado Pago, no card -> a 'bank' account.
+            "a_mp": (_OWNER, "Mercado Pago", None, "bank"),
+            # User B: their own Galicia, no card -> independent 'bank' account.
+            "b_galicia": (_OWNER_B, "Galicia", None, "bank"),
+        }
+        ids = {label: uuid.uuid4() for label in seeded}
+        try:
+            asyncio.run(_seed_bank_tagged(integration_database_url, ids, seeded))
+
+            # WHEN
+            command.upgrade(config, _ACCOUNTS)
+
+            # THEN — three accounts seeded (one per distinct user+bank pair).
+            accounts = asyncio.run(_read_accounts(integration_database_url))
+            assert len(accounts) == 3
+            by_owner_bank = {(str(owner), name): acc_type for owner, name, acc_type in accounts}
+            assert by_owner_bank[(_OWNER, "Galicia")] == "card"
+            assert by_owner_bank[(_OWNER, "Mercado Pago")] == "bank"
+            assert by_owner_bank[(_OWNER_B, "Galicia")] == "bank"
+
+            # THEN — every seeded transaction is linked to its owner's matching account.
+            links = asyncio.run(_read_account_links(integration_database_url, ids))
+            for label, (owner, bank, _card, _type) in seeded.items():
+                account_id = links[ids[label]]
+                assert account_id is not None
+                # The linked account belongs to the same owner and bank name.
+                owner_of, name_of = asyncio.run(_account_owner_and_name(integration_database_url, account_id))
+                assert (str(owner_of), name_of) == (owner, bank)
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
 
 async def _seed_transactions(
     url: str,
@@ -147,3 +203,72 @@ async def _read_bank_and_card(
         rows = {row.id: (row.payment_method, row.card) for row in result}
     await engine.dispose()
     return rows
+
+
+async def _seed_bank_tagged(
+    url: str,
+    ids: dict[str, uuid.UUID],
+    seeded: dict[str, tuple[str, str, str | None, str]],
+) -> None:
+    """Insert legacy bank-tagged transactions for the accounts-seed backfill test."""
+    engine = create_async_engine(url)
+    insert = text(
+        "INSERT INTO transactions (id, user_id, occurred_on, name, kind, amount, currency, payment_method, card) "
+        "VALUES (:id, :user_id, :occurred_on, :name, :kind, :amount, :currency, :payment_method, :card)"
+    )
+    async with engine.begin() as connection:
+        for label, (owner, bank, card, _type) in seeded.items():
+            await connection.execute(
+                insert,
+                {
+                    "id": ids[label],
+                    "user_id": uuid.UUID(owner),
+                    "occurred_on": datetime.date(2026, 6, 1),
+                    "name": f"row-{label}",
+                    "kind": "expense",
+                    "amount": Decimal("1000.00"),
+                    "currency": "ARS",
+                    "payment_method": bank,
+                    "card": card,
+                },
+            )
+    await engine.dispose()
+
+
+async def _read_accounts(url: str) -> list[tuple[uuid.UUID, str, str]]:
+    """Return the seeded accounts as ``(user_id, name, type)`` tuples."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        result = await connection.execute(text("SELECT user_id, name, type FROM accounts"))
+        rows = [(row.user_id, row.name, row.type) for row in result]
+    await engine.dispose()
+    return rows
+
+
+async def _read_account_links(
+    url: str,
+    ids: dict[str, uuid.UUID],
+) -> dict[uuid.UUID, uuid.UUID | None]:
+    """Return ``{transaction_id: account_id}`` for the seeded rows after the backfill."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        result = await connection.execute(
+            text("SELECT id, account_id FROM transactions WHERE id = ANY(:ids)"),
+            {"ids": list(ids.values())},
+        )
+        rows = {row.id: row.account_id for row in result}
+    await engine.dispose()
+    return rows
+
+
+async def _account_owner_and_name(url: str, account_id: uuid.UUID) -> tuple[uuid.UUID, str]:
+    """Return the ``(user_id, name)`` of the account with ``account_id``."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        result = await connection.execute(
+            text("SELECT user_id, name FROM accounts WHERE id = :id"),
+            {"id": account_id},
+        )
+        row = result.one()
+    await engine.dispose()
+    return row.user_id, row.name
