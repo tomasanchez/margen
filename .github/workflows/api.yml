@@ -150,6 +150,12 @@ jobs:
   migrate:
     name: Apply migrations (Supabase)
     runs-on: ubuntu-latest
+    # The `SUPABASE_DATABASE_URL` secret is an ENVIRONMENT secret on the `prod`
+    # environment, so this job must target that environment to read it (a job
+    # with `environment:` can read both the environment's secrets AND repo
+    # secrets). Add a required-reviewer rule on the `prod` environment to gate
+    # production migrations behind a manual approval. ADR-099 / ADR-118.
+    environment: prod
     needs: [ build, integration ]
     defaults:
       run:
