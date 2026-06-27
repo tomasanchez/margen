@@ -3,9 +3,11 @@
     "primary": "Principal",
     "home": "Inicio",
     "transactions": "Movimientos",
+    "accounts": "Cuentas",
     "monotributo": "Monotributo",
     "homeShort": "Inicio",
     "transactionsShort": "Actividad",
+    "accountsShort": "Cuentas",
     "monotributoShort": "Mono"
   },
   "actions": {

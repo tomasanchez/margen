@@ -61,6 +61,12 @@ export interface TransactionDto {
    * legacy rows.
    */
   card?: string | null
+  /**
+   * The account this transaction is attributed to (ADR-122/133), or `null` when
+   * unlinked. Nullable per ADR-133; absent on legacy rows. Supersedes the bank
+   * tag for attribution while `bank`/`card` stay for display (ADR-117).
+   */
+  accountId?: string | null
   currency: Currency
   type: TxType
   kind: TxKind
@@ -104,6 +110,12 @@ interface TransactionCreateBody {
   bank?: string
   /** Card-level display detail (ADR-117); import-set, preserved on edit. */
   card?: string
+  /**
+   * The account to attribute the transaction to (ADR-122/133), or `null` for
+   * none. Ownership is enforced server-side — a user may only link their own
+   * account (ADR-130).
+   */
+  accountId?: string | null
   usd?: number
   rate?: number
   fxRateType?: FxRateType
@@ -206,6 +218,9 @@ export function adaptTransaction(dto: TransactionDto): Transaction {
     // Card-level display detail (ADR-117); only present on imported rows. Kept off
     // rows with no card so the shape stays clean (null/empty → absent).
     ...(dto.card ? { card: dto.card } : {}),
+    // The attributed account (ADR-122/133); carried through when present (incl.
+    // null for an explicitly-unlinked row), absent when the contract omits it.
+    ...(dto.accountId !== undefined ? { accountId: dto.accountId } : {}),
     currency: dto.currency,
     type: dto.type,
     kind: dto.kind,
@@ -242,6 +257,10 @@ export function toCreateBody(input: NewTransactionInput): TransactionCreateBody 
     countsTowardMonotributo: input.countsTowardMonotributo ?? false,
   }
   if (input.card !== undefined) body.card = input.card
+  // The attributed account (ADR-122/133); sent when the input carries it (incl.
+  // null for an explicitly-unlinked row). The lenient backend defaults a missing
+  // value, so we only send it when present.
+  if (input.accountId !== undefined) body.accountId = input.accountId
   if (input.usd !== undefined) body.usd = input.usd
   if (input.rate !== undefined) body.rate = input.rate
   if (input.fxRateType !== undefined) body.fxRateType = input.fxRateType
@@ -276,6 +295,9 @@ export function toPatchBody(
   // Card detail is import-set (ADR-117); send it back unchanged on edit so an
   // imported row's card survives a re-save (omitted when the patch carries none).
   if (patch.card !== undefined) body.card = patch.card
+  // The attributed account (ADR-122/133); a present value (incl. null) updates
+  // the link, an omitted one leaves it unchanged (ADR-028).
+  if (patch.accountId !== undefined) body.accountId = patch.accountId
   if (patch.usd !== undefined) body.usd = patch.usd
   if (patch.rate !== undefined) body.rate = patch.rate
   if (patch.fxRateType !== undefined) body.fxRateType = patch.fxRateType

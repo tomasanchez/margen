@@ -59,6 +59,37 @@ export type Bank =
   | 'Deel'
   | 'Transfer'
 
+/**
+ * The kind of account a balance lives in (ADR-122). `bank` is a bank account,
+ * `cash` is physical/uncarded money, `card` is a card-only account. Drives the
+ * account's icon + label; not used for net-worth math (every liquid type counts).
+ */
+export type AccountType = 'bank' | 'cash' | 'card'
+
+/**
+ * A first-class money account (ADR-122/123). Each account carries its own native
+ * `currency` (ARS or USD): a USD account stores and reports balances in USD, and
+ * net worth aggregates across currencies via the MEP rate (ADR-123/133). Money
+ * crosses the API boundary as a Decimal string (ADR-025/034), so `openingBalance`
+ * is a string here and is parsed to a number only at the display edge.
+ */
+export interface Account {
+  /** Stable UUID identity issued by the backend (ADR-130). */
+  id: string
+  /** User-facing account name, e.g. "Galicia ARS" or "Deel USD". */
+  name: string
+  /** Account kind (ADR-122): bank / cash / card. */
+  type: AccountType
+  /** Native currency the account holds (ADR-123): ARS or USD. */
+  currency: Currency
+  /**
+   * Opening balance as a Decimal string (ADR-025/034), e.g. "150000.00". The
+   * running balance is opening + transaction deltas; the backend computes it for
+   * the net-worth read (ADR-122). Kept as a string end-to-end on the form.
+   */
+  openingBalance: string
+}
+
 /** Months present in the mock dataset, newest-first ordering handled elsewhere. */
 export type MonthName =
   | 'January'
@@ -98,6 +129,13 @@ export interface Transaction {
    * {@link Transaction.bank}. Rendered as `bank · card` when present.
    */
   card?: string
+  /**
+   * The account this transaction is attributed to (ADR-122/133), or `null` when
+   * unlinked (manual rows with no account; nullable per ADR-133). The account
+   * SUPERSEDES the bank tag for attribution, but the bank/card detail (ADR-117)
+   * is kept for display. Absent on legacy rows the adapter never saw an id for.
+   */
+  accountId?: string | null
   currency: Currency
   type: TxType
   kind: TxKind
@@ -144,6 +182,14 @@ export interface NewTransactionInput {
    * imported row never drops its card. Omitted for manual entries.
    */
   card?: string
+  /**
+   * The account this transaction is attributed to (ADR-122/133), or `null`/absent
+   * when unlinked. Set by the account selector; supersedes the bank tag for
+   * attribution while the bank/card detail (ADR-117) is kept for display. The
+   * create/patch client sends it as `accountId`; ownership is enforced server-side
+   * (a user may only link their own account, ADR-130).
+   */
+  accountId?: string | null
   currency: Currency
   type: TxType
   kind: TxKind

@@ -1,0 +1,53 @@
+{
+  "title": "Cuentas",
+  "subtitle": "Tus cuentas bancarias, de efectivo y de tarjeta, y sus saldos.",
+  "addAccount": "Agregar cuenta",
+  "type": {
+    "bank": "Banco",
+    "cash": "Efectivo",
+    "card": "Tarjeta"
+  },
+  "list": {
+    "title": "Tus cuentas",
+    "openingBalance": "Saldo inicial",
+    "empty": "Todavía no tenés cuentas. Agregá tu primera cuenta para seguir su saldo y tu patrimonio.",
+    "editAria": "Editar {{name}}"
+  },
+  "form": {
+    "addTitle": "Agregar cuenta",
+    "editTitle": "Editar cuenta",
+    "name": {
+      "label": "Nombre"
+    },
+    "type": {
+      "label": "Tipo"
+    },
+    "currency": {
+      "label": "Moneda",
+      "ars": "ARS — pesos argentinos",
+      "usd": "USD — dólares estadounidenses",
+      "lockedHelper": "La moneda no se puede cambiar después de crear la cuenta."
+    },
+    "openingBalance": {
+      "label": "Saldo inicial",
+      "helper": "El saldo con el que empezás a seguir esta cuenta."
+    },
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "saveError": "No pudimos guardar esta cuenta. Verificá tu conexión e intentá de nuevo."
+  },
+  "error": {
+    "title": "No se pueden cargar tus cuentas",
+    "description": "No pudimos conectar con el servidor para cargar tus cuentas. Verificá tu conexión e intentá de nuevo."
+  },
+  "netWorth": {
+    "title": "Patrimonio",
+    "subtitle": "Total entre tus cuentas",
+    "totalLabel": "Patrimonio total",
+    "converted": "≈ {{amount}}",
+    "empty": "Agregá una cuenta para ver tu patrimonio acá.",
+    "degradeNote": "Sumado en la moneda de cada cuenta — agregá un movimiento en USD con cotización para convertir.",
+    "errorTitle": "Patrimonio no disponible",
+    "errorDescription": "No pudimos cargar tu patrimonio ahora. Intentá de nuevo."
+  }
+}

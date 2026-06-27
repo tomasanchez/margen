@@ -150,6 +150,10 @@
     "bank": {
       "section": "Banco / tarjeta"
     },
+    "account": {
+      "label": "Cuenta",
+      "none": "Sin cuenta"
+    },
     "date": {
       "label": "Fecha",
       "ariaLabel": "Fecha del movimiento"

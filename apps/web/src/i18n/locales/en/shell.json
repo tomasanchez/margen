@@ -3,9 +3,11 @@
     "primary": "Primary",
     "home": "Home",
     "transactions": "Transactions",
+    "accounts": "Accounts",
     "monotributo": "Monotributo",
     "homeShort": "Home",
     "transactionsShort": "Activity",
+    "accountsShort": "Accounts",
     "monotributoShort": "Mono"
   },
   "actions": {

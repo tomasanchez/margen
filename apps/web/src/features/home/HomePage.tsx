@@ -52,6 +52,8 @@ import { CategoryBreakdown } from './CategoryBreakdown'
 import { MonotributoCard } from './MonotributoCard'
 import { Insights } from './Insights'
 import { RecentActivity } from './RecentActivity'
+import { NetWorthCard } from './NetWorthCard'
+import { useNetWorth } from '../accounts/queries'
 
 /** Percentage change from `previous` to `current`; 0 when previous is 0. */
 function pctChange(current: number, previous: number): number {
@@ -63,6 +65,8 @@ export function HomePage() {
   const { t } = useTranslation('home')
   const monotributoQuery = useMonotributo()
   const transactionsQuery = useTransactions()
+  // Net worth (ADR-122/123/127): an incremental Home addition below the hero.
+  const netWorthQuery = useNetWorth()
 
   // Calm note when USD is preferred but the live rate couldn't be fetched, so
   // the cards + summaries fall back to ARS (ADR-056/037). Null otherwise.
@@ -176,6 +180,15 @@ export function HomePage() {
           {fallbackNote}
         </Typography>
       ) : null}
+
+      <Box sx={{ mb: { xs: 1.75, md: 2.25 } }}>
+        <NetWorthCard
+          netWorth={netWorthQuery.data}
+          loading={netWorthQuery.isPending}
+          isError={netWorthQuery.isError}
+          onRetry={() => void netWorthQuery.refetch()}
+        />
+      </Box>
 
       <Box
         sx={{

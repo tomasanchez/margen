@@ -150,6 +150,10 @@
     "bank": {
       "section": "Bank / card"
     },
+    "account": {
+      "label": "Account",
+      "none": "No account"
+    },
     "date": {
       "label": "Date",
       "ariaLabel": "Transaction date"

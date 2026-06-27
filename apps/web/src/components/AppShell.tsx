@@ -22,6 +22,8 @@ import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import ReceiptLongOutlinedIcon from '@mui/icons-material/ReceiptLongOutlined'
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined'
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
+import AccountBalanceWalletOutlinedIcon from '@mui/icons-material/AccountBalanceWalletOutlined'
 import { AccountMenu } from './AccountMenu'
 import { MonthSwitcher } from './MonthSwitcher'
 import { MonthProvider } from './MonthProvider'
@@ -44,7 +46,7 @@ const MOBILE_SCROLL_CLEARANCE =
 /** A navigable destination wired to a router route. */
 interface NavRoute {
   kind: 'route'
-  to: '/' | '/transactions' | '/monotributo'
+  to: '/' | '/transactions' | '/accounts' | '/monotributo'
   /** i18n key (shell ns) for the sidebar label. */
   labelKey: string
   /** i18n key (shell ns) for the shorter mobile bottom-nav label. */
@@ -73,6 +75,14 @@ const NAV_ITEMS: NavItem[] = [
     shortLabelKey: 'nav.transactionsShort',
     icon: <ReceiptLongOutlinedIcon fontSize="small" />,
     activeIcon: <ReceiptLongIcon fontSize="small" />,
+  },
+  {
+    kind: 'route',
+    to: '/accounts',
+    labelKey: 'nav.accounts',
+    shortLabelKey: 'nav.accountsShort',
+    icon: <AccountBalanceWalletOutlinedIcon fontSize="small" />,
+    activeIcon: <AccountBalanceWalletIcon fontSize="small" />,
   },
   {
     kind: 'route',
