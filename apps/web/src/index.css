@@ -86,3 +86,26 @@ body {
 .mg-category-row-link:focus-visible {
   outline: 2px solid var(--mg-gold);
 }
+
+/*
+ * Monotributo card invoice drill-in link (ADR-062 pattern). A bare TanStack
+ * <Link> (so the typed `search` prop keeps route inference) styled to match the
+ * previous inline `sx`: gold text, flex-start alignment, gentle underline on
+ * hover, and a visible focus ring (never color alone — HIG / ADR-019).
+ */
+.mg-monotributo-drillin {
+  align-self: flex-start;
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--mg-gold);
+  text-decoration: none;
+  border-radius: 14px;
+}
+.mg-monotributo-drillin:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.mg-monotributo-drillin:focus-visible {
+  outline: 2px solid var(--mg-gold);
+  outline-offset: 2px;
+}

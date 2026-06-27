@@ -89,24 +89,37 @@ export interface UseTransactionFiltersOptions {
    * afterward, and it does not re-apply on re-render.
    */
   initialCategories?: Category[]
+  /**
+   * Type segment to seed the filter with on first mount (ADR-062 pattern). The
+   * Home Monotributo "See the N invoices behind this" link passes `'invoice'`.
+   * Used once via lazy reducer init (seed-once, like `initialCategories`); the
+   * user can clear or change it afterward and it does not re-apply on re-render.
+   * `'all'` (or absent) is a no-op.
+   */
+  initialType?: TypeFilter
 }
 
 /** Own the Transactions filter state and expose stable, typed setters. */
 export function useTransactionFilters(
   options: UseTransactionFiltersOptions = {},
 ): UseTransactionFilters {
-  const { initialCategories } = options
+  const { initialCategories, initialType } = options
   const [filters, dispatch] = useReducer(
     filtersReducer,
     undefined,
     (): TransactionFilters => {
-      // A category drilldown (ADR-062) should reveal the FULL history for that
-      // category, so it opens at "All time" rather than the current month.
-      if (initialCategories && initialCategories.length > 0) {
+      const hasCategorySeed = !!initialCategories && initialCategories.length > 0
+      const hasTypeSeed = !!initialType && initialType !== 'all'
+      // A drilldown (ADR-062) — by category and/or type — should reveal the
+      // FULL history for the seed rather than just the current month, so it
+      // opens at "All time". The Monotributo invoices feed the *annual* total,
+      // so they span the fiscal year, not the current month. Seeds compose.
+      if (hasCategorySeed || hasTypeSeed) {
         return {
           ...DEFAULT_FILTERS,
           month: ALL_MONTHS,
-          categories: [...initialCategories],
+          ...(hasCategorySeed ? { categories: [...initialCategories] } : {}),
+          ...(hasTypeSeed ? { type: initialType } : {}),
         }
       }
       // Otherwise default the per-screen month to the CURRENT month on first

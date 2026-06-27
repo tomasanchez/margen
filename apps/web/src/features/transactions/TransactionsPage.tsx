@@ -266,12 +266,23 @@ export interface TransactionsPageProps {
    * standalone in tests).
    */
   initialCategory?: Category
+  /**
+   * Optional type-segment drilldown seed (ADR-062 pattern), supplied by the
+   * route from the validated `/transactions?type=<value>` search param. The
+   * Home Monotributo card uses it to open pre-filtered to invoices. Like
+   * `initialCategory` it only seeds on first mount and stays user-overridable.
+   */
+  initialType?: TypeFilter
 }
 
-export function TransactionsPage({ initialCategory }: TransactionsPageProps = {}) {
+export function TransactionsPage({
+  initialCategory,
+  initialType,
+}: TransactionsPageProps = {}) {
   const { t } = useTranslation('transactions')
   const { filters, controls } = useTransactionFilters({
     initialCategories: initialCategory ? [initialCategory] : undefined,
+    initialType,
   })
   const { openAdd } = useAddTransaction()
   const transactionsQuery = useTransactions()

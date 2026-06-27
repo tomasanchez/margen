@@ -42,6 +42,10 @@ function renderCard(props: MonotributoCardProps) {
   const transactionsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/transactions',
+    // Mirror the app route's search validation so the drill-in <Link>'s
+    // `search={{ type: 'invoice' }}` is preserved into the rendered href.
+    validateSearch: (search: Record<string, unknown>) =>
+      search.type === 'invoice' ? { type: 'invoice' as const } : {},
     component: () => null,
   })
   const router = createRouter({
@@ -114,11 +118,13 @@ describe('status band mapping', () => {
 })
 
 describe('invoice drill-in link', () => {
-  test('pluralizes for many invoices', async () => {
+  test('pluralizes for many invoices and drills into the invoice filter', async () => {
     renderCard({ monotributo: BASE, invoiceCount: 7 })
+    // The link drills into Transactions pre-filtered to invoices (ADR-062
+    // pattern): the typed `search={{ type: 'invoice' }}` lands in the href.
     expect(
       await screen.findByRole('link', { name: 'See the 7 invoices behind this →' }),
-    ).toHaveAttribute('href', '/transactions')
+    ).toHaveAttribute('href', '/transactions?type=invoice')
   })
 
   test('uses the singular for exactly one invoice', async () => {

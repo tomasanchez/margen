@@ -15,6 +15,7 @@ import { SettingsPage } from './features/settings/SettingsPage'
 import { LoginPage } from './features/auth/LoginPage'
 import { CATEGORIES } from './mock/seed'
 import type { Category } from './mock/types'
+import { TYPE_OPTIONS, type TypeFilter } from './features/transactions/filtering'
 import type { RouterContext } from './router/context'
 
 /**
@@ -24,22 +25,40 @@ import type { RouterContext } from './router/context'
  * `/transactions?category=<name>` and the screen opens pre-filtered to it. The
  * value is validated against the known {@link Category} union so an absent or
  * unknown param is a no-op (`undefined`) rather than seeding a bogus filter.
+ *
+ * `type` mirrors that drilldown for the type segment: the Home Monotributo card
+ * links to `/transactions?type=invoice` so "See the N invoices behind this"
+ * opens pre-filtered to invoices. It is validated against the known
+ * {@link TypeFilter} values so an absent/unknown param is a no-op.
  */
 export interface TransactionsSearch {
   category?: Category
+  type?: TypeFilter
 }
 
 /** A Set of the known categories for O(1) validation of the search param. */
 const KNOWN_CATEGORIES = new Set<string>(CATEGORIES)
 
+/**
+ * A Set of the known {@link TypeFilter} values, derived from `TYPE_OPTIONS` so
+ * there is no second hardcoded copy of the union to drift (filtering.ts owns it).
+ */
+const KNOWN_TYPES = new Set<string>(TYPE_OPTIONS.map((o) => o.id))
+
 /** Validate (and narrow) the `/transactions` search params (ADR-062). */
 function validateTransactionsSearch(
   search: Record<string, unknown>,
 ): TransactionsSearch {
-  const raw = search.category
-  return typeof raw === 'string' && KNOWN_CATEGORIES.has(raw)
-    ? { category: raw as Category }
-    : {}
+  const result: TransactionsSearch = {}
+  const rawCategory = search.category
+  if (typeof rawCategory === 'string' && KNOWN_CATEGORIES.has(rawCategory)) {
+    result.category = rawCategory as Category
+  }
+  const rawType = search.type
+  if (typeof rawType === 'string' && KNOWN_TYPES.has(rawType)) {
+    result.type = rawType as TypeFilter
+  }
+  return result
 }
 
 /**
@@ -120,12 +139,12 @@ const transactionsRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/transactions',
   validateSearch: validateTransactionsSearch,
-  // Read the validated `category` search param here and seed the screen's
-  // category filter from it (ADR-062); this keeps TransactionsPage
+  // Read the validated `category` / `type` search params here and seed the
+  // screen's filters from them (ADR-062); this keeps TransactionsPage
   // router-agnostic (rendrable standalone in tests).
   component: () => {
-    const { category } = transactionsRoute.useSearch()
-    return <TransactionsPage initialCategory={category} />
+    const { category, type } = transactionsRoute.useSearch()
+    return <TransactionsPage initialCategory={category} initialType={type} />
   },
 })
 

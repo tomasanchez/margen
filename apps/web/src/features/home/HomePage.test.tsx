@@ -286,12 +286,13 @@ test('the Monotributo card shows the real standing and the invoice drill-in link
   // The status pill carries the watch band (icon + text, never color alone).
   expect(scoped.getByRole('status', { name: /watch/i })).toBeInTheDocument()
 
-  // The drill-in link to the Transactions screen renders; the seed has no
-  // invoice-kind rows in June, so the count reads zero (the singular/plural copy
-  // is covered at the MonotributoCard component level).
+  // The drill-in link to the Transactions screen renders pre-filtered to
+  // invoices (ADR-062 pattern); the seed has no invoice-kind rows in June, so
+  // the count reads zero (the singular/plural copy is covered at the
+  // MonotributoCard component level).
   expect(
     scoped.getByRole('link', { name: 'See the 0 invoices behind this →' }),
-  ).toHaveAttribute('href', '/transactions')
+  ).toHaveAttribute('href', '/transactions?type=invoice')
 })
 
 test('a month with no transactions shows the calm empty state', async () => {

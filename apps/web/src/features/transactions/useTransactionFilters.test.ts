@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import { ALL_MONTHS, currentViewingMonth } from '../../components/months'
 import { DEFAULT_FILTERS } from './filtering'
-import { filtersReducer } from './useTransactionFilters'
+import { filtersReducer, useTransactionFilters } from './useTransactionFilters'
 
 describe('filtersReducer', () => {
   test('setSearch / setType / setCurrency / setMonth / setAmount set values', () => {
@@ -43,5 +45,52 @@ describe('filtersReducer', () => {
       { kind: 'toggleCategory', value: 'Rent' },
     )
     expect(filtersReducer(dirty, { kind: 'clear' })).toEqual(DEFAULT_FILTERS)
+  })
+})
+
+describe('useTransactionFilters seeding (ADR-062 drilldown)', () => {
+  test('with no options, defaults month to the current month and type to "all"', () => {
+    const { result } = renderHook(() => useTransactionFilters())
+    expect(result.current.filters.month).toEqual(currentViewingMonth())
+    expect(result.current.filters.type).toBe('all')
+    expect(result.current.filters.categories).toEqual([])
+  })
+
+  test('initialType seeds the type segment AND opens at All time', () => {
+    const { result } = renderHook(() =>
+      useTransactionFilters({ initialType: 'invoice' }),
+    )
+    expect(result.current.filters.type).toBe('invoice')
+    expect(result.current.filters.month).toBe(ALL_MONTHS)
+  })
+
+  test('initialType of "all" is a no-op (keeps the current-month default)', () => {
+    const { result } = renderHook(() =>
+      useTransactionFilters({ initialType: 'all' }),
+    )
+    expect(result.current.filters.type).toBe('all')
+    expect(result.current.filters.month).toEqual(currentViewingMonth())
+  })
+
+  test('initialType composes with initialCategories, both seeded at All time', () => {
+    const { result } = renderHook(() =>
+      useTransactionFilters({
+        initialType: 'invoice',
+        initialCategories: ['Income'],
+      }),
+    )
+    expect(result.current.filters.type).toBe('invoice')
+    expect(result.current.filters.categories).toEqual(['Income'])
+    expect(result.current.filters.month).toBe(ALL_MONTHS)
+  })
+
+  test('seeded type stays overridable by the user afterward', () => {
+    const { result } = renderHook(() =>
+      useTransactionFilters({ initialType: 'invoice' }),
+    )
+    act(() => {
+      result.current.controls.setType('income')
+    })
+    expect(result.current.filters.type).toBe('income')
   })
 })
