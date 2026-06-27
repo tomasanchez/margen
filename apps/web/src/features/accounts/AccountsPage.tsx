@@ -51,6 +51,11 @@ import {
 import { accountTypeLabel } from './presentation'
 import { AccountForm } from './AccountForm'
 import { InstitutionForm } from './InstitutionForm'
+import {
+  InstitutionWizard,
+  type AccountResult,
+  type WizardSubmit,
+} from './InstitutionWizard'
 
 /** A drilldown route + search to the account's transactions (ADR-116/134). */
 const accountDrilldownClass = 'mg-account-row-link'
@@ -217,7 +222,23 @@ export function AccountsPage() {
   const createAccount = useCreateAccount()
   const updateAccount = useUpdateAccount()
 
-  // Institution dialog: closed, or add (institution === null) / edit.
+  // Onboarding wizard (NEW institution + optional accounts). The per-section
+  // "Add account" + "Edit institution" affordances stay for existing rows.
+  const [wizardOpen, setWizardOpen] = useState(false)
+  // The institution id once it has been created — drives retry-only Finish and
+  // never discards a created institution on a partial failure (ADR-037).
+  const [wizardInstitutionId, setWizardInstitutionId] = useState<string | null>(
+    null,
+  )
+  const [wizardInstitutionError, setWizardInstitutionError] = useState(false)
+  const [wizardSubmitting, setWizardSubmitting] = useState(false)
+  // Per-queued-account outcome by the wizard's local key.
+  const [wizardResults, setWizardResults] = useState<
+    Record<string, AccountResult>
+  >({})
+  const [wizardAllDone, setWizardAllDone] = useState(false)
+
+  // Edit-institution dialog: closed, or edit (the wizard owns "add" now).
   const [institutionDialogOpen, setInstitutionDialogOpen] = useState(false)
   const [editingInstitution, setEditingInstitution] =
     useState<Institution | null>(null)
@@ -234,12 +255,67 @@ export function AccountsPage() {
   const accountSaving = createAccount.isPending || updateAccount.isPending
   const accountSaveError = createAccount.isError || updateAccount.isError
 
-  const openAddInstitution = () => {
+  // Open the onboarding wizard with a clean slate.
+  const openWizard = () => {
     createInstitution.reset()
-    updateInstitution.reset()
-    setEditingInstitution(null)
-    setInstitutionDialogOpen(true)
+    createAccount.reset()
+    setWizardInstitutionId(null)
+    setWizardInstitutionError(false)
+    setWizardSubmitting(false)
+    setWizardResults({})
+    setWizardAllDone(false)
+    setWizardOpen(true)
   }
+  const closeWizard = () => setWizardOpen(false)
+
+  /**
+   * Finish the wizard: create the institution first (unless it already exists
+   * from a prior partial-failure attempt), then create each queued account that
+   * has not yet succeeded. On a partial failure we keep the created institution
+   * + the successful accounts, mark the failed ones, and let the user retry —
+   * never discarding the institution silently (ADR-037).
+   */
+  const handleWizardFinish = async (submit: WizardSubmit) => {
+    setWizardSubmitting(true)
+    setWizardInstitutionError(false)
+
+    let institutionId = wizardInstitutionId
+    if (!institutionId) {
+      try {
+        const created = await createInstitution.mutateAsync(submit.institution)
+        institutionId = created.id
+        setWizardInstitutionId(created.id)
+      } catch {
+        // Institution itself failed: surface it and stop — nothing to retry yet.
+        setWizardInstitutionError(true)
+        setWizardSubmitting(false)
+        return
+      }
+    }
+
+    // Create only the accounts that have not already succeeded (retry-safe).
+    const nextResults: Record<string, AccountResult> = { ...wizardResults }
+    let anyFailed = false
+    for (const account of submit.accounts) {
+      if (nextResults[account.key] === 'created') continue
+      try {
+        await createAccount.mutateAsync({
+          institutionId,
+          currency: account.currency,
+          openingBalance: account.openingBalance,
+        })
+        nextResults[account.key] = 'created'
+      } catch {
+        nextResults[account.key] = 'failed'
+        anyFailed = true
+      }
+    }
+
+    setWizardResults(nextResults)
+    setWizardSubmitting(false)
+    if (!anyFailed) setWizardAllDone(true)
+  }
+
   const openEditInstitution = (institution: Institution) => {
     createInstitution.reset()
     updateInstitution.reset()
@@ -329,7 +405,7 @@ export function AccountsPage() {
       <Button
         variant="contained"
         startIcon={<AddIcon />}
-        onClick={openAddInstitution}
+        onClick={openWizard}
         sx={{ textTransform: 'none', fontWeight: 600, flex: 'none' }}
       >
         {t('addInstitution')}
@@ -395,6 +471,23 @@ export function AccountsPage() {
           ))}
         </Box>
       )}
+
+      {/* Onboarding wizard for a NEW institution (+ optional accounts).
+          Remounted per open so its internal step/queue state starts fresh. */}
+      {wizardOpen ? (
+        <InstitutionWizard
+          open
+          institutionCreated={wizardInstitutionId !== null}
+          isSubmitting={wizardSubmitting}
+          institutionError={wizardInstitutionError}
+          accountResults={wizardResults}
+          allDone={wizardAllDone}
+          onFinish={(submit) => {
+            void handleWizardFinish(submit)
+          }}
+          onClose={closeWizard}
+        />
+      ) : null}
 
       {/* Keyed by the target so the seeded state always reflects the current
           institution and no stale closed instance lingers (aria-hidden). */}

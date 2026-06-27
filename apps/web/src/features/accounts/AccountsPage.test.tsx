@@ -132,21 +132,138 @@ describe('AccountsPage', () => {
     expect(link).toHaveAttribute('href', '/transactions?account=a1&month=all')
   })
 
-  test('"Add institution" saves name + type', async () => {
+  test('the onboarding wizard advances step 1 -> 2 and skips to create the institution alone', async () => {
     const user = userEvent.setup()
+    mockCreateInstitution.mockResolvedValue({
+      id: 'inst-new',
+      name: 'Brubank',
+      type: 'bank',
+    })
     renderAccountsPage()
     await screen.findByText('Galicia')
 
     await user.click(screen.getByRole('button', { name: 'Add institution' }))
     await screen.findByRole('dialog')
+
+    // Step 1: name is required to advance.
+    const next = screen.getByRole('button', { name: 'Next' })
+    expect(next).toBeDisabled()
     await user.type(screen.getByRole('textbox', { name: /Name/ }), 'Brubank')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(next).toBeEnabled()
+    await user.click(next)
+
+    // Step 2: with nothing queued, Skip creates the institution with no accounts.
+    await screen.findByRole('button', { name: 'Skip' })
+    await user.click(screen.getByRole('button', { name: 'Skip' }))
 
     await waitFor(() => expect(mockCreateInstitution).toHaveBeenCalledTimes(1))
     expect(mockCreateInstitution).toHaveBeenCalledWith({
       name: 'Brubank',
       type: 'bank',
     })
+    // No accounts were created on a skip.
+    expect(mockCreateAccount).not.toHaveBeenCalled()
+    // Calm success is shown, not a crash.
+    expect(await screen.findByText('Brubank is ready')).toBeInTheDocument()
+  })
+
+  test('the wizard queues ARS + USD accounts and finish creates the institution then both accounts', async () => {
+    const user = userEvent.setup()
+    mockCreateInstitution.mockResolvedValue({
+      id: 'inst-new',
+      name: 'Brubank',
+      type: 'bank',
+    })
+    renderAccountsPage()
+    await screen.findByText('Galicia')
+
+    await user.click(screen.getByRole('button', { name: 'Add institution' }))
+    await screen.findByRole('dialog')
+    await user.type(screen.getByRole('textbox', { name: /Name/ }), 'Brubank')
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+
+    // Queue an ARS and a USD account.
+    await user.click(screen.getByRole('button', { name: 'Add ARS account' }))
+    await user.click(screen.getByRole('button', { name: 'Add USD account' }))
+
+    const balanceFields = screen.getAllByRole('textbox', {
+      name: /Opening balance/,
+    })
+    await user.type(balanceFields[0], '150000')
+    await user.type(balanceFields[1], '1200')
+
+    await user.click(screen.getByRole('button', { name: 'Finish' }))
+
+    // Institution is created first.
+    await waitFor(() => expect(mockCreateInstitution).toHaveBeenCalledTimes(1))
+    // Then both accounts, attached to the new institution id.
+    await waitFor(() => expect(mockCreateAccount).toHaveBeenCalledTimes(2))
+    expect(mockCreateAccount).toHaveBeenNthCalledWith(1, {
+      institutionId: 'inst-new',
+      currency: 'ARS',
+      openingBalance: '150000.00',
+    })
+    expect(mockCreateAccount).toHaveBeenNthCalledWith(2, {
+      institutionId: 'inst-new',
+      currency: 'USD',
+      openingBalance: '1200.00',
+    })
+    expect(await screen.findByText('Brubank is ready')).toBeInTheDocument()
+  })
+
+  test('on a partial account failure the wizard keeps the institution and retries only the failed account', async () => {
+    const user = userEvent.setup()
+    mockCreateInstitution.mockResolvedValue({
+      id: 'inst-new',
+      name: 'Brubank',
+      type: 'bank',
+    })
+    // First account (ARS) succeeds; second (USD) fails, then succeeds on retry.
+    mockCreateAccount
+      .mockResolvedValueOnce(ACCOUNTS[0])
+      .mockRejectedValueOnce(new AccountApiError(503, 'unavailable'))
+      .mockResolvedValueOnce(ACCOUNTS[1])
+
+    renderAccountsPage()
+    await screen.findByText('Galicia')
+
+    await user.click(screen.getByRole('button', { name: 'Add institution' }))
+    await screen.findByRole('dialog')
+    await user.type(screen.getByRole('textbox', { name: /Name/ }), 'Brubank')
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+
+    await user.click(screen.getByRole('button', { name: 'Add ARS account' }))
+    await user.click(screen.getByRole('button', { name: 'Add USD account' }))
+    const balanceFields = screen.getAllByRole('textbox', {
+      name: /Opening balance/,
+    })
+    await user.type(balanceFields[0], '150000')
+    await user.type(balanceFields[1], '1200')
+
+    await user.click(screen.getByRole('button', { name: 'Finish' }))
+
+    // The institution is created once and is NOT discarded on the failure.
+    await waitFor(() => expect(mockCreateInstitution).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mockCreateAccount).toHaveBeenCalledTimes(2))
+    // The partial-failure message surfaces and the wizard offers a retry.
+    expect(
+      await screen.findByText(/the institution was created, but some accounts/i),
+    ).toBeInTheDocument()
+    const retry = await screen.findByRole('button', {
+      name: 'Retry failed accounts',
+    })
+
+    // Retry re-POSTs ONLY the failed (USD) account — institution is not re-created.
+    await user.click(retry)
+    await waitFor(() => expect(mockCreateAccount).toHaveBeenCalledTimes(3))
+    expect(mockCreateInstitution).toHaveBeenCalledTimes(1)
+    // The retried call is the USD account.
+    expect(mockCreateAccount).toHaveBeenNthCalledWith(3, {
+      institutionId: 'inst-new',
+      currency: 'USD',
+      openingBalance: '1200.00',
+    })
+    expect(await screen.findByText('Brubank is ready')).toBeInTheDocument()
   })
 
   test('"Add account" under an institution POSTs the currency + balance body', async () => {

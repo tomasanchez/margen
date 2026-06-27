@@ -33,6 +33,7 @@ import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import type { Account, Currency, Institution } from '../../mock/types'
 import type { AccountWriteBody } from '../../api/accountsClient'
+import { parseBalance, toDecimalString } from './balance'
 
 export interface AccountFormProps {
   /** Whether the dialog is open. */
@@ -49,31 +50,6 @@ export interface AccountFormProps {
   onSubmit: (input: AccountWriteBody) => void
   /** Cancel / dismiss the dialog. */
   onClose: () => void
-}
-
-/** Parse a free-text balance to a finite number (es-AR-ish: comma OR dot). */
-function parseBalance(raw: string): number {
-  const cleaned = raw.replace(/\s/g, '').replace(/[^\d.,-]/g, '')
-  if (cleaned === '') return Number.NaN
-  const lastComma = cleaned.lastIndexOf(',')
-  const lastDot = cleaned.lastIndexOf('.')
-  let normalized: string
-  if (lastComma > -1 && lastDot > -1) {
-    const decimalSep = lastComma > lastDot ? ',' : '.'
-    const groupSep = decimalSep === ',' ? '.' : ','
-    normalized = cleaned.split(groupSep).join('').replace(decimalSep, '.')
-  } else if (lastComma > -1) {
-    normalized = cleaned.replace(',', '.')
-  } else {
-    normalized = cleaned
-  }
-  const value = Number(normalized)
-  return Number.isFinite(value) ? value : Number.NaN
-}
-
-/** Round to 2 decimals and serialize as the Decimal string the API expects. */
-function toDecimalString(value: number): string {
-  return value.toFixed(2)
 }
 
 export function AccountForm({

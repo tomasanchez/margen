@@ -18,6 +18,42 @@
     "editAccountAria": "Editar la cuenta {{currency}} de {{institution}}",
     "drilldownAria": "Ver los movimientos de {{institution}} {{currency}}"
   },
+  "wizard": {
+    "title": "Agregar entidad",
+    "step1": {
+      "label": "Entidad",
+      "heading": "¿Qué entidad es?"
+    },
+    "step2": {
+      "label": "Cuentas",
+      "heading": "Agregá sus cuentas",
+      "subheading": "Opcional — agregá una cuenta en ARS o USD ahora, o salteá y agregalas después.",
+      "empty": "Todavía no hay cuentas. Agregá una abajo, o salteá para crear solo la entidad.",
+      "addCurrency": "Agregar cuenta {{currency}}",
+      "allCurrenciesAdded": "Ambas monedas agregadas",
+      "removeAria": "Quitar la cuenta {{currency}} {{index}}",
+      "rowInvalid": "Ingresá un saldo inicial válido.",
+      "rowFailed": "No se pudo crear esta cuenta. Reintentá abajo.",
+      "rowFailedAria": "La cuenta {{currency}} no se pudo crear",
+      "rowCreated": "Creada.",
+      "rowCreatedAria": "Cuenta {{currency}} creada"
+    },
+    "institutionError": "No pudimos crear la entidad. Verificá tu conexión e intentá de nuevo.",
+    "partialFailure": "La entidad se creó, pero algunas cuentas no. Corregilas y reintentá — la entidad se conserva.",
+    "success": {
+      "title": "{{name}} está lista",
+      "noAccounts": "Creada sin cuentas por ahora. Agregalas cuando quieras desde la lista.",
+      "body_one": "Creada con 1 cuenta.",
+      "body_other": "Creada con {{count}} cuentas."
+    },
+    "cancel": "Cancelar",
+    "back": "Atrás",
+    "next": "Siguiente",
+    "skip": "Saltear",
+    "finish": "Finalizar",
+    "retry": "Reintentar cuentas fallidas",
+    "done": "Listo"
+  },
   "institutionForm": {
     "addTitle": "Agregar entidad",
     "editTitle": "Editar entidad",

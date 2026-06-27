@@ -18,6 +18,42 @@
     "editAccountAria": "Edit {{institution}} {{currency}} account",
     "drilldownAria": "View {{institution}} {{currency}} transactions"
   },
+  "wizard": {
+    "title": "Add institution",
+    "step1": {
+      "label": "Institution",
+      "heading": "What institution is this?"
+    },
+    "step2": {
+      "label": "Accounts",
+      "heading": "Add its accounts",
+      "subheading": "Optional — add an ARS and/or USD account now, or skip and add them later.",
+      "empty": "No accounts yet. Add one below, or skip to create the institution on its own.",
+      "addCurrency": "Add {{currency}} account",
+      "allCurrenciesAdded": "Both currencies added",
+      "removeAria": "Remove {{currency}} account {{index}}",
+      "rowInvalid": "Enter a valid opening balance.",
+      "rowFailed": "Couldn't create this account. Retry below.",
+      "rowFailedAria": "{{currency}} account failed to create",
+      "rowCreated": "Created.",
+      "rowCreatedAria": "{{currency}} account created"
+    },
+    "institutionError": "We couldn't create the institution. Check your connection and try again.",
+    "partialFailure": "The institution was created, but some accounts didn't. Fix them and retry — the institution is kept.",
+    "success": {
+      "title": "{{name}} is ready",
+      "noAccounts": "Created with no accounts yet. Add them anytime from the list.",
+      "body_one": "Created with 1 account.",
+      "body_other": "Created with {{count}} accounts."
+    },
+    "cancel": "Cancel",
+    "back": "Back",
+    "next": "Next",
+    "skip": "Skip",
+    "finish": "Finish",
+    "retry": "Retry failed accounts",
+    "done": "Done"
+  },
   "institutionForm": {
     "addTitle": "Add institution",
     "editTitle": "Edit institution",
