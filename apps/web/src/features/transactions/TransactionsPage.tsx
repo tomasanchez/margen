@@ -60,6 +60,7 @@ import {
 } from './filtering'
 import { currentViewingMonth } from '../../components/months'
 import { useDeleteTransaction, useTransactions } from './queries'
+import { useAccounts } from '../accounts/queries'
 
 /** Search-box debounce before the query `q` is pushed to the URL (ADR-116). */
 const SEARCH_DEBOUNCE_MS = 300
@@ -88,13 +89,6 @@ function useStandaloneFilters(): UseTransactionFilters {
           categories: f.categories.includes(value)
             ? f.categories.filter((c) => c !== value)
             : [...f.categories, value],
-        })),
-      toggleBank: (value) =>
-        setFilters((f) => ({
-          ...f,
-          banks: f.banks.includes(value)
-            ? f.banks.filter((b) => b !== value)
-            : [...f.banks, value],
         })),
       toggleAccount: (value) =>
         setFilters((f) => ({
@@ -345,6 +339,20 @@ export function TransactionsPage({
   const deleteMutation = useDeleteTransaction()
   const [sheetOpen, setSheetOpen] = useState(false)
 
+  // The accounts list (already loaded for the Account filter) doubles as the
+  // row attribution source (ADR-136 extension): build a single `accountId →
+  // institutionName` lookup so each row resolves its attribution in O(1) with no
+  // per-row fetch. A row with no `accountId` (or an unknown id) falls back to its
+  // legacy `bank · card` tag inside `attributionLabel`.
+  const accountsQuery = useAccounts()
+  const accountNames = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const account of accountsQuery.data ?? []) {
+      map.set(account.id, account.institutionName)
+    }
+    return map
+  }, [accountsQuery.data])
+
   // Search box: keep a local value so typing is instant, then debounce-push `q`
   // to the URL (ADR-116). When the URL `q` changes externally (back/forward, or
   // a drill-in), sync the local value back. We track the last value we pushed so
@@ -563,6 +571,7 @@ export function TransactionsPage({
                       onEdit={handleEdit}
                       onDelete={handleDelete}
                       busy={deletingId === t.id}
+                      accountNames={accountNames}
                     />
                   ))}
                 </Box>
@@ -575,6 +584,7 @@ export function TransactionsPage({
                       onEdit={handleEdit}
                       onDelete={handleDelete}
                       busy={deletingId === t.id}
+                      accountNames={accountNames}
                     />
                   ))}
                 </Box>

@@ -2,8 +2,8 @@
  * Desktop filter bar for the Transactions screen (ADR-017).
  *
  * A search field (matches name OR category), two segmented controls (type and
- * currency) built on MUI ToggleButtonGroup, multi-select Category and Bank menus
- * with per-option counts, an amount-range select menu, and a "Clear filters"
+ * currency) built on MUI ToggleButtonGroup, multi-select Category and Account
+ * menus with per-option counts, an amount-range select menu, and a "Clear filters"
  * affordance that appears only when something is active. The gold active state
  * comes from the theme primary token; everything is keyboard-operable and
  * carries accessible names (ADR-019).
@@ -29,15 +29,14 @@ import Typography from '@mui/material/Typography'
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown'
 import SearchIcon from '@mui/icons-material/Search'
 import { monoFontFamily } from '../../theme'
-import { BANKS, CATEGORIES } from '../../mock/seed'
-import type { Account, Bank, Category, Transaction } from '../../mock/types'
+import { CATEGORIES } from '../../mock/seed'
+import type { Account, Category, Transaction } from '../../mock/types'
 import { useAccounts } from '../accounts/queries'
 import {
   AMOUNT_RANGES,
   CURRENCY_OPTIONS,
   TYPE_OPTIONS,
   countByAccount,
-  countByBank,
   countByCategory,
   hasActiveFilters,
   type AmountRange,
@@ -46,7 +45,7 @@ import {
   type TypeFilter,
 } from './filtering'
 import { MonthPicker } from './MonthPicker'
-import { accountOptionLabel, bankLabel, categoryLabel } from './presentation'
+import { accountOptionLabel, categoryLabel } from './presentation'
 import type { FilterControls } from './useTransactionFilters'
 
 /**
@@ -291,7 +290,7 @@ export function FilterBar({
 
   // The Account filter options (ADR-134) come from the user's accounts list,
   // labeled "{institutionName} · {currency}". Read non-blockingly: while pending
-  // or absent the menu simply has no options (the bank filter is unaffected).
+  // or absent the menu simply has no options.
   const accountsQuery = useAccounts()
   const accounts = accountsQuery.data ?? []
   const accountById = new Map<string, Account>(accounts.map((a) => [a.id, a]))
@@ -381,16 +380,6 @@ export function FilterBar({
           countOf={(c) => countByCategory(allTransactions, c)}
           onToggle={controls.toggleCategory}
           formatOption={categoryLabel}
-        />
-
-        <MultiSelectMenu<Bank>
-          buttonLabel={t('filters.bankLabel')}
-          baseLabel={t('filters.bankLabel')}
-          options={BANKS}
-          selected={filters.banks}
-          countOf={(b) => countByBank(allTransactions, b)}
-          onToggle={controls.toggleBank}
-          formatOption={bankLabel}
         />
 
         {accountIds.length > 0 ? (

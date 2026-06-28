@@ -205,7 +205,13 @@ export interface NewTransactionInput {
   dispDate: string
   name: string
   category: Category
-  bank: Bank
+  /**
+   * Optional legacy bank tag (ADR-117). No longer set by the Add/Edit form
+   * (ADR-136 extension — attribution is the `accountId` below); kept optional so
+   * non-form create paths (e.g. statement import) may still carry it. Omitted by
+   * manual entries; the client sends it only when present.
+   */
+  bank?: Bank
   /**
    * Optional card-level display detail (ADR-117), e.g. "VISA ·5771". Import-set,
    * not user-editable; carried through an edit's prefill + save so editing an

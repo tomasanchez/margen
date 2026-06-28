@@ -111,7 +111,7 @@ describe('filterTransactions', () => {
     expect(expenses.rows.every((t) => t.type === 'expense')).toBe(true)
   })
 
-  test('currency, month, category and bank filters narrow the list', () => {
+  test('currency, month and category filters narrow the list', () => {
     const usd = filterTransactions(
       SEED_TRANSACTIONS,
       withFilters({ currency: 'USD' }),
@@ -137,25 +137,6 @@ describe('filterTransactions', () => {
       withFilters({ categories: ['Food'] }),
     )
     expect(food.rows.every((t) => t.category === 'Food')).toBe(true)
-
-    const transfer = filterTransactions(
-      SEED_TRANSACTIONS,
-      withFilters({ banks: ['Transfer'] }),
-    )
-    expect(transfer.rows.every((t) => t.bank === 'Transfer')).toBe(true)
-  })
-
-  test('a normalized bank matches every row for that bank regardless of card (ADR-117)', () => {
-    const santander = filterTransactions(
-      SEED_TRANSACTIONS,
-      withFilters({ banks: ['Santander'] }),
-    )
-    // Two Santander rows in the fixture carry DIFFERENT cards — both must match.
-    expect(santander.rows.every((t) => t.bank === 'Santander')).toBe(true)
-    expect(santander.filteredCount).toBe(2)
-    expect(new Set(santander.rows.map((t) => t.card))).toEqual(
-      new Set(['AMEX ·1234', 'VISA ·5771']),
-    )
   })
 
   test('the account filter narrows by accountId (ADR-134)', () => {
@@ -310,7 +291,6 @@ describe('validateTransactionsSearch (ADR-116)', () => {
         currency: 'USD',
         month: '2026-05',
         category: 'Food,Rent',
-        bank: 'Brubank',
         amount: 'gt1m',
       }),
     ).toEqual({
@@ -319,7 +299,6 @@ describe('validateTransactionsSearch (ADR-116)', () => {
       currency: 'USD',
       month: '2026-05',
       category: 'Food,Rent',
-      bank: 'Brubank',
       amount: 'gt1m',
     })
   })
@@ -332,7 +311,6 @@ describe('validateTransactionsSearch (ADR-116)', () => {
         currency: 'all',
         amount: 'any',
         category: '',
-        bank: '',
       }),
     ).toEqual({})
   })
@@ -364,29 +342,6 @@ describe('validateTransactionsSearch (ADR-116)', () => {
     })
     // All unknown → the param is omitted entirely.
     expect(validateTransactionsSearch({ category: 'Bogus,Nope' })).toEqual({})
-  })
-
-  test('de-duplicates and validates the bank multi-select', () => {
-    expect(
-      validateTransactionsSearch({ bank: 'Brubank,Brubank,Deel' }),
-    ).toEqual({ bank: 'Brubank,Deel' })
-  })
-
-  test('accepts each of the six normalized banks and drops legacy composites (ADR-117)', () => {
-    expect(
-      validateTransactionsSearch({
-        bank: 'Galicia,Santander,Mercado Pago,Brubank,Deel,Transfer',
-      }),
-    ).toEqual({
-      bank: 'Galicia,Santander,Mercado Pago,Brubank,Deel,Transfer',
-    })
-    // Old composite values are no longer in the known set → dropped.
-    expect(
-      validateTransactionsSearch({ bank: 'Galicia · Visa,Santander' }),
-    ).toEqual({ bank: 'Santander' })
-    expect(
-      validateTransactionsSearch({ bank: 'Galicia · Visa' }),
-    ).toEqual({})
   })
 
   test('back-compatible single category drilldown still validates', () => {
@@ -423,7 +378,6 @@ describe('searchToFilters (ADR-116)', () => {
     expect(f.currency).toBe('all')
     expect(f.q).toBe('')
     expect(f.categories).toEqual([])
-    expect(f.banks).toEqual([])
     expect(f.accounts).toEqual([])
     expect(f.amount).toBe('any')
   })
@@ -436,7 +390,6 @@ describe('searchToFilters (ADR-116)', () => {
         currency: 'ARS',
         month: '2026-05',
         category: 'Food,Rent',
-        bank: 'Brubank,Deel',
         account: 'acc-1,acc-2',
         amount: '100_1m',
       },
@@ -448,7 +401,6 @@ describe('searchToFilters (ADR-116)', () => {
       currency: 'ARS',
       month: { year: 2026, month: 4 },
       categories: ['Food', 'Rent'],
-      banks: ['Brubank', 'Deel'],
       accounts: ['acc-1', 'acc-2'],
       amount: '100_1m',
     })
@@ -479,7 +431,6 @@ describe('filtersToSearch (ADR-116, defaults omitted)', () => {
       currency: 'USD',
       month: { year: 2026, month: 4 },
       categories: ['Food', 'Rent'],
-      banks: ['Brubank'],
       accounts: ['acc-1', 'acc-2'],
       amount: 'gt1m',
     }
@@ -489,7 +440,6 @@ describe('filtersToSearch (ADR-116, defaults omitted)', () => {
       currency: 'USD',
       month: '2026-05',
       category: 'Food,Rent',
-      bank: 'Brubank',
       account: 'acc-1,acc-2',
       amount: 'gt1m',
     })
@@ -502,7 +452,6 @@ describe('filtersToSearch (ADR-116, defaults omitted)', () => {
       currency: 'ARS',
       month: LAST_12_MONTHS,
       categories: ['Transport'],
-      banks: [],
       accounts: ['acc-9'],
       amount: 'lt10',
     }

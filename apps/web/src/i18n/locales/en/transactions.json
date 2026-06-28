@@ -43,7 +43,6 @@
     "typeAriaLabel": "Transaction type",
     "currencyAriaLabel": "Currency",
     "categoryLabel": "Category",
-    "bankLabel": "Bank / card",
     "accountLabel": "Account",
     "amountLabel": "Amount",
     "trigger": "Filters",
@@ -53,7 +52,6 @@
     "sheetTitle": "Filters",
     "currencySection": "Currency",
     "categorySection": "Category",
-    "bankSection": "Bank / card",
     "accountSection": "Account",
     "amountSection": "Amount",
     "showResults_one": "Show {{count}} transaction",
@@ -150,9 +148,6 @@
       "section": "Category",
       "loadCuota": "Load Monotributo cuota",
       "loadCuotaAmount": "Load Monotributo cuota (ARS {{amount}})"
-    },
-    "bank": {
-      "section": "Bank / card"
     },
     "account": {
       "label": "Account",

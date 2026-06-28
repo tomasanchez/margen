@@ -253,9 +253,12 @@ export function toCreateBody(input: NewTransactionInput): TransactionCreateBody 
     currency: input.currency,
     name: input.name,
     category: input.category,
-    bank: input.bank,
     countsTowardMonotributo: input.countsTowardMonotributo ?? false,
   }
+  // The legacy bank tag is no longer set by the Add/Edit form (ADR-136
+  // extension): attribution comes from `accountId`. Sent only when an input
+  // still carries it (e.g. a statement-import create path), omitted otherwise.
+  if (input.bank !== undefined) body.bank = input.bank
   if (input.card !== undefined) body.card = input.card
   // The attributed account (ADR-122/133); sent when the input carries it (incl.
   // null for an explicitly-unlinked row). The lenient backend defaults a missing

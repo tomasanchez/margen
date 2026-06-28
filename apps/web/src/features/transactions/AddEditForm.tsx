@@ -5,7 +5,7 @@
  * (mobile) by {@link AddEditTransaction}. It ports the concept's Add modal
  * (Margen Home.dc.html) to MUI: segmented Expense / Invoice·income tabs, a large
  * IBM Plex Mono amount input with a currency-symbol prefix, an ARS/USD toggle
- * with an editable MEP FX context line, category + bank chips, a native date
+ * with an editable MEP FX context line, category chips, an account selector, a native date
  * picker (default today, max today; backdating allowed — ADR-041), an optional
  * "More details" section, and Cancel / Save.
  *
@@ -41,9 +41,7 @@ import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded'
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded'
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
-import { BANKS } from '../../mock/seed'
 import type {
-  Bank,
   Currency,
   NewTransactionInput,
   TxType,
@@ -57,7 +55,7 @@ import {
 import { useMonotributoSnapshot } from '../monotributo/queries'
 import { useAccounts } from '../accounts/queries'
 import type { AddPrefill } from './addContext'
-import { accountOptionLabel, bankLabel, categoryLabel } from './presentation'
+import { accountOptionLabel, categoryLabel } from './presentation'
 import {
   EXPENSE_CATEGORIES,
   useAddEditFormState,
@@ -73,7 +71,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-/** Gold-tinted selectable chip used for category and bank pickers. */
+/** Gold-tinted selectable chip used for the category picker. */
 function SelectChip({
   label,
   selected,
@@ -826,25 +824,11 @@ export function AddEditForm({
         </Box>
       ) : null}
 
-      {/* Bank / card chips (single select). */}
-      <Box sx={{ mt: 2.5 }}>
-        <SectionLabel>{t('form.bank.section')}</SectionLabel>
-        <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-          {BANKS.map((bank: Bank) => (
-            <SelectChip
-              key={bank}
-              label={bankLabel(bank)}
-              selected={form.bank === bank}
-              onClick={() => form.setBank(bank)}
-            />
-          ))}
-        </Stack>
-      </Box>
-
-      {/* Account selector (ADR-122/133). The chosen account supersedes the bank
-          tag for attribution; the bank/card chips above stay for display
-          (ADR-117). A "no account" option leaves the row unlinked. The selector
-          is always shown so a row can be attributed even before any FX/USD step. */}
+      {/* Account selector (ADR-122/133/134). The chosen account is the row's
+          attribution (ADR-136 extension: the legacy bank picker is retired — a
+          manual entry no longer carries a bank tag, its source is the account).
+          A "no account" option leaves the row unlinked. The selector is always
+          shown so a row can be attributed even before any FX/USD step. */}
       <Box sx={{ mt: 2.5 }}>
         <FormControl fullWidth size="small">
           <InputLabel id={`${accountSelectId}-label`}>

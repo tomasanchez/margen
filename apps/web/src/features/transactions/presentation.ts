@@ -63,6 +63,36 @@ export function bankCardLabel(
 }
 
 /**
+ * The calm, secondary attribution line for a transaction row (ADR-136 extension
+ * of ADR-134/117).
+ *
+ * Attribution now comes from the LINKED ACCOUNT: when the row carries an
+ * `accountId` that resolves to a known account, the account's institution name
+ * is the base label (composed with the import-set `card` detail when present,
+ * e.g. "Galicia · VISA ·5771"). A row with no `accountId` — or one whose account
+ * is no longer in the list — FALLS BACK to the legacy `bank · card` tag
+ * ({@link bankCardLabel}), covering statement-imported / not-yet-linked rows.
+ *
+ * `accountNames` is a precomputed `accountId → institutionName` lookup (built
+ * once on the page from the loaded accounts), so resolving a row is O(1) and
+ * never triggers a per-row fetch. Pure (no React) so the row + tests can share it.
+ */
+export function attributionLabel(
+  transaction: Pick<Transaction, 'accountId' | 'bank' | 'card'>,
+  accountNames: ReadonlyMap<string, string>,
+): string {
+  const institutionName = transaction.accountId
+    ? accountNames.get(transaction.accountId)
+    : undefined
+  if (institutionName) {
+    const detail = transaction.card?.trim()
+    return detail ? `${institutionName} · ${detail}` : institutionName
+  }
+  // No account (or an unknown id): show the legacy bank · card display.
+  return bankCardLabel(transaction.bank, transaction.card)
+}
+
+/**
  * Label for an account in the selector / Account filter (ADR-134):
  * "{institutionName} · {currency}", e.g. "Galicia · ARS". The institution name
  * is a brand string kept as-is; the currency code is a canonical identifier. Pure

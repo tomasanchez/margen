@@ -4,8 +4,9 @@
  * Drives the shared Add/Edit form through its real seam and asserts that picking
  * an account from the selector sets `accountId` on the assembled create body, and
  * that editing a row seeded with an account preserves/changes it on the patch.
- * The account SUPERSEDES the bank tag for attribution while the bank chips stay
- * for display (ADR-117). English-pinned (ADR-105).
+ * The account IS the attribution: the legacy bank picker has been retired from
+ * the form (ADR-136 extension), so a manual entry carries an `accountId` and no
+ * `bank` tag. English-pinned (ADR-105).
  *
  * The HTTP client, FX adapter, settings, monotributo, and accounts clients are
  * all mocked so the form renders standalone with no real backend.
@@ -175,6 +176,36 @@ describe('transaction account selector (ADR-122/133)', () => {
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
     const input = createMock.mock.calls[0][0]
     expect(input.accountId).toBe('acc-2')
+  })
+
+  test('the form no longer renders the legacy bank picker (ADR-136 extension)', async () => {
+    const { dialog } = await openDialog()
+    const form = within(dialog)
+    await waitFor(() => expect(accountsListMock).toHaveBeenCalled())
+
+    // The Account selector — the attribution control — is present...
+    expect(form.getByRole('combobox', { name: 'Account' })).toBeInTheDocument()
+    // ...but the retired "Bank / card" picker section is gone, and none of the
+    // bank chips (e.g. Galicia) render as a selectable form control.
+    expect(form.queryByText('Bank / card')).not.toBeInTheDocument()
+    expect(form.queryByRole('button', { name: 'Galicia' })).toBeNull()
+  })
+
+  test('a manual entry with no account picked sends no bank tag', async () => {
+    const { user, dialog } = await openDialog()
+    const form = within(dialog)
+    await waitFor(() => expect(accountsListMock).toHaveBeenCalled())
+
+    // Just an amount — no account chosen.
+    await user.type(form.getByLabelText(/^Amount in /), '5000')
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    const input = createMock.mock.calls[0][0]
+    // The legacy bank tag is no longer a form field — it is omitted entirely.
+    expect(input.bank).toBeUndefined()
+    // Attribution is the account; none picked here, so it is explicitly null.
+    expect(input.accountId).toBeNull()
   })
 
   test('an edit seeded with an account preserves it on save', async () => {

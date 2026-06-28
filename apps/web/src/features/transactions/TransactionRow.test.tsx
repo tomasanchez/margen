@@ -119,6 +119,76 @@ describe('bank · card detail', () => {
   })
 })
 
+// Account-based attribution (ADR-136 extension of ADR-134/117): the row's
+// subline now prefers the LINKED ACCOUNT's institution name (resolved from the
+// page's accountId → institutionName lookup) over the legacy bank tag. A row
+// with no accountId — or an unknown id — falls back to the bank · card display.
+describe('account attribution', () => {
+  const arsExpense: Transaction = {
+    ...baseUsd,
+    currency: 'ARS',
+    type: 'expense',
+    kind: 'expense',
+    usd: undefined,
+    rate: undefined,
+    fxRateType: undefined,
+    name: 'Coto supermarket',
+  }
+
+  function renderRowWithAccounts(
+    t: Transaction,
+    accountNames: ReadonlyMap<string, string>,
+  ) {
+    return render(
+      <ThemeProvider theme={darkTheme}>
+        <TransactionRow
+          transaction={t}
+          onEdit={() => {}}
+          onDelete={() => {}}
+          accountNames={accountNames}
+        />
+      </ThemeProvider>,
+    )
+  }
+
+  test("shows the linked account's institution name (+ card) over the bank tag", () => {
+    // The row's legacy bank tag is 'Galicia', but it is linked to an account
+    // whose institution resolves to 'Brubank' — attribution prefers the account.
+    renderRowWithAccounts(
+      { ...arsExpense, bank: 'Galicia', card: 'VISA ·5771', accountId: 'acc-1' },
+      new Map([['acc-1', 'Brubank']]),
+    )
+    expect(screen.getByText('Brubank · VISA ·5771')).toBeInTheDocument()
+    expect(screen.queryByText(/Galicia/)).not.toBeInTheDocument()
+  })
+
+  test('shows just the institution name when the linked account row has no card', () => {
+    renderRowWithAccounts(
+      { ...arsExpense, bank: 'Galicia', card: undefined, accountId: 'acc-2' },
+      new Map([['acc-2', 'Mercado Pago']]),
+    )
+    expect(screen.getByText('Mercado Pago')).toBeInTheDocument()
+    expect(screen.queryByText(/Mercado Pago ·/)).not.toBeInTheDocument()
+  })
+
+  test('falls back to bank · card when the row has no accountId', () => {
+    // Statement-imported / not-yet-linked row: no accountId → legacy display.
+    renderRowWithAccounts(
+      { ...arsExpense, bank: 'Santander', card: 'VISA ·5771' },
+      new Map([['acc-1', 'Brubank']]),
+    )
+    expect(screen.getByText('Santander · VISA ·5771')).toBeInTheDocument()
+  })
+
+  test('falls back to bank · card when the accountId is unknown to the lookup', () => {
+    renderRowWithAccounts(
+      { ...arsExpense, bank: 'Santander', accountId: 'gone' },
+      new Map([['acc-1', 'Brubank']]),
+    )
+    expect(screen.getByText('Santander')).toBeInTheDocument()
+  })
+})
+
 // Invoice attachment badge (ADR-072, ADR-092): a kind === 'invoice' row surfaces
 // an accessible "PDF" button that fetches the stored document WITH the bearer
 // token (the routes are auth-gated, so a plain <a href> would 401) and opens the

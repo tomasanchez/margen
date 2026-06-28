@@ -2,7 +2,7 @@
  * Mobile filter bottom-sheet (ADR-017: the reusable bottom-anchored Drawer).
  *
  * Opened from the mobile "Filters" button, it presents currency / category /
- * bank / amount as chip groups (the same shared filter state as the desktop
+ * account / amount as chip groups (the same shared filter state as the desktop
  * bar), plus a "Clear all" link when anything is active and a primary
  * "Show N transactions" apply button that simply closes the sheet — filtering is
  * live, so the count updates as chips toggle. MUI Drawer traps and restores
@@ -20,8 +20,8 @@ import Chip from '@mui/material/Chip'
 import Drawer from '@mui/material/Drawer'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
-import { BANKS, CATEGORIES } from '../../mock/seed'
-import type { Bank, Category } from '../../mock/types'
+import { CATEGORIES } from '../../mock/seed'
+import type { Category } from '../../mock/types'
 import { useAccounts } from '../accounts/queries'
 import {
   AMOUNT_RANGES,
@@ -31,7 +31,7 @@ import {
   type CurrencyFilter,
   type TransactionFilters,
 } from './filtering'
-import { accountOptionLabel, bankLabel, categoryLabel } from './presentation'
+import { accountOptionLabel, categoryLabel } from './presentation'
 import type { FilterControls } from './useTransactionFilters'
 
 /** A selectable filter chip (gold-tinted when active), token-driven. */
@@ -109,7 +109,7 @@ export function MobileFilterSheet({
 
   // Account filter options (ADR-134) from the user's accounts list, labeled
   // "{institutionName} · {currency}". Read non-blockingly; while pending the
-  // section simply renders no chips (the bank section is unaffected).
+  // section simply renders no chips.
   const accountsQuery = useAccounts()
   const accounts = accountsQuery.data ?? []
 
@@ -188,17 +188,6 @@ export function MobileFilterSheet({
             label={categoryLabel(category)}
             selected={filters.categories.includes(category)}
             onClick={() => controls.toggleCategory(category)}
-          />
-        ))}
-      </ChipSection>
-
-      <ChipSection title={t('filters.bankSection')}>
-        {BANKS.map((bank: Bank) => (
-          <FilterChip
-            key={bank}
-            label={bankLabel(bank)}
-            selected={filters.banks.includes(bank)}
-            onClick={() => controls.toggleBank(bank)}
           />
         ))}
       </ChipSection>
