@@ -102,8 +102,14 @@
     "decomposition": "{{native}} + ~ {{converted}} ({{other}} a {{rate}})",
     "decompositionNoRate": "{{native}} + {{other}}",
     "mepUnit": "ARS {{rate}} / USD",
+    "rateUnit": "{{source}} ARS {{rate}} / USD",
+    "rateSource": {
+      "label": "Cotización",
+      "mep": "MEP",
+      "official": "Oficial"
+    },
     "empty": "Agregá una cuenta para ver tu patrimonio acá.",
-    "mepUnavailable": "Cotización MEP en vivo no disponible — mostrando cada moneda de forma nativa.",
+    "mepUnavailable": "Cotización en vivo no disponible — mostrando cada moneda de forma nativa.",
     "drilldownAria": "Ver los movimientos de {{institution}} {{currency}}",
     "errorTitle": "Patrimonio no disponible",
     "errorDescription": "No pudimos cargar tu patrimonio ahora. Intentá de nuevo."

@@ -4,19 +4,22 @@
  * The card renders fed a {@link NetWorth} read model directly — the `useNetWorth`
  * query + client adapter are covered separately (accountsClient.test). The card
  * computes its headline CLIENT-SIDE from each account's NATIVE balance + the LIVE
- * MEP rate (ADR-133 amendment), so these tests MOCK `fetchSuggestedMepRate` to a
- * fixed value (or null for the degrade case) and assert the presentation: the
- * headline total in the display currency, the currency decomposition line
- * (`<native> + ~ <converted> (<otherNative> at ARS <mep> / USD)`), the breakdown
- * GROUPED BY INSTITUTION (a header per institution + a type cue, its per-currency
- * accounts with the converted line, and a per-institution subtotal that sums to
- * the headline at the SAME live MEP, ADR-134), the MEP-unavailable degrade, the
- * account drilldown link, the empty state, and the loading skeleton. The card
- * renders TanStack <Link>s, so it mounts behind a memory router. English-pinned
- * (ADR-105).
+ * SELECTED rate (ADR-133 amendment), so these tests MOCK `fetchSuggestedRates` to
+ * fixed values (distinct MEP vs Official, or null for the degrade case) and assert
+ * the presentation: the headline total in the display currency, the currency
+ * decomposition line (`<native> + ~ <converted> (<otherNative> at <Source> ARS
+ * <rate> / USD)`), the breakdown GROUPED BY INSTITUTION (a header per institution
+ * + a type cue, its per-currency accounts with the converted line, and a
+ * per-institution subtotal that sums to the headline at the SAME selected rate,
+ * ADR-134), the rate-source picker (MEP default, switch to Official recomputes
+ * everything, a null source is disabled, a selected-null degrades), the
+ * rate-unavailable degrade, the account drilldown link, the empty state, and the
+ * loading skeleton. The card renders TanStack <Link>s, so it mounts behind a
+ * memory router. English-pinned (ADR-105).
  *
  * The mocked MEP is 1.250 ARS/USD so the existing converted/subtotal fixtures
- * (USD 720 → ARS 900.000, USD 760 → ARS 950.000) stay clean.
+ * (USD 720 → ARS 900.000, USD 760 → ARS 950.000) stay clean; the Official rate is
+ * a distinct 1.000 so a source switch is observable (USD 720 → ARS 720.000).
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -32,20 +35,22 @@ import {
 } from '@tanstack/react-router'
 import { ColorModeProvider } from '../../theme/colorMode'
 import { NetWorthCard, type NetWorthCardProps } from './NetWorthCard'
-import { fetchSuggestedMepRate } from '../../api/fxClient'
+import { fetchSuggestedRates } from '../../api/fxClient'
 import type { NetWorth } from '../../api/accountsClient'
 
 vi.mock('../../api/fxClient', () => ({
-  fetchSuggestedMepRate: vi.fn(),
+  fetchSuggestedRates: vi.fn(),
 }))
 
-const mockMep = vi.mocked(fetchSuggestedMepRate)
+const mockRates = vi.mocked(fetchSuggestedRates)
 
 /** The mocked live MEP rate (ARS per USD) used by most tests. */
 const MEP = 1250
+/** A distinct mocked Official rate so a source switch is observable. */
+const OFFICIAL = 1000
 
 beforeEach(() => {
-  mockMep.mockResolvedValue(MEP)
+  mockRates.mockResolvedValue({ mep: MEP, official: OFFICIAL })
 })
 
 afterEach(() => {
@@ -153,10 +158,11 @@ describe('NetWorthCard', () => {
     // total = native ARS 150.000 + (USD 720 * 1.250 = ARS 900.000) = 1.050.000.
     expect(await screen.findByText('ARS 1.050.000')).toBeInTheDocument()
 
-    // Decomposition: native ARS + ~ converted (USD native at the MEP unit).
+    // Decomposition: native ARS + ~ converted (USD native at the MEP unit, which
+    // names the selected source — MEP by default).
     expect(
       screen.getByText(
-        'ARS 150.000 + ~ ARS 900.000 (USD 720 at ARS 1.250 / USD)',
+        'ARS 150.000 + ~ ARS 900.000 (USD 720 at MEP ARS 1.250 / USD)',
       ),
     ).toBeInTheDocument()
   })
@@ -164,7 +170,7 @@ describe('NetWorthCard', () => {
   test('computes the headline symmetrically when display = USD', async () => {
     // Display USD: native USD 7.000 + native ARS 4.500.000. At MEP 1.500 the ARS
     // converts to USD 3.000, so total = USD 10.000.
-    mockMep.mockResolvedValue(1500)
+    mockRates.mockResolvedValue({ mep: 1500, official: OFFICIAL })
     const usdDisplay: NetWorth = {
       total: '10000.00',
       currency: 'USD',
@@ -194,7 +200,7 @@ describe('NetWorthCard', () => {
     expect(await screen.findByText('USD 10.000')).toBeInTheDocument()
     expect(
       screen.getByText(
-        'USD 7.000 + ~ USD 3.000 (ARS 4.500.000 at ARS 1.500 / USD)',
+        'USD 7.000 + ~ USD 3.000 (ARS 4.500.000 at MEP ARS 1.500 / USD)',
       ),
     ).toBeInTheDocument()
   })
@@ -257,8 +263,8 @@ describe('NetWorthCard', () => {
     expect(link).toHaveAttribute('href', '/transactions?account=a2&month=all')
   })
 
-  test('degrades to native when the live MEP is unavailable (null)', async () => {
-    mockMep.mockResolvedValue(null)
+  test('degrades to native when the selected source rate is unavailable (null)', async () => {
+    mockRates.mockResolvedValue({ mep: null, official: null })
     renderCard({ netWorth: CONVERTED, loading: false })
 
     // Headline = the display-native portion only (no fabricated rate). The
@@ -266,7 +272,7 @@ describe('NetWorthCard', () => {
     expect(await screen.findByText('ARS 150.000')).toBeInTheDocument()
     expect(screen.getByText('ARS 150.000 + USD 720')).toBeInTheDocument()
     expect(
-      screen.getByText(/Live MEP rate unavailable/i),
+      screen.getByText(/Live rate unavailable/i),
     ).toBeInTheDocument()
     // No converted (~) part and no "at … / USD" rate spelled out.
     expect(screen.queryByText(/~/)).not.toBeInTheDocument()
@@ -276,6 +282,79 @@ describe('NetWorthCard', () => {
     await expandDetails()
     expect(screen.getByText('USD 720')).toBeInTheDocument()
     expect(screen.queryByText(/≈/)).not.toBeInTheDocument()
+  })
+
+  test('defaults the source to MEP and exposes the labeled picker', async () => {
+    renderCard({ netWorth: CONVERTED, loading: false })
+    await screen.findByText('ARS 1.050.000')
+
+    // A labeled, keyboard-operable source picker (ADR-019), defaulting to MEP.
+    const picker = screen.getByRole('combobox', { name: 'Rate' })
+    expect(picker).toHaveTextContent('MEP')
+  })
+
+  test('switching the source to Official recomputes the total, decomposition and subtotal', async () => {
+    renderCard({ netWorth: MULTI_ACCOUNT, loading: false })
+    // Default MEP: USD 760 * 1.250 = ARS 950.000, subtotal 1.100.000.
+    await screen.findByText('ARS 1.100.000')
+
+    // Switch the source to Official (1.000): USD 760 → ARS 760.000, so the
+    // subtotal/total become 760.000 + 150.000 = 910.000.
+    await userEvent.click(screen.getByRole('combobox', { name: 'Rate' }))
+    await userEvent.click(
+      await screen.findByRole('option', { name: 'Official' }),
+    )
+
+    expect(await screen.findByText('ARS 910.000')).toBeInTheDocument()
+    // The decomposition unit now names Official + its value.
+    expect(
+      screen.getByText(
+        'ARS 150.000 + ~ ARS 760.000 (USD 760 at Official ARS 1.000 / USD)',
+      ),
+    ).toBeInTheDocument()
+
+    // The per-institution subtotal recomputes at the official rate too.
+    await expandDetails()
+    expect(
+      await screen.findByLabelText('Galicia subtotal ARS 910.000'),
+    ).toBeInTheDocument()
+  })
+
+  test('disables a source option whose live rate is null', async () => {
+    mockRates.mockResolvedValue({ mep: MEP, official: null })
+    renderCard({ netWorth: CONVERTED, loading: false })
+    await screen.findByText('ARS 1.050.000')
+
+    await userEvent.click(screen.getByRole('combobox', { name: 'Rate' }))
+    // Official failed to fetch → its option is present but disabled.
+    expect(
+      await screen.findByRole('option', { name: 'Official' }),
+    ).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  test('lets the user switch to Official when MEP is null to recover conversion', async () => {
+    // MEP failed but Official is available — the selected (MEP) source degrades
+    // to native, yet the user can switch to Official to see converted values.
+    mockRates.mockResolvedValue({ mep: null, official: OFFICIAL })
+    renderCard({ netWorth: CONVERTED, loading: false })
+
+    // Degraded under the default MEP selection.
+    expect(await screen.findByText('ARS 150.000')).toBeInTheDocument()
+    expect(screen.getByText(/Live rate unavailable/i)).toBeInTheDocument()
+
+    // Switch to Official (1.000): USD 720 → ARS 720.000, total 870.000.
+    await userEvent.click(screen.getByRole('combobox', { name: 'Rate' }))
+    await userEvent.click(
+      await screen.findByRole('option', { name: 'Official' }),
+    )
+
+    expect(await screen.findByText('ARS 870.000')).toBeInTheDocument()
+    expect(screen.queryByText(/Live rate unavailable/i)).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'ARS 150.000 + ~ ARS 720.000 (USD 720 at Official ARS 1.000 / USD)',
+      ),
+    ).toBeInTheDocument()
   })
 
   test('shows the headline alone when there is no other-currency account', async () => {

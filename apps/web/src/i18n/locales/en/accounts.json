@@ -102,8 +102,14 @@
     "decomposition": "{{native}} + ~ {{converted}} ({{other}} at {{rate}})",
     "decompositionNoRate": "{{native}} + {{other}}",
     "mepUnit": "ARS {{rate}} / USD",
+    "rateUnit": "{{source}} ARS {{rate}} / USD",
+    "rateSource": {
+      "label": "Rate",
+      "mep": "MEP",
+      "official": "Official"
+    },
     "empty": "Add an account to see your net worth here.",
-    "mepUnavailable": "Live MEP rate unavailable — showing each currency natively.",
+    "mepUnavailable": "Live rate unavailable — showing each currency natively.",
     "drilldownAria": "View {{institution}} {{currency}} transactions",
     "errorTitle": "Net worth unavailable",
     "errorDescription": "We couldn't load your net worth right now. Try again."

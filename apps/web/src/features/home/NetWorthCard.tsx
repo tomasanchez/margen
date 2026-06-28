@@ -3,29 +3,37 @@
  *
  * Appended below the existing month-status hero (incremental Home, ADR-127). It
  * shows the user's total net worth in their display currency, computed
- * CLIENT-SIDE from each account's NATIVE balance + the LIVE MEP rate (ADR-133
- * amendment: net worth now converts via the live MEP from `fxClient` (ADR-044),
+ * CLIENT-SIDE from each account's NATIVE balance + the LIVE selected rate (ADR-133
+ * amendment: net worth now converts via a live rate from `fxClient` (ADR-044),
  * NOT the last-transaction rate baked into the backend's `balanceConverted` /
  * `total`). Those stale converted fields are intentionally IGNORED for display.
  *
+ * A small labeled MUI Select in the card header lets the user pick which live FX
+ * SOURCE drives every conversion — MEP (default) or Official (ADR-044/019). The
+ * choice is local state (resets to MEP on reload); the selected source's live
+ * rate replaces the single rate everywhere the card converts. A source whose
+ * live rate failed (`null`) is disabled in the picker.
+ *
  * The headline is `<displayCcy> <total>`, where `total = nativeDisplay +
  * convertedOther`: the sum of accounts already in the display currency plus the
- * other currency's native sum converted at the live MEP. When both currencies
- * are present a smaller secondary line decomposes the total:
- * `<native> + ~ <convertedOther> (<otherNative> at ARS <mep> / USD)` — the `~`
- * marks the approximate converted part.
+ * other currency's native sum converted at the selected live rate. When both
+ * currencies are present a smaller secondary line decomposes the total:
+ * `<native> + ~ <convertedOther> (<otherNative> at <Source> ARS <rate> / USD)` —
+ * the `~` marks the approximate converted part and the unit names the source.
  *
  * Below it is a breakdown GROUPED BY INSTITUTION (ADR-134): each institution gets
  * a header (name + a non-color type cue, ADR-019), its per-currency accounts with
  * each account's NATIVE balance (and, when it differs from the display currency,
- * its value converted at the SAME live MEP), and a per-institution subtotal in
- * the display currency — so the subtotals sum to the headline total.
+ * its value converted at the SAME selected rate), and a per-institution subtotal
+ * in the display currency — so the subtotals sum to the headline total.
  *
- * Degrade (ADR-037): the MEP rate is NEVER fabricated. While it loads the card
- * shows a skeleton; if it resolves to `null` the card degrades to native amounts
- * (no `~ converted`, no rate, a calm "MEP unavailable" note) and the breakdown
- * shows native balances only. When there is no other-currency account there is
- * nothing to convert, so the headline shows alone with no decomposition or note.
+ * Degrade (ADR-037): the rate is NEVER fabricated. While the rates load the card
+ * shows a skeleton; if the SELECTED source resolves to `null` the card degrades
+ * to native amounts (no `~ converted`, no rate, a calm "rate unavailable" note)
+ * and the breakdown shows native balances only — but if the other source is
+ * available the user can switch to it to see converted values. When there is no
+ * other-currency account there is nothing to convert, so the headline shows alone
+ * with no decomposition or note.
  *
  * Money arrives as Decimal strings (ADR-025/034) and is parsed to numbers only
  * here for the shared formatter (ADR-102). A loading skeleton, a calm error
@@ -39,15 +47,27 @@ import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
 import Collapse from '@mui/material/Collapse'
+import FormControl from '@mui/material/FormControl'
+import InputLabel from '@mui/material/InputLabel'
+import MenuItem from '@mui/material/MenuItem'
+import Select from '@mui/material/Select'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
 import { formatARS, formatCurrency } from '../../lib/format'
-import { useMepRate } from './queries'
+import { useFxRates } from './queries'
+import type { SuggestedRates } from '../../api/fxClient'
 import type { AccountType, Currency } from '../../mock/types'
 import type { NetWorth, NetWorthAccount } from '../../api/accountsClient'
+
+/**
+ * Which live FX source the user chose to convert net worth with (ADR-044/133).
+ * Default is `'mep'` (the dollar most Argentines transact at); `'official'` is
+ * the alternate. Local component state only — it resets to MEP on reload.
+ */
+export type RateSource = 'mep' | 'official'
 
 /** Shared class for the clickable net-worth breakdown rows (account drilldown). */
 const breakdownRowLinkClass = 'mg-networth-row-link'
@@ -171,10 +191,12 @@ function NetWorthHeadline({
   decomp,
   displayCurrency,
   mep,
+  source,
 }: {
   decomp: Decomposition
   displayCurrency: Currency
   mep: number | null
+  source: RateSource
 }) {
   const { t } = useTranslation('accounts')
   // Headline value: the converted total when a rate exists, else the native
@@ -214,7 +236,10 @@ function NetWorthHeadline({
             native: nativeStr,
             converted: formatCurrency(decomp.convertedOther ?? 0, displayCurrency),
             other: otherStr,
-            rate: t('netWorth.mepUnit', { rate: formatARS(mep) }),
+            rate: t('netWorth.rateUnit', {
+              source: t(`netWorth.rateSource.${source}`),
+              rate: formatARS(mep),
+            }),
           })}
         </Typography>
       ) : null}
@@ -474,6 +499,46 @@ function InstitutionBlock({
   )
 }
 
+/**
+ * The labeled FX-source picker shown in the card header (ADR-044/019). A compact
+ * MUI Select bound to the local `source` state, with MEP + Official options. An
+ * option whose live rate failed (`null`) is disabled so the user can't pick a
+ * source we can't convert with; the control is fully keyboard-operable with a
+ * visible label (ADR-019). It is hidden entirely while there is nothing to
+ * convert (no other-currency account) so the header stays calm.
+ */
+function RateSourcePicker({
+  source,
+  onSourceChange,
+  rates,
+}: {
+  source: RateSource
+  onSourceChange: (next: RateSource) => void
+  rates: SuggestedRates
+}) {
+  const { t } = useTranslation('accounts')
+  const labelId = useId()
+  return (
+    <FormControl size="small" sx={{ minWidth: 124 }}>
+      <InputLabel id={labelId}>{t('netWorth.rateSource.label')}</InputLabel>
+      <Select
+        labelId={labelId}
+        label={t('netWorth.rateSource.label')}
+        value={source}
+        onChange={(event) => onSourceChange(event.target.value as RateSource)}
+        sx={{ borderRadius: '10px', bgcolor: 'var(--mg-paper)' }}
+      >
+        <MenuItem value="mep" disabled={usableMep(rates.mep) == null}>
+          {t('netWorth.rateSource.mep')}
+        </MenuItem>
+        <MenuItem value="official" disabled={usableMep(rates.official) == null}>
+          {t('netWorth.rateSource.official')}
+        </MenuItem>
+      </Select>
+    </FormControl>
+  )
+}
+
 export interface NetWorthCardProps {
   /** The net-worth read model, or undefined while loading. */
   netWorth: NetWorth | undefined
@@ -492,9 +557,13 @@ export function NetWorthCard({
   onRetry,
 }: NetWorthCardProps) {
   const { t } = useTranslation('accounts')
-  // Live MEP rate (ADR-044/133): cached for a few minutes, cancellable. We never
-  // fabricate a rate — `null` (failure) and `isPending` (loading) each degrade.
-  const mepQuery = useMepRate()
+  // Live suggested FX rates (ADR-044/133): both MEP + Official, cached for a few
+  // minutes, cancellable. We never fabricate a rate — a `null` for the selected
+  // source (failure) and `isPending` (loading) each degrade.
+  const ratesQuery = useFxRates()
+  // Which live FX source drives every conversion. Local-only (no persistence):
+  // defaults to MEP and resets to MEP on reload (ADR-133 amendment).
+  const [source, setSource] = useState<RateSource>('mep')
   // Local-only expand state (persistence not required); default COLLAPSED for a
   // compact summary card the user opens for detail.
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -510,9 +579,9 @@ export function NetWorthCard({
     )
   }
 
-  // Wait on BOTH the net-worth read AND the live MEP so the headline total is
+  // Wait on BOTH the net-worth read AND the live rates so the headline total is
   // never shown at the wrong (pre-conversion) value (ADR-133/037).
-  if (loading || !netWorth || mepQuery.isPending) {
+  if (loading || !netWorth || ratesQuery.isPending) {
     return (
       <SectionCard title={t('netWorth.title')}>
         <Skeleton variant="text" width={180} height={40} />
@@ -523,19 +592,37 @@ export function NetWorthCard({
   }
 
   const displayCurrency = asCurrency(netWorth.currency)
-  // A usable live MEP, or null on failure / unusable value → degrade-to-native.
-  const mep = usableMep(mepQuery.data)
-  // Decomposition + groups both convert at the SAME live MEP, so the breakdown
-  // subtotals sum to the headline total (ADR-133 amendment).
+  const rates = ratesQuery.data ?? { mep: null, official: null }
+  // The SELECTED source's usable live rate, or null on failure / unusable value
+  // → degrade-to-native. Switching to the other source (if available) recovers.
+  const mep = usableMep(rates[source])
+  // Decomposition + groups both convert at the SAME selected rate, so the
+  // breakdown subtotals sum to the headline total (ADR-133 amendment).
   const decomp = decompose(netWorth.accounts, displayCurrency, mep)
   const groups = groupByInstitution(netWorth.accounts, displayCurrency, mep)
+  // Only offer the source picker when there is something to convert — an
+  // other-currency account — so the header stays calm otherwise.
+  const showRatePicker = netWorth.accounts.length > 0 && decomp.hasOther
 
   return (
-    <SectionCard title={t('netWorth.title')} subtitle={t('netWorth.subtitle')}>
+    <SectionCard
+      title={t('netWorth.title')}
+      subtitle={t('netWorth.subtitle')}
+      action={
+        showRatePicker ? (
+          <RateSourcePicker
+            source={source}
+            onSourceChange={setSource}
+            rates={rates}
+          />
+        ) : undefined
+      }
+    >
       <NetWorthHeadline
         decomp={decomp}
         displayCurrency={displayCurrency}
         mep={mep}
+        source={source}
       />
 
       {netWorth.accounts.length === 0 ? (
