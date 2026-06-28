@@ -18,6 +18,7 @@ from margen_api.domain.commands.transaction import (
     DeleteTransaction,
     UpdateTransaction,
 )
+from margen_api.domain.commands.transfer import CreateTransfer, DeleteTransfer
 from margen_api.service_layer.account_handlers import create_account, update_account
 from margen_api.service_layer.handlers import (
     create_transaction,
@@ -29,6 +30,7 @@ from margen_api.service_layer.institution_handlers import create_institution, up
 from margen_api.service_layer.messagebus import CommandHandler, EventHandler
 from margen_api.service_layer.monotributo_handlers import capture_monotributo_snapshot
 from margen_api.service_layer.settings_handlers import update_settings
+from margen_api.service_layer.transfer_handlers import create_transfer, delete_transfer
 
 COMMAND_HANDLERS: dict[type, CommandHandler] = {
     CreateTransaction: create_transaction,
@@ -41,6 +43,8 @@ COMMAND_HANDLERS: dict[type, CommandHandler] = {
     UpdateAccount: update_account,
     CreateInstitution: create_institution,
     UpdateInstitution: update_institution,
+    CreateTransfer: create_transfer,
+    DeleteTransfer: delete_transfer,
 }
 
 EVENT_HANDLERS: dict[type, list[EventHandler]] = {}

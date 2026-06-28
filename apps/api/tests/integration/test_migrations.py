@@ -33,6 +33,11 @@ _MONOTRIBUTO_FLAG = "a8b9c0d1e2f3"
 # ``accounts.institution_id`` FK and drops ``accounts.name`` / ``accounts.type``.
 _INSTITUTION_HIERARCHY = "c0d1e2f3a4b5"
 
+# The transfers migration (ADR-135): chains after the Institution -> Account
+# hierarchy. It creates the ``transfers`` table with two account FKs and an owner
+# column. No data migration is involved.
+_TRANSFERS = "d1e2f3a4b5c6"
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
 # A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
@@ -217,6 +222,36 @@ class TestMigrations:
             assert "institution_id" in account_columns
             assert "name" not in account_columns
             assert "type" not in account_columns
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
+    def test_transfers_migration_creates_table(self, integration_database_url: str):
+        """
+        GIVEN a database at the Institution -> Account hierarchy revision
+        WHEN Alembic upgrades through the transfers migration (ADR-135)
+        THEN the transfers table exists with both account FK columns and the owner column
+
+        Proves the schema add on the production PostgreSQL dialect: the ``transfers``
+        table is created with ``from_account_id`` / ``to_account_id`` FKs to accounts
+        and a NOT NULL ``user_id`` owner column (ADR-135). No data migration.
+        """
+        # GIVEN — upgrade to the hierarchy revision (the head before ADR-135).
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _INSTITUTION_HIERARCHY)
+        try:
+            # WHEN
+            command.upgrade(config, _TRANSFERS)
+
+            # THEN — the transfers table exists with the expected columns.
+            tables = asyncio.run(_table_names(integration_database_url))
+            assert "transfers" in tables
+            transfer_columns = asyncio.run(_columns(integration_database_url, "transfers"))
+            assert {"from_account_id", "to_account_id", "amount_out", "amount_in", "user_id"} <= set(transfer_columns)
+
+            # THEN — the downgrade cleanly drops the table again.
+            command.downgrade(config, _INSTITUTION_HIERARCHY)
+            assert "transfers" not in asyncio.run(_table_names(integration_database_url))
         finally:
             asyncio.run(_drop_everything(integration_database_url))
 

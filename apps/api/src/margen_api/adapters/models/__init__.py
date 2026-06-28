@@ -12,6 +12,7 @@ from margen_api.adapters.models.invoice_document import InvoiceDocumentRecord
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
 from margen_api.adapters.models.statement_document import StatementDocumentRecord
 from margen_api.adapters.models.transaction import TransactionRecord
+from margen_api.adapters.models.transfer import TransferRecord
 
 __all__ = [
     "AccountRecord",
@@ -22,4 +23,5 @@ __all__ = [
     "MonotributoSnapshotRecord",
     "StatementDocumentRecord",
     "TransactionRecord",
+    "TransferRecord",
 ]

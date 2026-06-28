@@ -6,12 +6,17 @@ which apply the cross-currency conversion and sum the total. Keeping this logic
 free of I/O makes it fast to unit test (ADR-131) and keeps SQLAlchemy in the
 adapter (AGENTS.md).
 
-Net worth = Σ (each account's ``opening_balance + Σ signed transaction deltas``)
-converted into the user's display currency via the MEP rate (ADR-122, ADR-123).
-A transaction's signed delta is ``+amount`` for income / invoice and ``-amount``
-for expense (the ARS-equivalent magnitude is always positive, ADR-025); for a USD
-account the native USD figure is used so the balance stays USD-authoritative
-(ADR-123). The MEP rate is ARS-per-USD.
+Net worth = Σ (each account's ``opening_balance + Σ signed transaction deltas +
+net transfer flow``) converted into the user's display currency via the MEP rate
+(ADR-122, ADR-123, ADR-135). A transaction's signed delta is ``+amount`` for income
+/ invoice and ``-amount`` for expense (the ARS-equivalent magnitude is always
+positive, ADR-025); for a USD account the native USD figure is used so the balance
+stays USD-authoritative (ADR-123). A transfer adds ``amount_in`` to its destination
+account and subtracts ``amount_out`` from its source, in each account's native
+currency, so a same-currency transfer conserves total net worth (ADR-135). The
+adapter folds the transfer flow into each ``AccountBalanceInput.balance`` before
+these pure functions run, so this module is unchanged by transfers. The MEP rate is
+ARS-per-USD.
 """
 
 from __future__ import annotations

@@ -14,6 +14,7 @@ from margen_api.adapters.monotributo_repository import SqlAlchemyMonotributoSnap
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
 from margen_api.adapters.settings_repository import SqlAlchemySettingsRepository
 from margen_api.adapters.statement_store import SqlAlchemyStatementStore
+from margen_api.adapters.transfer_repository import SqlAlchemyTransferRepository
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork, IntegrityConflict
 
 
@@ -38,6 +39,7 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
         self.statements = SqlAlchemyStatementStore(self.session)
         self.accounts = SqlAlchemyAccountRepository(self.session)
         self.institutions = SqlAlchemyInstitutionRepository(self.session)
+        self.transfers = SqlAlchemyTransferRepository(self.session)
         return self
 
     async def __aexit__(

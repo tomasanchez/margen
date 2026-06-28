@@ -138,6 +138,8 @@ class FxRateType(StrEnum):
 
 
 # Known prototype category set (ADR-024/ADR-027). Unknown strings are tolerated.
+# "Fees" backs account-to-account transfer fees, recorded as expense transactions
+# (ADR-135, extends the category-addition precedent of ADR-083).
 KNOWN_CATEGORIES: frozenset[str] = frozenset(
     {
         "Income",
@@ -150,6 +152,7 @@ KNOWN_CATEGORIES: frozenset[str] = frozenset(
         "Entertainment",
         "Services",
         "Taxes",
+        "Fees",
         "Other",
     }
 )

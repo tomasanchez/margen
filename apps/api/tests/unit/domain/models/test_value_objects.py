@@ -129,6 +129,15 @@ class TestKnownCategory:
         # WHEN / THEN
         assert is_known_category("Food") is True
 
+    async def test_fees_is_a_known_category(self):
+        """
+        GIVEN the "Fees" category added for transfer fees (ADR-135)
+        WHEN membership is checked
+        THEN it reports True (extends the category set of ADR-083)
+        """
+        # WHEN / THEN
+        assert is_known_category("Fees") is True
+
     async def test_unknown_value(self):
         """
         GIVEN a category outside the known set

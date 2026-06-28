@@ -2,11 +2,13 @@
 
 Runs read-only queries against an ``AsyncSession`` and projects rows into the
 account read models. The per-account balance aggregation runs server-side SQL
-(SUM of signed deltas grouped by account); the cross-currency conversion and the
-total sum live in the pure :mod:`margen_api.service_layer.net_worth` so SQLAlchemy
-stays in this adapter (AGENTS.md). Each account is joined to its owning institution
-so the list and breakdown carry the institution ``name`` + ``type`` denormalized
-(ADR-134). Every query is owner-scoped (ADR-130). All I/O is awaited.
+(SUM of signed transaction deltas grouped by account, PLUS the net transfer flow:
+``+amount_in`` for transfers INTO the account and ``-amount_out`` for transfers OUT
+of it, ADR-135); the cross-currency conversion and the total sum live in the pure
+:mod:`margen_api.service_layer.net_worth` so SQLAlchemy stays in this adapter
+(AGENTS.md). Each account is joined to its owning institution so the list and
+breakdown carry the institution ``name`` + ``type`` denormalized (ADR-134). Every
+query is owner-scoped (ADR-130). All I/O is awaited.
 """
 
 from __future__ import annotations
@@ -14,13 +16,15 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Numeric, case, cast, func, select
+from sqlalchemy import ColumnElement, Numeric, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 
 from margen_api.adapters.models.account import AccountRecord
 from margen_api.adapters.models.app_settings import AppSettingsRecord
 from margen_api.adapters.models.institution import InstitutionRecord
 from margen_api.adapters.models.transaction import TransactionRecord
+from margen_api.adapters.models.transfer import TransferRecord
 from margen_api.adapters.settings_repository import DEFAULT_DISPLAY_CURRENCY
 from margen_api.domain.models.value_objects import Currency, InstitutionType, Kind
 from margen_api.service_layer.account_read_models import AccountReadModel, NetWorth
@@ -49,6 +53,38 @@ _SIGNED_DELTA = case(
     else_=_NATIVE_MAGNITUDE,
 )
 _DELTA_SUM = cast(func.coalesce(func.sum(_SIGNED_DELTA), _ZERO), Numeric(18, 2))
+
+
+def _transfer_delta(account_id_column: InstrumentedAttribute[UUID]) -> ColumnElement[Decimal]:
+    """Build the net transfer flow for an account as a correlated scalar (ADR-135).
+
+    A transfer moves money in the accounts' native currencies (ADR-123), so no FX is
+    applied here: the destination is credited ``amount_in`` and the source is debited
+    ``amount_out``. The two sums are computed as separate correlated scalar subqueries
+    (rather than extra joins) so they do not fan out the per-account transaction
+    aggregation. ``coalesce`` keeps an account with no transfers at zero, and the
+    result is cast back to ``NUMERIC(18, 2)`` so the driver returns a Decimal for
+    money (ADR-025).
+
+    Args:
+        account_id_column: The outer ``AccountRecord.id`` column the subqueries
+            correlate against.
+
+    Returns:
+        A scalar SQL expression: ``Σ amount_in (to this account) - Σ amount_out
+        (from this account)``.
+    """
+    credited = (
+        select(func.coalesce(func.sum(TransferRecord.amount_in), _ZERO))
+        .where(TransferRecord.to_account_id == account_id_column)
+        .scalar_subquery()
+    )
+    debited = (
+        select(func.coalesce(func.sum(TransferRecord.amount_out), _ZERO))
+        .where(TransferRecord.from_account_id == account_id_column)
+        .scalar_subquery()
+    )
+    return cast(credited - debited, Numeric(18, 2))
 
 
 def _as_decimal(value: object) -> Decimal:
@@ -106,14 +142,18 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
         return build_net_worth(balances, display_currency=display_currency, mep_rate=mep_rate)
 
     async def _account_balances(self, owner: UUID) -> list[AccountBalanceInput]:
-        """Return each of the owner's accounts with its native balance (ADR-122, ADR-134).
+        """Return each of the owner's accounts with its native balance (ADR-122, ADR-134, ADR-135).
 
-        Balance = ``opening_balance + Σ signed deltas`` of the account's
-        transactions. A ``LEFT OUTER JOIN`` keeps accounts with no transactions
-        (their balance is just the opening balance); the institution join supplies
-        the denormalized ``name`` + ``type``. Ordered newest-first to match
+        Balance = ``opening_balance + Σ signed transaction deltas + net transfer
+        flow``, where the net transfer flow is ``+Σ amount_in`` for transfers INTO the
+        account and ``-Σ amount_out`` for transfers OUT of it (ADR-135). A
+        ``LEFT OUTER JOIN`` keeps accounts with no transactions (their transaction
+        delta is zero); the transfer flow is two correlated scalar subqueries so it
+        does not fan out the transaction grouping. The institution join supplies the
+        denormalized ``name`` + ``type``. Ordered newest-first to match
         :meth:`list_accounts`.
         """
+        transfer_delta = _transfer_delta(AccountRecord.id)
         statement = (
             select(
                 AccountRecord.id,
@@ -123,6 +163,7 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
                 AccountRecord.currency,
                 AccountRecord.opening_balance,
                 _DELTA_SUM.label("delta"),
+                transfer_delta.label("transfer_delta"),
             )
             .select_from(AccountRecord)
             .join(InstitutionRecord, InstitutionRecord.id == AccountRecord.institution_id)
@@ -146,7 +187,7 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
                 institution_name=row.name,
                 type=InstitutionType.parse(row.type),
                 currency=Currency.parse(row.currency),
-                balance=_as_decimal(row.opening_balance) + _as_decimal(row.delta),
+                balance=_as_decimal(row.opening_balance) + _as_decimal(row.delta) + _as_decimal(row.transfer_delta),
             )
             for row in result.all()
         ]

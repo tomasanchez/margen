@@ -97,6 +97,32 @@ class InstitutionNotFoundError(TransactionError):
         super().__init__(f"institution not found: {institution_id!r}")
 
 
+class SameAccountTransferError(TransactionError):
+    """Raised when a transfer's source and destination accounts are the same (ADR-135).
+
+    A transfer moves money between two DIFFERENT accounts; pointing both legs at one
+    account is a true invariant violation, which the boundary maps to 422 (ADR-031).
+    The carried ``account_id`` lets the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, account_id: object) -> None:
+        self.account_id = account_id
+        super().__init__(f"a transfer must move money between two different accounts, got {account_id!r} twice")
+
+
+class TransferNotFoundError(TransactionError):
+    """Raised when no transfer matches a referenced identity (ADR-135, ADR-130).
+
+    Delete handlers raise this when the aggregate they target does not exist for the
+    owner, so the boundary can translate it into a 404 (ADR-111). The carried
+    ``transfer_id`` lets the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, transfer_id: object) -> None:
+        self.transfer_id = transfer_id
+        super().__init__(f"transfer not found: {transfer_id!r}")
+
+
 class MergeTargetNotFoundError(TransactionError):
     """Raised when a ``MERGE`` import line points at a missing transaction (ADR-085).
 
