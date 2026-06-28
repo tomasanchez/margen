@@ -24,6 +24,7 @@ export const CATEGORIES: readonly Category[] = [
   'Services',
   'Taxes',
   'Fee',
+  'Fees',
   'Other',
 ] as const
 

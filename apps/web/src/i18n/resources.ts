@@ -22,6 +22,7 @@ import enAuth from './locales/en/auth.json'
 import enHome from './locales/en/home.json'
 import enInsights from './locales/en/insights.json'
 import enTransactions from './locales/en/transactions.json'
+import enTransfers from './locales/en/transfers.json'
 import enStatements from './locales/en/statements.json'
 import enMonotributo from './locales/en/monotributo.json'
 import enSettings from './locales/en/settings.json'
@@ -35,6 +36,7 @@ import esAuth from './locales/es/auth.json'
 import esHome from './locales/es/home.json'
 import esInsights from './locales/es/insights.json'
 import esTransactions from './locales/es/transactions.json'
+import esTransfers from './locales/es/transfers.json'
 import esStatements from './locales/es/statements.json'
 import esMonotributo from './locales/es/monotributo.json'
 import esSettings from './locales/es/settings.json'
@@ -60,6 +62,7 @@ export const NAMESPACES = [
   'home',
   'insights',
   'transactions',
+  'transfers',
   'statements',
   'monotributo',
   'settings',
@@ -84,6 +87,7 @@ export const resources = {
     home: enHome,
     insights: enInsights,
     transactions: enTransactions,
+    transfers: enTransfers,
     statements: enStatements,
     monotributo: enMonotributo,
     settings: enSettings,
@@ -97,6 +101,7 @@ export const resources = {
     home: esHome,
     insights: esInsights,
     transactions: esTransactions,
+    transfers: esTransfers,
     statements: esStatements,
     monotributo: esMonotributo,
     settings: esSettings,

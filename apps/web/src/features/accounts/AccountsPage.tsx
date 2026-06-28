@@ -31,6 +31,7 @@ import Typography from '@mui/material/Typography'
 import AddIcon from '@mui/icons-material/Add'
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
 import { formatCurrency } from '../../lib/format'
@@ -402,14 +403,26 @@ export function AccountsPage() {
           {t('subtitle')}
         </Typography>
       </Box>
-      <Button
-        variant="contained"
-        startIcon={<AddIcon />}
-        onClick={openWizard}
-        sx={{ textTransform: 'none', fontWeight: 600, flex: 'none' }}
-      >
-        {t('addInstitution')}
-      </Button>
+      <Box sx={{ display: 'flex', gap: 1, flex: 'none' }}>
+        <Button
+          component={Link}
+          to="/transfers"
+          variant="outlined"
+          color="secondary"
+          startIcon={<SwapHorizIcon />}
+          sx={{ textTransform: 'none', fontWeight: 600, flex: 'none' }}
+        >
+          {t('transfers')}
+        </Button>
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={openWizard}
+          sx={{ textTransform: 'none', fontWeight: 600, flex: 'none' }}
+        >
+          {t('addInstitution')}
+        </Button>
+      </Box>
     </Box>
   )
 

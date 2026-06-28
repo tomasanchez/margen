@@ -1,0 +1,58 @@
+{
+  "title": "Transferencias",
+  "subtitle": "Mové dinero entre tus propias cuentas. Las transferencias no son ingresos ni gastos.",
+  "newTransfer": "Nueva transferencia",
+  "transfers": "Transferencias",
+  "list": {
+    "title": "Tus transferencias",
+    "empty": "Todavía no hay transferencias. Mové dinero entre dos de tus cuentas para verlas acá.",
+    "needAccounts": "Necesitás al menos dos cuentas para hacer una transferencia. Agregá otra cuenta primero."
+  },
+  "row": {
+    "received": "se recibieron {{amount}}",
+    "toAria": "a",
+    "unknownAccount": "Cuenta desconocida",
+    "deleteAria": "Eliminar transferencia de {{from}} a {{to}}"
+  },
+  "form": {
+    "title": "Nueva transferencia",
+    "intro": "Mové dinero entre dos de tus propias cuentas. Esto no es ingreso ni gasto.",
+    "saveError": "No pudimos guardar esta transferencia. Probá de nuevo.",
+    "from": { "label": "Cuenta de origen" },
+    "to": { "label": "Cuenta de destino" },
+    "sameAccountError": "Elegí una cuenta de destino distinta.",
+    "amountSent": {
+      "label": "Monto enviado",
+      "labelCurrency": "Monto enviado ({{currency}})"
+    },
+    "amountReceived": {
+      "labelCurrency": "Monto recibido ({{currency}})",
+      "helper": "El monto real que llegó a la cuenta de destino."
+    },
+    "amount": { "invalid": "Ingresá un monto mayor que cero." },
+    "date": { "label": "Fecha" },
+    "note": { "label": "Nota (opcional)" },
+    "fees": {
+      "heading": "Comisiones",
+      "helper": "Cada comisión se registra como un gasto en la categoría «Comisiones» en la cuenta elegida.",
+      "account": "Cuenta de la comisión",
+      "amount": "Monto de la comisión",
+      "label": "Detalle de la comisión",
+      "add": "Agregar comisión",
+      "remove": "Quitar comisión"
+    },
+    "cancel": "Cancelar",
+    "save": "Guardar transferencia"
+  },
+  "delete": {
+    "title": "¿Eliminar esta transferencia?",
+    "body": "Esto elimina la transferencia y restaura los saldos. Las comisiones registradas con ella quedan como gastos en la categoría «Comisiones» y no se eliminan.",
+    "error": "No pudimos eliminar esta transferencia. Probá de nuevo.",
+    "cancel": "Cancelar",
+    "confirm": "Eliminar transferencia"
+  },
+  "error": {
+    "title": "Las transferencias no están disponibles",
+    "description": "No pudimos cargar tus transferencias. Probá de nuevo."
+  }
+}

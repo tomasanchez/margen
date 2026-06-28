@@ -2,6 +2,7 @@
   "title": "Accounts",
   "subtitle": "Your institutions and their per-currency account balances.",
   "addInstitution": "Add institution",
+  "transfers": "Transfers",
   "type": {
     "bank": "Bank",
     "card": "Card",

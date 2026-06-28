@@ -2,6 +2,7 @@
   "title": "Cuentas",
   "subtitle": "Tus entidades y los saldos de sus cuentas por moneda.",
   "addInstitution": "Agregar entidad",
+  "transfers": "Transferencias",
   "type": {
     "bank": "Banco",
     "card": "Tarjeta",

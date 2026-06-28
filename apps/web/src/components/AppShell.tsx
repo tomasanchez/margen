@@ -16,6 +16,8 @@ import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import AddIcon from '@mui/icons-material/Add'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
+import SwapHorizOutlinedIcon from '@mui/icons-material/SwapHorizOutlined'
 import HomeIcon from '@mui/icons-material/Home'
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
@@ -47,7 +49,13 @@ const MOBILE_SCROLL_CLEARANCE =
 /** A navigable destination wired to a router route. */
 interface NavRoute {
   kind: 'route'
-  to: '/' | '/transactions' | '/accounts' | '/monotributo' | '/import-statement'
+  to:
+    | '/'
+    | '/transactions'
+    | '/accounts'
+    | '/transfers'
+    | '/monotributo'
+    | '/import-statement'
   /** i18n key (shell ns) for the sidebar label. */
   labelKey: string
   /** i18n key (shell ns) for the shorter mobile bottom-nav label. */
@@ -97,6 +105,15 @@ const PRIMARY_NAV_ITEMS: NavItem[] = [
  * Monotributo entry is settings-gated (ADR-126) — see {@link Sidebar}, which
  * filters it out when the module is disabled.
  */
+const TRANSFERS_NAV_ITEM: NavItem = {
+  kind: 'route',
+  to: '/transfers',
+  labelKey: 'nav.transfers',
+  shortLabelKey: 'nav.transfersShort',
+  icon: <SwapHorizOutlinedIcon fontSize="small" />,
+  activeIcon: <SwapHorizIcon fontSize="small" />,
+}
+
 const IMPORT_NAV_ITEM: NavItem = {
   kind: 'route',
   to: '/import-statement',
@@ -221,8 +238,8 @@ function Sidebar({ onAddTransaction }: { onAddTransaction: () => void }) {
   // Secondary "Tools" grouping (ADR-127): import is always present; Monotributo
   // only when the module is enabled.
   const toolItems: NavItem[] = monotributoEnabled
-    ? [IMPORT_NAV_ITEM, MONOTRIBUTO_NAV_ITEM]
-    : [IMPORT_NAV_ITEM]
+    ? [TRANSFERS_NAV_ITEM, IMPORT_NAV_ITEM, MONOTRIBUTO_NAV_ITEM]
+    : [TRANSFERS_NAV_ITEM, IMPORT_NAV_ITEM]
 
   return (
     <Box
