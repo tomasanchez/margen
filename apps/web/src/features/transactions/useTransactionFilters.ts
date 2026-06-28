@@ -19,7 +19,7 @@
 
 import { useCallback, useMemo } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
-import type { Bank, Category } from '../../mock/types'
+import type { Category } from '../../mock/types'
 import {
   filtersToSearch,
   searchToFilters,
@@ -45,7 +45,6 @@ export interface FilterControls {
   setCurrency: (value: CurrencyFilter) => void
   setMonth: (value: MonthFilter) => void
   toggleCategory: (value: Category) => void
-  toggleBank: (value: Bank) => void
   /** Add/remove an account id from the Account multi-select filter (ADR-134). */
   toggleAccount: (value: string) => void
   setAmount: (value: AmountRange) => void
@@ -106,11 +105,6 @@ export function useTransactionFilters(): UseTransactionFilters {
         pushFilters((current) => ({
           ...current,
           categories: toggle(current.categories, value),
-        })),
-      toggleBank: (value) =>
-        pushFilters((current) => ({
-          ...current,
-          banks: toggle(current.banks, value),
         })),
       toggleAccount: (value) =>
         pushFilters((current) => ({

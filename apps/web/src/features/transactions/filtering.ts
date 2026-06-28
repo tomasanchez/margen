@@ -4,7 +4,7 @@
  * Ported from the concept script (Margen Transactions.dc.html `renderVals`):
  * search matches name OR category; the type filter maps All / Expenses / Income
  * / Invoices onto `type`/`kind`; currency, month, multi-select category, and
- * multi-select bank narrow the list; an amount-range bucket filters by the
+ * multi-select account narrow the list; an amount-range bucket filters by the
  * ARS-equivalent magnitude. Rows are sorted newest-first within months ordered
  * June → May → April and grouped per month with per-group in/out sums and an
  * overall count + inflow + outflow + net.
@@ -14,7 +14,6 @@
  */
 
 import type {
-  Bank,
   Category,
   Currency,
   MonthName,
@@ -31,7 +30,7 @@ import {
   type MonthSelection,
   type ViewingMonth,
 } from '../../components/months'
-import { BANKS, CATEGORIES } from '../../mock/seed'
+import { CATEGORIES } from '../../mock/seed'
 import {
   occurredInLast12Months,
   occurredInMonth,
@@ -106,12 +105,10 @@ export interface TransactionFilters {
   month: MonthFilter
   /** Selected categories; empty means "all categories". */
   categories: Category[]
-  /** Selected banks/cards; empty means "all banks". */
-  banks: Bank[]
   /**
    * Selected account ids (ADR-134); empty means "all accounts". Filters by
-   * `t.accountId ∈ accounts`. Kept ALONGSIDE the bank filter (both available).
-   * Account ids are opaque UUIDs, so unknown ids are a harmless no-op match.
+   * `t.accountId ∈ accounts`. Account ids are opaque UUIDs, so unknown ids are a
+   * harmless no-op match.
    */
   accounts: string[]
   amount: AmountRange
@@ -130,7 +127,6 @@ export const DEFAULT_FILTERS: TransactionFilters = {
   currency: 'all',
   month: ALL_MONTHS,
   categories: [],
-  banks: [],
   accounts: [],
   amount: 'any',
 }
@@ -143,7 +139,6 @@ export function hasActiveFilters(f: TransactionFilters): boolean {
     f.currency !== 'all' ||
     f.month !== ALL_MONTHS ||
     f.categories.length > 0 ||
-    f.banks.length > 0 ||
     f.accounts.length > 0 ||
     f.amount !== 'any'
   )
@@ -151,15 +146,15 @@ export function hasActiveFilters(f: TransactionFilters): boolean {
 
 /**
  * Count of active filters surfaced on the mobile "Filters" button. Mirrors the
- * concept: currency + month + each category + each bank + a non-default amount.
- * (Search and the type segment live outside the sheet, so they are excluded.)
+ * concept: currency + month + each category + each account + a non-default
+ * amount. (Search and the type segment live outside the sheet, so they are
+ * excluded.)
  */
 export function activeFilterCount(f: TransactionFilters): number {
   return (
     (f.currency !== 'all' ? 1 : 0) +
     (f.month !== ALL_MONTHS ? 1 : 0) +
     f.categories.length +
-    f.banks.length +
     f.accounts.length +
     (f.amount !== 'any' ? 1 : 0)
   )
@@ -224,7 +219,6 @@ function matchesFilters(t: Transaction, f: TransactionFilters): boolean {
     return false
   }
   if (f.categories.length && !f.categories.includes(t.category)) return false
-  if (f.banks.length && !f.banks.includes(t.bank)) return false
   // Account filter (ADR-134): the row must be attributed to one of the selected
   // accounts. Unlinked rows (accountId null/absent) never match a non-empty
   // selection; an empty selection means "all accounts".
@@ -337,7 +331,6 @@ export function filterTransactions(
  * - `month`: a month token — `all` / `last12` / `thisYear` / `YYYY-MM` (absent
  *   means the current month, the per-screen default per ADR-040).
  * - `category`: comma-joined {@link Category} list (drops unknown entries).
- * - `bank`: comma-joined {@link Bank} list (drops unknown entries).
  * - `account`: comma-joined account-id list (ADR-134; drops empties, but ids are
  *   opaque UUIDs so unknown ids are kept and are a harmless no-op match).
  * - `amount`: one {@link AmountRange} other than `any`.
@@ -348,7 +341,6 @@ export interface TransactionsSearch {
   currency?: CurrencyFilter
   month?: string
   category?: string
-  bank?: string
   account?: string
   amount?: AmountRange
 }
@@ -357,7 +349,6 @@ const KNOWN_TYPES = new Set<string>(TYPE_OPTIONS.map((o) => o.id))
 const KNOWN_CURRENCIES = new Set<string>(CURRENCY_OPTIONS.map((o) => o.id))
 const KNOWN_AMOUNTS = new Set<string>(AMOUNT_RANGES.map((o) => o.id))
 const KNOWN_CATEGORIES = new Set<string>(CATEGORIES)
-const KNOWN_BANKS = new Set<string>(BANKS)
 
 /**
  * Parse a comma-separated multi-select param into its validated members, in
@@ -446,9 +437,6 @@ export function validateTransactionsSearch(
   const categories = parseCsv<Category>(search.category, KNOWN_CATEGORIES)
   if (categories) result.category = categories.join(',')
 
-  const banks = parseCsv<Bank>(search.bank, KNOWN_BANKS)
-  if (banks) result.bank = banks.join(',')
-
   const accounts = parseIds(search.account)
   if (accounts) result.account = accounts.join(',')
 
@@ -488,9 +476,6 @@ export function searchToFilters(
     categories: search.category
       ? (parseCsv<Category>(search.category, KNOWN_CATEGORIES) ?? [])
       : [],
-    banks: search.bank
-      ? (parseCsv<Bank>(search.bank, KNOWN_BANKS) ?? [])
-      : [],
     accounts: search.account ? (parseIds(search.account) ?? []) : [],
     amount: search.amount ?? 'any',
   }
@@ -500,7 +485,7 @@ export function searchToFilters(
  * Encode live {@link TransactionFilters} back into URL search params (ADR-116),
  * OMITTING every default so the URL carries only what narrows the list: no
  * `type=all` / `currency=all` / `amount=any`, no empty `q` / `categories` /
- * `banks`, and no `month` when it equals the current-month default (the absence
+ * `accounts`, and no `month` when it equals the current-month default (the absence
  * of `month` IS the current month, so writing it would be redundant). Specific
  * months serialize to `YYYY-MM`; ranges to their sentinel.
  */
@@ -528,7 +513,6 @@ export function filtersToSearch(
   if (filters.categories.length > 0) {
     search.category = filters.categories.join(',')
   }
-  if (filters.banks.length > 0) search.bank = filters.banks.join(',')
   if (filters.accounts.length > 0) search.account = filters.accounts.join(',')
 
   return search
@@ -540,14 +524,6 @@ export function countByCategory(
   category: Category,
 ): number {
   return transactions.filter((t) => t.category === category).length
-}
-
-/** Count of transactions in `transactions` attributed to `bank`. */
-export function countByBank(
-  transactions: readonly Transaction[],
-  bank: Bank,
-): number {
-  return transactions.filter((t) => t.bank === bank).length
 }
 
 /** Count of transactions in `transactions` attributed to account `id` (ADR-134). */

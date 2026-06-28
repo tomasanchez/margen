@@ -89,13 +89,6 @@ function useStandaloneFilters(): UseTransactionFilters {
             ? f.categories.filter((c) => c !== value)
             : [...f.categories, value],
         })),
-      toggleBank: (value) =>
-        setFilters((f) => ({
-          ...f,
-          banks: f.banks.includes(value)
-            ? f.banks.filter((b) => b !== value)
-            : [...f.banks, value],
-        })),
       toggleAccount: (value) =>
         setFilters((f) => ({
           ...f,
