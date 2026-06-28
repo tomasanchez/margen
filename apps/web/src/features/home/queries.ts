@@ -14,6 +14,7 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchSummary, type Summary } from '../../api/summariesClient'
 import { fetchInsights, type MonthlyInsights } from '../../api/insightsClient'
 import { fetchMonotributo } from '../../api/monotributoClient'
+import { fetchSuggestedMepRate } from '../../api/fxClient'
 import { standingToState } from '../monotributo/derive'
 import type { MonotributoSnapshot, MonotributoState } from '../../mock/types'
 import type { ViewingMonth } from '../../components/months'
@@ -27,6 +28,33 @@ export const homeQueryKeys = {
   /** Insights are per-month too, so the `YYYY-MM` is part of the key. */
   insights: (month: string) =>
     [...homeQueryKeys.all, 'insights', month] as const,
+}
+
+/**
+ * Stable query key for the live MEP rate. NOT under the `home` namespace — the
+ * MEP is a global FX concern (ADR-044) that the net-worth card converts with
+ * (ADR-133 amendment: net worth now converts via the LIVE MEP from `fxClient`,
+ * not the last-transaction rate), and other features may share it.
+ */
+export const fxQueryKeys = {
+  all: ['fx'] as const,
+  mep: () => [...fxQueryKeys.all, 'mep'] as const,
+}
+
+/**
+ * The live MEP rate (ARS per USD) from dolarapi.com via {@link fetchSuggestedMepRate}
+ * (ADR-044). Cached for a few minutes so a Home re-render doesn't refetch, and
+ * the request is cancellable via the query `signal`. Resolves to `null` on any
+ * failure or unexpected response — the consumer (net-worth card) must NOT
+ * fabricate a rate and degrades to native amounts instead (ADR-037/133).
+ */
+export function useMepRate() {
+  return useQuery<number | null>({
+    queryKey: fxQueryKeys.mep(),
+    queryFn: ({ signal }) => fetchSuggestedMepRate(signal),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+  })
 }
 
 /** Format a viewing month to the backend's `YYYY-MM` query value. */

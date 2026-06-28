@@ -2,17 +2,30 @@
  * Net-worth card for Home (ADR-122/123/127/133/134).
  *
  * Appended below the existing month-status hero (incremental Home, ADR-127). It
- * shows the user's total net worth in their display currency, then a breakdown
- * GROUPED BY INSTITUTION (ADR-134): each institution gets a header (name + a
- * non-color type cue, ADR-019), its per-currency accounts listed underneath with
- * each account's NATIVE balance (and, when it differs, its value in the display
- * currency), and a per-institution subtotal in the display currency. The card
- * renders WHATEVER the net-worth API returns and never computes FX client-side
- * (ADR-133): when the backend has no USD row to derive a MEP rate from it degrades
- * to native and `balanceConverted === balance`, in which case the row shows just
- * the one balance and a calm note explains the total is summed natively. The
- * subtotal merely SUMS the already-converted `balanceConverted` values — no FX is
- * derived here.
+ * shows the user's total net worth in their display currency, computed
+ * CLIENT-SIDE from each account's NATIVE balance + the LIVE MEP rate (ADR-133
+ * amendment: net worth now converts via the live MEP from `fxClient` (ADR-044),
+ * NOT the last-transaction rate baked into the backend's `balanceConverted` /
+ * `total`). Those stale converted fields are intentionally IGNORED for display.
+ *
+ * The headline is `<displayCcy> <total>`, where `total = nativeDisplay +
+ * convertedOther`: the sum of accounts already in the display currency plus the
+ * other currency's native sum converted at the live MEP. When both currencies
+ * are present a smaller secondary line decomposes the total:
+ * `<native> + ~ <convertedOther> (<otherNative> at ARS <mep> / USD)` — the `~`
+ * marks the approximate converted part.
+ *
+ * Below it is a breakdown GROUPED BY INSTITUTION (ADR-134): each institution gets
+ * a header (name + a non-color type cue, ADR-019), its per-currency accounts with
+ * each account's NATIVE balance (and, when it differs from the display currency,
+ * its value converted at the SAME live MEP), and a per-institution subtotal in
+ * the display currency — so the subtotals sum to the headline total.
+ *
+ * Degrade (ADR-037): the MEP rate is NEVER fabricated. While it loads the card
+ * shows a skeleton; if it resolves to `null` the card degrades to native amounts
+ * (no `~ converted`, no rate, a calm "MEP unavailable" note) and the breakdown
+ * shows native balances only. When there is no other-currency account there is
+ * nothing to convert, so the headline shows alone with no decomposition or note.
  *
  * Money arrives as Decimal strings (ADR-025/034) and is parsed to numbers only
  * here for the shared formatter (ADR-102). A loading skeleton, a calm error
@@ -32,6 +45,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
 import { formatARS, formatCurrency } from '../../lib/format'
+import { useMepRate } from './queries'
 import type { AccountType, Currency } from '../../mock/types'
 import type { NetWorth, NetWorthAccount } from '../../api/accountsClient'
 
@@ -61,114 +75,169 @@ function currencyRank(currency: Currency): number {
   return currency === 'ARS' ? 0 : 1
 }
 
-/**
- * The user's real USD holdings and, when a rate can be derived from the response,
- * their approximate value in ARS (ADR-123/133). `arsApprox`/`rate` are null when
- * no cross-currency account lets us derive the display-per-native rate — we never
- * fabricate one (ADR-133 degrade-to-native), so the callout shows USD only.
- */
-interface UsdHoldings {
-  /** Sum of native `balance` across USD accounts (actual dollars held). */
-  realUsd: number
-  /** That USD total valued in ARS at the derived rate, or null when none. */
-  arsApprox: number | null
-  /** The ARS-per-USD rate used for `arsApprox`, or null when none. */
-  rate: number | null
+/** The non-display currency (the one we have to convert at the live MEP). */
+function otherCurrencyOf(displayCurrency: Currency): Currency {
+  return displayCurrency === 'USD' ? 'ARS' : 'USD'
+}
+
+/** A usable live MEP rate: finite and positive, else `null` (degrade). */
+function usableMep(mep: number | null | undefined): number | null {
+  return typeof mep === 'number' && Number.isFinite(mep) && mep > 0 ? mep : null
 }
 
 /**
- * Derive USD holdings + an ARS approximation from the net-worth response
- * (ADR-123/133) WITHOUT fabricating an FX rate. The rate is recovered from the
- * response's own already-converted balances: for any account whose native
- * `currency` differs from the display `currency`, `balanceConverted / balance`
- * is the display-per-native rate.
- *
- * - Display = ARS: ARS value of USD = sum of `balanceConverted` for USD accounts
- *   (already in ARS); the implied rate = that sum / realUsd.
- * - Display = USD: recover ARS-per-USD from an ARS account
- *   (`balance / balanceConverted`) and multiply realUsd by it.
- *
- * Returns null when there are no USD accounts (callout hidden). `arsApprox`/`rate`
- * stay null when no usable cross-currency account exists (degrade-to-native).
+ * Convert `amount` from `from` currency into `displayCurrency` at the live MEP
+ * (ARS per USD). Same currency → returned as-is. ARS→USD divides by the MEP;
+ * USD→ARS multiplies. Returns `null` when no usable rate exists (degrade — we
+ * never fabricate one, ADR-133).
  */
-function deriveUsdHoldings(
+function convertAtMep(
+  amount: number,
+  from: Currency,
+  displayCurrency: Currency,
+  mep: number | null,
+): number | null {
+  if (from === displayCurrency) return amount
+  if (mep == null) return null
+  return displayCurrency === 'USD' ? amount / mep : amount * mep
+}
+
+/**
+ * The client-side net-worth decomposition (ADR-133 amendment): native amount in
+ * the display currency, the other currency's native sum, and that sum converted
+ * at the live MEP. `convertedOther`/`total` are `null` when there is an
+ * other-currency balance but no usable rate (degrade-to-native).
+ */
+interface Decomposition {
+  /** Sum of native `balance` across accounts already in the display currency. */
+  nativeDisplay: number
+  /** The non-display currency. */
+  otherCurrency: Currency
+  /** Sum of native `balance` across other-currency accounts. */
+  otherNative: number
+  /** Whether any other-currency balance exists (drives the decomposition line). */
+  hasOther: boolean
+  /** `otherNative` converted to the display currency, or `null` when no rate. */
+  convertedOther: number | null
+  /** `nativeDisplay + convertedOther`, or `null` when conversion was skipped. */
+  total: number | null
+}
+
+/**
+ * Compute the net-worth decomposition from the NATIVE balances + the live MEP
+ * (ADR-133 amendment), ignoring the backend's stale `balanceConverted`/`total`.
+ * Pure and unit-testable; the breakdown reuses {@link convertAtMep} so it stays
+ * consistent with this total.
+ */
+function decompose(
   accounts: NetWorthAccount[],
   displayCurrency: Currency,
-): UsdHoldings | null {
-  const usdAccounts = accounts.filter((a) => asCurrency(a.currency) === 'USD')
-  if (usdAccounts.length === 0) return null
-
-  const realUsd = usdAccounts.reduce((sum, a) => sum + num(a.balance), 0)
-
-  // No dollars actually held (all-zero USD rows): nothing meaningful to convert.
-  if (realUsd <= 0) return { realUsd, arsApprox: null, rate: null }
-
-  if (displayCurrency === 'ARS') {
-    // ARS value of USD holdings is already converted in each USD account
-    // (ADR-133); a degraded response leaves balanceConverted === balance, in
-    // which case there is no real ARS figure to sum, so we omit the approximation.
-    const arsSum = usdAccounts.reduce((sum, a) => {
-      const converted = num(a.balanceConverted)
-      return a.balanceConverted !== a.balance ? sum + converted : sum
-    }, 0)
-    if (arsSum <= 0) return { realUsd, arsApprox: null, rate: null }
-    return { realUsd, arsApprox: arsSum, rate: arsSum / realUsd }
-  }
-
-  // Display = USD: recover ARS-per-USD from any ARS account that was converted
-  // (balance in ARS / balanceConverted in USD). Skip degraded/zero rows.
+  mep: number | null,
+): Decomposition {
+  const other = otherCurrencyOf(displayCurrency)
+  let nativeDisplay = 0
+  let otherNative = 0
   for (const account of accounts) {
-    if (asCurrency(account.currency) !== 'ARS') continue
-    if (account.balanceConverted === account.balance) continue
-    const ars = num(account.balance)
-    const usd = num(account.balanceConverted)
-    if (ars > 0 && usd > 0) {
-      const rate = ars / usd
-      return { realUsd, arsApprox: realUsd * rate, rate }
-    }
+    const value = num(account.balance)
+    if (asCurrency(account.currency) === displayCurrency) nativeDisplay += value
+    else otherNative += value
   }
-  // No cross-currency ARS account to derive the rate from: degrade to USD only.
-  return { realUsd, arsApprox: null, rate: null }
+  const hasOther = accounts.some(
+    (a) => asCurrency(a.currency) === other,
+  )
+  const convertedOther = hasOther
+    ? convertAtMep(otherNative, other, displayCurrency, mep)
+    : 0
+  const total = convertedOther == null ? null : nativeDisplay + convertedOther
+  return {
+    nativeDisplay,
+    otherCurrency: other,
+    otherNative,
+    hasOther,
+    convertedOther,
+    total,
+  }
 }
 
 /**
- * Calm USD-holdings callout below the total (ADR-013/037): the real dollars held,
- * and — when a rate was derivable from the response (ADR-133) — their approximate
- * ARS value with the rate spelled out. Tabular-nums, localized via the shared
- * formatter (ADR-102); the ARS approximation is omitted when no rate exists.
+ * The headline + currency decomposition (ADR-133 amendment). The big total is in
+ * the display currency; when both currencies are present a smaller secondary
+ * line reads `<native> + ~ <converted> (<otherNative> at ARS <mep> / USD)` — the
+ * `~` marking the converted (approximate) part. When the MEP is unavailable the
+ * converted part and rate are omitted and a calm note is shown; when there is no
+ * other-currency balance the headline stands alone.
  */
-function UsdHoldingsCallout({ holdings }: { holdings: UsdHoldings }) {
+function NetWorthHeadline({
+  decomp,
+  displayCurrency,
+  mep,
+}: {
+  decomp: Decomposition
+  displayCurrency: Currency
+  mep: number | null
+}) {
   const { t } = useTranslation('accounts')
+  // Headline value: the converted total when a rate exists, else the native
+  // display-currency portion (we never invent a rate, ADR-133).
+  const headlineValue = decomp.total ?? decomp.nativeDisplay
+
+  const showConverted =
+    decomp.hasOther && decomp.convertedOther != null && mep != null
+  const showNoRate = decomp.hasOther && (decomp.convertedOther == null || mep == null)
+
+  const nativeStr = formatCurrency(decomp.nativeDisplay, displayCurrency)
+  const otherStr = formatCurrency(decomp.otherNative, decomp.otherCurrency)
+
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        alignItems: 'baseline',
-        columnGap: 1,
-        rowGap: 0.25,
-        mt: 1,
-      }}
-    >
+    <Box>
       <Typography sx={{ fontSize: 12.5 }} color="text.secondary">
-        {t('netWorth.usdHoldingsLabel')}
+        {t('netWorth.totalLabel')}
       </Typography>
       <Typography
-        sx={{ fontSize: 13.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
+        sx={{
+          fontSize: { xs: 26, md: 30 },
+          fontWeight: 700,
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: '-0.01em',
+        }}
         color="text.primary"
       >
-        {formatCurrency(holdings.realUsd, 'USD')}
+        {formatCurrency(headlineValue, displayCurrency)}
       </Typography>
-      {holdings.arsApprox != null && holdings.rate != null ? (
+
+      {showConverted ? (
         <Typography
-          sx={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}
+          sx={{ fontSize: 12.5, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}
           color="text.secondary"
         >
-          {t('netWorth.usdHoldingsApprox', {
-            amount: formatCurrency(holdings.arsApprox, 'ARS'),
-            rate: `AR$ ${formatARS(holdings.rate)}`,
+          {t('netWorth.decomposition', {
+            native: nativeStr,
+            converted: formatCurrency(decomp.convertedOther ?? 0, displayCurrency),
+            other: otherStr,
+            rate: t('netWorth.mepUnit', { rate: formatARS(mep) }),
           })}
         </Typography>
+      ) : null}
+
+      {showNoRate ? (
+        <>
+          <Typography
+            sx={{ fontSize: 12.5, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}
+            color="text.secondary"
+          >
+            {t('netWorth.decompositionNoRate', {
+              native: nativeStr,
+              other: otherStr,
+            })}
+          </Typography>
+          <Typography
+            sx={{ fontSize: 12, mt: 0.25 }}
+            color="text.secondary"
+            role="note"
+          >
+            {t('netWorth.mepUnavailable')}
+          </Typography>
+        </>
       ) : null}
     </Box>
   )
@@ -176,36 +245,53 @@ function UsdHoldingsCallout({ holdings }: { holdings: UsdHoldings }) {
 
 /**
  * One institution's grouped breakdown (ADR-134): its accounts (currency-ordered)
- * plus a `subtotal` in the display currency — the sum of the group's already
- * converted `balanceConverted` values (ADR-133: no FX derived here).
+ * plus a `subtotal` in the display currency — the sum of each account's value
+ * converted at the live MEP (ADR-133 amendment), so the subtotals sum to the
+ * headline total. `subtotal` is `null` when an other-currency account couldn't
+ * be converted (degrade), in which case the subtotal line is hidden.
  */
 interface InstitutionGroup {
   institutionId: string
   institutionName: string
   type: AccountType
   accounts: NetWorthAccount[]
-  subtotal: number
+  subtotal: number | null
 }
 
 /**
  * Group the flat net-worth breakdown by `institutionId` (ADR-134, client-side —
- * no backend change). Institutions are ordered by subtotal DESC (name as the
- * tie-break); accounts within an institution are ordered ARS before USD.
+ * no backend change), converting each account at the live MEP (ADR-133
+ * amendment) so the per-institution subtotals match the headline total.
+ * Institutions are ordered by subtotal DESC (name as the tie-break); accounts
+ * within an institution are ordered ARS before USD.
  */
-function groupByInstitution(accounts: NetWorthAccount[]): InstitutionGroup[] {
+function groupByInstitution(
+  accounts: NetWorthAccount[],
+  displayCurrency: Currency,
+  mep: number | null,
+): InstitutionGroup[] {
   const byId = new Map<string, InstitutionGroup>()
   for (const account of accounts) {
+    const converted = convertAtMep(
+      num(account.balance),
+      asCurrency(account.currency),
+      displayCurrency,
+      mep,
+    )
     const existing = byId.get(account.institutionId)
     if (existing) {
       existing.accounts.push(account)
-      existing.subtotal += num(account.balanceConverted)
+      existing.subtotal =
+        existing.subtotal == null || converted == null
+          ? null
+          : existing.subtotal + converted
     } else {
       byId.set(account.institutionId, {
         institutionId: account.institutionId,
         institutionName: account.institutionName,
         type: asAccountType(account.type),
         accounts: [account],
-        subtotal: num(account.balanceConverted),
+        subtotal: converted,
       })
     }
   }
@@ -217,7 +303,7 @@ function groupByInstitution(accounts: NetWorthAccount[]): InstitutionGroup[] {
   }
   groups.sort(
     (a, b) =>
-      b.subtotal - a.subtotal ||
+      (b.subtotal ?? 0) - (a.subtotal ?? 0) ||
       a.institutionName.localeCompare(b.institutionName),
   )
   return groups
@@ -228,24 +314,25 @@ function groupByInstitution(accounts: NetWorthAccount[]): InstitutionGroup[] {
  * drilldown to the account's transactions (`/transactions?account=<id>`,
  * ADR-116/134) — a bare TanStack {@link Link} so the typed `to` / `search`
  * inference is checked against the route schema — shows the native balance and,
- * when conversion actually happened, a secondary `≈ converted` line.
+ * when the account is in another currency and a live MEP exists, a secondary
+ * `≈ converted` line (computed at the SAME live rate as the headline, ADR-133).
  */
 function AccountRow({
   account,
   displayCurrency,
+  mep,
 }: {
   account: NetWorthAccount
   displayCurrency: Currency
+  mep: number | null
 }) {
   const { t } = useTranslation('accounts')
   const nativeCurrency = asCurrency(account.currency)
   const native = num(account.balance)
-  const converted = num(account.balanceConverted)
-  // Show the converted line only when conversion actually happened (ADR-133): a
-  // degraded backend returns balanceConverted === balance, so there is nothing
-  // extra to show. Also skip it when the account is already in display currency.
-  const showConverted =
-    nativeCurrency !== displayCurrency && account.balanceConverted !== account.balance
+  const converted = convertAtMep(native, nativeCurrency, displayCurrency, mep)
+  // Show the converted line only when the account is in another currency AND a
+  // live MEP let us convert it (ADR-133 degrade: no rate → native only).
+  const showConverted = nativeCurrency !== displayCurrency && converted != null
 
   return (
     <Link
@@ -289,7 +376,7 @@ function AccountRow({
               color="text.secondary"
             >
               {t('netWorth.converted', {
-                amount: formatCurrency(converted, displayCurrency),
+                amount: formatCurrency(converted ?? 0, displayCurrency),
               })}
             </Typography>
           ) : null}
@@ -304,14 +391,17 @@ function AccountRow({
  * ADR-019) over the institution's per-currency account rows, capped by a subtotal
  * in the display currency. The header is an `h4` so the breakdown has a real
  * heading structure under the card title; the subtotal carries an accessible
- * label naming the institution + amount.
+ * label naming the institution + amount. The subtotal is hidden when it couldn't
+ * be computed at the live MEP (degrade-to-native, ADR-133).
  */
 function InstitutionBlock({
   group,
   displayCurrency,
+  mep,
 }: {
   group: InstitutionGroup
   displayCurrency: Currency
+  mep: number | null
 }) {
   const { t } = useTranslation('accounts')
   return (
@@ -349,34 +439,37 @@ function InstitutionBlock({
             key={account.id}
             account={account}
             displayCurrency={displayCurrency}
+            mep={mep}
           />
         ))}
       </Box>
 
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'baseline',
-          justifyContent: 'space-between',
-          gap: 1.5,
-          mt: 0.5,
-          pl: 1,
-        }}
-      >
-        <Typography sx={{ fontSize: 12 }} color="text.secondary">
-          {t('netWorth.subtotalLabel')}
-        </Typography>
-        <Typography
-          sx={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
-          color="text.primary"
-          aria-label={t('netWorth.subtotalAria', {
-            institution: group.institutionName,
-            amount: formatCurrency(group.subtotal, displayCurrency),
-          })}
+      {group.subtotal != null ? (
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: 1.5,
+            mt: 0.5,
+            pl: 1,
+          }}
         >
-          {formatCurrency(group.subtotal, displayCurrency)}
-        </Typography>
-      </Box>
+          <Typography sx={{ fontSize: 12 }} color="text.secondary">
+            {t('netWorth.subtotalLabel')}
+          </Typography>
+          <Typography
+            sx={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
+            color="text.primary"
+            aria-label={t('netWorth.subtotalAria', {
+              institution: group.institutionName,
+              amount: formatCurrency(group.subtotal, displayCurrency),
+            })}
+          >
+            {formatCurrency(group.subtotal, displayCurrency)}
+          </Typography>
+        </Box>
+      ) : null}
     </Box>
   )
 }
@@ -399,6 +492,9 @@ export function NetWorthCard({
   onRetry,
 }: NetWorthCardProps) {
   const { t } = useTranslation('accounts')
+  // Live MEP rate (ADR-044/133): cached for a few minutes, cancellable. We never
+  // fabricate a rate — `null` (failure) and `isPending` (loading) each degrade.
+  const mepQuery = useMepRate()
   // Local-only expand state (persistence not required); default COLLAPSED for a
   // compact summary card the user opens for detail.
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -414,7 +510,9 @@ export function NetWorthCard({
     )
   }
 
-  if (loading || !netWorth) {
+  // Wait on BOTH the net-worth read AND the live MEP so the headline total is
+  // never shown at the wrong (pre-conversion) value (ADR-133/037).
+  if (loading || !netWorth || mepQuery.isPending) {
     return (
       <SectionCard title={t('netWorth.title')}>
         <Skeleton variant="text" width={180} height={40} />
@@ -425,39 +523,20 @@ export function NetWorthCard({
   }
 
   const displayCurrency = asCurrency(netWorth.currency)
-  const total = num(netWorth.total)
-  // Grouping is a cheap pure pass over the breakdown; computing it inline avoids
-  // a conditional hook after the loading/error early returns above.
-  const groups = groupByInstitution(netWorth.accounts)
-  // USD holdings + (when derivable) their ARS approximation — null when the user
-  // holds no dollars, in which case the callout is hidden (ADR-123/133).
-  const usdHoldings = deriveUsdHoldings(netWorth.accounts, displayCurrency)
-  // The total is summed natively (no conversion) when EVERY account already
-  // reports its converted balance equal to its native one (ADR-133 degrade).
-  const degraded =
-    netWorth.accounts.length > 0 &&
-    netWorth.accounts.every((a) => a.balanceConverted === a.balance) &&
-    netWorth.accounts.some((a) => asCurrency(a.currency) !== displayCurrency)
+  // A usable live MEP, or null on failure / unusable value → degrade-to-native.
+  const mep = usableMep(mepQuery.data)
+  // Decomposition + groups both convert at the SAME live MEP, so the breakdown
+  // subtotals sum to the headline total (ADR-133 amendment).
+  const decomp = decompose(netWorth.accounts, displayCurrency, mep)
+  const groups = groupByInstitution(netWorth.accounts, displayCurrency, mep)
 
   return (
     <SectionCard title={t('netWorth.title')} subtitle={t('netWorth.subtitle')}>
-      <Box>
-        <Typography sx={{ fontSize: 12.5 }} color="text.secondary">
-          {t('netWorth.totalLabel')}
-        </Typography>
-        <Typography
-          sx={{
-            fontSize: { xs: 26, md: 30 },
-            fontWeight: 700,
-            fontVariantNumeric: 'tabular-nums',
-            letterSpacing: '-0.01em',
-          }}
-          color="text.primary"
-        >
-          {formatCurrency(total, displayCurrency)}
-        </Typography>
-        {usdHoldings ? <UsdHoldingsCallout holdings={usdHoldings} /> : null}
-      </Box>
+      <NetWorthHeadline
+        decomp={decomp}
+        displayCurrency={displayCurrency}
+        mep={mep}
+      />
 
       {netWorth.accounts.length === 0 ? (
         <Typography
@@ -507,22 +586,13 @@ export function NetWorthCard({
                   key={group.institutionId}
                   group={group}
                   displayCurrency={displayCurrency}
+                  mep={mep}
                 />
               ))}
             </Box>
           </Collapse>
         </Box>
       )}
-
-      {degraded ? (
-        <Typography
-          sx={{ fontSize: 12, mt: 1.5 }}
-          color="text.secondary"
-          role="note"
-        >
-          {t('netWorth.degradeNote')}
-        </Typography>
-      ) : null}
     </SectionCard>
   )
 }

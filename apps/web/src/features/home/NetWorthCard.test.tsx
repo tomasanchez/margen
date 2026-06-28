@@ -2,17 +2,24 @@
  * Unit tests for the Home net-worth card (ADR-122/123/127/133/134).
  *
  * The card renders fed a {@link NetWorth} read model directly — the `useNetWorth`
- * query + client adapter are covered separately (accountsClient.test). Here we
- * assert the presentation: the total in the display currency, the breakdown
+ * query + client adapter are covered separately (accountsClient.test). The card
+ * computes its headline CLIENT-SIDE from each account's NATIVE balance + the LIVE
+ * MEP rate (ADR-133 amendment), so these tests MOCK `fetchSuggestedMepRate` to a
+ * fixed value (or null for the degrade case) and assert the presentation: the
+ * headline total in the display currency, the currency decomposition line
+ * (`<native> + ~ <converted> (<otherNative> at ARS <mep> / USD)`), the breakdown
  * GROUPED BY INSTITUTION (a header per institution + a type cue, its per-currency
- * accounts with the converted line when in another currency, and a per-institution
- * subtotal in the display currency, ADR-134), the ADR-133 DEGRADE case
- * (balanceConverted === balance → no second line, calm note shown), the account
- * drilldown link, the empty state, and the loading skeleton. The card renders
- * TanStack <Link>s, so it mounts behind a memory router. English-pinned (ADR-105).
+ * accounts with the converted line, and a per-institution subtotal that sums to
+ * the headline at the SAME live MEP, ADR-134), the MEP-unavailable degrade, the
+ * account drilldown link, the empty state, and the loading skeleton. The card
+ * renders TanStack <Link>s, so it mounts behind a memory router. English-pinned
+ * (ADR-105).
+ *
+ * The mocked MEP is 1.250 ARS/USD so the existing converted/subtotal fixtures
+ * (USD 720 → ARS 900.000, USD 760 → ARS 950.000) stay clean.
  */
 
-import { describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -25,7 +32,25 @@ import {
 } from '@tanstack/react-router'
 import { ColorModeProvider } from '../../theme/colorMode'
 import { NetWorthCard, type NetWorthCardProps } from './NetWorthCard'
+import { fetchSuggestedMepRate } from '../../api/fxClient'
 import type { NetWorth } from '../../api/accountsClient'
+
+vi.mock('../../api/fxClient', () => ({
+  fetchSuggestedMepRate: vi.fn(),
+}))
+
+const mockMep = vi.mocked(fetchSuggestedMepRate)
+
+/** The mocked live MEP rate (ARS per USD) used by most tests. */
+const MEP = 1250
+
+beforeEach(() => {
+  mockMep.mockResolvedValue(MEP)
+})
+
+afterEach(() => {
+  vi.clearAllMocks()
+})
 
 /** Render the card behind a memory router so its drilldown <Link>s resolve. */
 function renderCard(props: NetWorthCardProps) {
@@ -60,7 +85,11 @@ async function expandDetails() {
   return toggle
 }
 
-/** Mixed-currency net worth with a real USD→ARS conversion applied. */
+/**
+ * Mixed-currency net worth, display = ARS. Native ARS 150.000 + native USD 720.
+ * At MEP 1.250 the USD converts to ARS 900.000, so total = 1.050.000. The
+ * backend's stale `balanceConverted`/`total` are IGNORED for display (ADR-133).
+ */
 const CONVERTED: NetWorth = {
   total: '1050000.00',
   currency: 'ARS',
@@ -89,7 +118,8 @@ const CONVERTED: NetWorth = {
 /**
  * One institution holding TWO per-currency accounts (ARS + USD), to prove the
  * accounts group under a single institution header and that the per-institution
- * subtotal sums their converted balances (ADR-134).
+ * subtotal sums their values converted at the live MEP (ADR-134). At MEP 1.250
+ * USD 760 → ARS 950.000, so the subtotal = 950.000 + 150.000 = 1.100.000.
  */
 const MULTI_ACCOUNT: NetWorth = {
   total: '1100000.00',
@@ -117,38 +147,85 @@ const MULTI_ACCOUNT: NetWorth = {
 }
 
 describe('NetWorthCard', () => {
-  test('renders the total in the display currency and the per-account breakdown', async () => {
+  test('computes the headline at the live MEP and shows the ARS decomposition', async () => {
     renderCard({ netWorth: CONVERTED, loading: false })
 
-    // Total in the display currency (ARS, es-AR grouping → 1.050.000).
+    // total = native ARS 150.000 + (USD 720 * 1.250 = ARS 900.000) = 1.050.000.
     expect(await screen.findByText('ARS 1.050.000')).toBeInTheDocument()
+
+    // Decomposition: native ARS + ~ converted (USD native at the MEP unit).
+    expect(
+      screen.getByText(
+        'ARS 150.000 + ~ ARS 900.000 (USD 720 at ARS 1.250 / USD)',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  test('computes the headline symmetrically when display = USD', async () => {
+    // Display USD: native USD 7.000 + native ARS 4.500.000. At MEP 1.500 the ARS
+    // converts to USD 3.000, so total = USD 10.000.
+    mockMep.mockResolvedValue(1500)
+    const usdDisplay: NetWorth = {
+      total: '10000.00',
+      currency: 'USD',
+      accounts: [
+        {
+          id: 'u1',
+          institutionId: 'inst-1',
+          institutionName: 'Deel',
+          type: 'wallet',
+          currency: 'USD',
+          balance: '7000.00',
+          balanceConverted: '7000.00',
+        },
+        {
+          id: 'u2',
+          institutionId: 'inst-2',
+          institutionName: 'Galicia',
+          type: 'bank',
+          currency: 'ARS',
+          balance: '4500000.00',
+          balanceConverted: '3000.00',
+        },
+      ],
+    }
+    renderCard({ netWorth: usdDisplay, loading: false })
+
+    expect(await screen.findByText('USD 10.000')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'USD 7.000 + ~ USD 3.000 (ARS 4.500.000 at ARS 1.500 / USD)',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  test('renders the per-account breakdown with the converted line at the live MEP', async () => {
+    renderCard({ netWorth: CONVERTED, loading: false })
+    await screen.findByText('ARS 1.050.000')
 
     await expandDetails()
 
-    // Each institution name + native balance is shown (USD 720 also appears in
-    // the USD-holdings callout, hence getAllByText).
     expect(screen.getByText('Galicia')).toBeInTheDocument()
     expect(screen.getByText('Deel')).toBeInTheDocument()
-    expect(screen.getAllByText('USD 720').length).toBeGreaterThanOrEqual(1)
-
-    // The USD account shows its converted ARS value as a secondary line.
+    expect(screen.getByText('USD 720')).toBeInTheDocument()
+    // The USD account shows its converted ARS value (720 * 1.250) as a secondary line.
     expect(screen.getByText('≈ ARS 900.000')).toBeInTheDocument()
   })
 
   test('groups multiple accounts under one institution header with a subtotal', async () => {
     renderCard({ netWorth: MULTI_ACCOUNT, loading: false })
+    await screen.findByText('ARS 1.100.000')
 
     await expandDetails()
 
     // The institution header appears exactly once even with two accounts.
     expect(await screen.findAllByText('Galicia')).toHaveLength(1)
 
-    // Both per-currency native balances render under that institution (USD 760
-    // also appears in the USD-holdings callout, hence getAllByText).
-    expect(screen.getAllByText('USD 760').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('USD 760')).toBeInTheDocument()
     expect(screen.getByText('ARS 150.000')).toBeInTheDocument()
 
-    // The per-institution subtotal sums the converted balances (950.000 + 150.000).
+    // The per-institution subtotal sums the values converted at the MEP
+    // (950.000 + 150.000), matching the headline total.
     expect(
       screen.getByLabelText('Galicia subtotal ARS 1.100.000'),
     ).toBeInTheDocument()
@@ -156,10 +233,12 @@ describe('NetWorthCard', () => {
 
   test('renders a per-institution subtotal for each institution group', async () => {
     renderCard({ netWorth: CONVERTED, loading: false })
+    await screen.findByText('ARS 1.050.000')
 
     await expandDetails()
 
-    // Each single-account institution's subtotal equals its converted balance.
+    // Single-account institutions: ARS native subtotal and the USD account
+    // converted at the live MEP (720 * 1.250). They sum to the headline.
     expect(
       await screen.findByLabelText('Galicia subtotal ARS 150.000'),
     ).toBeInTheDocument()
@@ -170,6 +249,7 @@ describe('NetWorthCard', () => {
 
   test('each breakdown row links to its account drilldown', async () => {
     renderCard({ netWorth: CONVERTED, loading: false })
+    await screen.findByText('ARS 1.050.000')
     await expandDetails()
     const link = await screen.findByRole('link', {
       name: 'View Deel USD transactions',
@@ -177,40 +257,28 @@ describe('NetWorthCard', () => {
     expect(link).toHaveAttribute('href', '/transactions?account=a2&month=all')
   })
 
-  test('degrade case (ADR-133): equal balances render no converted line + a calm note', async () => {
-    const degraded: NetWorth = {
-      total: '720.00',
-      currency: 'ARS',
-      accounts: [
-        {
-          id: 'a2',
-          institutionId: 'inst-2',
-          institutionName: 'Deel',
-          type: 'wallet',
-          currency: 'USD',
-          balance: '720.00',
-          balanceConverted: '720.00',
-        },
-      ],
-    }
-    renderCard({ netWorth: degraded, loading: false })
-    await expandDetails()
+  test('degrades to native when the live MEP is unavailable (null)', async () => {
+    mockMep.mockResolvedValue(null)
+    renderCard({ netWorth: CONVERTED, loading: false })
 
-    // Native balance shown (the breakdown row + the USD-holdings callout both
-    // read USD 720); no "≈" converted line — conversion was skipped, and with no
-    // derivable rate the callout omits its ARS approximation too (ADR-133).
-    expect((await screen.findAllByText('USD 720')).length).toBeGreaterThanOrEqual(
-      1,
-    )
-    expect(screen.queryByText(/≈/)).not.toBeInTheDocument()
-
-    // The calm degrade note explains the native-summed total.
+    // Headline = the display-native portion only (no fabricated rate). The
+    // other-currency native is shown without conversion, plus a calm note.
+    expect(await screen.findByText('ARS 150.000')).toBeInTheDocument()
+    expect(screen.getByText('ARS 150.000 + USD 720')).toBeInTheDocument()
     expect(
-      screen.getByText(/Totalled in each account's own currency/i),
+      screen.getByText(/Live MEP rate unavailable/i),
     ).toBeInTheDocument()
+    // No converted (~) part and no "at … / USD" rate spelled out.
+    expect(screen.queryByText(/~/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/USD$/)).not.toBeInTheDocument()
+
+    // The breakdown shows native balances only — no converted (≈) line.
+    await expandDetails()
+    expect(screen.getByText('USD 720')).toBeInTheDocument()
+    expect(screen.queryByText(/≈/)).not.toBeInTheDocument()
   })
 
-  test('does not render a converted line for an account already in display currency', async () => {
+  test('shows the headline alone when there is no other-currency account', async () => {
     const arsOnly: NetWorth = {
       total: '150000.00',
       currency: 'ARS',
@@ -227,15 +295,16 @@ describe('NetWorthCard', () => {
       ],
     }
     renderCard({ netWorth: arsOnly, loading: false })
+
+    // Headline only: no decomposition line, no MEP note, no converted (~) part.
+    expect(await screen.findByText('ARS 150.000')).toBeInTheDocument()
+    expect(screen.queryByText(/~/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Live MEP rate unavailable/i)).not.toBeInTheDocument()
+
     await expandDetails()
-    // The total, the single ARS row, and the institution subtotal all read
-    // "ARS 150.000" (grand total + the one account + its one-account subtotal).
-    expect(await screen.findAllByText('ARS 150.000')).toHaveLength(3)
+    // Total, the single ARS row, and the institution subtotal all read 150.000.
+    expect(screen.getAllByText('ARS 150.000')).toHaveLength(3)
     expect(screen.queryByText(/≈/)).not.toBeInTheDocument()
-    // Not a cross-currency degrade — no native-sum note for an all-ARS portfolio.
-    expect(
-      screen.queryByText(/Totalled in each account's own currency/i),
-    ).not.toBeInTheDocument()
   })
 
   test('keeps the breakdown collapsed by default and toggles it open/closed', async () => {
@@ -268,65 +337,6 @@ describe('NetWorthCard', () => {
     )
   })
 
-  test('shows the USD-holdings callout with the ARS approximation (display = ARS)', async () => {
-    renderCard({ netWorth: CONVERTED, loading: false })
-
-    // Real USD = sum of USD account native balances (just a2: 720).
-    expect(await screen.findByText('USD holdings')).toBeInTheDocument()
-    expect(screen.getByText('USD 720')).toBeInTheDocument()
-    // ARS approximation = sum of converted USD balances (900.000), and the
-    // implied rate = 900.000 / 720 = 1.250 ARS per USD.
-    expect(
-      screen.getByText('≈ ARS 900.000 (at AR$ 1.250 / US$)'),
-    ).toBeInTheDocument()
-  })
-
-  test('hides the USD-holdings callout when there are no USD accounts', async () => {
-    const arsOnly: NetWorth = {
-      total: '150000.00',
-      currency: 'ARS',
-      accounts: [
-        {
-          id: 'a1',
-          institutionId: 'inst-1',
-          institutionName: 'Galicia',
-          type: 'bank',
-          currency: 'ARS',
-          balance: '150000.00',
-          balanceConverted: '150000.00',
-        },
-      ],
-    }
-    renderCard({ netWorth: arsOnly, loading: false })
-    await screen.findByText('ARS 150.000')
-    expect(screen.queryByText('USD holdings')).not.toBeInTheDocument()
-  })
-
-  test('omits the ARS approximation when no rate can be derived (degrade)', async () => {
-    // A USD-only, degraded response (balanceConverted === balance): real USD is
-    // shown, but with no cross-currency figure the ARS approximation is omitted.
-    const degraded: NetWorth = {
-      total: '720.00',
-      currency: 'ARS',
-      accounts: [
-        {
-          id: 'a2',
-          institutionId: 'inst-2',
-          institutionName: 'Deel',
-          type: 'wallet',
-          currency: 'USD',
-          balance: '720.00',
-          balanceConverted: '720.00',
-        },
-      ],
-    }
-    renderCard({ netWorth: degraded, loading: false })
-    expect(await screen.findByText('USD holdings')).toBeInTheDocument()
-    expect(screen.getAllByText('USD 720').length).toBeGreaterThanOrEqual(1)
-    // No "(at … / US$)" approximation line when the rate is not derivable.
-    expect(screen.queryByText(/US\$\)/)).not.toBeInTheDocument()
-  })
-
   test('shows the empty state when there are no accounts', async () => {
     const empty: NetWorth = { total: '0.00', currency: 'ARS', accounts: [] }
     renderCard({ netWorth: empty, loading: false })
@@ -335,7 +345,7 @@ describe('NetWorthCard', () => {
     ).toBeInTheDocument()
   })
 
-  test('shows a loading skeleton while pending', async () => {
+  test('shows a loading skeleton while the net-worth query is pending', async () => {
     const { container } = renderCard({ netWorth: undefined, loading: true })
     await screen.findByText('Net worth')
     expect(container.querySelector('.MuiSkeleton-root')).toBeInTheDocument()
