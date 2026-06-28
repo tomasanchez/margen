@@ -11,18 +11,24 @@
  * All money goes through <Amount>/format; the row never inlines number styling.
  */
 
-import { useCallback } from 'react'
+import { useCallback, useId, useState, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import CircularProgress from '@mui/material/CircularProgress'
 import IconButton from '@mui/material/IconButton'
+import ListItemIcon from '@mui/material/ListItemIcon'
+import ListItemText from '@mui/material/ListItemText'
+import Menu from '@mui/material/Menu'
+import MenuItem from '@mui/material/MenuItem'
 import Stack from '@mui/material/Stack'
 import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlineOutlined'
 import AttachFileIcon from '@mui/icons-material/AttachFile'
+import MoreVertIcon from '@mui/icons-material/MoreVert'
 import NotesOutlinedIcon from '@mui/icons-material/NotesOutlined'
+import OpenInNewOutlinedIcon from '@mui/icons-material/OpenInNewOutlined'
 import { Amount } from '../../components/Amount'
 import { FxBadge } from '../../components/FxBadge'
 import { formatDispDate } from '../../lib/format'
@@ -303,6 +309,165 @@ function RowActions({
   )
 }
 
+/**
+ * Whether a row has a stored document to open — the same condition the inline
+ * {@link InvoiceAttachmentBadge} uses (imported ARCA invoices are persisted with
+ * `kind === 'invoice'`, ADR-072). Drives the "Open PDF" overflow item.
+ */
+function hasAttachedDocument(transaction: Transaction): boolean {
+  return transaction.kind === 'invoice'
+}
+
+/**
+ * Kebab (⋮) overflow menu for the mobile row (ADR-017). Consolidates the
+ * per-row actions — Edit, Remove, and (when a document is attached) Open PDF —
+ * behind a single labeled icon button, so the cramped mobile row no longer has
+ * a trash icon and a "PDF" chip competing with the amount and date.
+ *
+ * Accessibility (ADR-019): the trigger carries an `aria-label`, `aria-haspopup`,
+ * and `aria-expanded`; the menu items are real `MenuItem`s with an icon AND a
+ * text label (non-color cues); the menu is keyboard-operable and closes on
+ * action. Remove preserves the calm delete flow + the `busy` disabled state
+ * (ADR-036/037).
+ *
+ * "Open PDF" drives the SAME authed document opener as the inline badge: it
+ * fetches the stored bytes WITH the bearer token (ADR-092), opens a short-lived
+ * object URL (ADR-073/081), and surfaces a calm error as text — not color alone
+ * (ADR-019/037) — beside the trigger on failure.
+ */
+function RowOverflowMenu({ transaction, onEdit, onDelete, busy }: TransactionRowProps) {
+  const { t } = useTranslation(['transactions', 'common'])
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
+  const open = Boolean(anchorEl)
+  const menuId = useId()
+
+  const fetchBlob = useCallback(
+    () => fetchInvoiceDocument(transaction.id),
+    [transaction.id],
+  )
+  const { open: openDocument, loading, error } = useDocumentOpener(fetchBlob)
+  const showPdf = hasAttachedDocument(transaction)
+
+  const handleOpen = (event: MouseEvent<HTMLElement>) => {
+    event.stopPropagation()
+    setAnchorEl(event.currentTarget)
+  }
+  const handleClose = () => setAnchorEl(null)
+
+  const handleEdit = () => {
+    handleClose()
+    onEdit(transaction)
+  }
+  const handleDelete = () => {
+    handleClose()
+    onDelete(transaction)
+  }
+  const handleOpenPdf = () => {
+    handleClose()
+    openDocument()
+  }
+
+  return (
+    <Box
+      sx={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 0.5 }}
+      // The kebab and its menu are actions, not the row's edit affordance: keep
+      // taps from bubbling to the surrounding tappable name button.
+      onClick={(event) => event.stopPropagation()}
+    >
+      {/* Calm, polite failure surfaced as text — not color alone (ADR-019/037).
+          Always in the DOM (role="alert" + aria-live) so mouse, keyboard, and
+          AT users all learn the open failed without hovering anything. */}
+      {error ? (
+        <Typography
+          role="alert"
+          component="span"
+          sx={{
+            fontSize: 10,
+            lineHeight: 1.4,
+            color: 'error.main',
+            textAlign: 'right',
+            maxWidth: 120,
+          }}
+        >
+          {error}
+        </Typography>
+      ) : null}
+      <IconButton
+        size="small"
+        aria-label={t('transactions:row.actionsAriaLabel', { name: transaction.name })}
+        aria-haspopup="menu"
+        aria-controls={open ? menuId : undefined}
+        aria-expanded={open ? 'true' : undefined}
+        aria-busy={loading || undefined}
+        onClick={handleOpen}
+        sx={{ color: 'text.disabled', '&:hover': { color: 'text.primary' } }}
+      >
+        {loading ? (
+          <CircularProgress size={18} thickness={5} color="inherit" aria-hidden />
+        ) : (
+          <MoreVertIcon fontSize="small" />
+        )}
+      </IconButton>
+
+      <Menu
+        id={menuId}
+        anchorEl={anchorEl}
+        open={open}
+        onClose={handleClose}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        slotProps={{
+          paper: {
+            elevation: 0,
+            sx: {
+              mt: 0.5,
+              minWidth: 184,
+              borderRadius: 2,
+              border: 1,
+              borderColor: 'divider',
+              bgcolor: 'background.paper',
+              boxShadow: '0 12px 32px -12px rgba(0,0,0,0.45)',
+            },
+          },
+          list: {
+            sx: { py: 0.5 },
+            'aria-label': t('transactions:row.actionsAriaLabel', {
+              name: transaction.name,
+            }),
+          },
+        }}
+      >
+        <MenuItem onClick={handleEdit} sx={{ py: 1.25 }}>
+          <ListItemIcon sx={{ color: 'text.secondary' }}>
+            <EditOutlinedIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText primary={t('common:actions.edit')} />
+        </MenuItem>
+
+        {showPdf ? (
+          <MenuItem onClick={handleOpenPdf} disabled={loading} sx={{ py: 1.25 }}>
+            <ListItemIcon sx={{ color: 'text.secondary' }}>
+              <OpenInNewOutlinedIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText primary={t('transactions:row.openPdf')} />
+          </MenuItem>
+        ) : null}
+
+        <MenuItem
+          onClick={handleDelete}
+          disabled={busy}
+          sx={{ py: 1.25, color: 'error.main' }}
+        >
+          <ListItemIcon sx={{ color: 'error.main' }}>
+            <DeleteOutlineIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText primary={t('common:actions.delete')} />
+        </MenuItem>
+      </Menu>
+    </Box>
+  )
+}
+
 /** Desktop grid row. Actions fade in on row hover/focus-within for calm UX. */
 export function TransactionRow(props: TransactionRowProps) {
   const { t: translate } = useTranslation('transactions')
@@ -428,7 +593,18 @@ export function TransactionRow(props: TransactionRowProps) {
   )
 }
 
-/** Condensed mobile row: name + meta on the left, amount + date on the right. */
+/**
+ * Condensed mobile row (ADR-017). Three zones: a tappable LEFT column (name +
+ * `category · bank`, truncated), a right-aligned AMOUNT column (signed amount,
+ * its FX subline, and the date stacked beneath), and a trailing kebab (⋮)
+ * overflow menu that consolidates Edit / Remove / Open PDF (replacing the old
+ * inline trash icon + "PDF" chip that crowded the row).
+ *
+ * The informational FX badge and notes indicator stay inline next to the name
+ * (they are cues, not actions — ADR-019), not buried in the menu. The left text
+ * truncates via `minWidth: 0` + ellipsis (never numeric `sx` widths — those are
+ * percentages, not px) so a long name can't push the amount off-screen.
+ */
 export function TransactionRowMobile(props: TransactionRowProps) {
   const { t: translate } = useTranslation(['transactions', 'common'])
   const { transaction: t, onEdit } = props
@@ -439,12 +615,14 @@ export function TransactionRowMobile(props: TransactionRowProps) {
       sx={{
         display: 'flex',
         alignItems: 'center',
-        gap: 1.5,
+        gap: 1,
         py: 1.375,
         borderBottom: 1,
         borderColor: 'var(--mg-border)',
       }}
     >
+      {/* LEFT: tappable name + meta. flex:1 + minWidth:0 lets it shrink and
+          ellipsis-truncate instead of shoving the amount column off-screen. */}
       <Box
         component="button"
         type="button"
@@ -468,7 +646,7 @@ export function TransactionRowMobile(props: TransactionRowProps) {
           },
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
           <Typography
             component="span"
             color="text.primary"
@@ -486,6 +664,7 @@ export function TransactionRowMobile(props: TransactionRowProps) {
             <RowBadge>{translate('transactions:row.recurring')}</RowBadge>
           ) : null}
           {isUsd ? <FxBadge /> : null}
+          <NotesIndicator notes={t.notes} />
         </Box>
         <Box
           sx={{
@@ -512,12 +691,14 @@ export function TransactionRowMobile(props: TransactionRowProps) {
         </Box>
       </Box>
 
+      {/* RIGHT: right-aligned amount column — amount, FX subline, then date. */}
       <Box
         sx={{
           flex: 'none',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'flex-end',
+          textAlign: 'right',
         }}
       >
         <Amount
@@ -529,42 +710,21 @@ export function TransactionRowMobile(props: TransactionRowProps) {
           fxRate={isUsd ? t.rate : undefined}
           fxSource={isUsd ? t.fxRateType : undefined}
         />
-        <Box
+        <Typography
+          component="span"
           sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 0.5,
             mt: 0.25,
+            fontFamily: monoFontFamily,
+            fontSize: 10.5,
+            color: 'text.disabled',
+            whiteSpace: 'nowrap',
           }}
         >
-          <InvoiceAttachmentBadge transaction={t} />
-          <NotesIndicator notes={t.notes} />
-          <Typography
-            component="span"
-            sx={{
-              fontFamily: monoFontFamily,
-              fontSize: 10.5,
-              color: 'text.disabled',
-            }}
-          >
-            {formatDispDate(t.dispDate)}
-          </Typography>
-        </Box>
+          {formatDispDate(t.dispDate)}
+        </Typography>
       </Box>
 
-      <Tooltip title={translate('common:actions.delete')}>
-        <span>
-          <IconButton
-            size="small"
-            aria-label={translate('transactions:row.delete', { name: t.name })}
-            disabled={props.busy}
-            onClick={() => props.onDelete(t)}
-            sx={{ color: 'text.disabled', '&:hover': { color: 'error.main' } }}
-          >
-            <DeleteOutlineIcon fontSize="small" />
-          </IconButton>
-        </span>
-      </Tooltip>
+      <RowOverflowMenu {...props} />
     </Box>
   )
 }

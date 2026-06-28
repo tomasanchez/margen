@@ -7,11 +7,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ThemeProvider } from '@mui/material/styles'
 import { darkTheme } from '../../theme'
-import { TransactionRow } from './TransactionRow'
+import { TransactionRow, TransactionRowMobile } from './TransactionRow'
 import type { Transaction } from '../../mock/types'
 import * as invoicesClient from '../../api/invoicesClient'
 
@@ -241,5 +241,166 @@ describe('notes indicator', () => {
   test('an empty/whitespace note renders no indicator', () => {
     renderRow({ ...baseUsd, notes: '   ' })
     expect(screen.queryByRole('note')).toBeNull()
+  })
+})
+
+// Mobile row overflow menu (ADR-017, ADR-019, ADR-036/037): the cramped mobile
+// row consolidates its per-row actions behind a single labeled kebab (⋮) button
+// → Menu. The amount column is right-aligned; the inline trash icon and "PDF"
+// chip are gone. Edit fires onEdit, Remove fires onDelete (and respects busy),
+// and Open PDF appears ONLY when a document is attached (kind === 'invoice') and
+// drives the authed document opener. Assertions go through roles/labels, not
+// brittle pixel styles.
+describe('mobile row overflow menu', () => {
+  const expense: Transaction = {
+    ...baseUsd,
+    id: 'exp-1',
+    currency: 'ARS',
+    type: 'expense',
+    kind: 'expense',
+    name: 'Coto supermarket',
+    category: 'Food',
+    bank: 'Galicia',
+    usd: undefined,
+    rate: undefined,
+    fxRateType: undefined,
+  }
+
+  function renderMobile(
+    t: Transaction,
+    handlers: {
+      onEdit?: (t: Transaction) => void
+      onDelete?: (t: Transaction) => void
+      busy?: boolean
+    } = {},
+  ) {
+    return render(
+      <ThemeProvider theme={darkTheme}>
+        <TransactionRowMobile
+          transaction={t}
+          onEdit={handlers.onEdit ?? (() => {})}
+          onDelete={handlers.onDelete ?? (() => {})}
+          busy={handlers.busy}
+        />
+      </ThemeProvider>,
+    )
+  }
+
+  beforeEach(() => {
+    vi.spyOn(invoicesClient, 'fetchInvoiceDocument')
+    vi.stubGlobal('open', vi.fn(() => ({}) as Window))
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:mock-url'),
+      revokeObjectURL: vi.fn(),
+    })
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  test('the kebab is a single labeled menu trigger (no inline trash / PDF chip)', () => {
+    renderMobile(expense)
+    const trigger = screen.getByRole('button', {
+      name: 'Actions for Coto supermarket',
+    })
+    expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
+    // The old inline affordances are gone from the row surface.
+    expect(
+      screen.queryByRole('button', { name: /Delete Coto supermarket/ }),
+    ).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: /Open invoice PDF/i }),
+    ).toBeNull()
+    // The menu is not mounted until opened.
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  test('opening the menu reveals Edit and Remove items', async () => {
+    const user = userEvent.setup()
+    renderMobile(expense)
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Coto supermarket' }),
+    )
+    const menu = await screen.findByRole('menu', {
+      name: 'Actions for Coto supermarket',
+    })
+    expect(within(menu).getByRole('menuitem', { name: 'Edit' })).toBeInTheDocument()
+    expect(
+      within(menu).getByRole('menuitem', { name: 'Delete' }),
+    ).toBeInTheDocument()
+  })
+
+  test('Edit fires onEdit with the transaction and closes the menu', async () => {
+    const user = userEvent.setup()
+    const onEdit = vi.fn()
+    renderMobile(expense, { onEdit })
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Coto supermarket' }),
+    )
+    await user.click(await screen.findByRole('menuitem', { name: 'Edit' }))
+    expect(onEdit).toHaveBeenCalledWith(expense)
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+  })
+
+  test('Remove fires onDelete with the transaction', async () => {
+    const user = userEvent.setup()
+    const onDelete = vi.fn()
+    renderMobile(expense, { onDelete })
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Coto supermarket' }),
+    )
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+    expect(onDelete).toHaveBeenCalledWith(expense)
+  })
+
+  test('Remove respects the busy disabled state (calm delete in flight)', async () => {
+    // pointerEventsCheck disabled so the click reaches the inert MenuItem; we
+    // assert the handler stays unfired even though a click was dispatched.
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const onDelete = vi.fn()
+    renderMobile(expense, { onDelete, busy: true })
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Coto supermarket' }),
+    )
+    const remove = await screen.findByRole('menuitem', { name: 'Delete' })
+    // Disabled while a delete is in flight (ADR-036/037): aria-disabled, and the
+    // click is inert, so a second delete can't be dispatched.
+    expect(remove).toHaveAttribute('aria-disabled', 'true')
+    await user.click(remove)
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
+  test('Open PDF appears only when a document is attached and opens the authed blob', async () => {
+    const user = userEvent.setup()
+    vi.mocked(invoicesClient.fetchInvoiceDocument).mockResolvedValueOnce(
+      new Blob(['%PDF-1.7'], { type: 'application/pdf' }),
+    )
+    renderMobile({ ...baseUsd, kind: 'invoice' })
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Invoice · Atlas Co.' }),
+    )
+    await user.click(await screen.findByRole('menuitem', { name: 'Open PDF' }))
+
+    await waitFor(() =>
+      expect(invoicesClient.fetchInvoiceDocument).toHaveBeenCalledWith('usd-1'),
+    )
+    await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledTimes(1))
+    expect(window.open).toHaveBeenCalledWith(
+      'blob:mock-url',
+      '_blank',
+      'noopener,noreferrer',
+    )
+  })
+
+  test('Open PDF is omitted when no document is attached', async () => {
+    const user = userEvent.setup()
+    renderMobile(expense)
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Coto supermarket' }),
+    )
+    await screen.findByRole('menu')
+    expect(screen.queryByRole('menuitem', { name: 'Open PDF' })).toBeNull()
   })
 })

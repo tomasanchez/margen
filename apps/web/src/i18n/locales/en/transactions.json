@@ -35,6 +35,8 @@
     "delete": "Delete {{name}}",
     "openInvoicePdf": "Open invoice PDF",
     "openInvoicePdfFor": "Open invoice PDF for {{name}}",
+    "openPdf": "Open PDF",
+    "actionsAriaLabel": "Actions for {{name}}",
     "notes": "Notes"
   },
   "filters": {
