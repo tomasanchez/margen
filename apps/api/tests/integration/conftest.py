@@ -57,5 +57,9 @@ async def fixture_session_factory(integration_database_url: str) -> AsyncIterato
         yield async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
     finally:
         async with engine.begin() as connection:
+            # Fail fast (loud error) instead of hanging the whole tier forever if a test
+            # leaked a connection left ``idle in transaction`` holding a lock — drop_all
+            # needs an ACCESS EXCLUSIVE lock and would otherwise block indefinitely.
+            await connection.exec_driver_sql("SET lock_timeout = '15s'")
             await connection.run_sync(Base.metadata.drop_all)
         await engine.dispose()
