@@ -228,8 +228,9 @@ class TestTransferMonotributoIsolation:
         )
 
         # THEN — Monotributo total is untouched; net worth dropped by exactly the fee.
-        reader_after = SqlAlchemyMonotributoReader(session_factory())
-        used_after = (await reader_after.current_standing(REFERENCE, OWNER)).used
+        # Route through the helper (rollback + close) so the read-only session does not
+        # return to the pool ``idle in transaction`` and deadlock the fixture's drop_all.
+        used_after = await _monotributo_used(session_factory, REFERENCE)
         net_after = sum(account.balance for account in (await _balances_by_id(session_factory)).values())
         assert used_after == used_before
         assert net_before - net_after == Decimal("5000.00")
