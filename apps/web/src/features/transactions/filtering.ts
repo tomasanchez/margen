@@ -559,6 +559,9 @@ export function buildEditPrefill(
     kind: t.kind,
     currency: t.currency,
     category: t.category === 'Income' ? 'Food' : t.category,
+    // Seed the Account selector from the row's linked account so editing a
+    // transaction shows its current account (ADR-122/136). Omitted when unlinked.
+    ...(t.accountId ? { accountId: t.accountId } : {}),
     bank: t.bank,
     // Card detail is import-set, not user-editable (ADR-117); carry it through so
     // editing an imported row preserves its card on save (omitted when absent).

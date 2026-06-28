@@ -264,6 +264,12 @@ describe('buildEditPrefill', () => {
     expect(buildEditPrefill(withNotes).notes).toBe('Reimbursed by client')
   })
 
+  test('carries the linked accountId so editing seeds the Account selector (ADR-136)', () => {
+    const base = SEED_TRANSACTIONS[0]
+    expect(buildEditPrefill({ ...base, accountId: 'acc-7' }).accountId).toBe('acc-7')
+    expect(buildEditPrefill({ ...base, accountId: null }).accountId).toBeUndefined()
+  })
+
   test('omits notes from the prefill when the row has none (ADR-088)', () => {
     const noNotes: Transaction = { ...SEED_TRANSACTIONS[0], notes: undefined }
     expect('notes' in buildEditPrefill(noNotes)).toBe(false)
