@@ -1,14 +1,18 @@
 /**
- * Net-worth card for Home (ADR-122/123/127/133).
+ * Net-worth card for Home (ADR-122/123/127/133/134).
  *
  * Appended below the existing month-status hero (incremental Home, ADR-127). It
- * shows the user's total net worth in their display currency plus a per-account
- * breakdown: each account's NATIVE balance and, when it differs, its value in the
- * display currency. The card renders WHATEVER the net-worth API returns and never
- * computes FX client-side (ADR-133): when the backend has no USD row to derive a
- * MEP rate from it degrades to native and `balanceConverted === balance`, in
- * which case the card shows just the one balance and a calm note explaining the
- * total is summed natively.
+ * shows the user's total net worth in their display currency, then a breakdown
+ * GROUPED BY INSTITUTION (ADR-134): each institution gets a header (name + a
+ * non-color type cue, ADR-019), its per-currency accounts listed underneath with
+ * each account's NATIVE balance (and, when it differs, its value in the display
+ * currency), and a per-institution subtotal in the display currency. The card
+ * renders WHATEVER the net-worth API returns and never computes FX client-side
+ * (ADR-133): when the backend has no USD row to derive a MEP rate from it degrades
+ * to native and `balanceConverted === balance`, in which case the row shows just
+ * the one balance and a calm note explains the total is summed natively. The
+ * subtotal merely SUMS the already-converted `balanceConverted` values — no FX is
+ * derived here.
  *
  * Money arrives as Decimal strings (ADR-025/034) and is parsed to numbers only
  * here for the shared formatter (ADR-102). A loading skeleton, a calm error
@@ -24,7 +28,7 @@ import Typography from '@mui/material/Typography'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
 import { formatCurrency } from '../../lib/format'
-import type { Currency } from '../../mock/types'
+import type { AccountType, Currency } from '../../mock/types'
 import type { NetWorth, NetWorthAccount } from '../../api/accountsClient'
 
 /** Shared class for the clickable net-worth breakdown rows (account drilldown). */
@@ -41,14 +45,75 @@ function asCurrency(value: string): Currency {
   return value === 'USD' ? 'USD' : 'ARS'
 }
 
+/** Narrow a backend institution/account `type` string to {@link AccountType}. */
+function asAccountType(value: string): AccountType {
+  return value === 'cash' || value === 'card' || value === 'wallet'
+    ? value
+    : 'bank'
+}
+
+/** Sort key for currency ordering within an institution: ARS before USD. */
+function currencyRank(currency: Currency): number {
+  return currency === 'ARS' ? 0 : 1
+}
+
 /**
- * One breakdown row (ADR-134): institution name + currency chip on the left,
- * native balance (and the converted value when it differs) on the right. The row
- * is a clickable drilldown to the account's transactions
- * (`/transactions?account=<id>`, ADR-116/134) — a bare TanStack {@link Link} so
- * the typed `to` / `search` inference is checked against the route schema.
+ * One institution's grouped breakdown (ADR-134): its accounts (currency-ordered)
+ * plus a `subtotal` in the display currency — the sum of the group's already
+ * converted `balanceConverted` values (ADR-133: no FX derived here).
  */
-function BreakdownRow({
+interface InstitutionGroup {
+  institutionId: string
+  institutionName: string
+  type: AccountType
+  accounts: NetWorthAccount[]
+  subtotal: number
+}
+
+/**
+ * Group the flat net-worth breakdown by `institutionId` (ADR-134, client-side —
+ * no backend change). Institutions are ordered by subtotal DESC (name as the
+ * tie-break); accounts within an institution are ordered ARS before USD.
+ */
+function groupByInstitution(accounts: NetWorthAccount[]): InstitutionGroup[] {
+  const byId = new Map<string, InstitutionGroup>()
+  for (const account of accounts) {
+    const existing = byId.get(account.institutionId)
+    if (existing) {
+      existing.accounts.push(account)
+      existing.subtotal += num(account.balanceConverted)
+    } else {
+      byId.set(account.institutionId, {
+        institutionId: account.institutionId,
+        institutionName: account.institutionName,
+        type: asAccountType(account.type),
+        accounts: [account],
+        subtotal: num(account.balanceConverted),
+      })
+    }
+  }
+  const groups = [...byId.values()]
+  for (const group of groups) {
+    group.accounts.sort(
+      (a, b) => currencyRank(asCurrency(a.currency)) - currencyRank(asCurrency(b.currency)),
+    )
+  }
+  groups.sort(
+    (a, b) =>
+      b.subtotal - a.subtotal ||
+      a.institutionName.localeCompare(b.institutionName),
+  )
+  return groups
+}
+
+/**
+ * One per-currency account row inside an institution group. The clickable
+ * drilldown to the account's transactions (`/transactions?account=<id>`,
+ * ADR-116/134) — a bare TanStack {@link Link} so the typed `to` / `search`
+ * inference is checked against the route schema — shows the native balance and,
+ * when conversion actually happened, a secondary `≈ converted` line.
+ */
+function AccountRow({
   account,
   displayCurrency,
 }: {
@@ -82,28 +147,18 @@ function BreakdownRow({
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 1.5,
-          py: 1.25,
+          py: 1,
+          pl: 1,
           borderBottom: '1px solid var(--mg-border)',
           '&:last-of-type': { borderBottom: 'none' },
         }}
       >
-        <Box
-          sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}
-        >
-          <Typography
-            sx={{ fontSize: 14, fontWeight: 500 }}
-            color="text.primary"
-            noWrap
-          >
-            {account.institutionName}
-          </Typography>
-          <Chip
-            label={account.currency}
-            size="small"
-            variant="outlined"
-            sx={{ borderRadius: '8px', fontSize: 11, height: 20, flex: 'none' }}
-          />
-        </Box>
+        <Chip
+          label={account.currency}
+          size="small"
+          variant="outlined"
+          sx={{ borderRadius: '8px', fontSize: 11, height: 20, flex: 'none' }}
+        />
         <Box sx={{ textAlign: 'right', flex: 'none' }}>
           <Typography
             sx={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
@@ -124,6 +179,88 @@ function BreakdownRow({
         </Box>
       </Box>
     </Link>
+  )
+}
+
+/**
+ * One institution block (ADR-134): a header (name + a non-color type cue,
+ * ADR-019) over the institution's per-currency account rows, capped by a subtotal
+ * in the display currency. The header is an `h4` so the breakdown has a real
+ * heading structure under the card title; the subtotal carries an accessible
+ * label naming the institution + amount.
+ */
+function InstitutionBlock({
+  group,
+  displayCurrency,
+}: {
+  group: InstitutionGroup
+  displayCurrency: Currency
+}) {
+  const { t } = useTranslation('accounts')
+  return (
+    <Box
+      component="section"
+      aria-label={group.institutionName}
+      sx={{
+        py: 1,
+        borderBottom: '1px solid var(--mg-border)',
+        '&:last-of-type': { borderBottom: 'none' },
+      }}
+    >
+      <Box
+        sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}
+      >
+        <Typography
+          component="h4"
+          sx={{ fontSize: 14, fontWeight: 600, m: 0 }}
+          color="text.primary"
+          noWrap
+        >
+          {group.institutionName}
+        </Typography>
+        <Chip
+          label={t(`type.${group.type}`)}
+          size="small"
+          variant="outlined"
+          sx={{ borderRadius: '8px', fontSize: 11, height: 20, flex: 'none' }}
+        />
+      </Box>
+
+      <Box sx={{ mt: 0.5 }}>
+        {group.accounts.map((account) => (
+          <AccountRow
+            key={account.id}
+            account={account}
+            displayCurrency={displayCurrency}
+          />
+        ))}
+      </Box>
+
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 1.5,
+          mt: 0.5,
+          pl: 1,
+        }}
+      >
+        <Typography sx={{ fontSize: 12 }} color="text.secondary">
+          {t('netWorth.subtotalLabel')}
+        </Typography>
+        <Typography
+          sx={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
+          color="text.primary"
+          aria-label={t('netWorth.subtotalAria', {
+            institution: group.institutionName,
+            amount: formatCurrency(group.subtotal, displayCurrency),
+          })}
+        >
+          {formatCurrency(group.subtotal, displayCurrency)}
+        </Typography>
+      </Box>
+    </Box>
   )
 }
 
@@ -168,6 +305,9 @@ export function NetWorthCard({
 
   const displayCurrency = asCurrency(netWorth.currency)
   const total = num(netWorth.total)
+  // Grouping is a cheap pure pass over the breakdown; computing it inline avoids
+  // a conditional hook after the loading/error early returns above.
+  const groups = groupByInstitution(netWorth.accounts)
   // The total is summed natively (no conversion) when EVERY account already
   // reports its converted balance equal to its native one (ADR-133 degrade).
   const degraded =
@@ -204,10 +344,10 @@ export function NetWorthCard({
         </Typography>
       ) : (
         <Box sx={{ mt: 1.5 }}>
-          {netWorth.accounts.map((account) => (
-            <BreakdownRow
-              key={account.id}
-              account={account}
+          {groups.map((group) => (
+            <InstitutionBlock
+              key={group.institutionId}
+              group={group}
               displayCurrency={displayCurrency}
             />
           ))}

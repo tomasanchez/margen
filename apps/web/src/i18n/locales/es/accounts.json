@@ -94,6 +94,8 @@
     "subtitle": "Total entre tus cuentas",
     "totalLabel": "Patrimonio total",
     "converted": "≈ {{amount}}",
+    "subtotalLabel": "Subtotal",
+    "subtotalAria": "Subtotal de {{institution}} {{amount}}",
     "empty": "Agregá una cuenta para ver tu patrimonio acá.",
     "degradeNote": "Sumado en la moneda de cada cuenta — agregá un movimiento en USD con cotización para convertir.",
     "drilldownAria": "Ver los movimientos de {{institution}} {{currency}}",

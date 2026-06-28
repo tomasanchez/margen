@@ -3,13 +3,13 @@
  *
  * The card renders fed a {@link NetWorth} read model directly — the `useNetWorth`
  * query + client adapter are covered separately (accountsClient.test). Here we
- * assert the presentation: the total in the display currency, the per-account
- * breakdown (institution name + currency + native balance, plus the converted
- * line when the account is in another currency, ADR-134), the ADR-133 DEGRADE
- * case (balanceConverted === balance → no second line, calm note shown), the
- * account drilldown link, the empty state, and the loading skeleton. The card now
- * renders TanStack <Link>s, so it mounts behind a memory router. English-pinned
- * (ADR-105).
+ * assert the presentation: the total in the display currency, the breakdown
+ * GROUPED BY INSTITUTION (a header per institution + a type cue, its per-currency
+ * accounts with the converted line when in another currency, and a per-institution
+ * subtotal in the display currency, ADR-134), the ADR-133 DEGRADE case
+ * (balanceConverted === balance → no second line, calm note shown), the account
+ * drilldown link, the empty state, and the loading skeleton. The card renders
+ * TanStack <Link>s, so it mounts behind a memory router. English-pinned (ADR-105).
  */
 
 import { describe, expect, test } from 'vitest'
@@ -78,6 +78,36 @@ const CONVERTED: NetWorth = {
   ],
 }
 
+/**
+ * One institution holding TWO per-currency accounts (ARS + USD), to prove the
+ * accounts group under a single institution header and that the per-institution
+ * subtotal sums their converted balances (ADR-134).
+ */
+const MULTI_ACCOUNT: NetWorth = {
+  total: '1100000.00',
+  currency: 'ARS',
+  accounts: [
+    {
+      id: 'b-usd',
+      institutionId: 'inst-1',
+      institutionName: 'Galicia',
+      type: 'bank',
+      currency: 'USD',
+      balance: '760.00',
+      balanceConverted: '950000.00',
+    },
+    {
+      id: 'b-ars',
+      institutionId: 'inst-1',
+      institutionName: 'Galicia',
+      type: 'bank',
+      currency: 'ARS',
+      balance: '150000.00',
+      balanceConverted: '150000.00',
+    },
+  ],
+}
+
 describe('NetWorthCard', () => {
   test('renders the total in the display currency and the per-account breakdown', async () => {
     renderCard({ netWorth: CONVERTED, loading: false })
@@ -92,6 +122,34 @@ describe('NetWorthCard', () => {
 
     // The USD account shows its converted ARS value as a secondary line.
     expect(screen.getByText('≈ ARS 900.000')).toBeInTheDocument()
+  })
+
+  test('groups multiple accounts under one institution header with a subtotal', async () => {
+    renderCard({ netWorth: MULTI_ACCOUNT, loading: false })
+
+    // The institution header appears exactly once even with two accounts.
+    expect(await screen.findAllByText('Galicia')).toHaveLength(1)
+
+    // Both per-currency native balances render under that institution.
+    expect(screen.getByText('USD 760')).toBeInTheDocument()
+    expect(screen.getByText('ARS 150.000')).toBeInTheDocument()
+
+    // The per-institution subtotal sums the converted balances (950.000 + 150.000).
+    expect(
+      screen.getByLabelText('Galicia subtotal ARS 1.100.000'),
+    ).toBeInTheDocument()
+  })
+
+  test('renders a per-institution subtotal for each institution group', async () => {
+    renderCard({ netWorth: CONVERTED, loading: false })
+
+    // Each single-account institution's subtotal equals its converted balance.
+    expect(
+      await screen.findByLabelText('Galicia subtotal ARS 150.000'),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByLabelText('Deel subtotal ARS 900.000'),
+    ).toBeInTheDocument()
   })
 
   test('each breakdown row links to its account drilldown', async () => {
@@ -147,8 +205,9 @@ describe('NetWorthCard', () => {
       ],
     }
     renderCard({ netWorth: arsOnly, loading: false })
-    // The total and the single ARS row both read "ARS 150.000".
-    expect(await screen.findAllByText('ARS 150.000')).toHaveLength(2)
+    // The total, the single ARS row, and the institution subtotal all read
+    // "ARS 150.000" (grand total + the one account + its one-account subtotal).
+    expect(await screen.findAllByText('ARS 150.000')).toHaveLength(3)
     expect(screen.queryByText(/≈/)).not.toBeInTheDocument()
     // Not a cross-currency degrade — no native-sum note for an all-ARS portfolio.
     expect(

@@ -94,6 +94,8 @@
     "subtitle": "Total across your accounts",
     "totalLabel": "Total net worth",
     "converted": "≈ {{amount}}",
+    "subtotalLabel": "Subtotal",
+    "subtotalAria": "{{institution}} subtotal {{amount}}",
     "empty": "Add an account to see your net worth here.",
     "degradeNote": "Totalled in each account's own currency — add a USD transaction with a rate to convert.",
     "drilldownAria": "View {{institution}} {{currency}} transactions",
