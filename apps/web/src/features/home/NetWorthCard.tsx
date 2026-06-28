@@ -19,15 +19,19 @@
  * fallback (ADR-037), and an empty state (no accounts yet) are all handled.
  */
 
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from '@tanstack/react-router'
 import Box from '@mui/material/Box'
+import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
+import Collapse from '@mui/material/Collapse'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
-import { formatCurrency } from '../../lib/format'
+import { formatARS, formatCurrency } from '../../lib/format'
 import type { AccountType, Currency } from '../../mock/types'
 import type { NetWorth, NetWorthAccount } from '../../api/accountsClient'
 
@@ -55,6 +59,119 @@ function asAccountType(value: string): AccountType {
 /** Sort key for currency ordering within an institution: ARS before USD. */
 function currencyRank(currency: Currency): number {
   return currency === 'ARS' ? 0 : 1
+}
+
+/**
+ * The user's real USD holdings and, when a rate can be derived from the response,
+ * their approximate value in ARS (ADR-123/133). `arsApprox`/`rate` are null when
+ * no cross-currency account lets us derive the display-per-native rate — we never
+ * fabricate one (ADR-133 degrade-to-native), so the callout shows USD only.
+ */
+interface UsdHoldings {
+  /** Sum of native `balance` across USD accounts (actual dollars held). */
+  realUsd: number
+  /** That USD total valued in ARS at the derived rate, or null when none. */
+  arsApprox: number | null
+  /** The ARS-per-USD rate used for `arsApprox`, or null when none. */
+  rate: number | null
+}
+
+/**
+ * Derive USD holdings + an ARS approximation from the net-worth response
+ * (ADR-123/133) WITHOUT fabricating an FX rate. The rate is recovered from the
+ * response's own already-converted balances: for any account whose native
+ * `currency` differs from the display `currency`, `balanceConverted / balance`
+ * is the display-per-native rate.
+ *
+ * - Display = ARS: ARS value of USD = sum of `balanceConverted` for USD accounts
+ *   (already in ARS); the implied rate = that sum / realUsd.
+ * - Display = USD: recover ARS-per-USD from an ARS account
+ *   (`balance / balanceConverted`) and multiply realUsd by it.
+ *
+ * Returns null when there are no USD accounts (callout hidden). `arsApprox`/`rate`
+ * stay null when no usable cross-currency account exists (degrade-to-native).
+ */
+function deriveUsdHoldings(
+  accounts: NetWorthAccount[],
+  displayCurrency: Currency,
+): UsdHoldings | null {
+  const usdAccounts = accounts.filter((a) => asCurrency(a.currency) === 'USD')
+  if (usdAccounts.length === 0) return null
+
+  const realUsd = usdAccounts.reduce((sum, a) => sum + num(a.balance), 0)
+
+  // No dollars actually held (all-zero USD rows): nothing meaningful to convert.
+  if (realUsd <= 0) return { realUsd, arsApprox: null, rate: null }
+
+  if (displayCurrency === 'ARS') {
+    // ARS value of USD holdings is already converted in each USD account
+    // (ADR-133); a degraded response leaves balanceConverted === balance, in
+    // which case there is no real ARS figure to sum, so we omit the approximation.
+    const arsSum = usdAccounts.reduce((sum, a) => {
+      const converted = num(a.balanceConverted)
+      return a.balanceConverted !== a.balance ? sum + converted : sum
+    }, 0)
+    if (arsSum <= 0) return { realUsd, arsApprox: null, rate: null }
+    return { realUsd, arsApprox: arsSum, rate: arsSum / realUsd }
+  }
+
+  // Display = USD: recover ARS-per-USD from any ARS account that was converted
+  // (balance in ARS / balanceConverted in USD). Skip degraded/zero rows.
+  for (const account of accounts) {
+    if (asCurrency(account.currency) !== 'ARS') continue
+    if (account.balanceConverted === account.balance) continue
+    const ars = num(account.balance)
+    const usd = num(account.balanceConverted)
+    if (ars > 0 && usd > 0) {
+      const rate = ars / usd
+      return { realUsd, arsApprox: realUsd * rate, rate }
+    }
+  }
+  // No cross-currency ARS account to derive the rate from: degrade to USD only.
+  return { realUsd, arsApprox: null, rate: null }
+}
+
+/**
+ * Calm USD-holdings callout below the total (ADR-013/037): the real dollars held,
+ * and — when a rate was derivable from the response (ADR-133) — their approximate
+ * ARS value with the rate spelled out. Tabular-nums, localized via the shared
+ * formatter (ADR-102); the ARS approximation is omitted when no rate exists.
+ */
+function UsdHoldingsCallout({ holdings }: { holdings: UsdHoldings }) {
+  const { t } = useTranslation('accounts')
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'baseline',
+        columnGap: 1,
+        rowGap: 0.25,
+        mt: 1,
+      }}
+    >
+      <Typography sx={{ fontSize: 12.5 }} color="text.secondary">
+        {t('netWorth.usdHoldingsLabel')}
+      </Typography>
+      <Typography
+        sx={{ fontSize: 13.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
+        color="text.primary"
+      >
+        {formatCurrency(holdings.realUsd, 'USD')}
+      </Typography>
+      {holdings.arsApprox != null && holdings.rate != null ? (
+        <Typography
+          sx={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}
+          color="text.secondary"
+        >
+          {t('netWorth.usdHoldingsApprox', {
+            amount: formatCurrency(holdings.arsApprox, 'ARS'),
+            rate: `AR$ ${formatARS(holdings.rate)}`,
+          })}
+        </Typography>
+      ) : null}
+    </Box>
+  )
 }
 
 /**
@@ -282,6 +399,10 @@ export function NetWorthCard({
   onRetry,
 }: NetWorthCardProps) {
   const { t } = useTranslation('accounts')
+  // Local-only expand state (persistence not required); default COLLAPSED for a
+  // compact summary card the user opens for detail.
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const detailsRegionId = useId()
 
   if (isError) {
     return (
@@ -308,6 +429,9 @@ export function NetWorthCard({
   // Grouping is a cheap pure pass over the breakdown; computing it inline avoids
   // a conditional hook after the loading/error early returns above.
   const groups = groupByInstitution(netWorth.accounts)
+  // USD holdings + (when derivable) their ARS approximation — null when the user
+  // holds no dollars, in which case the callout is hidden (ADR-123/133).
+  const usdHoldings = deriveUsdHoldings(netWorth.accounts, displayCurrency)
   // The total is summed natively (no conversion) when EVERY account already
   // reports its converted balance equal to its native one (ADR-133 degrade).
   const degraded =
@@ -332,6 +456,7 @@ export function NetWorthCard({
         >
           {formatCurrency(total, displayCurrency)}
         </Typography>
+        {usdHoldings ? <UsdHoldingsCallout holdings={usdHoldings} /> : null}
       </Box>
 
       {netWorth.accounts.length === 0 ? (
@@ -344,13 +469,48 @@ export function NetWorthCard({
         </Typography>
       ) : (
         <Box sx={{ mt: 1.5 }}>
-          {groups.map((group) => (
-            <InstitutionBlock
-              key={group.institutionId}
-              group={group}
-              displayCurrency={displayCurrency}
-            />
-          ))}
+          <Button
+            type="button"
+            variant="text"
+            size="small"
+            onClick={() => setDetailsOpen((open) => !open)}
+            aria-expanded={detailsOpen}
+            aria-controls={detailsRegionId}
+            endIcon={
+              <ExpandMoreIcon
+                sx={{
+                  transition: 'transform 150ms',
+                  transform: detailsOpen ? 'rotate(180deg)' : 'none',
+                  '@media (prefers-reduced-motion: reduce)': { transition: 'none' },
+                }}
+              />
+            }
+            sx={{
+              textTransform: 'none',
+              fontWeight: 600,
+              fontSize: 13,
+              px: 1,
+              minHeight: 36,
+            }}
+          >
+            {detailsOpen ? t('netWorth.hideDetails') : t('netWorth.showDetails')}
+          </Button>
+          <Collapse in={detailsOpen} unmountOnExit>
+            <Box
+              id={detailsRegionId}
+              role="region"
+              aria-label={t('netWorth.detailsRegionAria')}
+              sx={{ mt: 0.5 }}
+            >
+              {groups.map((group) => (
+                <InstitutionBlock
+                  key={group.institutionId}
+                  group={group}
+                  displayCurrency={displayCurrency}
+                />
+              ))}
+            </Box>
+          </Collapse>
         </Box>
       )}
 
