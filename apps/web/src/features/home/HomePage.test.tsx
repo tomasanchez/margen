@@ -208,7 +208,7 @@ test('opens on the selected month and lists that month activity', async () => {
   expect(within(recent).getByText('June Coto groceries')).toBeInTheDocument()
   expect(within(recent).queryByText('May invoice Beta')).not.toBeInTheDocument()
   // The row subline shows `category · bank` so same-category rows (e.g. two
-  // "Fee" expenses on different banks) are distinguishable on Home.
+  // "Fees" expenses on different banks) are distinguishable on Home.
   expect(within(recent).getAllByText('Other · Transfer').length).toBeGreaterThan(0)
 })
 

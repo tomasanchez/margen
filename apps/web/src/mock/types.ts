@@ -39,7 +39,6 @@ export type Category =
   | 'Entertainment'
   | 'Services'
   | 'Taxes'
-  | 'Fee'
   | 'Fees'
   | 'Other'
 

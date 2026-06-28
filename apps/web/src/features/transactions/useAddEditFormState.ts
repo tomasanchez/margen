@@ -53,7 +53,6 @@ export const EXPENSE_CATEGORIES: readonly Category[] = [
   'Entertainment',
   'Services',
   'Taxes',
-  'Fee',
   'Fees',
   'Other',
 ] as const
