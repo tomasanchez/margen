@@ -149,9 +149,6 @@
       "loadCuota": "Load Monotributo cuota",
       "loadCuotaAmount": "Load Monotributo cuota (ARS {{amount}})"
     },
-    "bank": {
-      "section": "Bank / card"
-    },
     "account": {
       "label": "Account",
       "none": "No account"

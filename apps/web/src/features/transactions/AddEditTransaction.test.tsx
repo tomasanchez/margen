@@ -622,9 +622,11 @@ describe('Add flow — optional Name/merchant field (ADR-088)', () => {
     await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
     const [id, patch] = updateMock.mock.calls[0]
     expect(id).toBe('edit-card-1')
-    // The card survives the re-save unchanged, and the normalized bank is sent.
+    // The card survives the re-save unchanged (ADR-117). The legacy bank tag is
+    // no longer a form field (ADR-136 extension): the form does not send it, so
+    // the stored value is left untouched by the patch (omitted = unchanged).
     expect(patch.card).toBe('VISA ·5771')
-    expect(patch.bank).toBe('Santander')
+    expect(patch.bank).toBeUndefined()
   })
 })
 

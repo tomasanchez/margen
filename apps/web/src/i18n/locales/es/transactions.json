@@ -149,9 +149,6 @@
       "loadCuota": "Cargar cuota de Monotributo",
       "loadCuotaAmount": "Cargar cuota de Monotributo (ARS {{amount}})"
     },
-    "bank": {
-      "section": "Banco / tarjeta"
-    },
     "account": {
       "label": "Cuenta",
       "none": "Sin cuenta"

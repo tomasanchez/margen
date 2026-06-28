@@ -37,7 +37,7 @@ import type { Transaction } from '../../mock/types'
 import { fetchInvoiceDocument } from '../../api/invoicesClient'
 import { useDocumentOpener } from '../../api/useDocumentOpener'
 import {
-  bankCardLabel,
+  attributionLabel,
   categoryDotColor,
   categoryLabel,
 } from './presentation'
@@ -205,7 +205,18 @@ interface TransactionRowProps {
   onDelete: (transaction: Transaction) => void
   /** Disable the actions while a delete for this row is in flight. */
   busy?: boolean
+  /**
+   * `accountId → institutionName` lookup built once on the page from the loaded
+   * accounts (ADR-136 extension). Drives the row's attribution line: a linked
+   * account resolves to its institution name; an unlinked row falls back to the
+   * legacy `bank · card` tag. Defaults to an empty map so the row degrades to the
+   * bank fallback when accounts haven't loaded (or in bare tests).
+   */
+  accountNames?: ReadonlyMap<string, string>
 }
+
+/** Shared empty lookup so a missing `accountNames` prop is a stable reference. */
+const EMPTY_ACCOUNT_NAMES: ReadonlyMap<string, string> = new Map()
 
 /** Small inline badge (recurring / FX) — a bordered pill, token-colored. */
 function RowBadge({
@@ -471,7 +482,7 @@ function RowOverflowMenu({ transaction, onEdit, onDelete, busy }: TransactionRow
 /** Desktop grid row. Actions fade in on row hover/focus-within for calm UX. */
 export function TransactionRow(props: TransactionRowProps) {
   const { t: translate } = useTranslation('transactions')
-  const { transaction: t } = props
+  const { transaction: t, accountNames = EMPTY_ACCOUNT_NAMES } = props
   const isUsd = t.currency === 'USD'
 
   return (
@@ -544,7 +555,7 @@ export function TransactionRow(props: TransactionRowProps) {
             whiteSpace: 'nowrap',
           }}
         >
-          {bankCardLabel(t.bank, t.card)}
+          {attributionLabel(t, accountNames)}
         </Typography>
       </Box>
 
@@ -607,7 +618,7 @@ export function TransactionRow(props: TransactionRowProps) {
  */
 export function TransactionRowMobile(props: TransactionRowProps) {
   const { t: translate } = useTranslation(['transactions', 'common'])
-  const { transaction: t, onEdit } = props
+  const { transaction: t, onEdit, accountNames = EMPTY_ACCOUNT_NAMES } = props
   const isUsd = t.currency === 'USD'
 
   return (
@@ -686,7 +697,7 @@ export function TransactionRowMobile(props: TransactionRowProps) {
               whiteSpace: 'nowrap',
             }}
           >
-            {categoryLabel(t.category)} · {bankCardLabel(t.bank, t.card)}
+            {categoryLabel(t.category)} · {attributionLabel(t, accountNames)}
           </Box>
         </Box>
       </Box>

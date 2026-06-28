@@ -29,7 +29,6 @@ import { fetchSuggestedRates } from '../../api/fxClient'
 import { useSettings } from '../settings/queries'
 import type { FxDefaultRateType } from '../../api/settingsClient'
 import type {
-  Bank,
   Category,
   Currency,
   FxRateType,
@@ -59,8 +58,6 @@ export const EXPENSE_CATEGORIES: readonly Category[] = [
 
 /** Default category when none is supplied (matches the concept's `Food`). */
 const DEFAULT_CATEGORY: Category = 'Food'
-/** Default bank when none is supplied (ADR-117 normalized name). */
-const DEFAULT_BANK: Bank = 'Galicia'
 
 /** Today's short display date, e.g. "Jun 13" (the concept's "Today · …" label). */
 export function todayDispDate(): string {
@@ -212,9 +209,6 @@ export interface AddEditFormState {
 
   readonly category: Category
   setCategory: (next: Category) => void
-
-  readonly bank: Bank
-  setBank: (next: Bank) => void
 
   /**
    * The account this transaction is attributed to (ADR-122/133), or `''` for
@@ -406,7 +400,6 @@ export function useAddEditFormState(
       ? prefill.category
       : DEFAULT_CATEGORY,
   )
-  const [bank, setBank] = useState<Bank>(prefill?.bank ?? DEFAULT_BANK)
   // The attributed account (ADR-122/133). Seeded from the prefill on edit; blank
   // (no account) on a fresh add. `''` is the "no account" sentinel; `buildInput`
   // maps it to `null`. Supersedes the bank tag for attribution (ADR-117 display
@@ -628,7 +621,6 @@ export function useAddEditFormState(
     setSuggestedRates({ MEP: null, official: null })
     setRateSuggestionStatus('idle')
     setCategory(DEFAULT_CATEGORY)
-    setBank(DEFAULT_BANK)
     setAccountId('')
     setName('')
     setNotes('')
@@ -675,7 +667,9 @@ export function useAddEditFormState(
       kind,
       currency,
       category: type === 'income' ? 'Income' : category,
-      bank,
+      // Bank/card is no longer a form field (ADR-136 extension): manual entries
+      // are attributed via the Account selector below, not the legacy bank tag.
+      // Card detail stays import-set and is carried through from the prefill.
       // The picker's ISO date is the source of truth sent as occurredOn; the
       // backend derives the month from it (ADR-041), so no `month` override is
       // passed. `dispDate` is the derived display label.
@@ -743,8 +737,6 @@ export function useAddEditFormState(
     refreshSuggestedRate,
     category,
     setCategory,
-    bank,
-    setBank,
     accountId,
     setAccountId,
     occurredOn,
