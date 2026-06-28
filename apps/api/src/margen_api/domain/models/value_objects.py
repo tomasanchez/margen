@@ -11,7 +11,11 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from margen_api.domain.models.exceptions import UnknownCurrencyError, UnknownKindError
+from margen_api.domain.models.exceptions import (
+    UnknownCurrencyError,
+    UnknownInstitutionTypeError,
+    UnknownKindError,
+)
 
 
 class Kind(StrEnum):
@@ -80,6 +84,43 @@ class Currency(StrEnum):
             raise UnknownCurrencyError(value) from exc
 
 
+class InstitutionType(StrEnum):
+    """The kind of financial institution in the net-worth model (ADR-122, ADR-134).
+
+    An institution is the money holder a user names once; its currency-specific
+    balances live on child accounts (ADR-134). A closed enum: ``bank`` (a bank),
+    ``card`` (a credit-card issuer whose balance is the outstanding charges),
+    ``cash`` (physical cash) and ``wallet`` (a digital wallet / payout provider
+    such as Deel, Payoneer or Mercado Pago). Investments, property and liabilities
+    are deferred (ADR-122).
+    """
+
+    BANK = "bank"
+    CASH = "cash"
+    CARD = "card"
+    WALLET = "wallet"
+
+    @classmethod
+    def parse(cls, value: object) -> InstitutionType:
+        """Coerce a value to an ``InstitutionType`` or raise ``UnknownInstitutionTypeError``.
+
+        Args:
+            value: An ``InstitutionType`` member or a string such as ``"bank"``.
+
+        Returns:
+            The matching ``InstitutionType`` member.
+
+        Raises:
+            UnknownInstitutionTypeError: When ``value`` is not a known institution type.
+        """
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(value)
+        except ValueError as exc:
+            raise UnknownInstitutionTypeError(value) from exc
+
+
 class FxRateType(StrEnum):
     """The source of the exchange rate used for a USD conversion (ADR-044).
 
@@ -97,6 +138,8 @@ class FxRateType(StrEnum):
 
 
 # Known prototype category set (ADR-024/ADR-027). Unknown strings are tolerated.
+# "Fees" backs account-to-account transfer fees, recorded as expense transactions
+# (ADR-135, extends the category-addition precedent of ADR-083).
 KNOWN_CATEGORIES: frozenset[str] = frozenset(
     {
         "Income",
@@ -109,6 +152,7 @@ KNOWN_CATEGORIES: frozenset[str] = frozenset(
         "Entertainment",
         "Services",
         "Taxes",
+        "Fees",
         "Other",
     }
 )

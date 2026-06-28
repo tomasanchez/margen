@@ -46,6 +46,7 @@ def to_domain(record: TransactionRecord) -> Transaction:
         recurring=record.recurring,
         counts_toward_monotributo=record.counts_toward_monotributo,
         statement_document_id=record.statement_document_id,
+        account_id=record.account_id,
         user_id=str(record.user_id) if record.user_id is not None else None,
         created_at=record.created_at,
         updated_at=record.updated_at,
@@ -98,6 +99,7 @@ def update_record(record: TransactionRecord, transaction: Transaction) -> None:
     record.recurring = transaction.recurring
     record.counts_toward_monotributo = transaction.counts_toward_monotributo
     record.statement_document_id = transaction.statement_document_id
+    record.account_id = transaction.account_id
     # The aggregate carries ``user_id`` as a string (the Supabase ``sub``); the
     # ownership column is a NOT NULL UUID (ADR-109), so coerce on the way down. Every
     # write path threads the authenticated owner (ADR-108), so a missing id here is a

@@ -19,6 +19,7 @@ from margen_api.adapters.settings_repository import (
     DEFAULT_FX_RATE_TYPE,
     DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
     DEFAULT_MONOTRIBUTO_CATEGORY,
+    DEFAULT_MONOTRIBUTO_ENABLED,
     SqlAlchemySettingsRepository,
 )
 
@@ -46,6 +47,7 @@ def _record(
     fx: str = "MEP",
     category: str = "C",
     activity: str = "services",
+    enabled: bool = True,
 ) -> AppSettingsRecord:
     """Build a persisted app_settings row."""
     record = AppSettingsRecord()
@@ -53,6 +55,7 @@ def _record(
     record.fx_default_rate_type = fx
     record.monotributo_current_category = category
     record.monotributo_activity_type = activity
+    record.monotributo_enabled = enabled
     return record
 
 
@@ -64,7 +67,7 @@ class TestGetSettings:
         # GIVEN
         session = _session()
         session.execute.return_value = _scalar_result(
-            _record(currency="USD", fx="official", category="F", activity="bienes")
+            _record(currency="USD", fx="official", category="F", activity="bienes", enabled=False)
         )
         repo = SqlAlchemySettingsRepository(session)
 
@@ -76,6 +79,7 @@ class TestGetSettings:
         assert settings.fx_default_rate_type == "official"
         assert settings.monotributo_current_category == "F"
         assert settings.monotributo_activity_type == "bienes"
+        assert settings.monotributo_enabled is False
 
     async def test_returns_documented_defaults_when_absent(self):
         """GIVEN no row WHEN read THEN the documented defaults come back, never None."""
@@ -92,6 +96,7 @@ class TestGetSettings:
         assert settings.fx_default_rate_type == DEFAULT_FX_RATE_TYPE
         assert settings.monotributo_current_category == DEFAULT_MONOTRIBUTO_CATEGORY
         assert settings.monotributo_activity_type == DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE
+        assert settings.monotributo_enabled == DEFAULT_MONOTRIBUTO_ENABLED
 
 
 class TestUpsertSettings:
@@ -134,6 +139,7 @@ class TestUpsertSettings:
             fx_default_rate_type="official",
             monotributo_current_category="H",
             monotributo_activity_type="bienes",
+            monotributo_enabled=False,
         )
 
         # THEN
@@ -141,6 +147,28 @@ class TestUpsertSettings:
         assert result.fx_default_rate_type == "official"
         assert result.monotributo_current_category == "H"
         assert result.monotributo_activity_type == "bienes"
+        assert result.monotributo_enabled is False
+
+    async def test_toggles_monotributo_enabled_only(self):
+        """
+        GIVEN an existing row with the module enabled
+        WHEN upsert is called with only ``monotributo_enabled=False``
+        THEN that flag flips and the other fields are left untouched (ADR-126)
+        """
+        # GIVEN
+        existing = _record(enabled=True)
+        session = _session()
+        session.execute.return_value = _scalar_result(existing)
+        repo = SqlAlchemySettingsRepository(session)
+
+        # WHEN
+        result = await repo.upsert_settings(OWNER, monotributo_enabled=False)
+
+        # THEN — only the toggle changed; no new row inserted.
+        session.add.assert_not_called()
+        assert result.monotributo_enabled is False
+        assert result.preferred_display_currency == "ARS"
+        assert result.monotributo_current_category == "C"
 
     async def test_get_or_creates_owner_row_when_absent_then_merges(self):
         """
@@ -167,3 +195,6 @@ class TestUpsertSettings:
         assert result.preferred_display_currency == DEFAULT_DISPLAY_CURRENCY
         assert result.fx_default_rate_type == DEFAULT_FX_RATE_TYPE
         assert result.monotributo_activity_type == DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE
+        # New users default to the Monotributo module OFF (ADR-126).
+        assert result.monotributo_enabled == DEFAULT_MONOTRIBUTO_ENABLED
+        assert added.monotributo_enabled is DEFAULT_MONOTRIBUTO_ENABLED

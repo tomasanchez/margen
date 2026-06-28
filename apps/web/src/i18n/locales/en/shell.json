@@ -3,10 +3,17 @@
     "primary": "Primary",
     "home": "Home",
     "transactions": "Transactions",
+    "accounts": "Accounts",
+    "transfers": "Transfers",
     "monotributo": "Monotributo",
+    "import": "Import statement",
+    "toolsGroup": "Tools",
     "homeShort": "Home",
     "transactionsShort": "Activity",
-    "monotributoShort": "Mono"
+    "accountsShort": "Accounts",
+    "transfersShort": "Transfers",
+    "monotributoShort": "Mono",
+    "importShort": "Import"
   },
   "actions": {
     "addTransaction": "Add transaction",

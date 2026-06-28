@@ -1,0 +1,84 @@
+"""SQLAlchemy repository for the ``Account`` aggregate (write side) (ADR-122, ADR-130).
+
+The repository is the only place handlers touch persistence for account writes.
+It maps between the aggregate and its ``AccountRecord`` and awaits all I/O against
+an ``AsyncSession`` so the event loop is never blocked (AGENTS.md). It does not own
+the transaction boundary — the unit of work commits. Every lookup is owner-scoped
+(ADR-130): a foreign owner's id is treated as absent so the boundary answers 404
+(ADR-111). ``user_id`` is the Supabase ``sub`` string, coerced to ``UUID`` at this
+persistence boundary (ADR-094).
+"""
+
+from __future__ import annotations
+
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from margen_api.adapters.mappers.account import to_domain, to_record, update_record
+from margen_api.adapters.models.account import AccountRecord
+from margen_api.domain.models.account import Account
+from margen_api.service_layer.account_repository import AbstractAccountRepository
+
+
+class SqlAlchemyAccountRepository(AbstractAccountRepository):
+    """Persist :class:`Account` aggregates through an async session (ADR-130)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Initialize the repository.
+
+        Args:
+            session: The async session that owns the current transaction.
+        """
+        self.session = session
+
+    def add(self, account: Account) -> None:
+        """Stage a new aggregate; the unit of work flushes it on commit.
+
+        Ownership rides on the aggregate: ``to_record`` copies ``account.user_id``
+        onto the row's ownership column (ADR-094, ADR-130).
+        """
+        self.session.add(to_record(account))
+
+    async def get(self, account_id: UUID, user_id: str) -> Account | None:
+        """Load one of the owner's aggregates by identity, or ``None`` (ADR-130, ADR-111).
+
+        Scopes the lookup by ``user_id`` so a foreign owner's id is not found — the
+        update handler maps that to a 404 at the boundary (ADR-111).
+        """
+        statement = select(AccountRecord).where(
+            AccountRecord.id == account_id,
+            AccountRecord.user_id == UUID(user_id),
+        )
+        record = (await self.session.execute(statement)).scalar_one_or_none()
+        if record is None:
+            return None
+        return to_domain(record)
+
+    async def persist(self, account: Account) -> None:
+        """Apply a mutated aggregate to its attached row (update semantics).
+
+        The aggregate was loaded through :meth:`get`, which rehydrates ``user_id``
+        from the row, so writing it back via ``update_record`` preserves ownership
+        rather than clobbering it (ADR-130).
+        """
+        record = await self.session.get(AccountRecord, account.id)
+        if record is None:
+            # No stored row: treat as an insert so the caller's change is not lost.
+            self.session.add(to_record(account))
+            return
+        update_record(record, account)
+
+    async def owns(self, account_id: UUID, user_id: str) -> bool:
+        """Return whether the owner has an account with ``account_id`` (ADR-130).
+
+        Used by the transaction create/update handlers to verify a linked account
+        belongs to the caller before persisting. A missing account or one owned by
+        another user both return ``False``.
+        """
+        statement = select(AccountRecord.id).where(
+            AccountRecord.id == account_id,
+            AccountRecord.user_id == UUID(user_id),
+        )
+        return (await self.session.execute(statement)).scalar_one_or_none() is not None

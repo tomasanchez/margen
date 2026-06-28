@@ -3,10 +3,17 @@
     "primary": "Principal",
     "home": "Inicio",
     "transactions": "Movimientos",
+    "accounts": "Cuentas",
+    "transfers": "Transferencias",
     "monotributo": "Monotributo",
+    "import": "Importar resumen",
+    "toolsGroup": "Herramientas",
     "homeShort": "Inicio",
     "transactionsShort": "Actividad",
-    "monotributoShort": "Mono"
+    "accountsShort": "Cuentas",
+    "transfersShort": "Transferencias",
+    "monotributoShort": "Mono",
+    "importShort": "Importar"
   },
   "actions": {
     "addTransaction": "Nuevo Movimiento",

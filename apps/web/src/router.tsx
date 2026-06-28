@@ -8,8 +8,10 @@ import {
 import { AppShell } from './components/AppShell'
 import { AddTransactionProvider } from './features/transactions/AddTransactionProvider'
 import { HomePage } from './features/home/HomePage'
+import { AccountsPage } from './features/accounts/AccountsPage'
+import { TransfersPage } from './features/transfers/TransfersPage'
 import { ImportStatement } from './features/statements/ImportStatement'
-import { MonotributoPage } from './features/monotributo/MonotributoPage'
+import { MonotributoRoute } from './features/monotributo/MonotributoRoute'
 import { SettingsPage } from './features/settings/SettingsPage'
 import { LoginPage } from './features/auth/LoginPage'
 import { validateTransactionsSearch } from './features/transactions/filtering'
@@ -102,6 +104,18 @@ const transactionsRoute = createRoute({
   component: TransactionsRoute,
 })
 
+const accountsRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: '/accounts',
+  component: AccountsPage,
+})
+
+const transfersRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: '/transfers',
+  component: TransfersPage,
+})
+
 const importStatementRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/import-statement',
@@ -111,7 +125,9 @@ const importStatementRoute = createRoute({
 const monotributoRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/monotributo',
-  component: MonotributoPage,
+  // Settings-gated: the route renders the page only when the optional module is
+  // enabled, otherwise redirects to Home (ADR-126). See {@link MonotributoRoute}.
+  component: MonotributoRoute,
 })
 
 const settingsRoute = createRoute({
@@ -125,6 +141,8 @@ const routeTree = rootRoute.addChildren([
   appLayoutRoute.addChildren([
     homeRoute,
     transactionsRoute,
+    accountsRoute,
+    transfersRoute,
     importStatementRoute,
     monotributoRoute,
     settingsRoute,

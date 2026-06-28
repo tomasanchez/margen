@@ -108,6 +108,12 @@ export interface TransactionFilters {
   categories: Category[]
   /** Selected banks/cards; empty means "all banks". */
   banks: Bank[]
+  /**
+   * Selected account ids (ADR-134); empty means "all accounts". Filters by
+   * `t.accountId ∈ accounts`. Kept ALONGSIDE the bank filter (both available).
+   * Account ids are opaque UUIDs, so unknown ids are a harmless no-op match.
+   */
+  accounts: string[]
   amount: AmountRange
 }
 
@@ -125,6 +131,7 @@ export const DEFAULT_FILTERS: TransactionFilters = {
   month: ALL_MONTHS,
   categories: [],
   banks: [],
+  accounts: [],
   amount: 'any',
 }
 
@@ -137,6 +144,7 @@ export function hasActiveFilters(f: TransactionFilters): boolean {
     f.month !== ALL_MONTHS ||
     f.categories.length > 0 ||
     f.banks.length > 0 ||
+    f.accounts.length > 0 ||
     f.amount !== 'any'
   )
 }
@@ -152,6 +160,7 @@ export function activeFilterCount(f: TransactionFilters): number {
     (f.month !== ALL_MONTHS ? 1 : 0) +
     f.categories.length +
     f.banks.length +
+    f.accounts.length +
     (f.amount !== 'any' ? 1 : 0)
   )
 }
@@ -216,6 +225,15 @@ function matchesFilters(t: Transaction, f: TransactionFilters): boolean {
   }
   if (f.categories.length && !f.categories.includes(t.category)) return false
   if (f.banks.length && !f.banks.includes(t.bank)) return false
+  // Account filter (ADR-134): the row must be attributed to one of the selected
+  // accounts. Unlinked rows (accountId null/absent) never match a non-empty
+  // selection; an empty selection means "all accounts".
+  if (
+    f.accounts.length &&
+    !(t.accountId != null && f.accounts.includes(t.accountId))
+  ) {
+    return false
+  }
   if (!amountInRange(f.amount, t.amountNum)) return false
   return true
 }
@@ -320,6 +338,8 @@ export function filterTransactions(
  *   means the current month, the per-screen default per ADR-040).
  * - `category`: comma-joined {@link Category} list (drops unknown entries).
  * - `bank`: comma-joined {@link Bank} list (drops unknown entries).
+ * - `account`: comma-joined account-id list (ADR-134; drops empties, but ids are
+ *   opaque UUIDs so unknown ids are kept and are a harmless no-op match).
  * - `amount`: one {@link AmountRange} other than `any`.
  */
 export interface TransactionsSearch {
@@ -329,6 +349,7 @@ export interface TransactionsSearch {
   month?: string
   category?: string
   bank?: string
+  account?: string
   amount?: AmountRange
 }
 
@@ -356,6 +377,26 @@ function parseCsv<T extends string>(
     if (value && known.has(value) && !seen.has(value)) {
       seen.add(value)
       out.push(value as T)
+    }
+  }
+  return out.length > 0 ? out : undefined
+}
+
+/**
+ * Parse a comma-separated id list (ADR-134) into its non-empty, de-duplicated
+ * members, in order. Account ids are opaque UUIDs with no fixed allow-set, so we
+ * keep any non-empty trimmed token (an id that doesn't match any account is a
+ * harmless no-op match). Returns `undefined` when nothing valid remains.
+ */
+function parseIds(raw: unknown): string[] | undefined {
+  if (typeof raw !== 'string') return undefined
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const part of raw.split(',')) {
+    const value = part.trim()
+    if (value && !seen.has(value)) {
+      seen.add(value)
+      out.push(value)
     }
   }
   return out.length > 0 ? out : undefined
@@ -408,6 +449,9 @@ export function validateTransactionsSearch(
   const banks = parseCsv<Bank>(search.bank, KNOWN_BANKS)
   if (banks) result.bank = banks.join(',')
 
+  const accounts = parseIds(search.account)
+  if (accounts) result.account = accounts.join(',')
+
   const rawAmount = search.amount
   if (
     typeof rawAmount === 'string' &&
@@ -447,6 +491,7 @@ export function searchToFilters(
     banks: search.bank
       ? (parseCsv<Bank>(search.bank, KNOWN_BANKS) ?? [])
       : [],
+    accounts: search.account ? (parseIds(search.account) ?? []) : [],
     amount: search.amount ?? 'any',
   }
 }
@@ -484,6 +529,7 @@ export function filtersToSearch(
     search.category = filters.categories.join(',')
   }
   if (filters.banks.length > 0) search.bank = filters.banks.join(',')
+  if (filters.accounts.length > 0) search.account = filters.accounts.join(',')
 
   return search
 }
@@ -502,6 +548,14 @@ export function countByBank(
   bank: Bank,
 ): number {
   return transactions.filter((t) => t.bank === bank).length
+}
+
+/** Count of transactions in `transactions` attributed to account `id` (ADR-134). */
+export function countByAccount(
+  transactions: readonly Transaction[],
+  id: string,
+): number {
+  return transactions.filter((t) => t.accountId === id).length
 }
 
 /** Months actually present in the data, in display order (for the month filter). */

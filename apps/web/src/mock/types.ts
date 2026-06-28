@@ -39,7 +39,7 @@ export type Category =
   | 'Entertainment'
   | 'Services'
   | 'Taxes'
-  | 'Fee'
+  | 'Fees'
   | 'Other'
 
 /**
@@ -58,6 +58,67 @@ export type Bank =
   | 'Brubank'
   | 'Deel'
   | 'Transfer'
+
+/**
+ * The kind of financial provider an institution represents (ADR-134). `bank` is
+ * a bank, `cash` is physical/uncarded money, `card` is a card-only provider, and
+ * `wallet` covers payment platforms (Deel, Payoneer, Mercado Pago) that are
+ * neither banks nor cards. Drives the institution's icon + label; not used for
+ * net-worth math (every liquid type counts). Lives on {@link Institution} now —
+ * the old flat `Account.type` (ADR-122) was moved up a level by ADR-134.
+ */
+export type AccountType = 'bank' | 'cash' | 'card' | 'wallet'
+
+/**
+ * A first-class financial provider (ADR-134). One row per provider per user; it
+ * carries the human-readable `name` and the `type`. An institution owns one or
+ * more per-currency {@link Account} leaves (e.g. Galicia with an ARS account and
+ * a USD account); the institution row is the label those sub-accounts share.
+ */
+export interface Institution {
+  /** Stable UUID identity issued by the backend (ADR-130/134). */
+  id: string
+  /** User-facing provider name, e.g. "Galicia" or "Deel". */
+  name: string
+  /** Provider kind (ADR-134): bank / cash / card / wallet. */
+  type: AccountType
+}
+
+/** Input the Add-institution flow produces for a create/update (ADR-134). */
+export interface InstitutionWriteBody {
+  name: string
+  type: AccountType
+}
+
+/**
+ * A per-currency money account leaf under an {@link Institution} (ADR-134).
+ *
+ * Each account holds a single native `currency` (ARS or USD): a USD account
+ * stores and reports balances in USD, and net worth aggregates across currencies
+ * via the MEP rate (ADR-123/133). The `name` + `type` live on the institution;
+ * responses denormalize `institutionName` + `type` onto the account for display
+ * so the UI never needs a second lookup. Money crosses the API boundary as a
+ * Decimal string (ADR-025/034), so `openingBalance` is a string here and is
+ * parsed to a number only at the display edge.
+ */
+export interface Account {
+  /** Stable UUID identity issued by the backend (ADR-130/134). */
+  id: string
+  /** The owning institution's id (ADR-134). */
+  institutionId: string
+  /** The owning institution's name, denormalized into the response for display. */
+  institutionName: string
+  /** The owning institution's type, denormalized into the response for display. */
+  type: AccountType
+  /** Native currency the account holds (ADR-123/134): ARS or USD. */
+  currency: Currency
+  /**
+   * Opening balance as a Decimal string (ADR-025/034), e.g. "150000.00". The
+   * running balance is opening + transaction deltas; the backend computes it for
+   * the net-worth read (ADR-122). Kept as a string end-to-end on the form.
+   */
+  openingBalance: string
+}
 
 /** Months present in the mock dataset, newest-first ordering handled elsewhere. */
 export type MonthName =
@@ -98,6 +159,13 @@ export interface Transaction {
    * {@link Transaction.bank}. Rendered as `bank · card` when present.
    */
   card?: string
+  /**
+   * The account this transaction is attributed to (ADR-122/133), or `null` when
+   * unlinked (manual rows with no account; nullable per ADR-133). The account
+   * SUPERSEDES the bank tag for attribution, but the bank/card detail (ADR-117)
+   * is kept for display. Absent on legacy rows the adapter never saw an id for.
+   */
+  accountId?: string | null
   currency: Currency
   type: TxType
   kind: TxKind
@@ -144,6 +212,14 @@ export interface NewTransactionInput {
    * imported row never drops its card. Omitted for manual entries.
    */
   card?: string
+  /**
+   * The account this transaction is attributed to (ADR-122/133), or `null`/absent
+   * when unlinked. Set by the account selector; supersedes the bank tag for
+   * attribution while the bank/card detail (ADR-117) is kept for display. The
+   * create/patch client sends it as `accountId`; ownership is enforced server-side
+   * (a user may only link their own account, ADR-130).
+   */
+  accountId?: string | null
   currency: Currency
   type: TxType
   kind: TxKind
@@ -197,6 +273,66 @@ export interface NewTransactionInput {
 
 /** Partial patch accepted by the update mutation. Id and identity stay fixed. */
 export type TransactionPatch = Partial<Omit<Transaction, 'id'>>
+
+/**
+ * An account-to-account transfer (ADR-135). A transfer moves money between two
+ * of the user's own accounts; it is NOT income or expense and never touches the
+ * income/expense or Monotributo readers — only the net-worth/balance union.
+ *
+ * `amountOut` is debited from `fromAccountId` in that account's currency;
+ * `amountIn` is credited to `toAccountId` in ITS currency. For a same-currency
+ * transfer they are equal (truly net-zero); for a cross-currency transfer the
+ * user enters the actual amount received (the FX rate is implied, not fetched).
+ * Money crosses the API boundary as a Decimal string (ADR-025/034). Any transfer
+ * fees are recorded as separate `kind=expense`, category `"Fees"` transactions
+ * (created atomically server-side) and are NOT part of this aggregate.
+ */
+export interface Transfer {
+  /** Stable UUID identity issued by the backend (ADR-130/135). */
+  id: string
+  /** Source account the money is debited from. */
+  fromAccountId: string
+  /** Destination account the money is credited to. */
+  toAccountId: string
+  /** Amount debited from the source, in the source account's currency (Decimal string). */
+  amountOut: string
+  /** Amount credited to the destination, in the destination account's currency (Decimal string). */
+  amountIn: string
+  /** Date the transfer occurred (`YYYY-MM-DD`). */
+  occurredOn: string
+  /** Optional free-text note. */
+  note?: string
+}
+
+/**
+ * One fee line attached to a transfer-create (ADR-135). Each fee becomes a
+ * `kind=expense`, category `"Fees"` transaction on `accountId`, recorded in that
+ * account's currency. `amount` is a positive Decimal string; `label` is the
+ * transaction's display name (e.g. "Deel transfer fee").
+ */
+export interface TransferFeeInput {
+  /** Account the fee is charged to (a fee = an expense on this account). */
+  accountId: string
+  /** Fee amount as a positive Decimal string, in the account's currency. */
+  amount: string
+  /** Human-readable label, stored as the fee transaction's name. */
+  label: string
+}
+
+/**
+ * Input the New-transfer form produces (ADR-135). Mirrors the `POST /transfers`
+ * body: the two accounts, the out/in amounts as Decimal strings, the date, an
+ * optional note, and zero or more {@link TransferFeeInput} fee lines.
+ */
+export interface NewTransferInput {
+  fromAccountId: string
+  toAccountId: string
+  amountOut: string
+  amountIn: string
+  occurredOn: string
+  note?: string
+  fees?: TransferFeeInput[]
+}
 
 /**
  * Status band used by the Monotributo meter and status pills.

@@ -57,6 +57,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     fxDefaultRateType: 'MEP',
     monotributoCurrentCategory: 'C',
     monotributoActivityType: 'services',
+    monotributoEnabled: true,
     ...overrides,
   }
 }

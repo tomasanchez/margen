@@ -35,6 +35,8 @@
     "delete": "Delete {{name}}",
     "openInvoicePdf": "Open invoice PDF",
     "openInvoicePdfFor": "Open invoice PDF for {{name}}",
+    "openPdf": "Open PDF",
+    "actionsAriaLabel": "Actions for {{name}}",
     "notes": "Notes"
   },
   "filters": {
@@ -42,6 +44,7 @@
     "currencyAriaLabel": "Currency",
     "categoryLabel": "Category",
     "bankLabel": "Bank / card",
+    "accountLabel": "Account",
     "amountLabel": "Amount",
     "trigger": "Filters",
     "triggerCount": "Filters · {{count}}",
@@ -51,6 +54,7 @@
     "currencySection": "Currency",
     "categorySection": "Category",
     "bankSection": "Bank / card",
+    "accountSection": "Account",
     "amountSection": "Amount",
     "showResults_one": "Show {{count}} transaction",
     "showResults_other": "Show {{count}} transactions"
@@ -149,6 +153,10 @@
     },
     "bank": {
       "section": "Bank / card"
+    },
+    "account": {
+      "label": "Account",
+      "none": "No account"
     },
     "date": {
       "label": "Date",

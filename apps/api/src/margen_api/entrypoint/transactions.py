@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from margen_api.domain.commands.transaction import DeleteTransaction
 from margen_api.domain.models.exceptions import (
+    AccountNotFoundError,
     InvalidAmountError,
     TransactionNotFoundError,
     UnknownCurrencyError,
@@ -104,6 +105,12 @@ async def create_transaction(
 
     try:
         transaction_id = await bus.handle(command)
+    except AccountNotFoundError as error:
+        # Linking a missing/cross-tenant account is a not-found, never a leak (ADR-130, ADR-111).
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Account {error.account_id} not found.",
+        ) from error
     except _INVARIANT_VIOLATIONS as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
 
@@ -164,6 +171,12 @@ async def update_transaction(
         await bus.handle(body.to_command(transaction_id, user.id))
     except TransactionNotFoundError as error:
         raise _not_found(transaction_id) from error
+    except AccountNotFoundError as error:
+        # Linking a missing/cross-tenant account is a not-found, never a leak (ADR-130, ADR-111).
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Account {error.account_id} not found.",
+        ) from error
     except _INVARIANT_VIOLATIONS as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
 

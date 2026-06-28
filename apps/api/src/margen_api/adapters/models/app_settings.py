@@ -19,7 +19,7 @@ from __future__ import annotations
 import datetime
 import uuid
 
-from sqlalchemy import DateTime, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, String, UniqueConstraint, false, func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,7 +34,9 @@ class AppSettingsRecord(Base):
     are validated in the domain layer. ``monotributo_current_category`` is a
     category letter A-K and ``monotributo_activity_type`` defaults to
     ``"services"`` -- carried over from the retired ``monotributo_config`` table.
-    ``user_id`` is unique so each user owns exactly one settings row (ADR-110).
+    ``monotributo_enabled`` gates the optional Monotributo module per user
+    (ADR-126); it defaults to ``False`` for brand-new rows. ``user_id`` is unique
+    so each user owns exactly one settings row (ADR-110).
     """
 
     __tablename__ = "app_settings"
@@ -70,6 +72,15 @@ class AppSettingsRecord(Base):
         String(20),
         nullable=False,
         server_default="services",
+    )
+    # Per-user toggle for the optional Monotributo module (ADR-126). Brand-new rows
+    # default to ``False`` (Monotributo hidden); the data migration back-fills
+    # existing rows to ``True`` so current users keep their access. Gates only the
+    # UI -- the M2M capture endpoint (ADR-064) is unaffected.
+    monotributo_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=false(),
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),

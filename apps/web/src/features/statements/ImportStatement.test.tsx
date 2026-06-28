@@ -151,7 +151,7 @@ const okParse: StatementParse = {
       name: 'Card fee',
       amount: 3000,
       currency: 'ARS',
-      category: 'Fee',
+      category: 'Fees',
       lineKind: 'fee',
       include: false,
     },

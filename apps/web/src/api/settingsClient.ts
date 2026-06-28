@@ -41,6 +41,12 @@ export interface Settings {
   monotributoCurrentCategory: string
   /** Activity type; `services` in the MVP (ADR-053/059). */
   monotributoActivityType: string
+  /**
+   * Whether the optional Monotributo module is enabled for this user (ADR-126).
+   * When `false`, the Monotributo nav item, Home card, and page are hidden.
+   * New users default to `false`; existing users were migrated to `true`.
+   */
+  monotributoEnabled: boolean
 }
 
 /** Partial settings patch — every field is optional (ADR-054). */

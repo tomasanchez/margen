@@ -28,6 +28,7 @@ import InputLabel from '@mui/material/InputLabel'
 import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
 import Skeleton from '@mui/material/Skeleton'
+import Switch from '@mui/material/Switch'
 import Typography from '@mui/material/Typography'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
@@ -107,6 +108,7 @@ export function SettingsPage() {
   const displayCurrencyId = useId()
   const fxDefaultId = useId()
   const categoryId = useId()
+  const monoModuleId = useId()
   const errorId = useId()
 
   const settings = settingsQuery.data
@@ -250,6 +252,32 @@ export function SettingsPage() {
           </SectionCard>
 
           <SectionCard title={t('monotributo.title')}>
+            {/* Module visibility toggle (ADR-126): when off, the Monotributo nav
+                item, Home card, and page are hidden. State is conveyed by the
+                Switch position (not color alone, ADR-019). */}
+            <SettingRow
+              label={t('monotributo.module.label')}
+              helper={t('monotributo.module.helper')}
+              htmlFor={monoModuleId}
+              control={
+                <Switch
+                  id={monoModuleId}
+                  checked={settings.monotributoEnabled}
+                  disabled={saving}
+                  onChange={(event) =>
+                    save({ monotributoEnabled: event.target.checked })
+                  }
+                  slotProps={{
+                    input: { 'aria-label': t('monotributo.module.label') },
+                  }}
+                />
+              }
+            />
+
+            {/* The category control only matters when the module is enabled;
+                hide it otherwise so a non-AR user sees a clean toggle. */}
+            {settings.monotributoEnabled ? (
+              <>
             <SettingRow
               label={t('monotributo.category.label')}
               helper={t('monotributo.category.helper')}
@@ -296,6 +324,8 @@ export function SettingsPage() {
             <Box sx={{ pt: 1.25 }}>
               <ManualThresholdNote />
             </Box>
+              </>
+            ) : null}
           </SectionCard>
         </Box>
       )}

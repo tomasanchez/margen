@@ -158,6 +158,37 @@ describe('filterTransactions', () => {
     )
   })
 
+  test('the account filter narrows by accountId (ADR-134)', () => {
+    // A tiny set with explicit account attribution: two rows on acc-1, one on
+    // acc-2, and one unlinked. The fixtures carry no accountId, so build inline.
+    const base = SEED_TRANSACTIONS[0]
+    const tagged: Transaction[] = [
+      { ...base, id: 't1', accountId: 'acc-1' },
+      { ...base, id: 't2', accountId: 'acc-1' },
+      { ...base, id: 't3', accountId: 'acc-2' },
+      { ...base, id: 't4', accountId: null },
+    ]
+
+    const onlyAcc1 = filterTransactions(tagged, withFilters({ accounts: ['acc-1'] }))
+    expect(onlyAcc1.filteredCount).toBe(2)
+    expect(onlyAcc1.rows.every((t) => t.accountId === 'acc-1')).toBe(true)
+
+    // A multi-select matches the union; the unlinked row never matches.
+    const both = filterTransactions(
+      tagged,
+      withFilters({ accounts: ['acc-1', 'acc-2'] }),
+    )
+    expect(both.filteredCount).toBe(3)
+    expect(both.rows.some((t) => t.accountId == null)).toBe(false)
+
+    // An unknown id is a harmless no-op match (selects nothing).
+    const unknown = filterTransactions(
+      tagged,
+      withFilters({ accounts: ['no-such-account'] }),
+    )
+    expect(unknown.filteredCount).toBe(0)
+  })
+
   test('amount ranges bucket by ARS-equivalent magnitude', () => {
     const big = filterTransactions(
       SEED_TRANSACTIONS,
@@ -364,6 +395,22 @@ describe('validateTransactionsSearch (ADR-116)', () => {
     })
     expect(validateTransactionsSearch({ category: 'Bogus' })).toEqual({})
   })
+
+  test('accepts the account param: keeps opaque ids, de-dups, drops empties (ADR-134)', () => {
+    // A single-id drilldown (the account drilldown link sets `account=<id>`).
+    expect(validateTransactionsSearch({ account: 'acc-1' })).toEqual({
+      account: 'acc-1',
+    })
+    // Account ids have no fixed allow-set, so any non-empty token survives;
+    // duplicates and empty segments are dropped, order preserved.
+    expect(
+      validateTransactionsSearch({ account: 'acc-1, ,acc-2,acc-1' }),
+    ).toEqual({ account: 'acc-1,acc-2' })
+    // An all-empty value omits the param entirely.
+    expect(validateTransactionsSearch({ account: ' , ' })).toEqual({})
+    // A non-string value is ignored.
+    expect(validateTransactionsSearch({ account: 42 })).toEqual({})
+  })
 })
 
 describe('searchToFilters (ADR-116)', () => {
@@ -377,6 +424,7 @@ describe('searchToFilters (ADR-116)', () => {
     expect(f.q).toBe('')
     expect(f.categories).toEqual([])
     expect(f.banks).toEqual([])
+    expect(f.accounts).toEqual([])
     expect(f.amount).toBe('any')
   })
 
@@ -389,6 +437,7 @@ describe('searchToFilters (ADR-116)', () => {
         month: '2026-05',
         category: 'Food,Rent',
         bank: 'Brubank,Deel',
+        account: 'acc-1,acc-2',
         amount: '100_1m',
       },
       now,
@@ -400,6 +449,7 @@ describe('searchToFilters (ADR-116)', () => {
       month: { year: 2026, month: 4 },
       categories: ['Food', 'Rent'],
       banks: ['Brubank', 'Deel'],
+      accounts: ['acc-1', 'acc-2'],
       amount: '100_1m',
     })
   })
@@ -430,6 +480,7 @@ describe('filtersToSearch (ADR-116, defaults omitted)', () => {
       month: { year: 2026, month: 4 },
       categories: ['Food', 'Rent'],
       banks: ['Brubank'],
+      accounts: ['acc-1', 'acc-2'],
       amount: 'gt1m',
     }
     expect(filtersToSearch(f, now)).toEqual({
@@ -439,6 +490,7 @@ describe('filtersToSearch (ADR-116, defaults omitted)', () => {
       month: '2026-05',
       category: 'Food,Rent',
       bank: 'Brubank',
+      account: 'acc-1,acc-2',
       amount: 'gt1m',
     })
   })
@@ -451,6 +503,7 @@ describe('filtersToSearch (ADR-116, defaults omitted)', () => {
       month: LAST_12_MONTHS,
       categories: ['Transport'],
       banks: [],
+      accounts: ['acc-9'],
       amount: 'lt10',
     }
     const restored = searchToFilters(

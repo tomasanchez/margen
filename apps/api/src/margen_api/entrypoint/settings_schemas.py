@@ -42,6 +42,10 @@ class SettingsUpdateRequest(CamelCaseModel):
         default=None,
         description="Monotributo activity type ('services' or 'bienes'); omit to leave unchanged.",
     )
+    monotributo_enabled: bool | None = Field(
+        default=None,
+        description="Whether the optional Monotributo module is enabled; omit to leave unchanged.",
+    )
 
     def to_command(self, user_id: str) -> UpdateSettings:
         """Translate the request into the owner-stamped command (ADR-108, ADR-110).
@@ -57,6 +61,7 @@ class SettingsUpdateRequest(CamelCaseModel):
             fx_default_rate_type=self.fx_default_rate_type,
             monotributo_current_category=self.monotributo_current_category,
             monotributo_activity_type=self.monotributo_activity_type,
+            monotributo_enabled=self.monotributo_enabled,
         )
 
 
@@ -67,6 +72,7 @@ class SettingsResponse(CamelCaseModel):
     fx_default_rate_type: str = Field(description="Default FX rate type ('MEP' or 'official').")
     monotributo_current_category: str = Field(description="Monotributo category letter A-K in effect.")
     monotributo_activity_type: str = Field(description="Monotributo activity type ('services' or 'bienes').")
+    monotributo_enabled: bool = Field(description="Whether the optional Monotributo module is enabled (ADR-126).")
 
     @classmethod
     def from_read_model(cls, model: AppSettings) -> SettingsResponse:
@@ -76,4 +82,5 @@ class SettingsResponse(CamelCaseModel):
             fx_default_rate_type=model.fx_default_rate_type,
             monotributo_current_category=model.monotributo_current_category,
             monotributo_activity_type=model.monotributo_activity_type,
+            monotributo_enabled=model.monotributo_enabled,
         )

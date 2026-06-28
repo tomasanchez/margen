@@ -23,9 +23,13 @@ import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
 import CircularProgress from '@mui/material/CircularProgress'
 import Collapse from '@mui/material/Collapse'
+import FormControl from '@mui/material/FormControl'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import IconButton from '@mui/material/IconButton'
 import InputBase from '@mui/material/InputBase'
+import InputLabel from '@mui/material/InputLabel'
+import MenuItem from '@mui/material/MenuItem'
+import Select from '@mui/material/Select'
 import Stack from '@mui/material/Stack'
 import Switch from '@mui/material/Switch'
 import TextField from '@mui/material/TextField'
@@ -51,8 +55,9 @@ import {
   parseInvoice,
 } from '../../api/invoicesClient'
 import { useMonotributoSnapshot } from '../monotributo/queries'
+import { useAccounts } from '../accounts/queries'
 import type { AddPrefill } from './addContext'
-import { bankLabel, categoryLabel } from './presentation'
+import { accountOptionLabel, bankLabel, categoryLabel } from './presentation'
 import {
   EXPENSE_CATEGORIES,
   useAddEditFormState,
@@ -213,11 +218,18 @@ export function AddEditForm({
     setMoreOpen(false)
   }
 
+  // The user's accounts feed the account selector (ADR-122). Read
+  // non-blockingly: while pending or absent the selector shows only the "no
+  // account" option, so the form never waits on the accounts load.
+  const accountsQuery = useAccounts()
+  const accounts = accountsQuery.data ?? []
+
   const nameInputId = useId()
   const amountInputId = useId()
   const rateInputId = useId()
   const dateInputId = useId()
   const notesInputId = useId()
+  const accountSelectId = useId()
 
   const isExpense = form.type === 'expense'
   const isUsd = form.currency === 'USD'
@@ -827,6 +839,35 @@ export function AddEditForm({
             />
           ))}
         </Stack>
+      </Box>
+
+      {/* Account selector (ADR-122/133). The chosen account supersedes the bank
+          tag for attribution; the bank/card chips above stay for display
+          (ADR-117). A "no account" option leaves the row unlinked. The selector
+          is always shown so a row can be attributed even before any FX/USD step. */}
+      <Box sx={{ mt: 2.5 }}>
+        <FormControl fullWidth size="small">
+          <InputLabel id={`${accountSelectId}-label`}>
+            {t('form.account.label')}
+          </InputLabel>
+          <Select
+            id={accountSelectId}
+            labelId={`${accountSelectId}-label`}
+            label={t('form.account.label')}
+            value={form.accountId}
+            onChange={(event) => form.setAccountId(event.target.value)}
+            sx={{ borderRadius: '10px', bgcolor: 'var(--mg-paper)' }}
+          >
+            <MenuItem value="">
+              <em>{t('form.account.none')}</em>
+            </MenuItem>
+            {accounts.map((account) => (
+              <MenuItem key={account.id} value={account.id}>
+                {accountOptionLabel(account)}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
       </Box>
 
       {/* Date — a native date picker. Defaults to today for a new transaction

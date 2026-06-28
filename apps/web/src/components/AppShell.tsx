@@ -16,17 +16,22 @@ import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import AddIcon from '@mui/icons-material/Add'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
+import SwapHorizOutlinedIcon from '@mui/icons-material/SwapHorizOutlined'
 import HomeIcon from '@mui/icons-material/Home'
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import ReceiptLongOutlinedIcon from '@mui/icons-material/ReceiptLongOutlined'
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined'
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
+import AccountBalanceWalletOutlinedIcon from '@mui/icons-material/AccountBalanceWalletOutlined'
 import { AccountMenu } from './AccountMenu'
 import { MonthSwitcher } from './MonthSwitcher'
 import { MonthProvider } from './MonthProvider'
 import { useViewingMonth } from './monthContext'
 import { useAddTransaction } from '../features/transactions/addContext'
+import { useMonotributoEnabled } from '../features/settings/queries'
 
 const SIDEBAR_WIDTH = 212
 /** Caps the routed content width so wide monitors get balanced side margins (ADR-017). */
@@ -44,7 +49,13 @@ const MOBILE_SCROLL_CLEARANCE =
 /** A navigable destination wired to a router route. */
 interface NavRoute {
   kind: 'route'
-  to: '/' | '/transactions' | '/monotributo'
+  to:
+    | '/'
+    | '/transactions'
+    | '/accounts'
+    | '/transfers'
+    | '/monotributo'
+    | '/import-statement'
   /** i18n key (shell ns) for the sidebar label. */
   labelKey: string
   /** i18n key (shell ns) for the shorter mobile bottom-nav label. */
@@ -57,7 +68,11 @@ interface NavRoute {
 
 type NavItem = NavRoute
 
-const NAV_ITEMS: NavItem[] = [
+/**
+ * Primary navigation (ADR-127): the everyday PFM peers. Home / Transactions /
+ * Accounts stay top-level on both the desktop sidebar and the mobile pill.
+ */
+const PRIMARY_NAV_ITEMS: NavItem[] = [
   {
     kind: 'route',
     to: '/',
@@ -76,13 +91,46 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     kind: 'route',
-    to: '/monotributo',
-    labelKey: 'nav.monotributo',
-    shortLabelKey: 'nav.monotributoShort',
-    icon: <AccountBalanceOutlinedIcon fontSize="small" />,
-    activeIcon: <AccountBalanceIcon fontSize="small" />,
+    to: '/accounts',
+    labelKey: 'nav.accounts',
+    shortLabelKey: 'nav.accountsShort',
+    icon: <AccountBalanceWalletOutlinedIcon fontSize="small" />,
+    activeIcon: <AccountBalanceWalletIcon fontSize="small" />,
   },
 ]
+
+/**
+ * Secondary "Tools" navigation (ADR-127): import + the optional Monotributo
+ * module are demoted below the primary peers into their own grouping. The
+ * Monotributo entry is settings-gated (ADR-126) — see {@link Sidebar}, which
+ * filters it out when the module is disabled.
+ */
+const TRANSFERS_NAV_ITEM: NavItem = {
+  kind: 'route',
+  to: '/transfers',
+  labelKey: 'nav.transfers',
+  shortLabelKey: 'nav.transfersShort',
+  icon: <SwapHorizOutlinedIcon fontSize="small" />,
+  activeIcon: <SwapHorizIcon fontSize="small" />,
+}
+
+const IMPORT_NAV_ITEM: NavItem = {
+  kind: 'route',
+  to: '/import-statement',
+  labelKey: 'nav.import',
+  shortLabelKey: 'nav.importShort',
+  icon: <UploadFileIcon fontSize="small" />,
+  activeIcon: <UploadFileIcon fontSize="small" />,
+}
+
+const MONOTRIBUTO_NAV_ITEM: NavItem = {
+  kind: 'route',
+  to: '/monotributo',
+  labelKey: 'nav.monotributo',
+  shortLabelKey: 'nav.monotributoShort',
+  icon: <AccountBalanceOutlinedIcon fontSize="small" />,
+  activeIcon: <AccountBalanceIcon fontSize="small" />,
+}
 
 /**
  * The margen brand mark — the new favicon icon (ADR-013): the sage "margin"
@@ -135,9 +183,63 @@ function BrandMark({ wordmark = true }: { wordmark?: boolean }) {
   )
 }
 
+/** A single sidebar nav link (primary or tools group), styled identically. */
+function SidebarNavLink({
+  item,
+  active,
+}: {
+  item: NavItem
+  active: boolean
+}) {
+  const { t } = useTranslation('shell')
+  return (
+    <Box
+      component={Link}
+      to={item.to}
+      aria-current={active ? 'page' : undefined}
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1.25,
+        px: 1.5,
+        py: 1.25,
+        borderRadius: 1.5,
+        fontSize: 14,
+        width: '100%',
+        textAlign: 'left',
+        textDecoration: 'none',
+        // Active conveyed beyond hue (ADR-019): gold color + filled icon +
+        // bolder label + selected background; inactive stays muted/outlined.
+        color: active ? 'primary.main' : 'text.secondary',
+        fontWeight: active ? 600 : 500,
+        bgcolor: active ? 'action.selected' : 'transparent',
+        '& .MuiSvgIcon-root': { flex: 'none' },
+        '&:hover': { bgcolor: 'action.hover' },
+        '&:focus-visible': {
+          outline: '2px solid',
+          outlineColor: 'primary.main',
+          outlineOffset: 2,
+        },
+      }}
+    >
+      {active ? item.activeIcon : item.icon}
+      {t(item.labelKey)}
+    </Box>
+  )
+}
+
 function Sidebar({ onAddTransaction }: { onAddTransaction: () => void }) {
   const { t } = useTranslation('shell')
   const pathname = useRouterState({ select: (s) => s.location.pathname })
+  // Gate the Monotributo tool on the optional-module flag (ADR-126). Treated as
+  // hidden until settings resolve, so the item never flashes then disappears.
+  const { enabled: monotributoEnabled } = useMonotributoEnabled()
+
+  // Secondary "Tools" grouping (ADR-127): import is always present; Monotributo
+  // only when the module is enabled.
+  const toolItems: NavItem[] = monotributoEnabled
+    ? [TRANSFERS_NAV_ITEM, IMPORT_NAV_ITEM, MONOTRIBUTO_NAV_ITEM]
+    : [TRANSFERS_NAV_ITEM, IMPORT_NAV_ITEM]
 
   return (
     <Box
@@ -163,75 +265,43 @@ function Sidebar({ onAddTransaction }: { onAddTransaction: () => void }) {
         startIcon={<AddIcon />}
         onClick={onAddTransaction}
         fullWidth
-        sx={{ mb: 1, py: 1.25, fontWeight: 600 }}
+        sx={{ mb: 1.75, py: 1.25, fontWeight: 600 }}
       >
         {t('actions.addTransaction')}
       </Button>
 
-      {/* Import statement: a sibling to the add CTA that opens the multi-row
-          statement-import flow (ADR-080). Routed (not the Add dialog) because the
-          review table needs the full page width. */}
-      <Button
-        component={Link}
-        to="/import-statement"
-        variant="outlined"
-        color="secondary"
-        startIcon={<UploadFileIcon fontSize="small" />}
-        fullWidth
+      {PRIMARY_NAV_ITEMS.map((item) => (
+        <SidebarNavLink
+          key={item.to}
+          item={item}
+          active={pathname === item.to}
+        />
+      ))}
+
+      {/* Tools group (ADR-127): a labeled secondary section that demotes import
+          + the optional Monotributo module below the everyday PFM peers. */}
+      <Typography
+        component="h2"
         sx={{
-          mb: 1.75,
-          py: 1.1,
-          fontWeight: 600,
-          textTransform: 'none',
-          color: 'text.secondary',
-          borderColor: 'var(--mg-border-2)',
-        }}
-      >
-        {t('actions.importStatement')}
-      </Button>
-
-      {NAV_ITEMS.map((item) => {
-        const common = {
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1.25,
+          mt: 2,
+          mb: 0.5,
           px: 1.5,
-          py: 1.25,
-          borderRadius: 1.5,
-          fontSize: 14,
-          width: '100%',
-          textAlign: 'left' as const,
-          textDecoration: 'none',
-        }
-
-        const active = pathname === item.to
-        return (
-          <Box
-            key={item.to}
-            component={Link}
-            to={item.to}
-            aria-current={active ? 'page' : undefined}
-            sx={{
-              ...common,
-              // Active conveyed beyond hue (ADR-019): gold color + filled icon +
-              // bolder label + selected background; inactive stays muted/outlined.
-              color: active ? 'primary.main' : 'text.secondary',
-              fontWeight: active ? 600 : 500,
-              bgcolor: active ? 'action.selected' : 'transparent',
-              '& .MuiSvgIcon-root': { flex: 'none' },
-              '&:hover': { bgcolor: 'action.hover' },
-              '&:focus-visible': {
-                outline: '2px solid',
-                outlineColor: 'primary.main',
-                outlineOffset: 2,
-              },
-            }}
-          >
-            {active ? item.activeIcon : item.icon}
-            {t(item.labelKey)}
-          </Box>
-        )
-      })}
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+        }}
+        color="text.secondary"
+      >
+        {t('nav.toolsGroup')}
+      </Typography>
+      {toolItems.map((item) => (
+        <SidebarNavLink
+          key={item.to}
+          item={item}
+          active={pathname === item.to}
+        />
+      ))}
     </Box>
   )
 }
@@ -262,6 +332,14 @@ const PILL_ITEM_SX = {
 function FloatingNavPill() {
   const { t } = useTranslation('shell')
   const pathname = useRouterState({ select: (s) => s.location.pathname })
+  // Gate the Monotributo entry on the optional-module flag (ADR-126); hidden
+  // until settings resolve to avoid a flash-then-hide.
+  const { enabled: monotributoEnabled } = useMonotributoEnabled()
+
+  // Primary peers, plus the optional Monotributo module when enabled (ADR-127).
+  const pillItems: NavItem[] = monotributoEnabled
+    ? [...PRIMARY_NAV_ITEMS, MONOTRIBUTO_NAV_ITEM]
+    : PRIMARY_NAV_ITEMS
 
   return (
     <Box
@@ -287,7 +365,7 @@ function FloatingNavPill() {
         backdropFilter: 'blur(12px)',
       }}
     >
-      {NAV_ITEMS.map((item) => {
+      {pillItems.map((item) => {
         const active = pathname === item.to
         return (
           <Box

@@ -91,6 +91,7 @@ beforeEach(() => {
     fxDefaultRateType: 'MEP',
     monotributoCurrentCategory: 'C',
     monotributoActivityType: 'services',
+    monotributoEnabled: true,
   })
   // Default: the user is on category C / services, whose monthly cuota is
   // ARS 56.502 (the services fee for the matching scale row).
@@ -324,6 +325,7 @@ describe('Add flow — USD picks an explicit FX source (ADR-044/045)', () => {
       fxDefaultRateType: 'official',
       monotributoCurrentCategory: 'C',
       monotributoActivityType: 'services',
+      monotributoEnabled: true,
     })
     const { user, dialog } = await openAddDialog()
     const form = within(dialog)

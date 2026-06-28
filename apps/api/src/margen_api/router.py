@@ -9,7 +9,9 @@ Resources:
 from fastapi import APIRouter, Depends
 
 from margen_api.entrypoint import (
+    accounts,
     insights,
+    institutions,
     invoices,
     monitor,
     monotributo,
@@ -17,6 +19,7 @@ from margen_api.entrypoint import (
     statements,
     summaries,
     transactions,
+    transfers,
 )
 from margen_api.entrypoint.dependencies import require_auth_user
 
@@ -47,6 +50,9 @@ root_router.include_router(monitor.router)
 # stacked with the user JWT.
 _auth = [Depends(require_auth_user)]
 api_router_v1.include_router(transactions.router, dependencies=_auth)
+api_router_v1.include_router(transfers.router, dependencies=_auth)
+api_router_v1.include_router(accounts.router, dependencies=_auth)
+api_router_v1.include_router(institutions.router, dependencies=_auth)
 api_router_v1.include_router(invoices.router, dependencies=_auth)
 api_router_v1.include_router(statements.router, dependencies=_auth)
 api_router_v1.include_router(summaries.router, dependencies=_auth)

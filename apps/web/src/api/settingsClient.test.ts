@@ -26,6 +26,7 @@ const SETTINGS: Settings = {
   fxDefaultRateType: 'MEP',
   monotributoCurrentCategory: 'C',
   monotributoActivityType: 'services',
+  monotributoEnabled: true,
 }
 
 describe('fetchSettings', () => {

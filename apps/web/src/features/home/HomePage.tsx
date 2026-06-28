@@ -32,6 +32,7 @@ import Typography from '@mui/material/Typography'
 import { visuallyHidden } from '@mui/utils'
 import { ErrorState } from '../../components/ErrorState'
 import { useDisplayCurrency } from '../settings/displayCurrencyContext'
+import { useMonotributoEnabled } from '../settings/queries'
 import { useInsights, useMonotributo, useSummary } from './queries'
 import { useTransactions } from '../transactions/queries'
 import { useViewingMonth } from '../../components/monthContext'
@@ -52,6 +53,8 @@ import { CategoryBreakdown } from './CategoryBreakdown'
 import { MonotributoCard } from './MonotributoCard'
 import { Insights } from './Insights'
 import { RecentActivity } from './RecentActivity'
+import { NetWorthCard } from './NetWorthCard'
+import { useNetWorth } from '../accounts/queries'
 
 /** Percentage change from `previous` to `current`; 0 when previous is 0. */
 function pctChange(current: number, previous: number): number {
@@ -63,10 +66,17 @@ export function HomePage() {
   const { t } = useTranslation('home')
   const monotributoQuery = useMonotributo()
   const transactionsQuery = useTransactions()
+  // Net worth (ADR-122/123/127): an incremental Home addition below the hero.
+  const netWorthQuery = useNetWorth()
 
   // Calm note when USD is preferred but the live rate couldn't be fetched, so
   // the cards + summaries fall back to ARS (ADR-056/037). Null otherwise.
   const { fallbackNote } = useDisplayCurrency()
+
+  // The Monotributo Home card is part of the optional module (ADR-126): hide it
+  // when the module is disabled. Treated as hidden until settings resolve so it
+  // never flashes then disappears.
+  const { enabled: monotributoEnabled } = useMonotributoEnabled()
 
   // The selected viewing month (top-bar navigator), shared via context (ADR-040).
   const { viewingMonth } = useViewingMonth()
@@ -177,6 +187,15 @@ export function HomePage() {
         </Typography>
       ) : null}
 
+      <Box sx={{ mb: { xs: 1.75, md: 2.25 } }}>
+        <NetWorthCard
+          netWorth={netWorthQuery.data}
+          loading={netWorthQuery.isPending}
+          isError={netWorthQuery.isError}
+          onRetry={() => void netWorthQuery.refetch()}
+        />
+      </Box>
+
       <Box
         sx={{
           display: 'grid',
@@ -221,11 +240,13 @@ export function HomePage() {
             minWidth: 0,
           }}
         >
-          <MonotributoCard
-            monotributo={monotributoQuery.data}
-            invoiceCount={invoiceCount}
-            loading={monotributoQuery.isPending}
-          />
+          {monotributoEnabled ? (
+            <MonotributoCard
+              monotributo={monotributoQuery.data}
+              invoiceCount={invoiceCount}
+              loading={monotributoQuery.isPending}
+            />
+          ) : null}
           <Insights
             insights={insightsQuery.data}
             loading={insightsQuery.isPending}

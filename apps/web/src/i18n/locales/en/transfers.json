@@ -1,0 +1,58 @@
+{
+  "title": "Transfers",
+  "subtitle": "Move money between your own accounts. Transfers are not income or expense.",
+  "newTransfer": "New transfer",
+  "transfers": "Transfers",
+  "list": {
+    "title": "Your transfers",
+    "empty": "No transfers yet. Move money between two of your accounts to see it here.",
+    "needAccounts": "You need at least two accounts to make a transfer. Add another account first."
+  },
+  "row": {
+    "received": "received {{amount}}",
+    "toAria": "to",
+    "unknownAccount": "Unknown account",
+    "deleteAria": "Delete transfer from {{from}} to {{to}}"
+  },
+  "form": {
+    "title": "New transfer",
+    "intro": "Move money between two of your own accounts. This is not income or expense.",
+    "saveError": "We couldn't save this transfer. Please try again.",
+    "from": { "label": "From account" },
+    "to": { "label": "To account" },
+    "sameAccountError": "Pick a different account to transfer to.",
+    "amountSent": {
+      "label": "Amount sent",
+      "labelCurrency": "Amount sent ({{currency}})"
+    },
+    "amountReceived": {
+      "labelCurrency": "Amount received ({{currency}})",
+      "helper": "The actual amount that arrived in the destination account."
+    },
+    "amount": { "invalid": "Enter an amount greater than zero." },
+    "date": { "label": "Date" },
+    "note": { "label": "Note (optional)" },
+    "fees": {
+      "heading": "Fees",
+      "helper": "Each fee becomes an expense in the “Fees” category on the chosen account.",
+      "account": "Fee account",
+      "amount": "Fee amount",
+      "label": "Fee label",
+      "add": "Add fee",
+      "remove": "Remove fee"
+    },
+    "cancel": "Cancel",
+    "save": "Save transfer"
+  },
+  "delete": {
+    "title": "Delete this transfer?",
+    "body": "This removes the transfer and restores the balances. Any fees recorded with it stay as expenses in the “Fees” category and are not deleted.",
+    "error": "We couldn't delete this transfer. Please try again.",
+    "cancel": "Cancel",
+    "confirm": "Delete transfer"
+  },
+  "error": {
+    "title": "Transfers are unavailable",
+    "description": "We couldn't load your transfers. Please try again."
+  }
+}

@@ -53,7 +53,7 @@ export const EXPENSE_CATEGORIES: readonly Category[] = [
   'Entertainment',
   'Services',
   'Taxes',
-  'Fee',
+  'Fees',
   'Other',
 ] as const
 
@@ -215,6 +215,15 @@ export interface AddEditFormState {
 
   readonly bank: Bank
   setBank: (next: Bank) => void
+
+  /**
+   * The account this transaction is attributed to (ADR-122/133), or `''` for
+   * none (unlinked). The account SUPERSEDES the bank tag for attribution; the
+   * bank/card detail (ADR-117) is kept for display. Seeded from the prefill on
+   * edit; blank on a fresh add. Sent as `accountId` (null when blank) on save.
+   */
+  readonly accountId: string
+  setAccountId: (next: string) => void
 
   /** ISO `YYYY-MM-DD` date from the picker (default today; prefilled on edit). */
   readonly occurredOn: string
@@ -398,6 +407,11 @@ export function useAddEditFormState(
       : DEFAULT_CATEGORY,
   )
   const [bank, setBank] = useState<Bank>(prefill?.bank ?? DEFAULT_BANK)
+  // The attributed account (ADR-122/133). Seeded from the prefill on edit; blank
+  // (no account) on a fresh add. `''` is the "no account" sentinel; `buildInput`
+  // maps it to `null`. Supersedes the bank tag for attribution (ADR-117 display
+  // kept).
+  const [accountId, setAccountId] = useState<string>(prefill?.accountId ?? '')
   // Optional merchant/client name (ADR-088). Seeded from the row's current name
   // on edit, blank on add. Typed/auto-filled input wins in `buildInput`; blank
   // falls back to the category-derived label. This field subsumes the old
@@ -615,6 +629,7 @@ export function useAddEditFormState(
     setRateSuggestionStatus('idle')
     setCategory(DEFAULT_CATEGORY)
     setBank(DEFAULT_BANK)
+    setAccountId('')
     setName('')
     setNotes('')
     setOccurredOn(maxOccurredOn)
@@ -668,6 +683,10 @@ export function useAddEditFormState(
       dispDate,
       amountNum: round2(amountArs),
       countsTowardMonotributo: type === 'income' && countsTowardMonotributo,
+      // The attributed account (ADR-122/133): a chosen id, or null for none.
+      // Always sent (incl. null) so editing a row down to "no account" clears
+      // the link on the backend (the patch is spread over the existing row).
+      accountId: accountId === '' ? null : accountId,
       ...(notes.trim() ? { notes: notes.trim() } : {}),
       // Card detail is import-set, not user-editable (ADR-117): carry the prefill's
       // value straight through so editing an imported row keeps its card on save.
@@ -726,6 +745,8 @@ export function useAddEditFormState(
     setCategory,
     bank,
     setBank,
+    accountId,
+    setAccountId,
     occurredOn,
     setOccurredOn,
     maxOccurredOn,

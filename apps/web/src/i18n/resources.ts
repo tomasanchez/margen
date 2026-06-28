@@ -17,10 +17,12 @@
 import enCommon from './locales/en/common.json'
 import enShell from './locales/en/shell.json'
 import enAccount from './locales/en/account.json'
+import enAccounts from './locales/en/accounts.json'
 import enAuth from './locales/en/auth.json'
 import enHome from './locales/en/home.json'
 import enInsights from './locales/en/insights.json'
 import enTransactions from './locales/en/transactions.json'
+import enTransfers from './locales/en/transfers.json'
 import enStatements from './locales/en/statements.json'
 import enMonotributo from './locales/en/monotributo.json'
 import enSettings from './locales/en/settings.json'
@@ -29,10 +31,12 @@ import enSettings from './locales/en/settings.json'
 import esCommon from './locales/es/common.json'
 import esShell from './locales/es/shell.json'
 import esAccount from './locales/es/account.json'
+import esAccounts from './locales/es/accounts.json'
 import esAuth from './locales/es/auth.json'
 import esHome from './locales/es/home.json'
 import esInsights from './locales/es/insights.json'
 import esTransactions from './locales/es/transactions.json'
+import esTransfers from './locales/es/transfers.json'
 import esStatements from './locales/es/statements.json'
 import esMonotributo from './locales/es/monotributo.json'
 import esSettings from './locales/es/settings.json'
@@ -53,10 +57,12 @@ export const NAMESPACES = [
   'common',
   'shell',
   'account',
+  'accounts',
   'auth',
   'home',
   'insights',
   'transactions',
+  'transfers',
   'statements',
   'monotributo',
   'settings',
@@ -76,10 +82,12 @@ export const resources = {
     common: enCommon,
     shell: enShell,
     account: enAccount,
+    accounts: enAccounts,
     auth: enAuth,
     home: enHome,
     insights: enInsights,
     transactions: enTransactions,
+    transfers: enTransfers,
     statements: enStatements,
     monotributo: enMonotributo,
     settings: enSettings,
@@ -88,10 +96,12 @@ export const resources = {
     common: esCommon,
     shell: esShell,
     account: esAccount,
+    accounts: esAccounts,
     auth: esAuth,
     home: esHome,
     insights: esInsights,
     transactions: esTransactions,
+    transfers: esTransfers,
     statements: esStatements,
     monotributo: esMonotributo,
     settings: esSettings,

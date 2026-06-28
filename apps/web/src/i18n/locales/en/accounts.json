@@ -1,0 +1,117 @@
+{
+  "title": "Accounts",
+  "subtitle": "Your institutions and their per-currency account balances.",
+  "addInstitution": "Add institution",
+  "transfers": "Transfers",
+  "type": {
+    "bank": "Bank",
+    "card": "Card",
+    "cash": "Cash",
+    "wallet": "Wallet"
+  },
+  "list": {
+    "title": "Your institutions",
+    "openingBalance": "Opening balance",
+    "empty": "No institutions yet. Add your first institution to track its accounts and your net worth.",
+    "noAccounts": "No accounts yet. Add one below.",
+    "addAccount": "Add account",
+    "editInstitutionAria": "Edit {{name}}",
+    "editAccountAria": "Edit {{institution}} {{currency}} account",
+    "drilldownAria": "View {{institution}} {{currency}} transactions"
+  },
+  "wizard": {
+    "title": "Add institution",
+    "step1": {
+      "label": "Institution",
+      "heading": "What institution is this?"
+    },
+    "step2": {
+      "label": "Accounts",
+      "heading": "Add its accounts",
+      "subheading": "Optional — add an ARS and/or USD account now, or skip and add them later.",
+      "empty": "No accounts yet. Add one below, or skip to create the institution on its own.",
+      "addCurrency": "Add {{currency}} account",
+      "allCurrenciesAdded": "Both currencies added",
+      "removeAria": "Remove {{currency}} account {{index}}",
+      "rowInvalid": "Enter a valid opening balance.",
+      "rowFailed": "Couldn't create this account. Retry below.",
+      "rowFailedAria": "{{currency}} account failed to create",
+      "rowCreated": "Created.",
+      "rowCreatedAria": "{{currency}} account created"
+    },
+    "institutionError": "We couldn't create the institution. Check your connection and try again.",
+    "partialFailure": "The institution was created, but some accounts didn't. Fix them and retry — the institution is kept.",
+    "success": {
+      "title": "{{name}} is ready",
+      "noAccounts": "Created with no accounts yet. Add them anytime from the list.",
+      "body_one": "Created with 1 account.",
+      "body_other": "Created with {{count}} accounts."
+    },
+    "cancel": "Cancel",
+    "back": "Back",
+    "next": "Next",
+    "skip": "Skip",
+    "finish": "Finish",
+    "retry": "Retry failed accounts",
+    "done": "Done"
+  },
+  "institutionForm": {
+    "addTitle": "Add institution",
+    "editTitle": "Edit institution",
+    "name": {
+      "label": "Name"
+    },
+    "type": {
+      "label": "Type"
+    },
+    "cancel": "Cancel",
+    "save": "Save",
+    "saveError": "We couldn't save this institution. Check your connection and try again."
+  },
+  "form": {
+    "addTitle": "Add account to {{institution}}",
+    "editTitle": "Edit {{institution}} account",
+    "currency": {
+      "label": "Currency",
+      "ars": "ARS — Argentine pesos",
+      "usd": "USD — US dollars",
+      "lockedHelper": "Currency can't be changed after an account is created."
+    },
+    "openingBalance": {
+      "label": "Opening balance",
+      "helper": "The balance when you start tracking this account."
+    },
+    "cancel": "Cancel",
+    "save": "Save",
+    "saveError": "We couldn't save this account. Check your connection and try again."
+  },
+  "error": {
+    "title": "Can't load your accounts",
+    "description": "We couldn't reach the server to load your accounts. Check your connection and try again."
+  },
+  "netWorth": {
+    "title": "Net worth",
+    "subtitle": "Total across your accounts",
+    "totalLabel": "Total net worth",
+    "converted": "≈ {{amount}}",
+    "subtotalLabel": "Subtotal",
+    "subtotalAria": "{{institution}} subtotal {{amount}}",
+    "showDetails": "Show details",
+    "hideDetails": "Hide details",
+    "detailsRegionAria": "Net worth breakdown by institution",
+    "decomposition": "{{native}} + ~ {{converted}} ({{other}} at {{rate}})",
+    "decompositionNoRate": "{{native}} + {{other}}",
+    "mepUnit": "ARS {{rate}} / USD",
+    "rateUnit": "{{source}} ARS {{rate}} / USD",
+    "rateSource": {
+      "label": "Rate",
+      "mep": "MEP",
+      "official": "Official"
+    },
+    "empty": "Add an account to see your net worth here.",
+    "mepUnavailable": "Live rate unavailable — showing each currency natively.",
+    "drilldownAria": "View {{institution}} {{currency}} transactions",
+    "errorTitle": "Net worth unavailable",
+    "errorDescription": "We couldn't load your net worth right now. Try again."
+  }
+}

@@ -50,13 +50,17 @@ LOCAL_DATABASE_URL ?= postgresql+asyncpg://margen-api:margen-api@localhost:5432/
 
 .PHONY: run
 run: ## Migrates + starts the API against Supabase on port 8000 (loads $(ENV_FILE))
-	uv run --env-file $(ENV_FILE) alembic upgrade head && \
+	uv run --env-file $(ENV_FILE) alembic upgrade head
 	uv run --env-file $(ENV_FILE) python -m margen_api.main
 
+# NOTE: run-local sets DATABASE_URL via a target-specific `export` (not a bash
+# `VAR=value cmd` prefix) so the recipe is cross-platform — GNU make puts the var
+# in the recipe's environment, working under both POSIX sh and Windows cmd.exe.
 .PHONY: run-local
+run-local: export DATABASE_URL := $(LOCAL_DATABASE_URL)
 run-local: ## Migrates + starts the API against the local docker DB (Supabase auth still loaded from $(ENV_FILE))
-	DATABASE_URL="$(LOCAL_DATABASE_URL)" uv run --env-file $(ENV_FILE) alembic upgrade head && \
-	DATABASE_URL="$(LOCAL_DATABASE_URL)" uv run --env-file $(ENV_FILE) python -m margen_api.main
+	uv run --env-file $(ENV_FILE) alembic upgrade head
+	uv run --env-file $(ENV_FILE) python -m margen_api.main
 
 .PHONY: cover
 cover: ## Executes the offline tiers (unit + e2e) with the coverage gate

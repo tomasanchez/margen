@@ -35,6 +35,8 @@
     "delete": "Eliminar {{name}}",
     "openInvoicePdf": "Abrir PDF de la factura",
     "openInvoicePdfFor": "Abrir PDF de la factura de {{name}}",
+    "openPdf": "Abrir PDF",
+    "actionsAriaLabel": "Acciones de {{name}}",
     "notes": "Notas"
   },
   "filters": {
@@ -42,6 +44,7 @@
     "currencyAriaLabel": "Moneda",
     "categoryLabel": "Categoría",
     "bankLabel": "Banco / tarjeta",
+    "accountLabel": "Cuenta",
     "amountLabel": "Importe",
     "trigger": "Filtros",
     "triggerCount": "Filtros · {{count}}",
@@ -51,6 +54,7 @@
     "currencySection": "Moneda",
     "categorySection": "Categoría",
     "bankSection": "Banco / tarjeta",
+    "accountSection": "Cuenta",
     "amountSection": "Importe",
     "showResults_one": "Ver {{count}} movimiento",
     "showResults_other": "Ver {{count}} movimientos"
@@ -149,6 +153,10 @@
     },
     "bank": {
       "section": "Banco / tarjeta"
+    },
+    "account": {
+      "label": "Cuenta",
+      "none": "Sin cuenta"
     },
     "date": {
       "label": "Fecha",

@@ -27,9 +27,15 @@ class AppSettings:
             Monotributo trailing-12-month calculation (ADR-046).
         monotributo_activity_type: ``"services"`` or ``"bienes"`` (MVP uses
             services).
+        monotributo_enabled: Whether the optional Monotributo module is enabled
+            for this user (ADR-126). ``False`` hides the Monotributo UI; brand-new
+            users default to ``False`` while existing users were back-filled to
+            ``True``. Gates the UI only -- the M2M capture endpoint (ADR-064) is
+            unaffected.
     """
 
     preferred_display_currency: str
     fx_default_rate_type: str
     monotributo_current_category: str
     monotributo_activity_type: str
+    monotributo_enabled: bool

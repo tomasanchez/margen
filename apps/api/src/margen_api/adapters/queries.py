@@ -23,6 +23,7 @@ from margen_api.adapters.settings_repository import (
     DEFAULT_FX_RATE_TYPE,
     DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
     DEFAULT_MONOTRIBUTO_CATEGORY,
+    DEFAULT_MONOTRIBUTO_ENABLED,
 )
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
 from margen_api.service_layer.insights import build_monthly_insights
@@ -75,6 +76,7 @@ def _to_read_model(record: TransactionRecord) -> TransactionReadModel:
         recurring=record.recurring,
         counts_toward_monotributo=record.counts_toward_monotributo,
         statement_document_id=record.statement_document_id,
+        account_id=record.account_id,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
@@ -560,10 +562,12 @@ class SqlAlchemySettingsReader(AbstractSettingsReader):
                 fx_default_rate_type=DEFAULT_FX_RATE_TYPE,
                 monotributo_current_category=DEFAULT_MONOTRIBUTO_CATEGORY,
                 monotributo_activity_type=DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
+                monotributo_enabled=DEFAULT_MONOTRIBUTO_ENABLED,
             )
         return AppSettings(
             preferred_display_currency=record.preferred_display_currency,
             fx_default_rate_type=record.fx_default_rate_type,
             monotributo_current_category=record.monotributo_current_category,
             monotributo_activity_type=record.monotributo_activity_type,
+            monotributo_enabled=record.monotributo_enabled,
         )

@@ -30,6 +30,7 @@ from margen_api.adapters.settings_repository import (
     DEFAULT_FX_RATE_TYPE,
     DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
     DEFAULT_MONOTRIBUTO_CATEGORY,
+    DEFAULT_MONOTRIBUTO_ENABLED,
 )
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
 
@@ -619,6 +620,7 @@ def _settings_record(
     fx: str = "official",
     category: str = "F",
     activity: str = "bienes",
+    enabled: bool = True,
 ) -> AppSettingsRecord:
     """Build a persisted app_settings row for the reader projection."""
     record = AppSettingsRecord()
@@ -626,6 +628,7 @@ def _settings_record(
     record.fx_default_rate_type = fx
     record.monotributo_current_category = category
     record.monotributo_activity_type = activity
+    record.monotributo_enabled = enabled
     return record
 
 
@@ -651,6 +654,7 @@ class TestSettingsReader:
         assert settings.fx_default_rate_type == "official"
         assert settings.monotributo_current_category == "F"
         assert settings.monotributo_activity_type == "bienes"
+        assert settings.monotributo_enabled is True
         assert "user_id" in str(session.execute.call_args.args[0]).lower()
 
     async def test_returns_documented_defaults_when_absent(self):
@@ -672,3 +676,4 @@ class TestSettingsReader:
         assert settings.fx_default_rate_type == DEFAULT_FX_RATE_TYPE
         assert settings.monotributo_current_category == DEFAULT_MONOTRIBUTO_CATEGORY
         assert settings.monotributo_activity_type == DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE
+        assert settings.monotributo_enabled == DEFAULT_MONOTRIBUTO_ENABLED

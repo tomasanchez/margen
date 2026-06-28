@@ -59,6 +59,11 @@ class Transaction:
             for an imported credit-card expense (ADR-077). A plain carried field,
             not a domain invariant — the aggregate stays lean (ADR-028); ``None``
             for manually-entered transactions.
+        account_id: Optional link to the owning account this movement belongs to
+            (ADR-122). A plain carried field, not a domain invariant; ``None`` for
+            transactions not yet attributed to an account. The owning-account
+            check (a user may only link to their own account) is an application-layer
+            concern (ADR-130), not a domain invariant.
         user_id: The owning user's id (the Supabase ``sub``), threaded from the
             authenticated request so every write is attributable and every read
             can be scoped to its owner (ADR-094, ADR-108). A plain carried field,
@@ -84,6 +89,7 @@ class Transaction:
     recurring: bool = False
     counts_toward_monotributo: bool = False
     statement_document_id: UUID | None = None
+    account_id: UUID | None = None
     user_id: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -160,6 +166,7 @@ def build_transaction(
     recurring: bool = False,
     counts_toward_monotributo: bool = False,
     statement_document_id: UUID | None = None,
+    account_id: UUID | None = None,
     user_id: str | None = None,
     transaction_id: UUID | None = None,
     created_at: datetime | None = None,
@@ -190,6 +197,7 @@ def build_transaction(
         counts_toward_monotributo: Monotributo counting hint (income / invoice only).
         statement_document_id: Optional link to the source statement document for
             an imported credit-card expense (ADR-077); ``None`` otherwise.
+        account_id: Optional link to the owning account (ADR-122); ``None`` otherwise.
         user_id: The owning user's id (the Supabase ``sub``); ``None`` otherwise
             (ADR-094, ADR-108).
         transaction_id: Optional identity; generated when omitted.
@@ -225,6 +233,7 @@ def build_transaction(
         recurring=recurring,
         counts_toward_monotributo=counts_toward_monotributo,
         statement_document_id=statement_document_id,
+        account_id=account_id,
         user_id=user_id,
         created_at=created_at if created_at is not None else now,
         updated_at=updated_at if updated_at is not None else now,

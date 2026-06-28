@@ -14,6 +14,7 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchSummary, type Summary } from '../../api/summariesClient'
 import { fetchInsights, type MonthlyInsights } from '../../api/insightsClient'
 import { fetchMonotributo } from '../../api/monotributoClient'
+import { fetchSuggestedRates, type SuggestedRates } from '../../api/fxClient'
 import { standingToState } from '../monotributo/derive'
 import type { MonotributoSnapshot, MonotributoState } from '../../mock/types'
 import type { ViewingMonth } from '../../components/months'
@@ -27,6 +28,35 @@ export const homeQueryKeys = {
   /** Insights are per-month too, so the `YYYY-MM` is part of the key. */
   insights: (month: string) =>
     [...homeQueryKeys.all, 'insights', month] as const,
+}
+
+/**
+ * Stable query key for the live FX rates. NOT under the `home` namespace — the
+ * rates are a global FX concern (ADR-044) that the net-worth card converts with
+ * (ADR-133 amendment: net worth now converts via the LIVE selected rate from
+ * `fxClient`, not the last-transaction rate), and other features may share it.
+ */
+export const fxQueryKeys = {
+  all: ['fx'] as const,
+  rates: () => [...fxQueryKeys.all, 'rates'] as const,
+}
+
+/**
+ * The live suggested FX rates (ARS per USD) from dolarapi.com via
+ * {@link fetchSuggestedRates} (ADR-044) — both the MEP/Bolsa and the Official
+ * source, each independently `null` on failure. Cached for a few minutes so a
+ * Home re-render doesn't refetch, and the request is cancellable via the query
+ * `signal`. The consumer (net-worth card) lets the user pick a source and must
+ * NOT fabricate a rate: a `null` for the selected source degrades to native
+ * amounts (ADR-037/133).
+ */
+export function useFxRates() {
+  return useQuery<SuggestedRates>({
+    queryKey: fxQueryKeys.rates(),
+    queryFn: ({ signal }) => fetchSuggestedRates(signal),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+  })
 }
 
 /** Format a viewing month to the backend's `YYYY-MM` query value. */

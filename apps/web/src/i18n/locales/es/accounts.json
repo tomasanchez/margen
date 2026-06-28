@@ -1,0 +1,117 @@
+{
+  "title": "Cuentas",
+  "subtitle": "Tus entidades y los saldos de sus cuentas por moneda.",
+  "addInstitution": "Agregar entidad",
+  "transfers": "Transferencias",
+  "type": {
+    "bank": "Banco",
+    "card": "Tarjeta",
+    "cash": "Efectivo",
+    "wallet": "Billetera"
+  },
+  "list": {
+    "title": "Tus entidades",
+    "openingBalance": "Saldo inicial",
+    "empty": "Todavía no tenés entidades. Agregá tu primera entidad para seguir sus cuentas y tu patrimonio.",
+    "noAccounts": "Todavía no hay cuentas. Agregá una abajo.",
+    "addAccount": "Agregar cuenta",
+    "editInstitutionAria": "Editar {{name}}",
+    "editAccountAria": "Editar la cuenta {{currency}} de {{institution}}",
+    "drilldownAria": "Ver los movimientos de {{institution}} {{currency}}"
+  },
+  "wizard": {
+    "title": "Agregar entidad",
+    "step1": {
+      "label": "Entidad",
+      "heading": "¿Qué entidad es?"
+    },
+    "step2": {
+      "label": "Cuentas",
+      "heading": "Agregá sus cuentas",
+      "subheading": "Opcional — agregá una cuenta en ARS o USD ahora, o salteá y agregalas después.",
+      "empty": "Todavía no hay cuentas. Agregá una abajo, o salteá para crear solo la entidad.",
+      "addCurrency": "Agregar cuenta {{currency}}",
+      "allCurrenciesAdded": "Ambas monedas agregadas",
+      "removeAria": "Quitar la cuenta {{currency}} {{index}}",
+      "rowInvalid": "Ingresá un saldo inicial válido.",
+      "rowFailed": "No se pudo crear esta cuenta. Reintentá abajo.",
+      "rowFailedAria": "La cuenta {{currency}} no se pudo crear",
+      "rowCreated": "Creada.",
+      "rowCreatedAria": "Cuenta {{currency}} creada"
+    },
+    "institutionError": "No pudimos crear la entidad. Verificá tu conexión e intentá de nuevo.",
+    "partialFailure": "La entidad se creó, pero algunas cuentas no. Corregilas y reintentá — la entidad se conserva.",
+    "success": {
+      "title": "{{name}} está lista",
+      "noAccounts": "Creada sin cuentas por ahora. Agregalas cuando quieras desde la lista.",
+      "body_one": "Creada con 1 cuenta.",
+      "body_other": "Creada con {{count}} cuentas."
+    },
+    "cancel": "Cancelar",
+    "back": "Atrás",
+    "next": "Siguiente",
+    "skip": "Saltear",
+    "finish": "Finalizar",
+    "retry": "Reintentar cuentas fallidas",
+    "done": "Listo"
+  },
+  "institutionForm": {
+    "addTitle": "Agregar entidad",
+    "editTitle": "Editar entidad",
+    "name": {
+      "label": "Nombre"
+    },
+    "type": {
+      "label": "Tipo"
+    },
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "saveError": "No pudimos guardar esta entidad. Verificá tu conexión e intentá de nuevo."
+  },
+  "form": {
+    "addTitle": "Agregar cuenta a {{institution}}",
+    "editTitle": "Editar la cuenta de {{institution}}",
+    "currency": {
+      "label": "Moneda",
+      "ars": "ARS — pesos argentinos",
+      "usd": "USD — dólares estadounidenses",
+      "lockedHelper": "La moneda no se puede cambiar después de crear la cuenta."
+    },
+    "openingBalance": {
+      "label": "Saldo inicial",
+      "helper": "El saldo con el que empezás a seguir esta cuenta."
+    },
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "saveError": "No pudimos guardar esta cuenta. Verificá tu conexión e intentá de nuevo."
+  },
+  "error": {
+    "title": "No se pueden cargar tus cuentas",
+    "description": "No pudimos conectar con el servidor para cargar tus cuentas. Verificá tu conexión e intentá de nuevo."
+  },
+  "netWorth": {
+    "title": "Patrimonio",
+    "subtitle": "Total entre tus cuentas",
+    "totalLabel": "Patrimonio total",
+    "converted": "≈ {{amount}}",
+    "subtotalLabel": "Subtotal",
+    "subtotalAria": "Subtotal de {{institution}} {{amount}}",
+    "showDetails": "Ver detalle",
+    "hideDetails": "Ocultar detalle",
+    "detailsRegionAria": "Desglose del patrimonio por entidad",
+    "decomposition": "{{native}} + ~ {{converted}} ({{other}} a {{rate}})",
+    "decompositionNoRate": "{{native}} + {{other}}",
+    "mepUnit": "ARS {{rate}} / USD",
+    "rateUnit": "{{source}} ARS {{rate}} / USD",
+    "rateSource": {
+      "label": "Cotización",
+      "mep": "MEP",
+      "official": "Oficial"
+    },
+    "empty": "Agregá una cuenta para ver tu patrimonio acá.",
+    "mepUnavailable": "Cotización en vivo no disponible — mostrando cada moneda de forma nativa.",
+    "drilldownAria": "Ver los movimientos de {{institution}} {{currency}}",
+    "errorTitle": "Patrimonio no disponible",
+    "errorDescription": "No pudimos cargar tu patrimonio ahora. Intentá de nuevo."
+  }
+}

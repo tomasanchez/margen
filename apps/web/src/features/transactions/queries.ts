@@ -22,6 +22,7 @@ import {
 } from '../../api/transactionsClient'
 import type { NewTransactionInput, Transaction } from '../../mock/types'
 import { homeQueryKeys } from '../home/queries'
+import { accountsKeys } from '../accounts/queries'
 
 /** Stable query-key factory for the transactions domain. */
 export const transactionsKeys = {
@@ -51,6 +52,10 @@ function useInvalidateTransactionDerived() {
   return () => {
     void queryClient.invalidateQueries({ queryKey: transactionsKeys.all })
     void queryClient.invalidateQueries({ queryKey: homeQueryKeys.all })
+    // Net worth = opening balances + transaction deltas (ADR-122) and uses the
+    // latest USD row's MEP rate (ADR-133), so a transaction mutation can change
+    // both the per-account balances and the conversion. Refresh accounts too.
+    void queryClient.invalidateQueries({ queryKey: accountsKeys.all })
   }
 }
 

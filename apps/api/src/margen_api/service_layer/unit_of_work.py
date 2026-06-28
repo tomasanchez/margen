@@ -7,11 +7,14 @@ from collections.abc import Iterator
 from types import TracebackType
 
 from margen_api.domain.messages import Event
+from margen_api.service_layer.account_repository import AbstractAccountRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore
+from margen_api.service_layer.institution_repository import AbstractInstitutionRepository
 from margen_api.service_layer.monotributo_repository import AbstractMonotributoSnapshotRepository
 from margen_api.service_layer.repository import AbstractTransactionRepository
 from margen_api.service_layer.settings_repository import AbstractSettingsRepository
 from margen_api.service_layer.statement_store import AbstractStatementStore
+from margen_api.service_layer.transfer_repository import AbstractTransferRepository
 
 
 class IntegrityConflict(RuntimeError):
@@ -35,6 +38,16 @@ class AbstractUnitOfWork(ABC):
             metadata, written by the create-with-attachment handler (ADR-071).
         statements: Storage port for the original statement PDF and its import
             metadata, written by the import-statement handler (ADR-077, ADR-078).
+        accounts: Repository for the ``Account`` aggregate, written by the
+            account create/update handlers and read by the transaction handlers'
+            ownership check (ADR-122, ADR-130).
+        institutions: Repository for the ``Institution`` aggregate, written by the
+            institution create/update handlers and read by the account handlers'
+            ownership check (ADR-130, ADR-134).
+        transfers: Repository for the ``Transfer`` aggregate, written by the
+            transfer create/delete handlers (ADR-135). A transfer create also stages
+            its fee expense transactions through ``transactions`` in the same unit
+            of work (ADR-135).
     """
 
     transactions: AbstractTransactionRepository
@@ -42,6 +55,9 @@ class AbstractUnitOfWork(ABC):
     settings: AbstractSettingsRepository
     documents: AbstractDocumentStore
     statements: AbstractStatementStore
+    accounts: AbstractAccountRepository
+    institutions: AbstractInstitutionRepository
+    transfers: AbstractTransferRepository
 
     async def __aenter__(self) -> AbstractUnitOfWork:
         """Enter the transaction boundary."""

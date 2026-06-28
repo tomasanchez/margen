@@ -14,11 +14,20 @@ from decimal import Decimal
 from types import TracebackType
 from uuid import UUID, uuid4
 
+from margen_api.domain.models.account import Account
+from margen_api.domain.models.institution import Institution
 from margen_api.domain.models.transaction import Transaction
-from margen_api.domain.models.value_objects import Kind, TxType
+from margen_api.domain.models.transfer import Transfer
+from margen_api.domain.models.value_objects import Currency, Kind, TxType
+from margen_api.service_layer.account_read_models import AccountReadModel, NetWorth
+from margen_api.service_layer.account_reader import AbstractAccountReader
+from margen_api.service_layer.account_repository import AbstractAccountRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore, InvoiceDocument
 from margen_api.service_layer.insights_read_models import MonthlyInsights
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
+from margen_api.service_layer.institution_read_models import InstitutionReadModel
+from margen_api.service_layer.institution_reader import AbstractInstitutionReader
+from margen_api.service_layer.institution_repository import AbstractInstitutionRepository
 from margen_api.service_layer.monotributo_read_models import (
     MonotributoSnapshot,
     MonotributoStanding,
@@ -36,6 +45,9 @@ from margen_api.service_layer.settings_repository import AbstractSettingsReposit
 from margen_api.service_layer.statement_store import AbstractStatementStore, StatementDocument
 from margen_api.service_layer.summary_read_models import MonthlySummary
 from margen_api.service_layer.summary_reader import AbstractSummaryReader
+from margen_api.service_layer.transfer_read_models import TransferReadModel
+from margen_api.service_layer.transfer_reader import AbstractTransferReader
+from margen_api.service_layer.transfer_repository import AbstractTransferRepository
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
 
 # Documented default settings used when the fake's settings store is empty (ADR-054).
@@ -43,6 +55,8 @@ _DEFAULT_DISPLAY_CURRENCY = "ARS"
 _DEFAULT_FX_RATE_TYPE = "MEP"
 _DEFAULT_MONOTRIBUTO_CATEGORY = "C"
 _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE = "services"
+# Brand-new users default to the Monotributo module OFF (ADR-126).
+_DEFAULT_MONOTRIBUTO_ENABLED = False
 
 
 class FakeTransactionRepository(AbstractTransactionRepository):
@@ -102,6 +116,106 @@ class FakeTransactionRepository(AbstractTransactionRepository):
         return True
 
 
+class FakeAccountRepository(AbstractAccountRepository):
+    """In-memory account repository over a committed store and a staging buffer.
+
+    Mirrors :class:`FakeTransactionRepository`: ``add``/``persist`` write to the
+    staging buffer, ``commit`` promotes it, ``rollback`` clears it, and every
+    lookup is owner-scoped (ADR-130).
+    """
+
+    def __init__(self, committed: dict[UUID, Account], staged: dict[UUID, Account]) -> None:
+        """Initialize the repository over the unit of work's stores."""
+        self._committed = committed
+        self._staged = staged
+
+    def add(self, account: Account) -> None:
+        """Stage a new aggregate until the unit of work commits (ADR-130)."""
+        self._staged[account.id] = account
+
+    async def get(self, account_id: UUID, user_id: str) -> Account | None:
+        """Return the owner's staged/committed aggregate, or ``None`` (ADR-130, ADR-111)."""
+        account = self._staged.get(account_id) or self._committed.get(account_id)
+        if account is None or account.user_id != user_id:
+            return None
+        return account
+
+    async def persist(self, account: Account) -> None:
+        """Stage a mutated aggregate for the next commit."""
+        self._staged[account.id] = account
+
+    async def owns(self, account_id: UUID, user_id: str) -> bool:
+        """Return whether the owner has an account with ``account_id`` (ADR-130)."""
+        return await self.get(account_id, user_id) is not None
+
+
+class FakeInstitutionRepository(AbstractInstitutionRepository):
+    """In-memory institution repository over a committed store and a staging buffer.
+
+    Mirrors :class:`FakeAccountRepository`: ``add``/``persist`` write to the
+    staging buffer, ``commit`` promotes it, ``rollback`` clears it, and every
+    lookup is owner-scoped (ADR-130, ADR-134).
+    """
+
+    def __init__(self, committed: dict[UUID, Institution], staged: dict[UUID, Institution]) -> None:
+        """Initialize the repository over the unit of work's stores."""
+        self._committed = committed
+        self._staged = staged
+
+    def add(self, institution: Institution) -> None:
+        """Stage a new aggregate until the unit of work commits (ADR-130)."""
+        self._staged[institution.id] = institution
+
+    async def get(self, institution_id: UUID, user_id: str) -> Institution | None:
+        """Return the owner's staged/committed aggregate, or ``None`` (ADR-130, ADR-111)."""
+        institution = self._staged.get(institution_id) or self._committed.get(institution_id)
+        if institution is None or institution.user_id != user_id:
+            return None
+        return institution
+
+    async def persist(self, institution: Institution) -> None:
+        """Stage a mutated aggregate for the next commit."""
+        self._staged[institution.id] = institution
+
+    async def owns(self, institution_id: UUID, user_id: str) -> bool:
+        """Return whether the owner has an institution with ``institution_id`` (ADR-130)."""
+        return await self.get(institution_id, user_id) is not None
+
+
+class FakeTransferRepository(AbstractTransferRepository):
+    """In-memory transfer repository over a committed store and a staging buffer.
+
+    Mirrors :class:`FakeAccountRepository`: ``add`` writes to the staging buffer,
+    ``commit`` promotes it, ``rollback`` clears it, and ``delete`` is an owner-scoped
+    hard delete across both stores (ADR-135, ADR-130).
+    """
+
+    def __init__(self, committed: dict[UUID, Transfer], staged: dict[UUID, Transfer]) -> None:
+        """Initialize the repository over the unit of work's stores."""
+        self._committed = committed
+        self._staged = staged
+
+    def add(self, transfer: Transfer) -> None:
+        """Stage a new aggregate until the unit of work commits (ADR-130)."""
+        self._staged[transfer.id] = transfer
+
+    async def delete(self, transfer_id: UUID, user_id: str) -> bool:
+        """Hard-delete the owner's aggregate from staged and committed stores (ADR-130).
+
+        A row owned by another user is not removed and reports a miss, so a
+        cross-tenant delete surfaces 404 (ADR-111). The fee expenses are independent
+        transactions and are untouched (ADR-135).
+        """
+        staged = self._staged.get(transfer_id)
+        committed = self._committed.get(transfer_id)
+        target = staged or committed
+        if target is None or target.user_id != user_id:
+            return False
+        self._staged.pop(transfer_id, None)
+        self._committed.pop(transfer_id, None)
+        return True
+
+
 class FakeMonotributoSnapshotRepository(AbstractMonotributoSnapshotRepository):
     """In-memory snapshot history keyed by ``(user_id, period_end)`` (ADR-052, ADR-112).
 
@@ -115,7 +229,7 @@ class FakeMonotributoSnapshotRepository(AbstractMonotributoSnapshotRepository):
     def __init__(
         self,
         committed: dict[tuple[str, date], MonotributoStanding],
-        config: dict[str, str],
+        config: dict[str, str | bool],
         used_by_window: dict[tuple[str, date, date], Decimal],
     ) -> None:
         """Initialize the repository over the unit of work's stores."""
@@ -132,7 +246,7 @@ class FakeMonotributoSnapshotRepository(AbstractMonotributoSnapshotRepository):
         """
         if not self._config:
             return None
-        return self._config["current_category"], self._config["activity_type"]
+        return str(self._config["current_category"]), str(self._config["activity_type"])
 
     async def used_in_window(self, window_start: date, window_end: date, user_id: str) -> Decimal:
         """Return the canned SUM of the owner's included income for a window, else 0 (ADR-112)."""
@@ -160,7 +274,7 @@ class FakeSettingsRepository(AbstractSettingsRepository):
     for the category.
     """
 
-    def __init__(self, settings: dict[str, str]) -> None:
+    def __init__(self, settings: dict[str, str | bool]) -> None:
         """Initialize over a shared settings dict."""
         self._settings = settings
 
@@ -176,8 +290,9 @@ class FakeSettingsRepository(AbstractSettingsRepository):
         fx_default_rate_type: str | None = None,
         monotributo_current_category: str | None = None,
         monotributo_activity_type: str | None = None,
+        monotributo_enabled: bool | None = None,
     ) -> AppSettings:
-        """Merge only the provided fields onto the owner's settings row (ADR-110)."""
+        """Merge only the provided fields onto the owner's settings row (ADR-110, ADR-126)."""
         if preferred_display_currency is not None:
             self._settings["preferred_display_currency"] = preferred_display_currency
         if fx_default_rate_type is not None:
@@ -186,15 +301,18 @@ class FakeSettingsRepository(AbstractSettingsRepository):
             self._settings["current_category"] = monotributo_current_category
         if monotributo_activity_type is not None:
             self._settings["activity_type"] = monotributo_activity_type
+        if monotributo_enabled is not None:
+            self._settings["monotributo_enabled"] = monotributo_enabled
         return self._as_read_model()
 
     def _as_read_model(self) -> AppSettings:
         """Project the shared dict into an :class:`AppSettings`, applying defaults."""
         return AppSettings(
-            preferred_display_currency=self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY),
-            fx_default_rate_type=self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE),
-            monotributo_current_category=self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY),
-            monotributo_activity_type=self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE),
+            preferred_display_currency=str(self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY)),
+            fx_default_rate_type=str(self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE)),
+            monotributo_current_category=str(self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY)),
+            monotributo_activity_type=str(self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE)),
+            monotributo_enabled=bool(self._settings.get("monotributo_enabled", _DEFAULT_MONOTRIBUTO_ENABLED)),
         )
 
 
@@ -387,8 +505,14 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         """Initialize an empty unit of work."""
         self.committed_aggregates: dict[UUID, Transaction] = {}
         self._staged: dict[UUID, Transaction] = {}
+        self.committed_accounts: dict[UUID, Account] = {}
+        self._staged_accounts: dict[UUID, Account] = {}
+        self.committed_institutions: dict[UUID, Institution] = {}
+        self._staged_institutions: dict[UUID, Institution] = {}
+        self.committed_transfers: dict[UUID, Transfer] = {}
+        self._staged_transfers: dict[UUID, Transfer] = {}
         self.snapshots: dict[tuple[str, date], MonotributoStanding] = {}
-        self.config: dict[str, str] = {}
+        self.config: dict[str, str | bool] = {}
         self.used_by_window: dict[tuple[str, date, date], Decimal] = {}
         self.documents_store: dict[UUID, InvoiceDocument] = {}
         self.document_owners: dict[UUID, str | None] = {}
@@ -399,17 +523,26 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.settings = FakeSettingsRepository(self.config)
         self.documents = FakeDocumentStore(self.documents_store, self.document_owners)
         self.statements = FakeStatementStore(self.statements_store, self.statement_owners)
+        self.accounts = FakeAccountRepository(self.committed_accounts, self._staged_accounts)
+        self.institutions = FakeInstitutionRepository(self.committed_institutions, self._staged_institutions)
+        self.transfers = FakeTransferRepository(self.committed_transfers, self._staged_transfers)
         self.committed = False
 
     async def __aenter__(self) -> FakeUnitOfWork:
         """Enter the transaction boundary with a fresh staging buffer."""
         self.committed = False
         self._staged = {}
+        self._staged_accounts = {}
+        self._staged_institutions = {}
+        self._staged_transfers = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
         self.settings = FakeSettingsRepository(self.config)
         self.documents = FakeDocumentStore(self.documents_store, self.document_owners)
         self.statements = FakeStatementStore(self.statements_store, self.statement_owners)
+        self.accounts = FakeAccountRepository(self.committed_accounts, self._staged_accounts)
+        self.institutions = FakeInstitutionRepository(self.committed_institutions, self._staged_institutions)
+        self.transfers = FakeTransferRepository(self.committed_transfers, self._staged_transfers)
         return self
 
     async def __aexit__(
@@ -424,7 +557,13 @@ class FakeUnitOfWork(AbstractUnitOfWork):
     async def commit(self) -> None:
         """Make staged aggregates visible to later reads."""
         self.committed_aggregates.update(self._staged)
+        self.committed_accounts.update(self._staged_accounts)
+        self.committed_institutions.update(self._staged_institutions)
+        self.committed_transfers.update(self._staged_transfers)
         self._staged.clear()
+        self._staged_accounts.clear()
+        self._staged_institutions.clear()
+        self._staged_transfers.clear()
         self.committed = True
 
     async def flush(self) -> None:
@@ -432,10 +571,16 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         # Mirror a real flush: staged rows become visible to later reads in the
         # same unit of work; commit still promotes + clears them.
         self.committed_aggregates.update(self._staged)
+        self.committed_accounts.update(self._staged_accounts)
+        self.committed_institutions.update(self._staged_institutions)
+        self.committed_transfers.update(self._staged_transfers)
 
     async def rollback(self) -> None:
         """Discard staged aggregates."""
         self._staged.clear()
+        self._staged_accounts.clear()
+        self._staged_institutions.clear()
+        self._staged_transfers.clear()
 
 
 class FakeTransactionReader(AbstractTransactionReader):
@@ -466,6 +611,126 @@ class FakeTransactionReader(AbstractTransactionReader):
         if transaction is None or transaction.user_id != user_id:
             return None
         return _project(transaction)
+
+
+class FakeAccountReader(AbstractAccountReader):
+    """In-memory account reader projecting committed accounts (ADR-122, ADR-130, ADR-134).
+
+    Mirrors :class:`FakeTransactionReader` for the accounts list (owner-scoped,
+    newest-first by creation), joining each account to its institution for the
+    denormalized ``name``/``type`` (ADR-134). For net worth the route tests assert
+    the wiring and the HTTP contract, not the aggregation (covered by the
+    pure-function and integration tiers), so ``net_worth`` returns the canned value
+    it was given and records the requested owner.
+    """
+
+    def __init__(
+        self,
+        committed: dict[UUID, Account],
+        institutions: dict[UUID, Institution] | None = None,
+        net_worth: NetWorth | None = None,
+    ) -> None:
+        """Initialize over a committed account store and an optional canned net worth.
+
+        Args:
+            committed: The accounts to project, keyed by id. Pass a unit of work's
+                ``committed_accounts`` to share state.
+            institutions: The institutions to join for name/type, keyed by id. Pass
+                a unit of work's ``committed_institutions`` to share state; defaults
+                to an empty mapping.
+            net_worth: The canned net-worth value ``net_worth`` returns; defaults to
+                an empty ARS net worth when omitted.
+        """
+        self._committed = committed
+        self._institutions = institutions if institutions is not None else {}
+        self._net_worth = (
+            net_worth if net_worth is not None else NetWorth(total=Decimal(0), currency=Currency.ARS, accounts=[])
+        )
+        self.requested_user_id: str | None = None
+
+    async def list_accounts(self, user_id: str) -> list[AccountReadModel]:
+        """List the owner's accounts newest-first by creation, joining institution data (ADR-130, ADR-134)."""
+        owned = [account for account in self._committed.values() if account.user_id == user_id]
+        ordered = sorted(owned, key=lambda account: (account.created_at, account.id), reverse=True)
+        models: list[AccountReadModel] = []
+        for account in ordered:
+            institution = self._institutions[account.institution_id]
+            models.append(
+                AccountReadModel(
+                    id=account.id,
+                    institution_id=account.institution_id,
+                    institution_name=institution.name,
+                    type=institution.type,
+                    currency=account.currency,
+                    opening_balance=account.opening_balance,
+                )
+            )
+        return models
+
+    async def net_worth(self, user_id: str) -> NetWorth:
+        """Record the requested owner and return the canned net worth (ADR-108)."""
+        self.requested_user_id = user_id
+        return self._net_worth
+
+
+class FakeInstitutionReader(AbstractInstitutionReader):
+    """In-memory institution reader projecting committed institutions (ADR-130, ADR-134).
+
+    Mirrors :class:`FakeAccountReader` for the institutions list (owner-scoped,
+    newest-first by creation).
+    """
+
+    def __init__(self, committed: dict[UUID, Institution]) -> None:
+        """Initialize over a committed institution store.
+
+        Args:
+            committed: The institutions to project, keyed by id. Pass a unit of
+                work's ``committed_institutions`` to share state.
+        """
+        self._committed = committed
+
+    async def list_institutions(self, user_id: str) -> list[InstitutionReadModel]:
+        """List the owner's institutions newest-first by creation (ADR-130)."""
+        owned = [institution for institution in self._committed.values() if institution.user_id == user_id]
+        ordered = sorted(owned, key=lambda institution: (institution.created_at, institution.id), reverse=True)
+        return [
+            InstitutionReadModel(id=institution.id, name=institution.name, type=institution.type)
+            for institution in ordered
+        ]
+
+
+class FakeTransferReader(AbstractTransferReader):
+    """In-memory transfer reader projecting committed transfers (ADR-135, ADR-130).
+
+    Mirrors :class:`FakeInstitutionReader` for the transfers list (owner-scoped,
+    newest-first by ``occurred_on`` then ``created_at``).
+    """
+
+    def __init__(self, committed: dict[UUID, Transfer]) -> None:
+        """Initialize over a committed transfer store.
+
+        Args:
+            committed: The transfers to project, keyed by id. Pass a unit of work's
+                ``committed_transfers`` to share state.
+        """
+        self._committed = committed
+
+    async def list_transfers(self, user_id: str) -> list[TransferReadModel]:
+        """List the owner's transfers newest-first by occurrence then creation (ADR-130)."""
+        owned = [transfer for transfer in self._committed.values() if transfer.user_id == user_id]
+        ordered = sorted(owned, key=lambda transfer: (transfer.occurred_on, transfer.created_at), reverse=True)
+        return [
+            TransferReadModel(
+                id=transfer.id,
+                from_account_id=transfer.from_account_id,
+                to_account_id=transfer.to_account_id,
+                amount_out=transfer.amount_out,
+                amount_in=transfer.amount_in,
+                occurred_on=transfer.occurred_on,
+                note=transfer.note,
+            )
+            for transfer in ordered
+        ]
 
 
 class FakeSummaryReader(AbstractSummaryReader):
@@ -559,17 +824,18 @@ class FakeSettingsReader(AbstractSettingsReader):
     single shared dict, so route tests drive one owner at a time.
     """
 
-    def __init__(self, settings: dict[str, str]) -> None:
+    def __init__(self, settings: dict[str, str | bool]) -> None:
         """Initialize over a shared settings dict."""
         self._settings = settings
 
     async def get_settings(self, user_id: str) -> AppSettings:
         """Project the owner's shared dict into an :class:`AppSettings`, applying defaults."""
         return AppSettings(
-            preferred_display_currency=self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY),
-            fx_default_rate_type=self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE),
-            monotributo_current_category=self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY),
-            monotributo_activity_type=self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE),
+            preferred_display_currency=str(self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY)),
+            fx_default_rate_type=str(self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE)),
+            monotributo_current_category=str(self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY)),
+            monotributo_activity_type=str(self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE)),
+            monotributo_enabled=bool(self._settings.get("monotributo_enabled", _DEFAULT_MONOTRIBUTO_ENABLED)),
         )
 
 
@@ -594,6 +860,7 @@ def _project(transaction: Transaction) -> TransactionReadModel:
         recurring=transaction.recurring,
         counts_toward_monotributo=transaction.counts_toward_monotributo,
         statement_document_id=transaction.statement_document_id,
+        account_id=transaction.account_id,
         created_at=transaction.created_at,
         updated_at=transaction.updated_at,
     )
