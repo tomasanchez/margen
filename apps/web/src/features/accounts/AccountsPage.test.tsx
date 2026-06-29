@@ -17,7 +17,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
@@ -29,7 +29,12 @@ import {
 } from '@tanstack/react-router'
 import { ColorModeProvider } from '../../theme/colorMode'
 import { AccountsPage } from './AccountsPage'
-import { accountsClient, AccountApiError } from '../../api/accountsClient'
+import {
+  accountsClient,
+  AccountApiError,
+  type NetWorth,
+} from '../../api/accountsClient'
+import { fetchSuggestedRates } from '../../api/fxClient'
 import type { Account, Institution } from '../../mock/types'
 
 vi.mock('../../api/accountsClient', async (importOriginal) => {
@@ -47,6 +52,13 @@ vi.mock('../../api/accountsClient', async (importOriginal) => {
     },
   }
 })
+
+// The page reads live FX rates only to ORDER institutions by net-worth subtotal
+// (rows show native balances), so a fixed MEP keeps the order deterministic and
+// avoids a real network call.
+vi.mock('../../api/fxClient', () => ({
+  fetchSuggestedRates: vi.fn(),
+}))
 
 const INSTITUTIONS: Institution[] = [
   { id: 'inst-1', name: 'Galicia', type: 'bank' },
@@ -72,11 +84,45 @@ const ACCOUNTS: Account[] = [
   },
 ]
 
+/**
+ * Net worth carries each account's CURRENT native balance (opening + transaction
+ * deltas, ADR-122) — deliberately DIFFERENT from the openingBalance above so the
+ * tests prove the row shows the net-worth balance, not the stale opening one.
+ * At MEP 1.000 Deel (USD 1.500 → ARS 1.500.000) outranks Galicia (ARS 765.000),
+ * so Deel sorts before Galicia (subtotal DESC).
+ */
+const NET_WORTH: NetWorth = {
+  total: '2265000.00',
+  currency: 'ARS',
+  accounts: [
+    {
+      id: 'a1',
+      institutionId: 'inst-1',
+      institutionName: 'Galicia',
+      type: 'bank',
+      currency: 'ARS',
+      balance: '765000.00',
+      balanceConverted: '765000.00',
+    },
+    {
+      id: 'a2',
+      institutionId: 'inst-2',
+      institutionName: 'Deel',
+      type: 'wallet',
+      currency: 'USD',
+      balance: '1500.00',
+      balanceConverted: '1500000.00',
+    },
+  ],
+}
+
 const mockListInstitutions = vi.mocked(accountsClient.listInstitutions)
 const mockListAccounts = vi.mocked(accountsClient.list)
+const mockNetWorth = vi.mocked(accountsClient.netWorth)
 const mockCreateInstitution = vi.mocked(accountsClient.createInstitution)
 const mockCreateAccount = vi.mocked(accountsClient.create)
 const mockUpdateAccount = vi.mocked(accountsClient.update)
+const mockRates = vi.mocked(fetchSuggestedRates)
 
 /** Render the page behind a memory router so its drilldown <Link>s resolve. */
 function renderAccountsPage() {
@@ -106,22 +152,42 @@ describe('AccountsPage', () => {
   beforeEach(() => {
     mockListInstitutions.mockResolvedValue(INSTITUTIONS)
     mockListAccounts.mockResolvedValue(ACCOUNTS)
+    mockNetWorth.mockResolvedValue(NET_WORTH)
+    mockRates.mockResolvedValue({ mep: 1000, official: 1000 })
     mockCreateInstitution.mockResolvedValue(INSTITUTIONS[0])
     mockCreateAccount.mockResolvedValue(ACCOUNTS[0])
     mockUpdateAccount.mockResolvedValue(ACCOUNTS[0])
   })
   afterEach(() => vi.clearAllMocks())
 
-  test('groups institutions and shows each account currency + balance', async () => {
+  test('shows each account CURRENT balance from net worth, not its opening balance', async () => {
     renderAccountsPage()
 
     // Each institution is a section header.
     expect(await screen.findByText('Galicia')).toBeInTheDocument()
     expect(screen.getByText('Deel')).toBeInTheDocument()
-    // ARS balance under Galicia (es-AR grouping).
-    expect(screen.getByText('ARS 150.000')).toBeInTheDocument()
-    // USD account under Deel renders in its native currency.
-    expect(screen.getByText('USD 1.200')).toBeInTheDocument()
+
+    // Rows show the net-worth CURRENT balance (opening + deltas, ADR-122) — the
+    // SAME value Home shows — NOT the stale opening balance.
+    expect(screen.getByText('ARS 765.000')).toBeInTheDocument()
+    expect(screen.getByText('USD 1.500')).toBeInTheDocument()
+
+    // The opening balances (150.000 / 1.200) are deliberately different and must
+    // NOT be what the list renders.
+    expect(screen.queryByText('ARS 150.000')).not.toBeInTheDocument()
+    expect(screen.queryByText('USD 1.200')).not.toBeInTheDocument()
+  })
+
+  test('orders institutions by net-worth subtotal desc (Deel before Galicia here)', async () => {
+    renderAccountsPage()
+    await screen.findByText('Galicia')
+
+    // Institution section titles are h2 headings; in subtotal-DESC order Deel
+    // (ARS 1.500.000 at MEP 1.000) precedes Galicia (ARS 765.000).
+    const names = screen
+      .getAllByRole('heading', { level: 2 })
+      .map((h) => h.textContent)
+    expect(names.indexOf('Deel')).toBeLessThan(names.indexOf('Galicia'))
   })
 
   test('an account row links to its transactions drilldown', async () => {
@@ -271,11 +337,14 @@ describe('AccountsPage', () => {
     renderAccountsPage()
     await screen.findByText('Galicia')
 
-    // The first institution section's "Add account" button.
-    const addAccountButtons = screen.getAllByRole('button', {
-      name: 'Add account',
-    })
-    await user.click(addAccountButtons[0])
+    // Scope to Galicia's section explicitly — institution ORDER now follows
+    // net-worth subtotal (Deel sorts first here), so "first button" is brittle.
+    const galiciaSection = screen
+      .getByRole('heading', { level: 2, name: 'Galicia' })
+      .closest('section') as HTMLElement
+    await user.click(
+      within(galiciaSection).getByRole('button', { name: 'Add account' }),
+    )
 
     await screen.findByRole('dialog')
     await user.type(

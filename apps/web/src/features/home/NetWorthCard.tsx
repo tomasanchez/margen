@@ -22,10 +22,11 @@
  * the `~` marks the approximate converted part and the unit names the source.
  *
  * Below it is a breakdown GROUPED BY INSTITUTION (ADR-134): each institution gets
- * a header (name + a non-color type cue, ADR-019), its per-currency accounts with
- * each account's NATIVE balance (and, when it differs from the display currency,
- * its value converted at the SAME selected rate), and a per-institution subtotal
- * in the display currency — so the subtotals sum to the headline total.
+ * a name header, its per-currency accounts with each account's NATIVE balance
+ * (the formatted amount carries the currency, so no per-row currency chip — and,
+ * when it differs from the display currency, its value converted at the SAME
+ * selected rate), and a per-institution subtotal in the display currency — so the
+ * subtotals sum to the headline total.
  *
  * Degrade (ADR-037): the rate is NEVER fabricated. While the rates load the card
  * shows a skeleton; if the SELECTED source resolves to `null` the card degrades
@@ -45,7 +46,6 @@ import { useTranslation } from 'react-i18next'
 import { Link } from '@tanstack/react-router'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
-import Chip from '@mui/material/Chip'
 import Collapse from '@mui/material/Collapse'
 import FormControl from '@mui/material/FormControl'
 import InputLabel from '@mui/material/InputLabel'
@@ -58,8 +58,17 @@ import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
 import { formatARS, formatCurrency } from '../../lib/format'
 import { useFxRates } from './queries'
+import {
+  type InstitutionGroup,
+  asCurrency,
+  convertAtMep,
+  groupByInstitution,
+  num,
+  otherCurrencyOf,
+  usableMep,
+} from '../accounts/grouping'
 import type { SuggestedRates } from '../../api/fxClient'
-import type { AccountType, Currency } from '../../mock/types'
+import type { Currency } from '../../mock/types'
 import type { NetWorth, NetWorthAccount } from '../../api/accountsClient'
 
 /**
@@ -71,56 +80,6 @@ export type RateSource = 'mep' | 'official'
 
 /** Shared class for the clickable net-worth breakdown rows (account drilldown). */
 const breakdownRowLinkClass = 'mg-networth-row-link'
-
-/** Parse a Decimal string to a finite number for the formatter (0 on garbage). */
-function num(value: string): number {
-  const parsed = Number.parseFloat(value)
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
-/** Narrow a backend currency string to {@link Currency} (default ARS). */
-function asCurrency(value: string): Currency {
-  return value === 'USD' ? 'USD' : 'ARS'
-}
-
-/** Narrow a backend institution/account `type` string to {@link AccountType}. */
-function asAccountType(value: string): AccountType {
-  return value === 'cash' || value === 'card' || value === 'wallet'
-    ? value
-    : 'bank'
-}
-
-/** Sort key for currency ordering within an institution: ARS before USD. */
-function currencyRank(currency: Currency): number {
-  return currency === 'ARS' ? 0 : 1
-}
-
-/** The non-display currency (the one we have to convert at the live MEP). */
-function otherCurrencyOf(displayCurrency: Currency): Currency {
-  return displayCurrency === 'USD' ? 'ARS' : 'USD'
-}
-
-/** A usable live MEP rate: finite and positive, else `null` (degrade). */
-function usableMep(mep: number | null | undefined): number | null {
-  return typeof mep === 'number' && Number.isFinite(mep) && mep > 0 ? mep : null
-}
-
-/**
- * Convert `amount` from `from` currency into `displayCurrency` at the live MEP
- * (ARS per USD). Same currency → returned as-is. ARS→USD divides by the MEP;
- * USD→ARS multiplies. Returns `null` when no usable rate exists (degrade — we
- * never fabricate one, ADR-133).
- */
-function convertAtMep(
-  amount: number,
-  from: Currency,
-  displayCurrency: Currency,
-  mep: number | null,
-): number | null {
-  if (from === displayCurrency) return amount
-  if (mep == null) return null
-  return displayCurrency === 'USD' ? amount / mep : amount * mep
-}
 
 /**
  * The client-side net-worth decomposition (ADR-133 amendment): native amount in
@@ -269,72 +228,6 @@ function NetWorthHeadline({
 }
 
 /**
- * One institution's grouped breakdown (ADR-134): its accounts (currency-ordered)
- * plus a `subtotal` in the display currency — the sum of each account's value
- * converted at the live MEP (ADR-133 amendment), so the subtotals sum to the
- * headline total. `subtotal` is `null` when an other-currency account couldn't
- * be converted (degrade), in which case the subtotal line is hidden.
- */
-interface InstitutionGroup {
-  institutionId: string
-  institutionName: string
-  type: AccountType
-  accounts: NetWorthAccount[]
-  subtotal: number | null
-}
-
-/**
- * Group the flat net-worth breakdown by `institutionId` (ADR-134, client-side —
- * no backend change), converting each account at the live MEP (ADR-133
- * amendment) so the per-institution subtotals match the headline total.
- * Institutions are ordered by subtotal DESC (name as the tie-break); accounts
- * within an institution are ordered ARS before USD.
- */
-function groupByInstitution(
-  accounts: NetWorthAccount[],
-  displayCurrency: Currency,
-  mep: number | null,
-): InstitutionGroup[] {
-  const byId = new Map<string, InstitutionGroup>()
-  for (const account of accounts) {
-    const converted = convertAtMep(
-      num(account.balance),
-      asCurrency(account.currency),
-      displayCurrency,
-      mep,
-    )
-    const existing = byId.get(account.institutionId)
-    if (existing) {
-      existing.accounts.push(account)
-      existing.subtotal =
-        existing.subtotal == null || converted == null
-          ? null
-          : existing.subtotal + converted
-    } else {
-      byId.set(account.institutionId, {
-        institutionId: account.institutionId,
-        institutionName: account.institutionName,
-        type: asAccountType(account.type),
-        accounts: [account],
-        subtotal: converted,
-      })
-    }
-  }
-  const groups = [...byId.values()]
-  for (const group of groups) {
-    group.accounts.sort(
-      (a, b) => currencyRank(asCurrency(a.currency)) - currencyRank(asCurrency(b.currency)),
-    )
-  }
-  groups.sort(
-    (a, b) =>
-      (b.subtotal ?? 0) - (a.subtotal ?? 0) ||
-      a.institutionName.localeCompare(b.institutionName),
-  )
-  return groups
-}
-
-/**
  * One per-currency account row inside an institution group. The clickable
  * drilldown to the account's transactions (`/transactions?account=<id>`,
  * ADR-116/134) — a bare TanStack {@link Link} so the typed `to` / `search`
@@ -374,7 +267,7 @@ function AccountRow({
         sx={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          justifyContent: 'flex-end',
           gap: 1.5,
           py: 1,
           pl: 1,
@@ -382,12 +275,6 @@ function AccountRow({
           '&:last-of-type': { borderBottom: 'none' },
         }}
       >
-        <Chip
-          label={account.currency}
-          size="small"
-          variant="outlined"
-          sx={{ borderRadius: '8px', fontSize: 11, height: 20, flex: 'none' }}
-        />
         <Box sx={{ textAlign: 'right', flex: 'none' }}>
           <Typography
             sx={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
@@ -412,12 +299,12 @@ function AccountRow({
 }
 
 /**
- * One institution block (ADR-134): a header (name + a non-color type cue,
- * ADR-019) over the institution's per-currency account rows, capped by a subtotal
- * in the display currency. The header is an `h4` so the breakdown has a real
- * heading structure under the card title; the subtotal carries an accessible
- * label naming the institution + amount. The subtotal is hidden when it couldn't
- * be computed at the live MEP (degrade-to-native, ADR-133).
+ * One institution block (ADR-134): a name header over the institution's
+ * per-currency account rows, capped by a subtotal in the display currency. The
+ * header is an `h4` so the breakdown has a real heading structure under the card
+ * title; the subtotal carries an accessible label naming the institution +
+ * amount. The subtotal is hidden when it couldn't be computed at the live MEP
+ * (degrade-to-native, ADR-133).
  */
 function InstitutionBlock({
   group,
@@ -450,12 +337,6 @@ function InstitutionBlock({
         >
           {group.institutionName}
         </Typography>
-        <Chip
-          label={t(`type.${group.type}`)}
-          size="small"
-          variant="outlined"
-          sx={{ borderRadius: '8px', fontSize: 11, height: 20, flex: 'none' }}
-        />
       </Box>
 
       <Box sx={{ mt: 0.5 }}>

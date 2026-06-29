@@ -218,6 +218,28 @@ describe('NetWorthCard', () => {
     expect(screen.getByText('≈ ARS 900.000')).toBeInTheDocument()
   })
 
+  test('omits the institution type chip and the per-account currency chip', async () => {
+    renderCard({ netWorth: CONVERTED, loading: false })
+    await screen.findByText('ARS 1.050.000')
+
+    await expandDetails()
+
+    // Institution headers still render their NAME, but no type cue (Bank / Wallet).
+    expect(screen.getByText('Galicia')).toBeInTheDocument()
+    expect(screen.getByText('Deel')).toBeInTheDocument()
+    expect(screen.queryByText('Bank')).not.toBeInTheDocument()
+    expect(screen.queryByText('Wallet')).not.toBeInTheDocument()
+
+    // The amount carries the currency, so the redundant bare-currency chip is
+    // gone: there is no standalone "ARS" / "USD" text (only "ARS 150.000" etc.).
+    expect(screen.queryByText('ARS')).not.toBeInTheDocument()
+    expect(screen.queryByText('USD')).not.toBeInTheDocument()
+    // The formatted amounts (which DO carry the currency) still render — the ARS
+    // amount appears both as the Galicia row and its subtotal.
+    expect(screen.getAllByText('ARS 150.000').length).toBeGreaterThan(0)
+    expect(screen.getByText('USD 720')).toBeInTheDocument()
+  })
+
   test('groups multiple accounts under one institution header with a subtotal', async () => {
     renderCard({ netWorth: MULTI_ACCOUNT, loading: false })
     await screen.findByText('ARS 1.100.000')

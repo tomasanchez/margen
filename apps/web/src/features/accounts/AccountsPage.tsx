@@ -11,12 +11,20 @@
  *    `/transactions?account=<id>`, seeding the account filter (ADR-116/134).
  *
  * Server state comes from TanStack Query ({@link useInstitutions} +
- * {@link useAccounts}); a write invalidates both lists AND net worth. The page
- * shows calm loading skeletons, a calm error state if a GET fails (incl. a
+ * {@link useAccounts} + {@link useNetWorth}); a write invalidates all three. The
+ * page shows calm loading skeletons, a calm error state if a GET fails (incl. a
  * cross-tenant 404, ADR-130), and an empty state inviting the first institution
- * (ADR-037). Money is rendered from the Decimal-string `openingBalance` parsed at
- * the display edge (ADR-102). The visible page <h1> ("Accounts") names the route
- * landmark.
+ * (ADR-037). The visible page <h1> ("Accounts") names the route landmark.
+ *
+ * Each account row shows its CURRENT balance — opening + transaction deltas, the
+ * same value Home shows (ADR-122). That balance is sourced from the net-worth
+ * read model (`useNetWorth`, matched by account id), NOT the stale opening
+ * balance the account entity carries; the edit form still edits the opening
+ * balance. Institutions are ordered EXACTLY like the Home breakdown — by
+ * net-worth subtotal DESC (live MEP, ADR-133), accounts ARS before USD — via the
+ * shared {@link buildNetWorthBalanceIndex} / {@link orderInstitutionIds} helpers
+ * so the two screens stay in lockstep. Money is parsed at the display edge
+ * (ADR-102).
  */
 
 import { useMemo, useState } from 'react'
@@ -46,9 +54,18 @@ import {
   useCreateAccount,
   useCreateInstitution,
   useInstitutions,
+  useNetWorth,
   useUpdateAccount,
   useUpdateInstitution,
 } from './queries'
+import { useFxRates } from '../home/queries'
+import {
+  asCurrency,
+  buildNetWorthBalanceIndex,
+  compareAccountCurrencies,
+  orderInstitutionIds,
+  usableMep,
+} from './grouping'
 import { accountTypeLabel } from './presentation'
 import { AccountForm } from './AccountForm'
 import { InstitutionForm } from './InstitutionForm'
@@ -61,23 +78,22 @@ import {
 /** A drilldown route + search to the account's transactions (ADR-116/134). */
 const accountDrilldownClass = 'mg-account-row-link'
 
-/** Parse the Decimal-string balance to a number for the shared formatter. */
-function balanceNumber(value: string): number {
-  const parsed = Number.parseFloat(value)
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
 /**
- * One account row: currency + balance, clickable to drill into its transactions
- * (ADR-134). A bare TanStack {@link Link} preserves the typed `to` / `search`
+ * One account row: currency + CURRENT balance, clickable to drill into its
+ * transactions (ADR-134). The balance is the net-worth value (opening +
+ * transaction deltas, ADR-122) passed in — NOT the account's stale opening
+ * balance. A bare TanStack {@link Link} preserves the typed `to` / `search`
  * inference against the route's search schema; the right edit button is a sibling
  * (not nested in the link) so the two actions stay independently operable.
  */
 function AccountRow({
   account,
+  balance,
   onEdit,
 }: {
   account: Account
+  /** The account's current native balance from the net-worth read model. */
+  balance: number
   onEdit: () => void
 }) {
   const { t } = useTranslation('accounts')
@@ -131,7 +147,7 @@ function AccountRow({
           }}
           color="text.primary"
         >
-          {formatCurrency(balanceNumber(account.openingBalance), account.currency)}
+          {formatCurrency(balance, account.currency)}
         </Typography>
       </Link>
       <IconButton
@@ -153,12 +169,16 @@ function AccountRow({
 function InstitutionSection({
   institution,
   accounts,
+  balanceOf,
   onEditInstitution,
   onAddAccount,
   onEditAccount,
 }: {
   institution: Institution
+  /** This institution's accounts, already ordered ARS before USD. */
   accounts: Account[]
+  /** Current native balance for an account (net-worth, ADR-122). */
+  balanceOf: (account: Account) => number
   onEditInstitution: () => void
   onAddAccount: () => void
   onEditAccount: (account: Account) => void
@@ -198,6 +218,7 @@ function InstitutionSection({
           <AccountRow
             key={account.id}
             account={account}
+            balance={balanceOf(account)}
             onEdit={() => onEditAccount(account)}
           />
         ))
@@ -218,6 +239,11 @@ export function AccountsPage() {
   const { t } = useTranslation('accounts')
   const institutionsQuery = useInstitutions()
   const accountsQuery = useAccounts()
+  const netWorthQuery = useNetWorth()
+  // Live FX rates drive the institution ORDER (subtotals at the MEP), matching
+  // Home's default (MEP) view (ADR-133). Rows themselves show NATIVE balances, so
+  // the page never blocks on rates — order degrades gracefully if they're slow.
+  const fxQuery = useFxRates()
   const createInstitution = useCreateInstitution()
   const updateInstitution = useUpdateInstitution()
   const createAccount = useCreateAccount()
@@ -365,9 +391,26 @@ export function AccountsPage() {
     }
   }
 
-  const institutions = institutionsQuery.data ?? []
+  const netWorth = netWorthQuery.data
+  const fxRates = fxQuery.data
 
-  // Group accounts by institution id once per data change.
+  // Current native balance per account id, sourced from net worth (opening +
+  // transaction deltas, ADR-122) — the SAME value Home shows. A missing id (the
+  // net-worth read should include every account, even zero-transaction ones)
+  // falls back to the account's opening balance so a row is never blank.
+  const balanceIndex = useMemo(
+    () => buildNetWorthBalanceIndex(netWorth?.accounts ?? []),
+    [netWorth?.accounts],
+  )
+  const balanceOf = (account: Account): number => {
+    const fromNetWorth = balanceIndex.get(account.id)
+    if (fromNetWorth != null) return fromNetWorth
+    const parsed = Number.parseFloat(account.openingBalance)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
+  // Group accounts by institution id, ordering each group's accounts ARS before
+  // USD — the SAME within-institution order Home uses.
   const accountsByInstitution = useMemo(() => {
     const map = new Map<string, Account[]>()
     for (const account of accountsQuery.data ?? []) {
@@ -375,11 +418,42 @@ export function AccountsPage() {
       list.push(account)
       map.set(account.institutionId, list)
     }
+    for (const list of map.values()) {
+      list.sort((a, b) =>
+        compareAccountCurrencies(asCurrency(a.currency), asCurrency(b.currency)),
+      )
+    }
     return map
   }, [accountsQuery.data])
 
-  const isPending = institutionsQuery.isPending || accountsQuery.isPending
-  const isError = institutionsQuery.isError || accountsQuery.isError
+  // Order institutions EXACTLY like Home: by net-worth subtotal DESC (live MEP,
+  // name tie-break). Institutions absent from net worth (e.g. no accounts yet)
+  // are appended after, sorted by name, so every institution still renders.
+  const institutions = useMemo(() => {
+    const data = institutionsQuery.data ?? []
+    if (!netWorth) return data
+    const displayCurrency = asCurrency(netWorth.currency)
+    const mep = usableMep(fxRates?.mep)
+    const order = orderInstitutionIds(netWorth.accounts, displayCurrency, mep)
+    const rank = new Map(order.map((id, index) => [id, index]))
+    return [...data].sort((a, b) => {
+      const ra = rank.get(a.id)
+      const rb = rank.get(b.id)
+      if (ra != null && rb != null) return ra - rb
+      if (ra != null) return -1
+      if (rb != null) return 1
+      return a.name.localeCompare(b.name)
+    })
+  }, [institutionsQuery.data, netWorth, fxRates?.mep])
+
+  const isPending =
+    institutionsQuery.isPending ||
+    accountsQuery.isPending ||
+    netWorthQuery.isPending
+  const isError =
+    institutionsQuery.isError ||
+    accountsQuery.isError ||
+    netWorthQuery.isError
 
   const heading = (
     <Box
@@ -436,6 +510,7 @@ export function AccountsPage() {
           onRetry={() => {
             void institutionsQuery.refetch()
             void accountsQuery.refetch()
+            void netWorthQuery.refetch()
           }}
         />
       </Box>
@@ -477,6 +552,7 @@ export function AccountsPage() {
               key={institution.id}
               institution={institution}
               accounts={accountsByInstitution.get(institution.id) ?? []}
+              balanceOf={balanceOf}
               onEditInstitution={() => openEditInstitution(institution)}
               onAddAccount={() => openAddAccount(institution)}
               onEditAccount={(account) => openEditAccount(institution, account)}
