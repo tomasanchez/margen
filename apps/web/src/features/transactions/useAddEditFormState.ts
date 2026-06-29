@@ -544,6 +544,11 @@ export function useAddEditFormState(
     setCountsTowardMonotributo(parsed.countsTowardMonotributo ?? true)
     setDuplicate(parsed.duplicate)
     setImportedDocument(parsed.document)
+    // The parse sets the currency wholesale (below); a previously-picked account
+    // could now be a currency mismatch (an account holds one currency,
+    // ADR-122/123), so drop the account back to "none" — the user re-picks a
+    // matching one after reviewing the import.
+    setAccountId('')
     if (fileName) setAttachedFileName(fileName)
     // Surface the parsed client name in the editable Name field (ADR-088); a
     // parse without a name clears it so the field reflects the import.
@@ -592,6 +597,9 @@ export function useAddEditFormState(
   // ARS amount, so we set ARS and clear any FX state (rate/source/suggestions) so
   // `buildInput` produces a plain ARS expense. We pin the `Taxes` category and set
   // the name override to the configured category label (e.g. "Monotributo C").
+  // Forcing ARS could strand a previously-picked USD account (an account holds
+  // one currency, ADR-122/123), so we drop the account back to "none" too — the
+  // form's currency↔account guard otherwise lives in the currency-change path.
   const applyMonotributoCuota = useCallback(
     (amount: number, categoryLabel: string) => {
       setAmountText(String(amount))
@@ -603,6 +611,7 @@ export function useAddEditFormState(
       setRateSuggestionStatus('idle')
       setCategory('Taxes')
       setName(categoryLabel)
+      setAccountId('')
     },
     [],
   )

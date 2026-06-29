@@ -221,6 +221,15 @@ export function AddEditForm({
   // account" option, so the form never waits on the accounts load.
   const accountsQuery = useAccounts()
   const accounts = accountsQuery.data ?? []
+  // Only offer accounts whose currency matches the transaction's currency: an
+  // account holds one currency (ADR-122/123), so a USD txn must not be linkable
+  // to an ARS account, and vice-versa. The "no account" option is always shown.
+  // A currency switch that strands the current selection is cleared in
+  // `handleCurrencyChange` (effect-free), so the selected value always stays
+  // within this filtered list.
+  const accountOptions = accounts.filter(
+    (account) => account.currency === form.currency,
+  )
 
   const nameInputId = useId()
   const amountInputId = useId()
@@ -243,8 +252,20 @@ export function AddEditForm({
   const handleTypeChange = (_: unknown, next: TxType | null) => {
     if (next) form.setType(next)
   }
+  // Switching the form currency must keep the Account selection consistent: an
+  // account holds exactly ONE currency (ADR-122/123), so a USD transaction can't
+  // be attributed to an ARS account and vice-versa. When the new currency no
+  // longer matches the currently-selected account's currency, clear the account
+  // back to "none" (effect-free: done here in the change path, where both the
+  // accounts list and the setters are in scope — not a useEffect that would
+  // fight the controlled state, see useAddEditFormState's deliberate no-effect
+  // seeding). On edit the seeded account already matches the row's currency
+  // (ADR-136), so this never fires on the initial seed — only on a user switch.
   const handleCurrencyChange = (_: unknown, next: Currency | null) => {
-    if (next) form.setCurrency(next)
+    if (!next) return
+    const selected = accounts.find((account) => account.id === form.accountId)
+    if (selected && selected.currency !== next) form.setAccountId('')
+    form.setCurrency(next)
   }
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -845,7 +866,7 @@ export function AddEditForm({
             <MenuItem value="">
               <em>{t('form.account.none')}</em>
             </MenuItem>
-            {accounts.map((account) => (
+            {accountOptions.map((account) => (
               <MenuItem key={account.id} value={account.id}>
                 {accountOptionLabel(account)}
               </MenuItem>
