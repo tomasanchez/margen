@@ -165,9 +165,10 @@ describe('transaction account selector (ADR-122/133)', () => {
     // Enter an ARS amount so the form can save.
     await user.type(form.getByLabelText(/^Amount in /), '5000')
 
-    // Open the Account select and pick "Deel · USD" (institution · currency).
+    // Open the Account select and pick "Galicia · ARS" (institution · currency).
+    // The form currency is ARS, so only the ARS account is offered (ADR-122/123).
     await user.click(form.getByRole('combobox', { name: 'Account' }))
-    const option = await screen.findByRole('option', { name: 'Deel · USD' })
+    const option = await screen.findByRole('option', { name: 'Galicia · ARS' })
     await user.click(option)
 
     // Save.
@@ -175,7 +176,7 @@ describe('transaction account selector (ADR-122/133)', () => {
 
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
     const input = createMock.mock.calls[0][0]
-    expect(input.accountId).toBe('acc-2')
+    expect(input.accountId).toBe('acc-1')
   })
 
   test('the form no longer renders the legacy bank picker (ADR-136 extension)', async () => {
@@ -206,6 +207,107 @@ describe('transaction account selector (ADR-122/133)', () => {
     expect(input.bank).toBeUndefined()
     // Attribution is the account; none picked here, so it is explicitly null.
     expect(input.accountId).toBeNull()
+  })
+
+  test('the selector lists only accounts matching the form currency (ARS)', async () => {
+    const { user, dialog } = await openDialog()
+    const form = within(dialog)
+    await waitFor(() => expect(accountsListMock).toHaveBeenCalled())
+
+    // Default currency is ARS, so only the ARS account is offered; the USD
+    // account is absent (an account holds one currency, ADR-122/123).
+    await user.click(form.getByRole('combobox', { name: 'Account' }))
+    expect(
+      await screen.findByRole('option', { name: 'Galicia · ARS' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('option', { name: 'Deel · USD' }),
+    ).not.toBeInTheDocument()
+  })
+
+  test('switching ARS→USD swaps the options to USD accounts and clears a stranded ARS pick', async () => {
+    const { user, dialog } = await openDialog()
+    const form = within(dialog)
+    await waitFor(() => expect(accountsListMock).toHaveBeenCalled())
+
+    // Pick the ARS account while the form is ARS.
+    await user.click(form.getByRole('combobox', { name: 'Account' }))
+    await user.click(await screen.findByRole('option', { name: 'Galicia · ARS' }))
+    expect(form.getByRole('combobox', { name: 'Account' })).toHaveTextContent(
+      'Galicia · ARS',
+    )
+
+    // Switch the form currency to USD: the ARS account no longer matches, so the
+    // selection is cleared back to "No account", and the options become USD-only.
+    await user.click(form.getByRole('button', { name: 'USD' }))
+    await waitFor(() =>
+      expect(
+        form.getByRole('combobox', { name: 'Account' }),
+      ).not.toHaveTextContent('Galicia · ARS'),
+    )
+
+    await user.click(form.getByRole('combobox', { name: 'Account' }))
+    expect(
+      await screen.findByRole('option', { name: 'Deel · USD' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('option', { name: 'Galicia · ARS' }),
+    ).not.toBeInTheDocument()
+  })
+
+  test('a USD transaction saves a currency-matching account', async () => {
+    fxMock.mockResolvedValue({ mep: 1245, official: 1045 })
+    const { user, dialog } = await openDialog()
+    const form = within(dialog)
+    await waitFor(() => expect(accountsListMock).toHaveBeenCalled())
+
+    // Switch to USD, enter an amount + rate, pick the USD account, save.
+    await user.click(form.getByRole('button', { name: 'USD' }))
+    await user.type(form.getByLabelText(/^Amount in /), '500')
+    // The MEP suggestion pre-fills the rate; await it so the form can save.
+    await form.findByText('≈ ARS 622.500 at MEP 1.245')
+
+    await user.click(form.getByRole('combobox', { name: 'Account' }))
+    await user.click(await screen.findByRole('option', { name: 'Deel · USD' }))
+
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    const input = createMock.mock.calls[0][0]
+    expect(input.currency).toBe('USD')
+    expect(input.accountId).toBe('acc-2')
+  })
+
+  test('editing a USD transaction keeps its USD account seeded (not cleared)', async () => {
+    const { user, dialog } = await openDialog({
+      id: 'tx-usd',
+      type: 'expense',
+      kind: 'expense',
+      currency: 'USD',
+      amountNum: 622500,
+      usd: 500,
+      rate: 1245,
+      fxRateType: 'MEP',
+      category: 'Food',
+      accountId: 'acc-2',
+      occurredOn: '2026-06-10',
+      dispDate: 'Jun 10',
+      name: 'Hardware',
+    })
+    const form = within(dialog)
+    await waitFor(() => expect(accountsListMock).toHaveBeenCalled())
+
+    // The seeded USD account matches the row's currency, so it stays selected on
+    // the initial seed (ADR-136); no clearing fires.
+    expect(form.getByRole('combobox', { name: 'Account' })).toHaveTextContent(
+      'Deel · USD',
+    )
+
+    await user.click(form.getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
+    const [, patch] = updateMock.mock.calls[0]
+    expect(patch.accountId).toBe('acc-2')
   })
 
   test('an edit seeded with an account preserves it on save', async () => {
