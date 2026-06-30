@@ -122,20 +122,28 @@ async def category_history(
             examples=["2026-06"],
         ),
     ] = None,
+    currency: Annotated[
+        Currency,
+        Query(description="The budget currency: 'ARS' (default) or 'USD' (ADR-152)."),
+    ] = Currency.ARS,
 ) -> ResponseModel[CategoryHistoryResponse]:
-    """Return the caller's trailing per-category spend history for a month (ADR-145, ADR-108).
+    """Return the caller's trailing per-category spend history for a month (ADR-145, ADR-108, ADR-152).
 
     For every expense category present in the trailing spend, returns the mean spend
     over the three calendar months immediately before the requested month (``avg3mo``)
     and the single prior month's spend (``lastMonth``), as decimal strings (ADR-025).
     Reuses the same per-category month-expense aggregation as the budgets surface
-    (ADR-042). Scoped to ``user.id`` so a caller only sees their own spend (ADR-108).
-    A category with no spend in a window contributes 0. A malformed ``month`` yields
-    ``422``. This read-only endpoint backs the Budgets redesign templates and the
-    per-row "use avg" chips (ADR-145..147).
+    (ADR-042). ``currency`` denominates the history exactly like the spend surface
+    (ADR-152): ``ARS`` (default, unchanged) sums the authoritative amount; ``USD`` sums
+    each category's stored ``usd_amount`` snapshot and excludes rows lacking one, so a
+    USD budget's templates and "use avg" chips read USD-denominated history. Scoped to
+    ``user.id`` so a caller only sees their own spend (ADR-108). A category with no
+    spend in a window contributes 0. A malformed ``month`` yields ``422``. This
+    read-only endpoint backs the Budgets redesign templates and the per-row "use avg"
+    chips (ADR-145..147).
     """
     target = _parse_month(month or _current_month())
-    model = await reader.category_history(target, user.id)
+    model = await reader.category_history(target, user.id, currency)
     return ResponseModel(data=CategoryHistoryResponse.from_read_model(model))
 
 

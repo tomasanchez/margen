@@ -734,3 +734,33 @@ class TestBudgetCategoryHistory:
 
         # THEN
         assert history.categories == []
+
+    async def test_usd_history_sums_snapshot_and_excludes_null_rows(self):
+        """
+        GIVEN a USD history request whose three executes return usd_amount totals
+        WHEN category_history runs with currency=USD
+        THEN it aggregates the snapshot totals AND each query excludes null-snapshot rows
+             (the USD spend path's exclusion threads through, ADR-152)
+        """
+        # GIVEN — three months of USD-denominated Food spend (oldest-first).
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([_category_row("Food", Decimal("30.00"))]),
+            _result([_category_row("Food", Decimal("60.00"))]),
+            _result([_category_row("Food", Decimal("90.00"))]),
+        ]
+        reader = SqlAlchemyBudgetReader(session)
+
+        # WHEN
+        history = await reader.category_history(date(2026, 6, 15), A_USER, Currency.USD)
+
+        # THEN — each query filters out rows lacking a usd_amount snapshot (ADR-152).
+        assert session.execute.await_count == 3
+        for call in session.execute.await_args_list:
+            (statement,) = call.args
+            assert "usd_amount is not null" in str(statement).lower()
+
+        # THEN — USD history sums the snapshot: mean(30, 60, 90) = 60.00; last = May's 90.00.
+        food = next(line for line in history.categories if line.category == "Food")
+        assert food.avg3mo == Decimal("60.00")
+        assert food.last_month == Decimal("90.00")

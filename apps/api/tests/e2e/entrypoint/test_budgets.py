@@ -635,3 +635,46 @@ class TestUsdBudgetSpend:
         assert food["target"] == "200.00"
         assert food["spent"] == "50.00"
         assert food["remaining"] == "150.00"
+
+
+class TestUsdCategoryHistory:
+    """GET /budgets/history?currency=USD sums usd_amount over the trailing window (ADR-145, ADR-152)."""
+
+    def _history_line(self, data: dict, category: str) -> dict:
+        """Return the history line for a category from the response data."""
+        return next(line for line in data["categories"] if line["category"] == category)
+
+    async def test_ars_default_sums_amount(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a USD expense with a snapshot in the prior month
+        WHEN the history is requested without a currency (ARS default)
+        THEN avg3mo / lastMonth sum the authoritative ARS amount (unchanged, ADR-152)
+        """
+        # GIVEN — 30000 ARS-equivalent USD spend in May (snapshotted at 1000).
+        await _seed_usd_expense(test_client, category="Food", amount="30000", rate="1000", occurred_on="2026-05-10")
+
+        # WHEN
+        data = (await test_client.get(f"{BUDGETS}/history", params={"month": JUNE})).json()["data"]
+
+        # THEN — ARS history sums the amount: 30000 / 3 = 10000; May lastMonth 30000.
+        food = self._history_line(data, "Food")
+        assert food["avg3mo"] == "10000.00"
+        assert food["lastMonth"] == "30000.00"
+
+    async def test_usd_sums_snapshot_and_excludes_unconverted(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a snapshotted USD expense and a snapshot-less one in prior months
+        WHEN the history is requested with currency=USD
+        THEN avg3mo / lastMonth sum only the snapshot's usd_amount (ADR-152)
+        """
+        # GIVEN — May: 60000 ARS @ 1000 -> usd 60.00 (snapshotted); Apr: 30000 ARS, NO snapshot.
+        await _seed_usd_expense(test_client, category="Food", amount="60000", rate="1000", occurred_on="2026-05-10")
+        await _seed_usd_expense(test_client, category="Food", amount="30000", rate=None, occurred_on="2026-04-10")
+
+        # WHEN
+        data = (await test_client.get(f"{BUDGETS}/history", params={"month": JUNE, "currency": "USD"})).json()["data"]
+
+        # THEN — only the snapshotted May row counts: avg3mo = 60.00 / 3 = 20.00; lastMonth = 60.00.
+        food = self._history_line(data, "Food")
+        assert food["avg3mo"] == "20.00"
+        assert food["lastMonth"] == "60.00"

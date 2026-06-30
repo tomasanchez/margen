@@ -86,13 +86,27 @@ class SqlAlchemyBudgetReader(AbstractBudgetReader):
             unconverted=unconverted,
         )
 
-    async def category_history(self, month: date, user_id: str) -> CategoryHistory:
-        """Aggregate the owner's per-category spend over the three months before ``month`` (ADR-145, ADR-108)."""
+    async def category_history(
+        self,
+        month: date,
+        user_id: str,
+        currency: Currency = Currency.ARS,
+    ) -> CategoryHistory:
+        """Aggregate the owner's per-category spend over the three months before ``month`` (ADR-145, ADR-108, ADR-152).
+
+        ``currency`` denominates the trailing spend exactly like the spend surface
+        (ADR-152): ``ARS`` (default) sums the authoritative ``amount``; ``USD`` sums
+        each category's stored ``usd_amount`` snapshot, excluding rows that lack one,
+        so a USD budget's "Match 3-mo avg" / "Match last month" templates and per-row
+        "use avg" chips read USD-denominated history.
+        """
         owner = UUID(user_id)
         period = month_start(month)
         # The three calendar months immediately before the requested month, oldest-first.
         prior_months = [add_months(period, offset) for offset in (-3, -2, -1)]
-        monthly_totals = [await month_category_expense_totals(self.session, prior, owner) for prior in prior_months]
+        monthly_totals = [
+            await month_category_expense_totals(self.session, prior, owner, currency) for prior in prior_months
+        ]
         return CategoryHistory(categories=build_category_history(monthly_totals))
 
     async def _targets(self, period: date, owner: UUID) -> dict[str, Decimal]:

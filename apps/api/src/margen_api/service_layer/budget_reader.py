@@ -49,8 +49,13 @@ class AbstractBudgetReader(ABC):
         """
 
     @abstractmethod
-    async def category_history(self, month: date, user_id: str) -> CategoryHistory:
-        """Return the owner's trailing per-category spend history for a month (ADR-145, ADR-108).
+    async def category_history(
+        self,
+        month: date,
+        user_id: str,
+        currency: Currency = Currency.ARS,
+    ) -> CategoryHistory:
+        """Return the owner's trailing per-category spend history for a month (ADR-145, ADR-108, ADR-152).
 
         For every expense category present in the trailing spend, computes the mean
         spend over the three calendar months immediately BEFORE ``month`` (e.g. for
@@ -63,6 +68,9 @@ class AbstractBudgetReader(ABC):
             month: Any date within the requested calendar month; only its year and
                 month are significant. The history covers the three months before it.
             user_id: The authenticated owner the spend history is scoped to.
+            currency: The budget currency (ADR-152); ``ARS`` (default) sums the
+                authoritative amount, ``USD`` sums the stored ``usd_amount`` snapshot
+                and excludes rows lacking one.
 
         Returns:
             The assembled :class:`CategoryHistory`.

@@ -58,12 +58,13 @@ async def _create_usd_expense(
     fx_source: str | None = None,
     user_id: str = OWNER,
     kind: Kind = Kind.EXPENSE,
+    occurred_on: date = A_DATE,
 ):
     """Create a USD transaction through the real handler and return its id."""
     return await create_transaction(
         CreateTransaction(
             user_id=user_id,
-            occurred_on=A_DATE,
+            occurred_on=occurred_on,
             name=f"{category} usd",
             kind=kind,
             amount=Decimal(amount),
@@ -286,6 +287,41 @@ class TestUsdBudgetSpend:
         food = next(line for line in model.categories if line.category == "Food")
         assert food.spent == Decimal("50000.00")
         assert model.unconverted == 0
+
+
+class TestUsdCategoryHistory:
+    """USD category history sums usd_amount over the trailing window, excluding nulls (ADR-145, ADR-152)."""
+
+    async def test_usd_history_sums_snapshot_and_excludes_unconverted(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a snapshotted USD expense and a snapshot-less one in the months before June
+        WHEN the USD category history for June is read
+        THEN avg3mo / lastMonth sum only the snapshot's usd_amount, the other excluded (ADR-152)
+        """
+        # GIVEN — May: 60000 ARS @ 1000 -> usd 60.00 (snapshotted); April: 30000 ARS, no snapshot.
+        await _create_usd_expense(
+            session_factory,
+            amount="60000",
+            fx_rate=Decimal("1000"),
+            fx_source="bolsa",
+            occurred_on=date(2026, 5, 10),
+        )
+        await _create_usd_expense(session_factory, amount="30000", occurred_on=date(2026, 4, 10))
+
+        # WHEN
+        session = session_factory()
+        try:
+            history = await SqlAlchemyBudgetReader(session).category_history(JUNE, OWNER, Currency.USD)
+            await session.rollback()
+        finally:
+            await session.close()
+
+        # THEN — only the snapshotted May row counts: avg3mo = 60.00 / 3 = 20.00; lastMonth = 60.00.
+        food = next(line for line in history.categories if line.category == "Food")
+        assert food.avg3mo == Decimal("20.00")
+        assert food.last_month == Decimal("60.00")
 
 
 class TestUsdSuggestedBase:

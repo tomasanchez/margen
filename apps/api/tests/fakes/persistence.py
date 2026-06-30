@@ -905,10 +905,16 @@ class FakeBudgetReader(AbstractBudgetReader):
         self.requested_currency = currency
         return self._budget
 
-    async def category_history(self, month: date, user_id: str) -> CategoryHistory:
-        """Record the requested month and owner and return the canned history (ADR-108, ADR-145)."""
+    async def category_history(
+        self,
+        month: date,
+        user_id: str,
+        currency: Currency = Currency.ARS,
+    ) -> CategoryHistory:
+        """Record the requested month, owner and currency and return the canned history (ADR-108, ADR-145, ADR-152)."""
         self.requested_month = month
         self.requested_user_id = user_id
+        self.requested_currency = currency
         return self._history
 
 
