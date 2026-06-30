@@ -68,7 +68,7 @@ class SqlAlchemyBudgetReader(AbstractBudgetReader):
         """
         owner = UUID(user_id)
         period = month_start(month)
-        targets = await self._targets(period, owner)
+        targets, target_currencies = await self._targets(period, owner)
         spent = await month_category_expense_totals(self.session, period, owner, currency)
         savings = await self._savings(period, owner)
         income, floor_amount, floor_source = await self._income_and_floor(period, owner)
@@ -78,7 +78,7 @@ class SqlAlchemyBudgetReader(AbstractBudgetReader):
         return MonthlyBudget(
             month=month_key(period),
             currency=currency,
-            categories=build_budget_lines(targets, spent),
+            categories=build_budget_lines(targets, spent, target_currencies),
             savings=build_saving_lines(savings, income),
             floor=Floor(amount=floor_amount, source=floor_source if floor_amount is not None else None),
             suggested_strategy=self._suggested_strategy(income, floor_amount),
@@ -109,19 +109,26 @@ class SqlAlchemyBudgetReader(AbstractBudgetReader):
         ]
         return CategoryHistory(categories=build_category_history(monthly_totals))
 
-    async def _targets(self, period: date, owner: UUID) -> dict[str, Decimal]:
-        """Return the owner's per-category SPEND targets for the month (ADR-138, ADR-130).
+    async def _targets(self, period: date, owner: UUID) -> tuple[dict[str, Decimal], dict[str, str]]:
+        """Return the owner's per-category SPEND targets and their native currency (ADR-138, ADR-152).
 
         Filters ``kind='spend'`` so saving-bucket rows (which have no expense
-        actuals) never surface as fake spend in the vs-actuals join (ADR-138).
+        actuals) never surface as fake spend in the vs-actuals join (ADR-138). The
+        second map carries each target's stored ``currency`` column — the NATIVE
+        currency it was authored in (``'USD'`` or ``'ARS'``, ADR-152) — so the line
+        can report ``targetCurrency`` independently of the requested spend currency
+        (ADR-155). Both maps are keyed by the same category.
         """
-        statement = select(BudgetRecord.category, BudgetRecord.amount).where(
+        statement = select(BudgetRecord.category, BudgetRecord.amount, BudgetRecord.currency).where(
             BudgetRecord.user_id == owner,
             BudgetRecord.period == period,
             BudgetRecord.kind == BudgetKind.SPEND.value,
         )
         result = await self.session.execute(statement)
-        return {str(row.category): row.amount for row in result.all()}
+        rows = result.all()
+        targets = {str(row.category): row.amount for row in rows}
+        currencies = {str(row.category): str(row.currency) for row in rows}
+        return targets, currencies
 
     async def _savings(self, period: date, owner: UUID) -> dict[str, Decimal]:
         """Return the owner's per-bucket SAVING allocations for the month (ADR-138, ADR-130)."""

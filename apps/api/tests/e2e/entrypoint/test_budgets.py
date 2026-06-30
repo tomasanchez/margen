@@ -99,6 +99,52 @@ class TestBudgetSurface:
         assert food["spent"] == "20000.00"
         assert food["remaining"] == "30000.00"
 
+    async def test_target_currency_reflects_stored_currency_regardless_of_query(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a USD-stored Food target
+        WHEN the surface is requested with currency=ARS (the spend column)
+        THEN the Food line's targetCurrency is 'USD' — the NATIVE stored currency,
+             independent of the requested spend currency (ADR-152/155)
+        """
+        # GIVEN — a target authored in USD.
+        await _put_budget(test_client, category="Food", month=JUNE, amount="200", currency="USD")
+
+        # WHEN — query the ARS spend column; the target's native currency is unaffected.
+        response = await test_client.get(BUDGETS, params={"month": JUNE, "currency": "ARS"})
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK
+        food = _line(response.json()["data"], "Food")
+        assert food["targetCurrency"] == "USD"
+
+    async def test_target_currency_is_null_when_no_target(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN no budgets set
+        WHEN the budgets surface is requested
+        THEN every line's targetCurrency is null (no stored target to denominate, ADR-152)
+        """
+        # WHEN
+        data = (await test_client.get(BUDGETS, params={"month": JUNE})).json()["data"]
+
+        # THEN
+        assert _line(data, "Food")["targetCurrency"] is None
+        assert all(line["targetCurrency"] is None for line in data["categories"])
+
+    async def test_ars_stored_target_reports_ars_currency(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an ARS-stored Food target (the default currency)
+        WHEN the budgets surface is requested
+        THEN the Food line's targetCurrency is 'ARS' (ADR-152)
+        """
+        # GIVEN — the PUT body defaults currency to ARS.
+        await _put_budget(test_client, category="Food", month=JUNE, amount="50000")
+
+        # WHEN
+        data = (await test_client.get(BUDGETS, params={"month": JUNE})).json()["data"]
+
+        # THEN
+        assert _line(data, "Food")["targetCurrency"] == "ARS"
+
     async def test_defaults_to_current_server_month(self, test_client: httpx.AsyncClient):
         """
         GIVEN no month query param

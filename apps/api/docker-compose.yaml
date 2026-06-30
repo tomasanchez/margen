@@ -32,6 +32,9 @@ services:
     # changing infrastructure. The example domain ships no vector column yet.
     image: pgvector/pgvector:pg17
     container_name: margen-api-db
+    # Survive Docker Desktop / daemon restarts so the local dev DB doesn't drop
+    # out from under a running API (data persists in the db-data volume).
+    restart: unless-stopped
     environment:
       - POSTGRES_USER=margen-api
       - POSTGRES_PASSWORD=margen-api

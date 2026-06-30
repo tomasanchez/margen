@@ -54,22 +54,31 @@ def budgetable_categories(
 def build_budget_lines(
     targets: Mapping[str, Decimal],
     spent: Mapping[str, Decimal],
+    target_currencies: Mapping[str, str] | None = None,
 ) -> list[BudgetLine]:
-    """Join targets and spend into one line per expense category (ADR-125, ADR-042).
+    """Join targets and spend into one line per expense category (ADR-125, ADR-042, ADR-152).
 
     For each category in :func:`budgetable_categories`, pairs its ``target`` (the
     budget amount, or ``None`` when unset) with its ``spent`` (the month's actual
     expense total, ``0`` when none), computes ``remaining = target - spent`` when a
     target exists (``None`` otherwise), and flags whether the category is essential
-    (a "Needs" floor category, ADR-143) so the client can group Needs vs Wants.
+    (a "Needs" floor category, ADR-143) so the client can group Needs vs Wants. Each
+    line also carries the NATIVE currency the target was STORED in
+    (``target_currency``), so the client can convert it to the preferred display
+    currency (ADR-152/155); it is ``None`` for a category with no target.
 
     Args:
         targets: The owner's per-category targets for the month, keyed by category.
         spent: The month's per-category expense totals, keyed by category (ADR-042).
+        target_currencies: The native currency each target was stored in (``'USD'``
+            or ``'ARS'``, ADR-152), keyed by category. Defaults to empty when the
+            caller does not supply it; a category absent here yields a ``None``
+            ``target_currency`` even if it has a target.
 
     Returns:
         One :class:`BudgetLine` per expense category, sorted by category name.
     """
+    currencies = target_currencies or {}
     lines: list[BudgetLine] = []
     for category in budgetable_categories(targets, spent):
         target = targets.get(category)
@@ -82,6 +91,9 @@ def build_budget_lines(
                 spent=category_spent,
                 remaining=remaining,
                 is_essential=is_essential(category),
+                # The native stored currency only makes sense when a target exists;
+                # an untargeted category has nothing to denominate (ADR-152).
+                target_currency=currencies.get(category) if target is not None else None,
             )
         )
     return lines

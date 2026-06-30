@@ -126,6 +126,51 @@ class TestBuildBudgetLines:
         assert food.is_essential is True
         assert entertainment.is_essential is False
 
+    def test_target_currency_reflects_stored_native_currency(self):
+        """
+        GIVEN a USD-stored Food target and an ARS-stored Transport target
+        WHEN the lines are built with their native currencies
+        THEN each line carries its own stored targetCurrency (ADR-152/155)
+        """
+        # WHEN — the native currency is independent of any requested spend currency.
+        lines = build_budget_lines(
+            {"Food": Decimal("200"), "Transport": Decimal("50000")},
+            {},
+            {"Food": "USD", "Transport": "ARS"},
+        )
+        food = next(line for line in lines if line.category == "Food")
+        transport = next(line for line in lines if line.category == "Transport")
+
+        # THEN
+        assert food.target_currency == "USD"
+        assert transport.target_currency == "ARS"
+
+    def test_target_currency_is_none_without_a_target(self):
+        """
+        GIVEN a category with spend but no target
+        WHEN the lines are built
+        THEN its targetCurrency is None — there is no stored target to denominate (ADR-152)
+        """
+        # WHEN
+        lines = build_budget_lines({}, {"Transport": Decimal("8000")}, {})
+        transport = next(line for line in lines if line.category == "Transport")
+
+        # THEN
+        assert transport.target_currency is None
+
+    def test_target_currency_defaults_to_none_when_map_omitted(self):
+        """
+        GIVEN a target but no target_currencies map (a back-compatible caller)
+        WHEN the lines are built
+        THEN targetCurrency is None — the optional map defaults to empty (ADR-152)
+        """
+        # WHEN
+        lines = build_budget_lines({"Food": Decimal("50000")}, {})
+        food = next(line for line in lines if line.category == "Food")
+
+        # THEN
+        assert food.target_currency is None
+
 
 class TestBuildCategoryHistory:
     """``build_category_history`` averages three prior months and reports the last (ADR-145)."""

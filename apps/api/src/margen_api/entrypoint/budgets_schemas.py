@@ -59,6 +59,15 @@ class BudgetLineResponse(CamelCaseModel):
     is_essential: bool = Field(
         description="Whether the category is an essential 'Needs' floor category, serialized as 'isEssential' (ADR-143).",
     )
+    target_currency: str | None = Field(
+        default=None,
+        description=(
+            "The native currency the target was STORED in ('USD'/'ARS'); null when "
+            "no target is set. Independent of the requested spend currency — the "
+            "client converts it to the preferred display currency (ADR-152/155). "
+            "Serialized as 'targetCurrency'."
+        ),
+    )
 
     @classmethod
     def from_read_model(cls, model: BudgetLine) -> BudgetLineResponse:
@@ -69,6 +78,7 @@ class BudgetLineResponse(CamelCaseModel):
             spent=model.spent,
             remaining=model.remaining,
             is_essential=model.is_essential,
+            target_currency=model.target_currency,
         )
 
 

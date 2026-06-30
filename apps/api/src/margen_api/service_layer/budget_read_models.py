@@ -34,6 +34,12 @@ class BudgetLine:
         is_essential: Whether the category is an essential ("Needs") spend category
             that defines the household floor (ADR-143). Lets the client group Needs
             vs Wants without re-listing the essential set (ADR-140/143).
+        target_currency: The NATIVE currency the ``target`` was STORED in
+            (``'USD'`` or ``'ARS'``, the row's ``currency`` column, ADR-152), or
+            ``None`` when the category has no target set. Independent of the
+            requested spend ``currency`` (ADR-152 query param) — it reflects how the
+            target was authored, so the client can convert each target to the
+            preferred display currency at the current rate (ADR-155).
     """
 
     category: str
@@ -41,6 +47,7 @@ class BudgetLine:
     spent: Decimal
     remaining: Decimal | None
     is_essential: bool
+    target_currency: str | None
 
 
 @dataclass(frozen=True, slots=True)

@@ -126,11 +126,14 @@ class TestBudgetReader:
         assert food.target == Decimal("50000.00")
         assert food.spent == Decimal("20000.00")  # the other owner's 999999 is excluded
         assert food.remaining == Decimal("30000.00")
-        # Transport has spend but no target -> null target/remaining.
+        # The stored native currency surfaces from the target's own row (ADR-152/155).
+        assert food.target_currency == "ARS"
+        # Transport has spend but no target -> null target/remaining/currency.
         transport = _line(model.categories, "Transport")
         assert transport.target is None
         assert transport.spent == Decimal("8000.00")
         assert transport.remaining is None
+        assert transport.target_currency is None
 
 
 class TestCategoryHistoryReader:
