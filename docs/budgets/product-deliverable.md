@@ -145,7 +145,7 @@ Decisive cut: **MVP is the inflation reprice loop + saving-profile presets**, be
 - Add a per-user **`budget_income`** concept (net spendable income per month) — small new row/table keyed `(user_id, period)`.
 - Add a **reprice service**: pure function `next_cap = round(cap × (1+infl)) + step_up`; entrypoint applies it across the month's `spend` rows on user confirm.
 - `BudgetsPage`: add net-income header, profile-preset selector, and a "Reprice for {month}" review action. Add a **Savings** section listing `kind=saving` rows with profile %.
-- Category list (MVP subset of the §7.1 final set): rename `Rent`→`Housing` and add `Education` in `value_objects.py`, `types.ts`, `seed.ts`. `Utilities`, `EatingOut`, `DebtService`, `FamilySupport` follow in Phase 2 (low-risk — categories are tolerant strings, ADR-027/083).
+- Category list (MVP subset of the §7.1 final set): rename `Rent`→`Housing` and add `Education` in `value_objects.py`, `types.ts`, `seed.ts`. `Utilities`, `Social`, `DebtService`, `FamilySupport` follow in Phase 2 (low-risk — categories are tolerant strings, ADR-027/083).
 
 ### Replace / restructure (Phase 2+)
 - Promote savings buckets out of the flat budget row into a **dedicated `savings_buckets` aggregate** once targets/due-dates/account links are needed — at that point the `kind=saving` rows migrate into it. Follow the cosmic-python aggregate+repo+UoW pattern (as Account/Transfer/Budget do).
@@ -194,14 +194,14 @@ Three inputs reconciled: (a) both docs' category trees, (b) margen's current `KN
 | Housing (rent, mortgage, expensas, maintenance, property tax, insurance) | **RENAME existing** `Rent` → **`Housing`** | Rent is one line of housing. Keep `Rent` accepted as a tolerant alias (ADR-027). |
 | Utilities & regulated services (electricity, gas, water, internet, mobile, garrafa) | **SPLIT existing** `Services` → **`Utilities`** | `Services` is ambiguous; `Utilities` is the INDEC-aligned essential. Carries `subsidy_status` tag later (§7.2). |
 | Food at home | **KEEP** `Food` | — |
-| Eating out (restaurants, bars, cafés, takeout) | **ADD `EatingOut`** | Research splits discretionary dining from essential groceries; distinct essentiality. Was folded into `Food`/`Entertainment` before — separate it. |
+| Social — eating out, bars, cafés, outings | **ADD `Social`** | Discretionary dining/social, split from essential groceries (`Food`) and from `Entertainment` (games/hobbies/one-off). |
 | Transport (SUBE, fuel, tolls, ride-hailing, vehicle) | **KEEP** `Transport` | — |
 | Health (prepaga, obra social, meds, dentistry) | **KEEP** `Health` | — |
 | Education & childcare | **ADD `Education`** | Separate INDEC division; reprices in lumps → sinking-fund candidate. |
 | Personal / clothing / household goods | **KEEP** `Shopping` | Covers clothing + low-ticket home replacement. |
 | Entertainment / recreation / subscriptions-above-essentials | **KEEP** `Entertainment` | — |
 | Streaming / app subscriptions | **KEEP** `Subscriptions` | Distinct recurring digital; keep separate from `Utilities`. |
-| Taxes & social security (Ganancias, IIBB, autónomos, domestic-worker, provincial/municipal) | **KEEP `Taxes`** — *non-monotributo only* | **Monotributo cuota is NOT this category** — it is owned by the Monotributo module (ADR-046/112/126) and feeds the tax-*reserve* bucket (§2.1). `Taxes` here = paid Ganancias/IIBB/provincial. |
+| Taxes & social security (monotributo cuota, autónomos, Ganancias, IIBB/AGIP/ARBA, ABL/municipal, domestic-worker) | **KEEP `Taxes`** — all government obligations | **Monotributo cuota IS this category** (a real monthly tax expense). The Monotributo *module* (ADR-046/112/126) separately tracks the income-vs-scale standing + feeds the tax-*reserve* bucket (§2.1) — a different concern from the cuota outflow. Includes ABL (CABA municipal) + AGIP/ARBA IIBB. |
 | **Debt service** (card payment, loan instalments, BNPL, overdraft) | **ADD `DebtService`** | A real recurring *expense* (interest + principal leaving the household). Distinct from the *debt-acceleration savings bucket* (extra payoff, §2.2). Decision: **category for the obligation, bucket for the extra**. |
 | **Transfers & remittances / family support** | **ADD `FamilySupport`** *(expense)* — but distinguish from account-to-account transfers | Money *given away* (parents, child support, cross-border) is an expense → `FamilySupport`. Money moved between the *user's own* accounts is **not** this — it is the **Transfer** feature (ADR-135). |
 | Transfer fees | **KEEP** `Fees` | Already created by ADR-135 (fees-as-expenses). |
@@ -214,12 +214,13 @@ Three inputs reconciled: (a) both docs' category trees, (b) margen's current `KN
 | `Income` | **KEEP** (system) | Not a budgetable expense category; it is the inflow side. |
 | `Other` | **KEEP** (fallback) | Uncategorized bucket; ADR-042 buckets nulls as "Uncategorized". |
 
-**FINAL EXPENSE-CATEGORY SET (12 budgetable + Income + Other):**
-`Housing, Utilities, Food, EatingOut, Transport, Health, Education, Shopping, Entertainment, Subscriptions, Taxes, DebtService, FamilySupport, Fees` — plus `Income` (inflow) and `Other` (fallback).
+**FINAL EXPENSE-CATEGORY SET — LOCKED 2026-06-30 (14 budgetable + Income + Other):**
+`Housing, Utilities, Food, Social, Transport, Health, Education, Shopping, Entertainment, Subscriptions, Taxes, DebtService, FamilySupport, Fees` — plus `Income` (inflow) and `Other` (fallback).
+Locked definitions: **Housing** = mortgage/rent · expensas · maintenance · insurance (works for owners & renters); **Utilities** = electricity/gas/water + internet/mobile (kept separate — regulated/tariff clock); **Social** = dining out/bars/cafés/outings; **Entertainment** = games (Steam)/hobbies/one-off purchases; **Subscriptions** = recurring digital services; **Taxes** = monotributo cuota · autónomos · Ganancias · IIBB (AGIP/ARBA) · ABL/municipal; **DebtService** = loans/installments/overdraft (kept for multi-user; card payoffs are Transfers, not this).
 
-**Dropped because the product already covers them:** Savings-ARS, Savings-USD, Investments → **Accounts + savings buckets + Transfers** (ADR-122/134/135). Dollarized-expenses → **per-account/transaction currency + `rate_type` tag** (ADR-123/134). Cash & informal → **Cash account + `evidence_quality` tag** (ADR-134). FX purchases / transfers → **Transfer feature** (ADR-135). Monotributo cuota → **Monotributo module** (ADR-046/112/126).
+**Dropped because the product already covers them:** Savings-ARS, Savings-USD, Investments → **Accounts + savings buckets + Transfers** (ADR-122/134/135). Dollarized-expenses → **per-account/transaction currency + `rate_type` tag** (ADR-123/134). Cash & informal → **Cash account + `evidence_quality` tag** (ADR-134). FX purchases / transfers → **Transfer feature** (ADR-135). (The monotributo *cuota* is NOT dropped — it's a real tax expense and lives in the **Taxes** category; the **Monotributo module** separately tracks the income-vs-scale *standing* — ADR-046/112/126.)
 
-**MVP category delta:** rename `Rent`→`Housing`, add `Education` (matches §3 MVP). **Phase 2 delta:** split `Services`→`Utilities`, add `EatingOut`, `DebtService`, `FamilySupport`. Each is a tolerant-string addition across `value_objects.py`, `types.ts`, `seed.ts` (ADR-027/083) — no schema migration.
+**MVP category delta:** rename `Rent`→`Housing`, add `Education` (matches §3 MVP). **Phase 2 delta:** split `Services`→`Utilities`, add `Social`, `DebtService`, `FamilySupport`. Each is a tolerant-string addition across `value_objects.py`, `types.ts`, `seed.ts` (ADR-027/083) — no schema migration.
 
 ### 7.2 New ideas folded in — phase decision per item
 
