@@ -120,6 +120,9 @@ class MonthlyBudgetResponse(CamelCaseModel):
         default=None,
         description="Income-pressure segment (constrained/stable/comfortable); null without an income base.",
     )
+    unconverted: int = Field(
+        description="Count of the month's expense transactions lacking a USD snapshot; 0 for ARS budgets (ADR-152).",
+    )
 
     @classmethod
     def from_read_model(cls, model: MonthlyBudget) -> MonthlyBudgetResponse:
@@ -132,6 +135,7 @@ class MonthlyBudgetResponse(CamelCaseModel):
             floor=FloorResponse.from_read_model(model.floor),
             suggested_strategy=model.suggested_strategy,
             pressure=model.pressure,
+            unconverted=model.unconverted,
         )
 
 
@@ -203,13 +207,16 @@ class BudgetUpsertRequest(CamelCaseModel):
         Returns:
             The boundary-agnostic command the message bus dispatches.
         """
+        # ``CamelCaseModel`` sets ``use_enum_values=True``, so an explicitly-supplied
+        # enum field arrives as its string value while an unset field keeps the enum
+        # default; normalize through the enum so both shapes yield the string token.
         return UpsertBudget(
             user_id=user_id,
             category=self.category,
             period=period,
             amount=self.amount,
-            currency=self.currency.value,
-            kind=self.kind.value,
+            currency=Currency(self.currency).value,
+            kind=BudgetKind(self.kind).value,
         )
 
 
@@ -235,6 +242,9 @@ class ApplyProfileResponse(CamelCaseModel):
     floor: FloorResponse = Field(description="The household-floor readout.")
     suggested_strategy: str | None = Field(default=None, description="Strategy suggestion; null without income base.")
     pressure: str | None = Field(default=None, description="Income-pressure segment; null without income base.")
+    unconverted: int = Field(
+        description="Count of the month's expense transactions lacking a USD snapshot; 0 for ARS budgets (ADR-152).",
+    )
     floor_breached: bool = Field(description="Whether the profile would underfund the household floor (warn-only).")
     gap: Decimal | None = Field(
         default=None,
@@ -252,6 +262,7 @@ class ApplyProfileResponse(CamelCaseModel):
             floor=FloorResponse.from_read_model(model.floor),
             suggested_strategy=model.suggested_strategy,
             pressure=model.pressure,
+            unconverted=model.unconverted,
             floor_breached=floor_breached,
             gap=gap if floor_breached else None,
         )

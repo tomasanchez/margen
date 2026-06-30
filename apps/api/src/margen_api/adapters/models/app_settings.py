@@ -64,6 +64,16 @@ class AppSettingsRecord(Base):
         nullable=False,
         server_default="MEP",
     )
+    # The persisted preferred FX rate source (ADR-151): a short token (e.g.
+    # ``'bolsa'`` | ``'oficial'``) that drives transaction-capture suggestions, the
+    # client-driven backfill default, and the USD budget conversion source. Brand-new
+    # rows default to ``'bolsa'``; existing rows back-fill to ``'bolsa'`` via the
+    # migration. Validated in the domain layer (ADR-151), so a plain string column.
+    preferred_rate_source: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="bolsa",
+    )
     monotributo_current_category: Mapped[str] = mapped_column(
         String(2),
         nullable=False,

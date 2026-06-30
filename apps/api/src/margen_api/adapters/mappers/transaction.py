@@ -37,6 +37,7 @@ def to_domain(record: TransactionRecord) -> Transaction:
         currency=Currency.parse(record.currency),
         usd_amount=record.usd_amount,
         fx_rate=record.fx_rate,
+        fx_source=record.fx_source,
         fx_rate_type=FxRateType(record.fx_rate_type) if record.fx_rate_type is not None else None,
         fx_rate_as_of=record.fx_rate_as_of,
         category=record.category,
@@ -90,6 +91,7 @@ def update_record(record: TransactionRecord, transaction: Transaction) -> None:
     record.currency = transaction.currency.value
     record.usd_amount = transaction.usd_amount
     record.fx_rate = transaction.fx_rate
+    record.fx_source = transaction.fx_source
     record.fx_rate_type = transaction.fx_rate_type.value if transaction.fx_rate_type is not None else None
     record.fx_rate_as_of = transaction.fx_rate_as_of
     record.category = transaction.category

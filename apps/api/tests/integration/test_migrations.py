@@ -53,6 +53,11 @@ _BUDGET_INCOME = "f1a2b3c4d5e6"
 # (user_id, kind, category, period) via batch_alter_table.
 _BUDGET_KIND = "a2b3c4d5e6f7"
 
+# The FX-snapshot source + preferred-rate-source migration (ADR-148, ADR-151): chains
+# after the budgets.kind swap. It adds the nullable ``transactions.fx_source`` column
+# and the NOT NULL ``app_settings.preferred_rate_source`` (server default 'bolsa').
+_FX_SNAPSHOT = "b3c4d5e6f7a8"
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
 # A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
@@ -382,6 +387,53 @@ class TestMigrations:
         finally:
             asyncio.run(_drop_everything(integration_database_url))
 
+    def test_fx_snapshot_migration_adds_nullable_source_and_preferred_rate(self, integration_database_url: str):
+        """
+        GIVEN a database at the budgets.kind revision with a seeded transaction + settings row
+        WHEN Alembic upgrades through the FX-snapshot migration (ADR-148, ADR-151)
+        THEN transactions gains a NULLABLE fx_source, app_settings gains
+             preferred_rate_source back-filled to 'bolsa', and the downgrade drops both
+
+        Proves the additive, non-destructive column adds on the production PostgreSQL
+        dialect: ``fx_source`` is nullable (no backfill — usd_amount backfill is
+        client-driven, ADR-149), and ``preferred_rate_source`` NOT NULL defaults to
+        'bolsa' for existing rows (ADR-151).
+        """
+        # GIVEN — upgrade to the budgets.kind revision (the head before ADR-148/151) and
+        # seed a transaction + a settings row that the column adds must not break.
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _BUDGET_KIND)
+        transaction_id = uuid.uuid4()
+        settings_id = uuid.uuid4()
+        try:
+            asyncio.run(_seed_one_transaction(integration_database_url, transaction_id))
+            asyncio.run(_seed_app_settings(integration_database_url, settings_id))
+
+            # WHEN
+            command.upgrade(config, _FX_SNAPSHOT)
+
+            # THEN — the new columns exist.
+            tx_columns = asyncio.run(_column_map(integration_database_url, "transactions"))
+            settings_columns = asyncio.run(_column_map(integration_database_url, "app_settings"))
+            assert "fx_source" in tx_columns
+            assert "preferred_rate_source" in settings_columns
+
+            # THEN — fx_source is nullable (no backfill) and the seeded row carries NULL.
+            assert tx_columns["fx_source"] is True  # nullable
+            assert asyncio.run(_read_fx_source(integration_database_url, transaction_id)) is None
+
+            # THEN — preferred_rate_source is NOT NULL and back-fills existing rows to 'bolsa'.
+            assert settings_columns["preferred_rate_source"] is False  # NOT NULL
+            assert asyncio.run(_read_preferred_rate_source(integration_database_url, settings_id)) == "bolsa"
+
+            # THEN — the downgrade cleanly drops both columns.
+            command.downgrade(config, _BUDGET_KIND)
+            assert "fx_source" not in asyncio.run(_columns(integration_database_url, "transactions"))
+            assert "preferred_rate_source" not in asyncio.run(_columns(integration_database_url, "app_settings"))
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
 
 async def _duplicate_income_is_rejected(url: str) -> bool:
     """Insert two income rows with the same (user_id, period); return whether the 2nd fails."""
@@ -673,6 +725,64 @@ async def _columns(url: str, table: str) -> list[str]:
         )
     await engine.dispose()
     return names
+
+
+async def _column_map(url: str, table: str) -> dict[str, bool]:
+    """Return ``{column_name: nullable}`` for ``table`` so a test can assert NULL-ability."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        columns = await connection.run_sync(lambda sync_conn: inspect(sync_conn).get_columns(table))
+    await engine.dispose()
+    return {col["name"]: bool(col["nullable"]) for col in columns}
+
+
+async def _seed_one_transaction(url: str, transaction_id: uuid.UUID) -> None:
+    """Insert one transaction before the fx_source column exists (the no-backfill target)."""
+    engine = create_async_engine(url)
+    insert = text(
+        "INSERT INTO transactions (id, user_id, occurred_on, name, kind, amount, currency) "
+        "VALUES (:id, :user_id, :occurred_on, :name, :kind, :amount, :currency)"
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            insert,
+            {
+                "id": transaction_id,
+                "user_id": uuid.UUID(_OWNER),
+                "occurred_on": datetime.date(2026, 6, 1),
+                "name": "Legacy USD spend",
+                "kind": "expense",
+                "amount": Decimal("50000.00"),
+                "currency": "USD",
+            },
+        )
+    await engine.dispose()
+
+
+async def _read_fx_source(url: str, transaction_id: uuid.UUID) -> str | None:
+    """Return the ``fx_source`` of the seeded transaction after the column add."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        result = await connection.execute(
+            text("SELECT fx_source FROM transactions WHERE id = :id"),
+            {"id": transaction_id},
+        )
+        value = result.scalar_one()
+    await engine.dispose()
+    return value
+
+
+async def _read_preferred_rate_source(url: str, settings_id: uuid.UUID) -> str:
+    """Return the ``preferred_rate_source`` of the seeded app_settings row after the back-fill."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        result = await connection.execute(
+            text("SELECT preferred_rate_source FROM app_settings WHERE id = :id"),
+            {"id": settings_id},
+        )
+        value = result.scalar_one()
+    await engine.dispose()
+    return str(value)
 
 
 async def _app_settings_columns(url: str) -> list[str]:

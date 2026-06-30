@@ -63,6 +63,13 @@ class TransactionRecord(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     usd_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    # The FX snapshot's rate provenance (ADR-148): a short token for the source the
+    # client used to capture the rate (e.g. ``'bolsa'``, ``'mep'``, ``'oficial'``,
+    # ``'manual'``, ``'backfill'``). Distinct from ``fx_rate_type`` (ADR-029): the
+    # snapshot ``fx_source`` is the per-row provenance the client supplies on write,
+    # while ``fx_rate_type`` is the legacy rate family. Nullable: rows without a
+    # snapshot (pre-backfill, statement imports pending rate-fill) carry ``None``.
+    fx_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
     fx_rate_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     fx_rate_as_of: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True),

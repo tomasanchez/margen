@@ -23,6 +23,8 @@ from margen_api.service_layer.settings_repository import AbstractSettingsReposit
 # ``"C"`` and the activity ``"services"`` (the MVP Monotributo path, ADR-046).
 DEFAULT_DISPLAY_CURRENCY = "ARS"
 DEFAULT_FX_RATE_TYPE = "MEP"
+# The persisted preferred FX rate source default (ADR-151): the MEP/bolsa rate.
+DEFAULT_PREFERRED_RATE_SOURCE = "bolsa"
 DEFAULT_MONOTRIBUTO_CATEGORY = "C"
 DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE = "services"
 # Brand-new users default to the Monotributo module OFF (ADR-126); existing rows
@@ -35,6 +37,7 @@ def _to_read_model(record: AppSettingsRecord) -> AppSettings:
     return AppSettings(
         preferred_display_currency=record.preferred_display_currency,
         fx_default_rate_type=record.fx_default_rate_type,
+        preferred_rate_source=record.preferred_rate_source,
         monotributo_current_category=record.monotributo_current_category,
         monotributo_activity_type=record.monotributo_activity_type,
         monotributo_enabled=record.monotributo_enabled,
@@ -42,10 +45,11 @@ def _to_read_model(record: AppSettingsRecord) -> AppSettings:
 
 
 def _defaults() -> AppSettings:
-    """Return the documented default settings (ADR-054, ADR-126)."""
+    """Return the documented default settings (ADR-054, ADR-126, ADR-151)."""
     return AppSettings(
         preferred_display_currency=DEFAULT_DISPLAY_CURRENCY,
         fx_default_rate_type=DEFAULT_FX_RATE_TYPE,
+        preferred_rate_source=DEFAULT_PREFERRED_RATE_SOURCE,
         monotributo_current_category=DEFAULT_MONOTRIBUTO_CATEGORY,
         monotributo_activity_type=DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
         monotributo_enabled=DEFAULT_MONOTRIBUTO_ENABLED,
@@ -76,6 +80,7 @@ class SqlAlchemySettingsRepository(AbstractSettingsRepository):
         *,
         preferred_display_currency: str | None = None,
         fx_default_rate_type: str | None = None,
+        preferred_rate_source: str | None = None,
         monotributo_current_category: str | None = None,
         monotributo_activity_type: str | None = None,
         monotributo_enabled: bool | None = None,
@@ -88,6 +93,8 @@ class SqlAlchemySettingsRepository(AbstractSettingsRepository):
             record.preferred_display_currency = preferred_display_currency
         if fx_default_rate_type is not None:
             record.fx_default_rate_type = fx_default_rate_type
+        if preferred_rate_source is not None:
+            record.preferred_rate_source = preferred_rate_source
         if monotributo_current_category is not None:
             record.monotributo_current_category = monotributo_current_category
         if monotributo_activity_type is not None:
@@ -102,6 +109,7 @@ class SqlAlchemySettingsRepository(AbstractSettingsRepository):
             user_id=UUID(user_id),
             preferred_display_currency=DEFAULT_DISPLAY_CURRENCY,
             fx_default_rate_type=DEFAULT_FX_RATE_TYPE,
+            preferred_rate_source=DEFAULT_PREFERRED_RATE_SOURCE,
             monotributo_current_category=DEFAULT_MONOTRIBUTO_CATEGORY,
             monotributo_activity_type=DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
             monotributo_enabled=DEFAULT_MONOTRIBUTO_ENABLED,

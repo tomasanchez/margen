@@ -20,7 +20,11 @@ from margen_api.domain.models.exceptions import (
     UnknownCurrencyError,
     UnknownKindError,
 )
-from margen_api.domain.models.transaction import Transaction, build_transaction
+from margen_api.domain.models.transaction import (
+    Transaction,
+    build_transaction,
+    materialize_usd_amount,
+)
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
 
 A_DATE = date(2026, 6, 12)
@@ -267,6 +271,88 @@ class TestForeignExchangeHandling:
         assert transaction.fx_rate_type is None
         assert transaction.fx_rate_as_of is None
         assert transaction.has_complete_fx is False
+
+
+class TestFxSnapshotMaterialization:
+    """The FX snapshot materializes usd_amount as pure arithmetic (ADR-148, ADR-149)."""
+
+    def test_materialize_usd_amount_rounds_half_up(self):
+        """
+        GIVEN an ARS amount and an ARS-per-USD rate that does not divide evenly
+        WHEN the USD equivalent is materialized
+        THEN it is amount ÷ rate rounded HALF_UP to two decimals (ADR-148)
+        """
+        # 12345 / 1000 = 12.345 -> 12.35 (HALF_UP), not 12.34.
+        assert materialize_usd_amount(Decimal("12345"), Decimal("1000")) == Decimal("12.35")
+
+    async def test_snapshot_recomputes_usd_from_amount_and_rate(self):
+        """
+        GIVEN a USD row with an fx_source snapshot and a positive rate
+        WHEN the transaction is built
+        THEN usd_amount is re-materialized from amount ÷ rate, ignoring any supplied usd
+        """
+        # GIVEN — amount 50000 ARS at 1000 ARS/USD with a 'bolsa' snapshot.
+        transaction = _build(
+            currency=Currency.USD,
+            amount=Decimal("50000"),
+            usd_amount=Decimal("999"),  # stale client value, must be overwritten
+            fx_rate=Decimal("1000"),
+            fx_source="bolsa",
+        )
+
+        # THEN — the server-computed snapshot wins: 50000 / 1000 = 50.00.
+        assert transaction.usd_amount == Decimal("50.00")
+        assert transaction.fx_source == "bolsa"
+        assert transaction.has_complete_fx is True
+
+    async def test_legacy_usd_without_source_keeps_supplied_amount(self):
+        """
+        GIVEN a USD row carrying usd + rate but NO fx_source (the legacy ADR-029 flow)
+        WHEN the transaction is built
+        THEN the supplied usd_amount is preserved (no snapshot recompute)
+        """
+        # WHEN
+        transaction = _build(
+            currency=Currency.USD,
+            amount=Decimal("50"),
+            usd_amount=Decimal("50"),
+            fx_rate=Decimal("1000"),
+        )
+
+        # THEN — the legacy value stands; the snapshot recompute did not fire.
+        assert transaction.usd_amount == Decimal("50")
+        assert transaction.fx_source is None
+
+    async def test_non_decimal_rate_is_coerced_before_materializing(self):
+        """
+        GIVEN a USD snapshot whose fx_rate arrives as a plain int (not a Decimal)
+        WHEN the transaction is built
+        THEN the rate is coerced to Decimal and usd_amount is materialized from it
+        """
+        # WHEN — rate supplied as an int 1000, amount 50000 ARS.
+        transaction = _build(
+            currency=Currency.USD,
+            amount=Decimal("50000"),
+            fx_rate=1000,  # type: ignore[arg-type]
+            fx_source="bolsa",
+        )
+
+        # THEN — coerced to Decimal('1000') and materialized: 50000 / 1000 = 50.00.
+        assert transaction.fx_rate == Decimal("1000")
+        assert transaction.usd_amount == Decimal("50.00")
+
+    async def test_ars_row_drops_fx_source(self):
+        """
+        GIVEN an ARS transaction carrying an fx_source
+        WHEN the transaction is built
+        THEN fx_source is dropped to None alongside the rest of the FX block (ADR-029)
+        """
+        # WHEN
+        transaction = _build(currency=Currency.ARS, fx_rate=Decimal("1000"), fx_source="bolsa")
+
+        # THEN
+        assert transaction.fx_source is None
+        assert transaction.usd_amount is None
 
 
 class TestUnknownValueObjects:

@@ -22,6 +22,7 @@ from margen_api.domain.commands.statement import (
 from margen_api.domain.commands.transaction import (
     CreateTransaction,
     DeleteTransaction,
+    SetTransactionFxSnapshot,
     TransactionDocumentPayload,
     UpdateTransaction,
 )
@@ -30,7 +31,11 @@ from margen_api.domain.models.exceptions import (
     MergeTargetNotFoundError,
     TransactionNotFoundError,
 )
-from margen_api.domain.models.transaction import Transaction, build_transaction
+from margen_api.domain.models.transaction import (
+    Transaction,
+    build_transaction,
+    materialize_usd_amount,
+)
 from margen_api.domain.models.value_objects import Kind
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
 
@@ -44,6 +49,7 @@ _PATCHABLE_FIELDS = (
     "currency",
     "usd_amount",
     "fx_rate",
+    "fx_source",
     "fx_rate_type",
     "fx_rate_as_of",
     "category",
@@ -109,6 +115,7 @@ async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork
         currency=command.currency,
         usd_amount=command.usd_amount,
         fx_rate=command.fx_rate,
+        fx_source=command.fx_source,
         fx_rate_type=command.fx_rate_type,
         fx_rate_as_of=command.fx_rate_as_of,
         category=command.category,
@@ -257,6 +264,7 @@ def _create_statement_line(
         currency=line.currency,
         usd_amount=line.usd_amount,
         fx_rate=line.fx_rate,
+        fx_source=line.fx_source,
         fx_rate_type=line.fx_rate_type,
         fx_rate_as_of=line.fx_rate_as_of,
         category=line.category,
@@ -319,6 +327,7 @@ async def _merge_statement_line(
         currency=existing.currency,
         usd_amount=existing.usd_amount,
         fx_rate=existing.fx_rate,
+        fx_source=existing.fx_source,
         fx_rate_type=existing.fx_rate_type,
         fx_rate_as_of=existing.fx_rate_as_of,
         category=existing.category if existing.category else line.category,
@@ -403,6 +412,66 @@ async def update_transaction(command: UpdateTransaction, uow: AbstractUnitOfWork
         await uow.transactions.persist(patched)
         await uow.commit()
     return patched.id
+
+
+async def set_transaction_fx_snapshot(command: SetTransactionFxSnapshot, uow: AbstractUnitOfWork) -> UUID:
+    """Set or replace the FX snapshot on an existing transaction (ADR-148, ADR-149).
+
+    Loads the aggregate by identity scoped to the owner, overlays the client-supplied
+    ``fx_rate`` / ``fx_source``, and rebuilds it through the domain so ``usd_amount``
+    is re-materialized as pure arithmetic (``round(amount ÷ fx_rate, 2)``) — no FX feed
+    is ever called (ADR-149). Identity, ``created_at`` and ownership are preserved;
+    ``updated_at`` is refreshed (ADR-026). Powers the client import rate-fill and the
+    one-time historical backfill (ADR-149/150).
+
+    Args:
+        command: The validated snapshot request, addressing one aggregate by ``id``
+            and carrying the owner ``user_id`` (ADR-108).
+        uow: The unit of work providing the transaction repository.
+
+    Returns:
+        The UUID identity of the snapshotted transaction.
+
+    Raises:
+        TransactionNotFoundError: When no transaction owned by ``user_id`` matches
+            ``command.id`` (a cross-tenant id is not found, ADR-108/ADR-111).
+    """
+    async with uow:
+        existing = await uow.transactions.get(command.id, command.user_id)
+        if existing is None:
+            raise TransactionNotFoundError(command.id)
+        # The snapshot setter is the explicit backfill/rate-fill path (ADR-149): always
+        # re-materialize the USD figure from the authoritative amount, even when no
+        # fx_source is given. Passing the computed usd_amount makes the recompute hold
+        # for a USD row whether or not the domain's snapshot-keyed recompute fires.
+        usd_amount = materialize_usd_amount(existing.amount, command.fx_rate)
+        snapshotted = build_transaction(
+            transaction_id=existing.id,
+            created_at=existing.created_at,
+            updated_at=datetime.now(UTC),
+            user_id=existing.user_id,
+            occurred_on=existing.occurred_on,
+            name=existing.name,
+            kind=existing.kind,
+            amount=existing.amount,
+            currency=existing.currency,
+            usd_amount=usd_amount,
+            fx_rate=command.fx_rate,
+            fx_source=command.fx_source,
+            fx_rate_type=existing.fx_rate_type,
+            fx_rate_as_of=existing.fx_rate_as_of,
+            category=existing.category,
+            payment_method=existing.payment_method,
+            card=existing.card,
+            notes=existing.notes,
+            recurring=existing.recurring,
+            counts_toward_monotributo=existing.counts_toward_monotributo,
+            statement_document_id=existing.statement_document_id,
+            account_id=existing.account_id,
+        )
+        await uow.transactions.persist(snapshotted)
+        await uow.commit()
+    return snapshotted.id
 
 
 async def delete_transaction(command: DeleteTransaction, uow: AbstractUnitOfWork) -> None:

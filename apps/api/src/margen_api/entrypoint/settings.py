@@ -20,6 +20,7 @@ from margen_api.domain.models.monotributo_scale import UnknownCategoryError
 from margen_api.domain.models.settings import (
     UnknownDisplayCurrencyError,
     UnknownFxRateTypeError,
+    UnknownRateSourceError,
 )
 from margen_api.entrypoint.dependencies import AuthUser, Bus, SettingsReader
 from margen_api.entrypoint.schemas import ResponseModel
@@ -69,7 +70,12 @@ async def update_settings(
     """
     try:
         settings = await bus.handle(body.to_command(user.id))
-    except (UnknownDisplayCurrencyError, UnknownFxRateTypeError, UnknownCategoryError) as error:
+    except (
+        UnknownDisplayCurrencyError,
+        UnknownFxRateTypeError,
+        UnknownRateSourceError,
+        UnknownCategoryError,
+    ) as error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(error),

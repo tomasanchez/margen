@@ -21,6 +21,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
+from margen_api.domain.models.value_objects import Currency
 from margen_api.entrypoint.budget_income_schemas import (
     BudgetIncomeResponse,
     BudgetIncomeUpsertRequest,
@@ -127,13 +128,21 @@ async def get_suggested_base(
             examples=["2026-06"],
         ),
     ] = None,
+    currency: Annotated[
+        Currency,
+        Query(description="The estimate currency: 'ARS' (default) or 'USD' (ADR-152)."),
+    ] = Currency.ARS,
 ) -> ResponseModel[SuggestedBaseResponse]:
-    """Return the conservative variable-income suggestion, or ``null`` (ADR-139).
+    """Return the conservative variable-income suggestion (ADR-139, ADR-152, ADR-153).
 
-    Applies the lower-of-trailing-12-average-vs-lowest-month rule over the caller's
-    income ledger ending at ``month``; ``null`` when fewer than 12 months exist.
-    Scoped to ``user.id`` (ADR-130). A malformed ``month`` yields ``422``.
+    Applies the lower-of(average, lowest-month) rule over the caller's inflow ledger
+    ending at ``month``, estimating from the AVAILABLE months (≥ 1); ``suggestedBase``
+    is ``null`` ONLY when zero inflow months exist (ADR-153). ``monthsAvailable`` and
+    ``isSparse`` let the UI caveat a partial-year estimate. ``currency`` selects the
+    summed column (ADR-152): ``USD`` sums the stored ``usd_amount`` snapshot on inflow
+    rows (excluding nulls), ``ARS`` (default) sums ``amount``. Scoped to ``user.id``
+    (ADR-130). A malformed ``month`` yields ``422``.
     """
     target = _parse_month(month or _current_month())
-    suggested = await reader.suggested_base(target, user.id)
-    return ResponseModel(data=SuggestedBaseResponse(suggested_base=suggested))
+    suggested = await reader.suggested_base(target, user.id, currency)
+    return ResponseModel(data=SuggestedBaseResponse.from_read_model(suggested))

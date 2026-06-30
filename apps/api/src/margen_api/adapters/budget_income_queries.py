@@ -22,9 +22,9 @@ from margen_api.adapters.models.budget_income import BudgetIncomeRecord
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.adapters.queries import _as_decimal
 from margen_api.domain.models.budget import month_start
-from margen_api.domain.models.budget_income import suggest_variable_base
+from margen_api.domain.models.budget_income import is_sparse_history, suggest_variable_base
 from margen_api.domain.models.value_objects import Currency, Kind
-from margen_api.service_layer.budget_income_read_models import BudgetIncomeReadModel
+from margen_api.service_layer.budget_income_read_models import BudgetIncomeReadModel, SuggestedBaseReadModel
 from margen_api.service_layer.budget_income_reader import AbstractBudgetIncomeReader
 from margen_api.service_layer.summaries import add_months, month_key
 
@@ -84,34 +84,54 @@ class SqlAlchemyBudgetIncomeReader(AbstractBudgetIncomeReader):
             floor_source=row.floor_source if row.floor_amount is not None else None,
         )
 
-    async def suggested_base(self, month: date, user_id: str) -> Decimal | None:
-        """Apply the lower-of variable-income rule over the trailing-12 ledger (ADR-139)."""
+    async def suggested_base(
+        self,
+        month: date,
+        user_id: str,
+        currency: Currency = Currency.ARS,
+    ) -> SuggestedBaseReadModel:
+        """Apply the lower-of variable-income rule over the trailing ledger (ADR-139, ADR-152, ADR-153)."""
         owner = UUID(user_id)
         reference = month_start(month)
-        monthly = await self._trailing_monthly_inflow(reference, owner)
-        return suggest_variable_base(monthly)
+        monthly = await self._trailing_monthly_inflow(reference, owner, currency)
+        months_available = len(monthly)
+        return SuggestedBaseReadModel(
+            suggested_base=suggest_variable_base(monthly),
+            months_available=months_available,
+            is_sparse=is_sparse_history(months_available),
+            currency=currency,
+        )
 
-    async def _trailing_monthly_inflow(self, reference: date, owner: UUID) -> list[Decimal]:
-        """Return the owner's per-month inflow totals over the trailing-12 window (ADR-139).
+    async def _trailing_monthly_inflow(self, reference: date, owner: UUID, currency: Currency) -> list[Decimal]:
+        """Return the owner's per-month inflow totals over the trailing-12 window (ADR-139, ADR-152).
 
-        Only months that actually have inflow rows are summed; the suggestion rule
-        treats fewer than 12 distinct months as insufficient history and returns
-        ``None``, so a sparse ledger correctly degrades to a manual base. Rows are
-        bucketed by month in Python (rather than a SQL ``date_trunc`` /
-        ``strftime``) so the query stays portable across the PostgreSQL production
-        target and the in-memory SQLite e2e tier (ADR-019).
+        Only months that actually have inflow rows are summed; the relaxed suggestion
+        rule (ADR-153) estimates from whatever months exist (≥ 1), so the returned
+        count IS the ``monthsAvailable`` figure. ``currency`` selects the summed value
+        (ADR-152): ``USD`` sums each inflow row's stored ``usd_amount`` snapshot and
+        EXCLUDES rows lacking one (the same unconverted-exclusion as the budget spend
+        path), ``ARS`` sums ``amount``. Rows are bucketed by month in Python (rather
+        than a SQL ``date_trunc`` / ``strftime``) so the query stays portable across
+        the PostgreSQL production target and the in-memory SQLite e2e tier (ADR-019).
         """
+        is_usd = currency is Currency.USD
+        value_column = TransactionRecord.usd_amount if is_usd else TransactionRecord.amount
         window_start = add_months(reference, -(_TRAILING_MONTHS - 1))
         window_end = add_months(reference, 1)  # exclusive upper bound
-        statement = select(TransactionRecord.occurred_on, TransactionRecord.amount).where(
+        predicates = [
             TransactionRecord.user_id == owner,
             TransactionRecord.kind.in_(_INFLOW_KINDS),
             TransactionRecord.occurred_on >= window_start,
             TransactionRecord.occurred_on < window_end,
-        )
+        ]
+        if is_usd:
+            # USD inflow sums the stored snapshot; rows without one are excluded so a
+            # null never poisons a month's total (ADR-152 unconverted-exclusion).
+            predicates.append(TransactionRecord.usd_amount.is_not(None))
+        statement = select(TransactionRecord.occurred_on, value_column.label("value")).where(*predicates)
         result = await self.session.execute(statement)
         totals: dict[date, Decimal] = {}
         for row in result.all():
             key = month_start(row.occurred_on)
-            totals[key] = totals.get(key, _ZERO) + _as_decimal(row.amount)
+            totals[key] = totals.get(key, _ZERO) + _as_decimal(row.value)
         return list(totals.values())

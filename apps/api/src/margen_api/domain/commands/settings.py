@@ -33,6 +33,8 @@ class UpdateSettings(Command):
             to set; ``None`` leaves it unchanged (ADR-056).
         fx_default_rate_type: The default FX rate type (``"MEP"`` or ``"official"``)
             to set; ``None`` leaves it unchanged.
+        preferred_rate_source: The preferred FX rate source (``"bolsa"`` or
+            ``"oficial"``) to set; ``None`` leaves it unchanged (ADR-151).
         monotributo_current_category: The category letter A-K to set; ``None``
             leaves it unchanged.
         monotributo_activity_type: The activity type (``"services"`` or
@@ -45,6 +47,7 @@ class UpdateSettings(Command):
     user_id: str
     preferred_display_currency: str | None = None
     fx_default_rate_type: str | None = None
+    preferred_rate_source: str | None = None
     monotributo_current_category: str | None = None
     monotributo_activity_type: str | None = None
     monotributo_enabled: bool | None = None

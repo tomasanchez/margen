@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import date
-from decimal import Decimal
 
-from margen_api.service_layer.budget_income_read_models import BudgetIncomeReadModel
+from margen_api.domain.models.value_objects import Currency
+from margen_api.service_layer.budget_income_read_models import BudgetIncomeReadModel, SuggestedBaseReadModel
 
 
 class AbstractBudgetIncomeReader(ABC):
@@ -36,18 +36,29 @@ class AbstractBudgetIncomeReader(ABC):
         """
 
     @abstractmethod
-    async def suggested_base(self, month: date, user_id: str) -> Decimal | None:
-        """Return the conservative variable-income suggestion, or ``None`` (ADR-139).
+    async def suggested_base(
+        self,
+        month: date,
+        user_id: str,
+        currency: Currency = Currency.ARS,
+    ) -> SuggestedBaseReadModel:
+        """Return the conservative variable-income suggestion for a month (ADR-139, ADR-153).
 
-        Applies the lower-of-trailing-12-average-vs-lowest-month rule over the
-        owner's income ledger ending at ``month``; ``None`` when fewer than 12 months
-        of history exist (the rule needs a full year). Suggestion only — the user
-        accepts it into the manual base (suggest/confirm, ADR-044).
+        Applies the lower-of(average, lowest-month) rule over the owner's inflow ledger
+        across the AVAILABLE months in the trailing window (ADR-153): the suggestion is
+        offered from a single month upward, with ``isSparse`` flagging a partial-year
+        estimate; only zero inflow months yield a ``None`` base. ``currency`` selects
+        the summed column (ADR-152): ``USD`` sums the stored ``usd_amount`` snapshot on
+        inflow rows (excluding nulls), ``ARS`` (default) sums ``amount``. Suggestion
+        only — the user accepts it into the manual base (suggest/confirm, ADR-044).
 
         Args:
             month: The reference month; the trailing-12 window ends at this month.
             user_id: The authenticated owner the ledger is scoped to.
+            currency: The estimate currency (ADR-152/153); ``ARS`` (default) sums
+                ``amount``, ``USD`` sums the ``usd_amount`` snapshot.
 
         Returns:
-            The suggested base, or ``None`` when history is insufficient.
+            The :class:`SuggestedBaseReadModel` carrying the base, the months backing
+            it, the sparse flag and the echoed currency.
         """

@@ -23,6 +23,7 @@ from margen_api.domain.commands.statement import ImportStatement
 from margen_api.domain.commands.transaction import (
     CreateTransaction,
     DeleteTransaction,
+    SetTransactionFxSnapshot,
     UpdateTransaction,
 )
 from margen_api.domain.commands.transfer import CreateTransfer, DeleteTransfer
@@ -38,6 +39,7 @@ from margen_api.service_layer.handlers import (
     create_transaction,
     delete_transaction,
     import_statement,
+    set_transaction_fx_snapshot,
     update_transaction,
 )
 from margen_api.service_layer.institution_handlers import create_institution, update_institution
@@ -49,6 +51,7 @@ from margen_api.service_layer.transfer_handlers import create_transfer, delete_t
 COMMAND_HANDLERS: dict[type, CommandHandler] = {
     CreateTransaction: create_transaction,
     UpdateTransaction: update_transaction,
+    SetTransactionFxSnapshot: set_transaction_fx_snapshot,
     DeleteTransaction: delete_transaction,
     ImportStatement: import_statement,
     CaptureMonotributoSnapshot: capture_monotributo_snapshot,

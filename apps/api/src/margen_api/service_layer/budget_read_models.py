@@ -139,6 +139,9 @@ class MonthlyBudget:
             (ADR-143). The user still picks.
         pressure: The income-pressure segment (constrained/stable/comfortable), or
             ``None`` when there is no income base (ADR-143).
+        unconverted: The count of the month's expense transactions lacking a USD
+            snapshot, surfaced so a USD spend total is never silently understated
+            (ADR-152). Always ``0`` for an ARS budget (ARS spend needs no snapshot).
     """
 
     month: str
@@ -148,3 +151,4 @@ class MonthlyBudget:
     floor: Floor
     suggested_strategy: str | None
     pressure: str | None
+    unconverted: int

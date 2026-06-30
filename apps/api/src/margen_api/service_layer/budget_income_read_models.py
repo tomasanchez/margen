@@ -38,3 +38,25 @@ class BudgetIncomeReadModel:
     source: str | None
     floor_amount: Decimal | None
     floor_source: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SuggestedBaseReadModel:
+    """The conservative variable-income suggestion for a month (ADR-139, ADR-153).
+
+    Attributes:
+        suggested_base: The lower-of(average, lowest-month) estimate over the
+            available inflow months, or ``None`` when zero inflow months exist
+            (ADR-153). Rounded to cents (ADR-025).
+        months_available: The count of distinct inflow months backing the estimate.
+        is_sparse: Whether fewer than 12 months back the estimate, so the frontend
+            can caveat it ("Estimated from N month(s) of history", ADR-153).
+        currency: The currency the estimate is denominated in; ``USD`` sums the
+            stored ``usd_amount`` snapshot on inflow rows, ``ARS`` sums ``amount``
+            (ADR-152/153).
+    """
+
+    suggested_base: Decimal | None
+    months_available: int
+    is_sparse: bool
+    currency: Currency

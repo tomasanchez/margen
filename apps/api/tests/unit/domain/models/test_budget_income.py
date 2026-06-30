@@ -100,14 +100,32 @@ class TestSuggestVariableBase:
         # THEN
         assert base == Decimal("100.00")
 
-    def test_fewer_than_twelve_months_returns_none(self):
+    def test_estimates_from_available_months_below_twelve(self):
         """
-        GIVEN fewer than 12 months of history
+        GIVEN fewer than 12 months of history (ADR-153 relaxes the 12-mo floor)
         WHEN the base is suggested
-        THEN it returns None (degrade to a manual base)
+        THEN it is the lower-of(average, lowest) over the AVAILABLE months, not None
         """
-        # WHEN / THEN
-        assert suggest_variable_base([Decimal("100")] * 11) is None
+        # GIVEN — three months: 100, 100, 40. Average 80 > lowest 40.
+        months = [Decimal("100"), Decimal("100"), Decimal("40")]
+
+        # WHEN
+        base = suggest_variable_base(months)
+
+        # THEN — the conservative lowest month, computed over the 3 available months.
+        assert base == Decimal("40")
+
+    def test_single_month_is_a_conservative_single_point_estimate(self):
+        """
+        GIVEN exactly one month of history
+        WHEN the base is suggested
+        THEN the average and lowest coincide, so the base is that single month (ADR-153)
+        """
+        # WHEN
+        base = suggest_variable_base([Decimal("100")])
+
+        # THEN
+        assert base == Decimal("100.00")
 
     def test_empty_history_returns_none(self):
         """

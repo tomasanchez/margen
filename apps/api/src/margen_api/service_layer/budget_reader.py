@@ -13,6 +13,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import date
 
+from margen_api.domain.models.value_objects import Currency
 from margen_api.service_layer.budget_read_models import CategoryHistory, MonthlyBudget
 
 
@@ -20,8 +21,13 @@ class AbstractBudgetReader(ABC):
     """Async, read-only query port for budgets vs actuals (ADR-125)."""
 
     @abstractmethod
-    async def monthly_budget(self, month: date, user_id: str) -> MonthlyBudget:
-        """Return the owner's per-category targets vs actual spend for a month (ADR-125, ADR-108).
+    async def monthly_budget(
+        self,
+        month: date,
+        user_id: str,
+        currency: Currency = Currency.ARS,
+    ) -> MonthlyBudget:
+        """Return the owner's per-category targets vs actual spend for a month (ADR-125, ADR-108, ADR-152).
 
         Joins the owner's per-category targets for ``month`` with the month's
         per-category expense totals (the same aggregation the summaries reader uses,
@@ -34,6 +40,9 @@ class AbstractBudgetReader(ABC):
             month: Any date within the requested calendar month; only its year and
                 month are significant.
             user_id: The authenticated owner the targets and spend are scoped to.
+            currency: The budget currency (ADR-152); ``ARS`` (default) sums the
+                authoritative amount, ``USD`` sums the stored ``usd_amount`` snapshot
+                and surfaces the unconverted count.
 
         Returns:
             The assembled :class:`MonthlyBudget`.

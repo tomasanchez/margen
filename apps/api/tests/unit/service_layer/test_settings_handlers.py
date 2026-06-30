@@ -16,6 +16,7 @@ from margen_api.domain.models.monotributo_scale import UnknownCategoryError
 from margen_api.domain.models.settings import (
     UnknownDisplayCurrencyError,
     UnknownFxRateTypeError,
+    UnknownRateSourceError,
 )
 from margen_api.service_layer.settings_handlers import update_settings
 from tests.fakes.persistence import FakeUnitOfWork
@@ -110,10 +111,28 @@ class TestPartialMerge:
         # THEN — defaults from the fake's single-row store.
         assert result.preferred_display_currency == "ARS"
         assert result.fx_default_rate_type == "MEP"
+        # The preferred rate source defaults to 'bolsa' (ADR-151).
+        assert result.preferred_rate_source == "bolsa"
         assert result.monotributo_current_category == "C"
         assert result.monotributo_activity_type == "services"
         # New users default to the Monotributo module OFF (ADR-126).
         assert result.monotributo_enabled is False
+        assert uow.committed is True
+
+    async def test_preferred_rate_source_round_trips(self):
+        """
+        GIVEN an empty unit of work
+        WHEN the preferred rate source is set to 'oficial'
+        THEN the field is applied and committed (ADR-151)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+
+        # WHEN
+        result = await update_settings(UpdateSettings(user_id=OWNER, preferred_rate_source="oficial"), uow)
+
+        # THEN
+        assert result.preferred_rate_source == "oficial"
         assert uow.committed is True
 
 
@@ -130,6 +149,7 @@ class TestNormalization:
             UpdateSettings(
                 user_id=OWNER,
                 preferred_display_currency="  usd  ",
+                preferred_rate_source="  OFICIAL  ",
                 monotributo_current_category=" h ",
                 monotributo_activity_type="  bienes  ",
             ),
@@ -138,6 +158,8 @@ class TestNormalization:
 
         # THEN
         assert result.preferred_display_currency == "USD"
+        # The rate source is trimmed and lower-cased (ADR-151).
+        assert result.preferred_rate_source == "oficial"
         assert result.monotributo_current_category == "H"
         assert result.monotributo_activity_type == "bienes"
 
@@ -173,4 +195,14 @@ class TestValidation:
         # WHEN / THEN
         with pytest.raises(UnknownCategoryError):
             await update_settings(UpdateSettings(user_id=OWNER, monotributo_current_category="Z"), uow)
+        assert uow.committed is False
+
+    async def test_unknown_rate_source_raises(self):
+        """GIVEN an unknown rate source WHEN updated THEN the rate-source error is raised, no commit (ADR-151)."""
+        # GIVEN
+        uow = FakeUnitOfWork()
+
+        # WHEN / THEN
+        with pytest.raises(UnknownRateSourceError):
+            await update_settings(UpdateSettings(user_id=OWNER, preferred_rate_source="blue"), uow)
         assert uow.committed is False

@@ -543,3 +543,95 @@ class TestReprice:
 
         # THEN
         assert _line(data, "Housing")["target"] == "122000.00"
+
+
+async def _seed_usd_expense(
+    client: httpx.AsyncClient,
+    *,
+    category: str,
+    amount: str,
+    rate: str | None,
+    occurred_on: str = A_DATE,
+) -> dict:
+    """POST a USD expense and (optionally) set its FX snapshot; return the created row.
+
+    When ``rate`` is given the snapshot PUT materializes ``usd_amount`` from
+    ``amount ÷ rate`` (ADR-148/149); when ``None`` the row stays unsnapshotted so it
+    is excluded from USD spend and counted as unconverted (ADR-152).
+    """
+    created = await client.post(
+        TRANSACTIONS,
+        json={
+            "occurredOn": occurred_on,
+            "name": f"{category} usd spend",
+            "kind": "expense",
+            "amountNum": amount,
+            "currency": "USD",
+            "category": category,
+        },
+    )
+    assert created.status_code == status.HTTP_201_CREATED, created.text
+    row = created.json()["data"]
+    if rate is not None:
+        snap = await client.put(f"{TRANSACTIONS}/{row['id']}/fx", json={"fxRate": rate, "fxSource": "bolsa"})
+        assert snap.status_code == status.HTTP_200_OK, snap.text
+        row = snap.json()["data"]
+    return row
+
+
+class TestUsdBudgetSpend:
+    """GET /budgets?currency=USD sums usd_amount and surfaces unconverted (ADR-152)."""
+
+    async def test_ars_default_is_unchanged(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a USD expense lacking a snapshot
+        WHEN the budgets surface is requested without a currency (ARS default)
+        THEN the ARS spend path is used and unconverted is 0 (ADR-152 preserves ARS)
+        """
+        # GIVEN — a USD expense of 50000 ARS-equivalent, no snapshot.
+        await _seed_usd_expense(test_client, category="Food", amount="50000", rate=None)
+
+        # WHEN
+        data = (await test_client.get(BUDGETS, params={"month": JUNE})).json()["data"]
+
+        # THEN — ARS spend sums the authoritative amount; unconverted stays 0.
+        assert data["currency"] == "ARS"
+        assert _line(data, "Food")["spent"] == "50000.00"
+        assert data["unconverted"] == 0
+
+    async def test_usd_sums_snapshot_and_excludes_unconverted(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN one snapshotted USD expense and one without a snapshot in the same category
+        WHEN the budgets surface is requested with currency=USD
+        THEN spent sums only the snapshot's usd_amount and unconverted counts the other (ADR-152)
+        """
+        # GIVEN — 50000 ARS @ 1000 -> usd 50.00 (snapshotted); 30000 ARS with no snapshot.
+        await _seed_usd_expense(test_client, category="Food", amount="50000", rate="1000")
+        await _seed_usd_expense(test_client, category="Food", amount="30000", rate=None)
+
+        # WHEN
+        data = (await test_client.get(BUDGETS, params={"month": JUNE, "currency": "USD"})).json()["data"]
+
+        # THEN — only the snapshotted row contributes; the unsnapshotted row is counted.
+        assert data["currency"] == "USD"
+        assert _line(data, "Food")["spent"] == "50.00"
+        assert data["unconverted"] == 1
+
+    async def test_usd_target_remaining_in_usd(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a USD target and a snapshotted USD expense
+        WHEN the USD budgets surface is requested
+        THEN remaining = target - usd spend, all in USD
+        """
+        # GIVEN
+        await _seed_usd_expense(test_client, category="Food", amount="50000", rate="1000")
+        await _put_budget(test_client, category="Food", month=JUNE, amount="200", currency="USD")
+
+        # WHEN
+        data = (await test_client.get(BUDGETS, params={"month": JUNE, "currency": "USD"})).json()["data"]
+
+        # THEN — 200 target - 50 spent = 150 remaining.
+        food = _line(data, "Food")
+        assert food["target"] == "200.00"
+        assert food["spent"] == "50.00"
+        assert food["remaining"] == "150.00"

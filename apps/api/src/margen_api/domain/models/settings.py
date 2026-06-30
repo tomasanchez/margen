@@ -22,6 +22,13 @@ KNOWN_DISPLAY_CURRENCIES: frozenset[str] = frozenset(currency.value for currency
 # so the settable set is the live-rate subset dolarapi.com exposes.
 KNOWN_FX_DEFAULT_RATE_TYPES: frozenset[str] = frozenset({FxRateType.MEP.value, FxRateType.OFFICIAL.value})
 
+# Preferred FX rate sources the settings surface accepts (ADR-151). A short
+# closed set: ``"bolsa"`` (the MEP/bolsa rate, default) and ``"oficial"`` (the
+# official rate). Drives transaction-capture suggestions, the client-driven
+# backfill default, and USD budget conversion. Tolerant string column (no schema
+# enum), validated here so the boundary stays a thin translation layer.
+KNOWN_RATE_SOURCES: frozenset[str] = frozenset({"bolsa", "oficial"})
+
 
 class UnknownDisplayCurrencyError(Exception):
     """Raised when a display currency is not a known ``{ARS, USD}`` value (ADR-054).
@@ -47,3 +54,16 @@ class UnknownFxRateTypeError(Exception):
     def __init__(self, rate_type: object) -> None:
         self.rate_type = rate_type
         super().__init__(f"unknown FX default rate type: {rate_type!r} (expected one of MEP, official)")
+
+
+class UnknownRateSourceError(Exception):
+    """Raised when a preferred rate source is not a known ``{bolsa, oficial}`` value (ADR-151).
+
+    The settings write path raises this so the boundary can translate it into a
+    ``422 Unprocessable Entity`` (ADR-030). The carried ``rate_source`` lets the
+    entrypoint build a meaningful message.
+    """
+
+    def __init__(self, rate_source: object) -> None:
+        self.rate_source = rate_source
+        super().__init__(f"unknown preferred rate source: {rate_source!r} (expected one of bolsa, oficial)")

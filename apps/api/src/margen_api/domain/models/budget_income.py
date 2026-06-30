@@ -34,10 +34,11 @@ from margen_api.domain.models.value_objects import Currency
 ZERO = Decimal("0")
 CENTS = Decimal("0.01")
 
-# The variable-income base needs a full year of ledger history to be meaningful
-# (product-deliverable §2.1 / §5.7); below this it degrades to a manual base
-# (the suggestion returns ``None``).
-_MIN_MONTHS_FOR_VARIABLE_BASE = 12
+# The variable-income suggestion is "full confidence" only with a year of history
+# (product-deliverable §2.1 / §5.7). Below this it is still offered (ADR-153) but the
+# response flags it as sparse so the UI can caveat it. The hard floor is now a single
+# inflow month: with zero months there is nothing to estimate from.
+_FULL_HISTORY_MONTHS = 12
 
 # Provenance tokens for the income base and the floor (ADR-139, ADR-143). Tolerant
 # strings (no schema enum): ``manual`` is the MVP source; ``monotributo`` (income)
@@ -155,29 +156,47 @@ def build_budget_income(
     )
 
 
-def suggest_variable_base(monthly_incomes: Sequence[Decimal]) -> Decimal | None:
-    """Suggest a conservative variable-income base from the income ledger (ADR-139).
+def is_sparse_history(months_available: int) -> bool:
+    """Return whether an income estimate is backed by fewer than a full year (ADR-153).
 
-    The research's headline variable-income rule (product-deliverable §2.1): the base
-    is the **lower of** the trailing-12-month average (``Σ / 12``) and the lowest
-    single month, so essentials are budgeted from a conservative floor and only
-    better-than-base months feed the true-up. Pure and feed-free: the adapter
-    supplies the trailing-12 monthly income totals; this applies the rule.
-
-    Returns ``None`` when fewer than 12 months of history are supplied — the rule is
-    not meaningful without a full year, so the UI degrades to a manual base
-    (product-deliverable §5.7). The suggestion is offered for the user to accept into
-    the manual field (suggest/confirm, ADR-044); it is never auto-applied.
+    Drives the ``isSparse`` flag the API surfaces so the frontend can caveat a
+    suggestion built from a partial ledger ("Estimated from N month(s) of history").
 
     Args:
-        monthly_incomes: The trailing-12-month per-month income totals (any order;
-            most recent windows pass exactly 12 values).
+        months_available: The count of distinct inflow months backing the estimate.
 
     Returns:
-        The suggested base rounded to cents, or ``None`` when there are fewer than
-        12 months of history.
+        ``True`` when fewer than 12 months back the estimate, ``False`` otherwise.
     """
-    if len(monthly_incomes) < _MIN_MONTHS_FOR_VARIABLE_BASE:
+    return months_available < _FULL_HISTORY_MONTHS
+
+
+def suggest_variable_base(monthly_incomes: Sequence[Decimal]) -> Decimal | None:
+    """Suggest a conservative variable-income base from the income ledger (ADR-139, ADR-153).
+
+    The research's headline variable-income rule (product-deliverable §2.1): the base
+    is the **lower of** the average over the available months (``Σ / n``) and the
+    lowest single month, so essentials are budgeted from a conservative floor and only
+    better-than-base months feed the true-up. Pure and feed-free: the adapter supplies
+    the per-month income totals over the trailing window; this applies the rule.
+
+    Estimates from **available months (≥ 1)** rather than requiring a full year
+    (ADR-153, amending ADR-139): with a single month, the average and lowest coincide
+    — a conservative single-data-point estimate. Returns ``None`` ONLY when zero inflow
+    months exist (nothing to estimate from). The suggestion is offered for the user to
+    accept into the manual field (suggest/confirm, ADR-044); it is never auto-applied.
+    Sparse estimates (< 12 months) are flagged via :func:`is_sparse_history` so the UI
+    can caveat them.
+
+    Args:
+        monthly_incomes: The per-month income totals over the trailing window (any
+            order); empty when the owner has no inflow history.
+
+    Returns:
+        The suggested base rounded to cents, or ``None`` when there are zero months
+        of inflow history.
+    """
+    if not monthly_incomes:
         return None
     average = (sum(monthly_incomes, ZERO) / Decimal(len(monthly_incomes))).quantize(CENTS, rounding=ROUND_HALF_UP)
     return min(average, min(monthly_incomes))

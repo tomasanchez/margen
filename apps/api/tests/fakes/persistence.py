@@ -59,6 +59,7 @@ from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
 # Documented default settings used when the fake's settings store is empty (ADR-054).
 _DEFAULT_DISPLAY_CURRENCY = "ARS"
 _DEFAULT_FX_RATE_TYPE = "MEP"
+_DEFAULT_PREFERRED_RATE_SOURCE = "bolsa"
 _DEFAULT_MONOTRIBUTO_CATEGORY = "C"
 _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE = "services"
 # Brand-new users default to the Monotributo module OFF (ADR-126).
@@ -403,15 +404,18 @@ class FakeSettingsRepository(AbstractSettingsRepository):
         *,
         preferred_display_currency: str | None = None,
         fx_default_rate_type: str | None = None,
+        preferred_rate_source: str | None = None,
         monotributo_current_category: str | None = None,
         monotributo_activity_type: str | None = None,
         monotributo_enabled: bool | None = None,
     ) -> AppSettings:
-        """Merge only the provided fields onto the owner's settings row (ADR-110, ADR-126)."""
+        """Merge only the provided fields onto the owner's settings row (ADR-110, ADR-126, ADR-151)."""
         if preferred_display_currency is not None:
             self._settings["preferred_display_currency"] = preferred_display_currency
         if fx_default_rate_type is not None:
             self._settings["fx_default_rate_type"] = fx_default_rate_type
+        if preferred_rate_source is not None:
+            self._settings["preferred_rate_source"] = preferred_rate_source
         if monotributo_current_category is not None:
             self._settings["current_category"] = monotributo_current_category
         if monotributo_activity_type is not None:
@@ -425,6 +429,7 @@ class FakeSettingsRepository(AbstractSettingsRepository):
         return AppSettings(
             preferred_display_currency=str(self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY)),
             fx_default_rate_type=str(self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE)),
+            preferred_rate_source=str(self._settings.get("preferred_rate_source", _DEFAULT_PREFERRED_RATE_SOURCE)),
             monotributo_current_category=str(self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY)),
             monotributo_activity_type=str(self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE)),
             monotributo_enabled=bool(self._settings.get("monotributo_enabled", _DEFAULT_MONOTRIBUTO_ENABLED)),
@@ -886,11 +891,18 @@ class FakeBudgetReader(AbstractBudgetReader):
         self._history = history if history is not None else CategoryHistory(categories=[])
         self.requested_month: date | None = None
         self.requested_user_id: str | None = None
+        self.requested_currency: Currency | None = None
 
-    async def monthly_budget(self, month: date, user_id: str) -> MonthlyBudget:
-        """Record the requested month and owner and return the canned budget (ADR-108)."""
+    async def monthly_budget(
+        self,
+        month: date,
+        user_id: str,
+        currency: Currency = Currency.ARS,
+    ) -> MonthlyBudget:
+        """Record the requested month, owner and currency and return the canned budget (ADR-108, ADR-152)."""
         self.requested_month = month
         self.requested_user_id = user_id
+        self.requested_currency = currency
         return self._budget
 
     async def category_history(self, month: date, user_id: str) -> CategoryHistory:
@@ -1000,6 +1012,7 @@ class FakeSettingsReader(AbstractSettingsReader):
         return AppSettings(
             preferred_display_currency=str(self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY)),
             fx_default_rate_type=str(self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE)),
+            preferred_rate_source=str(self._settings.get("preferred_rate_source", _DEFAULT_PREFERRED_RATE_SOURCE)),
             monotributo_current_category=str(self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY)),
             monotributo_activity_type=str(self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE)),
             monotributo_enabled=bool(self._settings.get("monotributo_enabled", _DEFAULT_MONOTRIBUTO_ENABLED)),
@@ -1018,6 +1031,7 @@ def _project(transaction: Transaction) -> TransactionReadModel:
         currency=transaction.currency,
         usd_amount=transaction.usd_amount,
         fx_rate=transaction.fx_rate,
+        fx_source=transaction.fx_source,
         fx_rate_type=transaction.fx_rate_type,
         fx_rate_as_of=transaction.fx_rate_as_of,
         category=transaction.category,

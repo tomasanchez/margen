@@ -23,6 +23,9 @@ class AppSettings:
             ``"USD"``); a frontend display preference only (ADR-056).
         fx_default_rate_type: The default FX rate-type token (``"MEP"`` or
             ``"official"``) the frontend uses to convert for the USD display.
+        preferred_rate_source: The persisted preferred FX rate source (``"bolsa"``
+            or ``"oficial"``, default ``"bolsa"``) driving transaction-capture
+            suggestions, the backfill default, and USD budget conversion (ADR-151).
         monotributo_current_category: The category letter A-K in effect for the
             Monotributo trailing-12-month calculation (ADR-046).
         monotributo_activity_type: ``"services"`` or ``"bienes"`` (MVP uses
@@ -36,6 +39,7 @@ class AppSettings:
 
     preferred_display_currency: str
     fx_default_rate_type: str
+    preferred_rate_source: str
     monotributo_current_category: str
     monotributo_activity_type: str
     monotributo_enabled: bool

@@ -21,7 +21,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from margen_api.domain.commands.budget import ApplySavingProfile, ClearBudget, RepriceMonth
 from margen_api.domain.models.exceptions import MissingIncomeBaseError, UnknownSavingProfileError
-from margen_api.domain.models.value_objects import BudgetKind
+from margen_api.domain.models.value_objects import BudgetKind, Currency
 from margen_api.entrypoint.budgets_schemas import (
     ApplyProfileRequest,
     ApplyProfileResponse,
@@ -83,17 +83,25 @@ async def monthly_budget(
             examples=["2026-06"],
         ),
     ] = None,
+    currency: Annotated[
+        Currency,
+        Query(description="The budget currency: 'ARS' (default) or 'USD' (ADR-152)."),
+    ] = Currency.ARS,
 ) -> ResponseModel[MonthlyBudgetResponse]:
-    """Return the caller's per-category targets vs actual spend for a month (ADR-125, ADR-108).
+    """Return the caller's per-category targets vs actual spend for a month (ADR-125, ADR-108, ADR-152).
 
     Lists every expense category with its ``target`` (the budget amount, or ``null``
     when unset), its ``spent`` (the month's actual expense total for the category,
     from the summaries aggregation, ADR-042) and ``remaining`` (``target - spent``,
     ``null`` when no target). Scoped to ``user.id`` so a caller only sees their own
-    budgets and spend (ADR-108). A malformed ``month`` yields ``422``.
+    budgets and spend (ADR-108). ``currency`` denominates the spend path (ADR-152):
+    ``ARS`` (default, unchanged) sums the authoritative amount; ``USD`` sums each
+    category's stored ``usd_amount`` snapshot, excludes rows lacking one, and returns
+    their count as ``unconverted``. The response echoes the requested ``currency``. A
+    malformed ``month`` yields ``422``.
     """
     target = _parse_month(month or _current_month())
-    model = await reader.monthly_budget(target, user.id)
+    model = await reader.monthly_budget(target, user.id, currency)
     return ResponseModel(data=MonthlyBudgetResponse.from_read_model(model))
 
 

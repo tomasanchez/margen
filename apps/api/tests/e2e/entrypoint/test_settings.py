@@ -88,12 +88,15 @@ class TestGetSettings:
         assert set(data) == {
             "preferredDisplayCurrency",
             "fxDefaultRateType",
+            "preferredRateSource",
             "monotributoCurrentCategory",
             "monotributoActivityType",
             "monotributoEnabled",
         }
         assert data["preferredDisplayCurrency"] == "ARS"
         assert data["fxDefaultRateType"] == "MEP"
+        # The persisted preferred rate source defaults to 'bolsa' (ADR-151).
+        assert data["preferredRateSource"] == "bolsa"
         assert data["monotributoCurrentCategory"] == "C"
         assert data["monotributoActivityType"] == "services"
         # New users default to the Monotributo module OFF (ADR-126).
@@ -175,6 +178,21 @@ class TestPatchSettings:
         assert data["monotributoCurrentCategory"] == "K"
         assert data["fxDefaultRateType"] == "official"
 
+    async def test_preferred_rate_source_round_trips(self, client: httpx.AsyncClient):
+        """
+        GIVEN a new user whose preferred rate source defaults to 'bolsa' (ADR-151)
+        WHEN a PATCH sets it to 'oficial'
+        THEN the PATCH echoes it and a later GET reflects the committed value
+        """
+        # WHEN — change only the preferred rate source.
+        patched = await client.patch(SETTINGS, json={"preferredRateSource": "oficial"})
+
+        # THEN — the PATCH echoes it and the subsequent GET sees it committed.
+        assert patched.status_code == status.HTTP_200_OK
+        assert patched.json()["data"]["preferredRateSource"] == "oficial"
+        data = (await client.get(SETTINGS)).json()["data"]
+        assert data["preferredRateSource"] == "oficial"
+
     async def test_enabling_monotributo_round_trips(self, client: httpx.AsyncClient):
         """
         GIVEN a new user with the Monotributo module off by default (ADR-126)
@@ -195,6 +213,7 @@ class TestPatchSettings:
         [
             ({"preferredDisplayCurrency": "EUR"}, "bad currency"),
             ({"fxDefaultRateType": "manual"}, "bad FX default"),
+            ({"preferredRateSource": "blue"}, "bad rate source"),
             ({"monotributoCurrentCategory": "Z"}, "bad category"),
         ],
     )

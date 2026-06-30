@@ -117,18 +117,22 @@ class TestBudgetIncomeRoundTrip:
 class TestSuggestedBase:
     """GET /budget-income/suggested applies the lower-of rule over the income ledger."""
 
-    async def test_suggested_is_null_under_twelve_months(self, test_client: httpx.AsyncClient):
+    async def test_suggested_is_null_with_zero_inflow_months(self, test_client: httpx.AsyncClient):
         """
         GIVEN a fresh ledger (no inflow rows)
         WHEN the suggested base is requested
-        THEN it is null (the lower-of rule needs 12 months)
+        THEN it is null — the relaxed rule still needs ≥ 1 inflow month (ADR-153)
         """
         # WHEN
         response = await test_client.get(f"{BUDGET_INCOME}/suggested", params={"month": JUNE})
 
         # THEN
+        data = response.json()["data"]
         assert response.status_code == status.HTTP_200_OK
-        assert response.json()["data"]["suggestedBase"] is None
+        assert data["suggestedBase"] is None
+        assert data["monthsAvailable"] == 0
+        assert data["isSparse"] is True
+        assert data["currency"] == "ARS"
 
     async def test_suggested_is_lower_of_average_and_lowest_month(self, test_client: httpx.AsyncClient):
         """
@@ -195,3 +199,93 @@ class TestOwnership:
         # THEN
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["data"]["amount"] is None
+
+
+class TestSuggestedBaseRelaxedAndUsd:
+    """The suggestion estimates from available months and supports USD (ADR-152, ADR-153)."""
+
+    async def _seed_income(self, client: httpx.AsyncClient, *, month: str, amount: str) -> None:
+        """POST an ARS income inflow for a month, asserting 201."""
+        response = await client.post(
+            "/api/v1/transactions",
+            json={"occurredOn": f"{month}-10", "name": "Payout", "kind": "income", "amountNum": amount},
+        )
+        assert response.status_code == status.HTTP_201_CREATED, response.text
+
+    async def _seed_usd_income(self, client: httpx.AsyncClient, *, month: str, amount: str, rate: str | None) -> None:
+        """POST a USD income inflow and optionally set its FX snapshot."""
+        created = await client.post(
+            "/api/v1/transactions",
+            json={
+                "occurredOn": f"{month}-10",
+                "name": "Deel payout",
+                "kind": "income",
+                "amountNum": amount,
+                "currency": "USD",
+            },
+        )
+        assert created.status_code == status.HTTP_201_CREATED, created.text
+        if rate is not None:
+            row = created.json()["data"]
+            snap = await client.put(
+                f"/api/v1/transactions/{row['id']}/fx",
+                json={"fxRate": rate, "fxSource": "bolsa"},
+            )
+            assert snap.status_code == status.HTTP_200_OK, snap.text
+
+    async def test_single_month_is_sparse_estimate(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN exactly one inflow month
+        WHEN the suggested base is requested
+        THEN it returns that month as a sparse estimate (monthsAvailable=1, isSparse) (ADR-153)
+        """
+        # GIVEN
+        await self._seed_income(test_client, month=JUNE, amount="100000")
+
+        # WHEN
+        data = (await test_client.get(f"{BUDGET_INCOME}/suggested", params={"month": JUNE})).json()["data"]
+
+        # THEN
+        assert data["suggestedBase"] == "100000.00"
+        assert data["monthsAvailable"] == 1
+        assert data["isSparse"] is True
+        assert data["currency"] == "ARS"
+
+    async def test_three_months_lower_of_average_and_lowest(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN three inflow months with one lean month
+        WHEN the suggested base is requested
+        THEN it is the lower-of(average, lowest) over the three available months (ADR-153)
+        """
+        # GIVEN — Apr/May 100000, Jun 40000.
+        await self._seed_income(test_client, month="2026-04", amount="100000")
+        await self._seed_income(test_client, month="2026-05", amount="100000")
+        await self._seed_income(test_client, month=JUNE, amount="40000")
+
+        # WHEN
+        data = (await test_client.get(f"{BUDGET_INCOME}/suggested", params={"month": JUNE})).json()["data"]
+
+        # THEN — average 80000 vs lowest 40000 -> 40000; 3 months, still sparse.
+        assert data["suggestedBase"] == "40000.00"
+        assert data["monthsAvailable"] == 3
+        assert data["isSparse"] is True
+
+    async def test_usd_sums_snapshot_inflow(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a USD inflow month with a snapshot and one without
+        WHEN the suggested base is requested with currency=USD
+        THEN it sums only the snapshotted usd_amount and ignores the unsnapshotted row (ADR-152)
+        """
+        # GIVEN — June: 100000 ARS @ 1000 -> usd 100.00 snapshot; May: USD with no snapshot.
+        await self._seed_usd_income(test_client, month=JUNE, amount="100000", rate="1000")
+        await self._seed_usd_income(test_client, month="2026-05", amount="50000", rate=None)
+
+        # WHEN
+        data = (await test_client.get(f"{BUDGET_INCOME}/suggested", params={"month": JUNE, "currency": "USD"})).json()[
+            "data"
+        ]
+
+        # THEN — only June's snapshot contributes: one USD month of 100.00.
+        assert data["suggestedBase"] == "100.00"
+        assert data["monthsAvailable"] == 1
+        assert data["currency"] == "USD"

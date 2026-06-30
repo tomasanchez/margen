@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from margen_api.adapters.models.budget import BudgetRecord
 from margen_api.adapters.models.budget_income import BudgetIncomeRecord
-from margen_api.adapters.queries import month_category_expense_totals
+from margen_api.adapters.queries import month_category_expense_totals, month_expense_unconverted_count
 from margen_api.domain.models.budget import month_start
 from margen_api.domain.models.strategy import income_pressure, suggest_strategy
 from margen_api.domain.models.value_objects import BudgetKind, Currency
@@ -34,10 +34,6 @@ from margen_api.service_layer.budget_read_models import CategoryHistory, Floor, 
 from margen_api.service_layer.budget_reader import AbstractBudgetReader
 from margen_api.service_layer.budgets import build_budget_lines, build_category_history, build_saving_lines
 from margen_api.service_layer.summaries import add_months, month_key
-
-# For the MVP every figure is ARS-equivalent: targets are stored ARS and the spend
-# is the ARS-equivalent category total, so the surface reports ARS (ADR-125).
-_MVP_CURRENCY = Currency.ARS
 
 # The debt-service minimum is a manual, non-persisted UI field (budget-design §9.1.2),
 # so the read side has no debt figure to score against: the suggestion is computed
@@ -56,22 +52,38 @@ class SqlAlchemyBudgetReader(AbstractBudgetReader):
         """
         self.session = session
 
-    async def monthly_budget(self, month: date, user_id: str) -> MonthlyBudget:
-        """Join the owner's targets, spend, savings, income and floor for a month (ADR-125, ADR-138)."""
+    async def monthly_budget(
+        self,
+        month: date,
+        user_id: str,
+        currency: Currency = Currency.ARS,
+    ) -> MonthlyBudget:
+        """Join the owner's targets, spend, savings, income and floor for a month (ADR-125, ADR-138, ADR-152).
+
+        ``currency`` denominates the spend path (ADR-152): ``ARS`` (default) sums the
+        authoritative ``amount`` exactly as before; ``USD`` sums each category's stored
+        ``usd_amount`` snapshot, excluding rows that lack one, and surfaces their count
+        as ``unconverted`` so a USD total is never silently understated. The returned
+        ``currency`` echoes the requested one.
+        """
         owner = UUID(user_id)
         period = month_start(month)
         targets = await self._targets(period, owner)
-        spent = await month_category_expense_totals(self.session, period, owner)
+        spent = await month_category_expense_totals(self.session, period, owner, currency)
         savings = await self._savings(period, owner)
         income, floor_amount, floor_source = await self._income_and_floor(period, owner)
+        unconverted = (
+            await month_expense_unconverted_count(self.session, period, owner) if currency is Currency.USD else 0
+        )
         return MonthlyBudget(
             month=month_key(period),
-            currency=_MVP_CURRENCY,
+            currency=currency,
             categories=build_budget_lines(targets, spent),
             savings=build_saving_lines(savings, income),
             floor=Floor(amount=floor_amount, source=floor_source if floor_amount is not None else None),
             suggested_strategy=self._suggested_strategy(income, floor_amount),
             pressure=self._pressure(income, floor_amount),
+            unconverted=unconverted,
         )
 
     async def category_history(self, month: date, user_id: str) -> CategoryHistory:

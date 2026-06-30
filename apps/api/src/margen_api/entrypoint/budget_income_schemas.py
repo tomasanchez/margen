@@ -24,7 +24,7 @@ from pydantic import Field
 from margen_api.domain.commands.budget import UpsertBudgetIncome
 from margen_api.domain.models.value_objects import Currency
 from margen_api.entrypoint.schemas import CamelCaseModel
-from margen_api.service_layer.budget_income_read_models import BudgetIncomeReadModel
+from margen_api.service_layer.budget_income_read_models import BudgetIncomeReadModel, SuggestedBaseReadModel
 
 
 class IncomeFloorResponse(CamelCaseModel):
@@ -81,20 +81,44 @@ class BudgetIncomeUpsertRequest(CamelCaseModel):
         Returns:
             The boundary-agnostic command the message bus dispatches.
         """
+        # ``use_enum_values=True`` (CamelCaseModel) yields a string for a supplied
+        # currency and the enum default otherwise; normalize through the enum so both
+        # shapes pass the string token to the command.
         return UpsertBudgetIncome(
             user_id=user_id,
             period=period,
             amount=self.amount,
-            currency=self.currency.value,
+            currency=Currency(self.currency).value,
             floor_amount=self.floor_amount,
             floor_source=self.floor_source,
         )
 
 
 class SuggestedBaseResponse(CamelCaseModel):
-    """Response for ``GET /budget-income/suggested`` (ADR-139)."""
+    """Response for ``GET /budget-income/suggested`` (ADR-139, ADR-152, ADR-153).
+
+    Pinned JSON contract::
+
+        GET /budget-income/suggested?month=YYYY-MM&currency=ARS|USD ->
+            { suggestedBase: string|null, monthsAvailable: int, isSparse: bool, currency }
+    """
 
     suggested_base: Decimal | None = Field(
         default=None,
-        description="The conservative variable-income suggestion; null when <12 months of history.",
+        description="The conservative variable-income suggestion; null only when zero inflow months exist (ADR-153).",
     )
+    months_available: int = Field(description="The count of distinct inflow months backing the estimate (ADR-153).")
+    is_sparse: bool = Field(
+        description="Whether fewer than 12 months back the estimate, so the UI caveats it (ADR-153)."
+    )
+    currency: Currency = Field(description="The currency the estimate is denominated in (ADR-152).")
+
+    @classmethod
+    def from_read_model(cls, model: SuggestedBaseReadModel) -> SuggestedBaseResponse:
+        """Build the response from the suggested-base read model (ADR-030)."""
+        return cls(
+            suggested_base=model.suggested_base,
+            months_available=model.months_available,
+            is_sparse=model.is_sparse,
+            currency=model.currency,
+        )
