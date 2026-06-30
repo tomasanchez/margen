@@ -109,8 +109,10 @@ describe('BudgetsPage', () => {
     expect(screen.getByText('Rent')).toBeInTheDocument()
     expect(screen.getByText('Transport')).toBeInTheDocument()
 
-    // Spent figures render via the shared es-AR formatter.
-    expect(screen.getByText('Spent ARS 90.000')).toBeInTheDocument()
+    // A targeted row reads "spent / target" (the comp's column 3); Food spent
+    // 90.000 of a 120.000 target. Transport (no target) keeps the "Spent X" line.
+    expect(screen.getByText('ARS 90.000 / ARS 120.000')).toBeInTheDocument()
+    expect(screen.getByText('Spent ARS 15.000')).toBeInTheDocument()
 
     // Food's target seeds its input (the saved value).
     const foodInput = screen.getByRole('textbox', { name: 'Food target' })

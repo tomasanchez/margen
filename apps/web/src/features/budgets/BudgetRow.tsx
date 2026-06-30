@@ -20,18 +20,18 @@
  * under the input (ADR-037) without blocking further edits.
  */
 
-import { useId, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import CircularProgress from '@mui/material/CircularProgress'
-import InputAdornment from '@mui/material/InputAdornment'
-import TextField from '@mui/material/TextField'
+import InputBase from '@mui/material/InputBase'
 import Typography from '@mui/material/Typography'
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined'
 import { formatCurrency } from '../../lib/format'
 import { categoryDotColor, categoryLabel } from '../transactions/presentation'
 import { BudgetMeter } from './BudgetMeter'
+import { ROW_GRID_GAP, ROW_GRID_TEMPLATE } from './groupGrid'
 import { deriveCategoryProgress, parseMoney, toMoneyString } from './derive'
 import type { BudgetCategory } from '../../api/budgetsClient'
 import type { Currency } from '../../mock/types'
@@ -97,7 +97,6 @@ export function BudgetRow({
   const { t } = useTranslation('budgets')
   const progress = deriveCategoryProgress(line)
   const label = categoryLabel(line.category)
-  const inputId = useId()
 
   // The saved target as a plain editable string (no grouping, so typing is
   // predictable); empty when unset.
@@ -155,108 +154,113 @@ export function BudgetRow({
       })
     : t('row.meterNoTargetAria', { category: label })
 
-  return (
-    <Box
-      component="li"
-      sx={{
-        listStyle: 'none',
-        py: 1.5,
-        borderBottom: '1px solid var(--mg-border)',
-        '&:last-of-type': { borderBottom: 'none' },
-      }}
-    >
+  // The category name cell (dot + label + over-budget chip) — column 1.
+  const nameCell = (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
       <Box
+        aria-hidden
         sx={{
-          display: 'flex',
-          alignItems: 'center',
-          flexWrap: { xs: 'wrap', sm: 'nowrap' },
-          gap: { xs: 1, sm: 2 },
+          width: 9,
+          height: 9,
+          borderRadius: '50%',
+          flex: 'none',
+          bgcolor: categoryDotColor(line.category),
         }}
-      >
-        {/* Category: dot + label (the dot is redundant beside the text, ADR-019). */}
+      />
+      <Typography sx={{ fontSize: 14, fontWeight: 600 }} color="text.primary" noWrap>
+        {label}
+      </Typography>
+      {progress.overBudget ? (
         <Box
+          component="span"
           sx={{
-            display: 'flex',
+            display: 'inline-flex',
             alignItems: 'center',
-            gap: 1,
-            minWidth: { xs: '100%', sm: 150 },
-            flex: { sm: 'none' },
+            gap: 0.25,
+            ml: 0.5,
+            px: 0.75,
+            py: '2px',
+            borderRadius: '6px',
+            flex: 'none',
+            fontSize: 11,
+            fontWeight: 600,
+            color: 'var(--mg-watch)',
+            bgcolor: 'color-mix(in srgb, var(--mg-watch) 12%, transparent)',
           }}
         >
-          <Box
-            aria-hidden
-            sx={{
-              width: 9,
-              height: 9,
-              borderRadius: '50%',
-              flex: 'none',
-              bgcolor: categoryDotColor(line.category),
-            }}
-          />
-          <Typography
-            sx={{ fontSize: 14, fontWeight: 600 }}
-            color="text.primary"
-            noWrap
-          >
-            {label}
-          </Typography>
-          {progress.overBudget ? (
-            <Box
-              component="span"
-              sx={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 0.25,
-                ml: 0.5,
-                px: 0.75,
-                py: '2px',
-                borderRadius: '6px',
-                fontSize: 11,
-                fontWeight: 600,
-                color: 'var(--mg-watch)',
-                bgcolor: 'color-mix(in srgb, var(--mg-watch) 12%, transparent)',
-              }}
-            >
-              <ReportProblemOutlinedIcon sx={{ fontSize: 13 }} aria-hidden />
-              {t('row.over')}
-            </Box>
-          ) : null}
+          <ReportProblemOutlinedIcon sx={{ fontSize: 13 }} aria-hidden />
+          {t('row.over')}
         </Box>
+      ) : null}
+    </Box>
+  )
 
-        {/* Editable target amount. */}
-        <TextField
-          id={inputId}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={commit}
-          onKeyDown={handleKeyDown}
-          size="small"
-          placeholder={t('row.targetPlaceholder')}
-          label={t('row.targetLabel', { category: label })}
-          inputMode="decimal"
-          slotProps={{
-            input: {
-              startAdornment: (
-                <InputAdornment position="start">{currency}</InputAdornment>
-              ),
-              endAdornment: saving ? (
-                <InputAdornment position="end">
-                  <CircularProgress size={16} aria-label={t('row.saving')} />
-                </InputAdornment>
-              ) : undefined,
-              sx: { fontVariantNumeric: 'tabular-nums' },
-            },
-            inputLabel: { shrink: true },
-          }}
-          sx={{
-            width: { xs: '100%', sm: 168 },
-            flex: 'none',
-            '& .MuiOutlinedInput-root': { borderRadius: '10px' },
-          }}
-        />
+  // The minimal target pill (the comp's element) — column 2. A bordered box with
+  // a muted mono "ARS" prefix + a borderless right-aligned mono input. NO floating
+  // label; the field keeps its accessible name via aria-label so AT + the tests
+  // (getByLabelText / getByRole textbox) still resolve it.
+  const targetCell = (
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        border: '1px solid var(--mg-border-2)',
+        borderRadius: '9px',
+        bgcolor: 'var(--mg-paper-2)',
+        px: 1.375,
+        py: 1,
+        width: { xs: 168, sm: '100%' },
+        flex: 'none',
+      }}
+    >
+      <Typography
+        component="span"
+        aria-hidden
+        sx={{ fontFamily: 'var(--font-mono)', fontSize: 12, flex: 'none' }}
+        color="text.secondary"
+      >
+        {currency}
+      </Typography>
+      <InputBase
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={handleKeyDown}
+        placeholder={t('row.targetPlaceholder')}
+        inputMode="decimal"
+        inputProps={{
+          'aria-label': t('row.targetLabel', { category: label }),
+          style: { padding: 0, textAlign: 'right' },
+        }}
+        endAdornment={
+          saving ? (
+            <CircularProgress
+              size={14}
+              aria-label={t('row.saving')}
+              sx={{ ml: 0.75, flex: 'none' }}
+            />
+          ) : undefined
+        }
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          color: 'text.primary',
+          fontFamily: 'var(--font-mono)',
+          fontVariantNumeric: 'tabular-nums',
+          fontSize: 14,
+          '& input': { padding: 0 },
+        }}
+      />
+    </Box>
+  )
 
-        {/* Spent + remaining figures. */}
-        <Box sx={{ flex: 1, minWidth: { xs: '100%', sm: 0 } }}>
+  // Spent-vs-target (column 3): a meter + remaining when a target exists, else the
+  // "Spent X" line with the dashed "↳ use {avg}" chip (ADR-147). Unchanged content.
+  const spentCell = (
+    <Box sx={{ minWidth: 0 }}>
+      {progress.hasTarget ? (
+        <>
           <Box
             sx={{
               display: 'flex',
@@ -267,22 +271,20 @@ export function BudgetRow({
             }}
           >
             <Typography
-              sx={{ fontSize: 13, fontVariantNumeric: 'tabular-nums' }}
+              sx={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}
               color="text.secondary"
             >
-              {t('row.spent', { amount: formatCurrency(progress.spent, currency) })}
+              {formatCurrency(progress.spent, currency)} /{' '}
+              {formatCurrency(progress.target ?? 0, currency)}
             </Typography>
             {progress.remaining != null ? (
               <Typography
-                sx={{ fontSize: 13, fontVariantNumeric: 'tabular-nums' }}
-                color={progress.overBudget ? 'var(--mg-watch)' : 'text.secondary'}
+                sx={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}
+                color={progress.overBudget ? 'var(--mg-watch)' : 'var(--mg-safe)'}
               >
                 {progress.overBudget
                   ? t('row.overBy', {
-                      amount: formatCurrency(
-                        Math.abs(progress.remaining),
-                        currency,
-                      ),
+                      amount: formatCurrency(Math.abs(progress.remaining), currency),
                     })
                   : t('row.remaining', {
                       amount: formatCurrency(progress.remaining, currency),
@@ -290,61 +292,96 @@ export function BudgetRow({
               </Typography>
             ) : null}
           </Box>
-          {progress.hasTarget ? (
-            <BudgetMeter
-              ratio={progress.ratio}
-              overBudget={progress.overBudget}
-              label={meterLabel}
-            />
-          ) : suggestionAmount != null ? (
-            // Untargeted row with history: offer a one-tap "use the 3-mo avg"
-            // suggestion alongside the no-target hint (ADR-147).
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
-              <Typography sx={{ fontSize: 12.5 }} color="text.disabled" role="note">
-                {t('row.noTargetHint')}
-              </Typography>
-              <Button
-                onClick={applySuggestion}
-                size="small"
-                variant="outlined"
-                aria-label={t('row.useAvgAria', {
-                  category: label,
-                  amount: formatCurrency(suggestionAmount, currency),
-                })}
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '8px',
-                  borderStyle: 'dashed',
-                  borderColor: 'var(--mg-border-2)',
-                  color: 'var(--mg-gold)',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  fontVariantNumeric: 'tabular-nums',
-                  px: 1.25,
-                  minHeight: 32,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {t('row.useAvg', {
-                  amount: formatCurrency(suggestionAmount, currency),
-                })}
-              </Button>
-            </Box>
-          ) : (
-            <Typography
-              sx={{ fontSize: 12.5 }}
-              color="text.disabled"
-              role="note"
-            >
-              {t('row.noTargetHint')}
-            </Typography>
-          )}
+          <BudgetMeter
+            ratio={progress.ratio}
+            overBudget={progress.overBudget}
+            label={meterLabel}
+          />
+        </>
+      ) : suggestionAmount != null ? (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
+          <Typography
+            sx={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}
+            color="text.disabled"
+          >
+            {t('row.spent', { amount: formatCurrency(progress.spent, currency) })}
+          </Typography>
+          <Button
+            onClick={applySuggestion}
+            size="small"
+            variant="outlined"
+            aria-label={t('row.useAvgAria', {
+              category: label,
+              amount: formatCurrency(suggestionAmount, currency),
+            })}
+            sx={{
+              textTransform: 'none',
+              borderRadius: '7px',
+              borderStyle: 'dashed',
+              borderColor: 'var(--mg-border-2)',
+              color: 'var(--mg-gold)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 12,
+              fontWeight: 500,
+              fontVariantNumeric: 'tabular-nums',
+              px: 1.25,
+              minHeight: 30,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {t('row.useAvg', {
+              amount: formatCurrency(suggestionAmount, currency),
+            })}
+          </Button>
         </Box>
+      ) : (
+        <Typography
+          sx={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}
+          color="text.disabled"
+        >
+          {t('row.spent', { amount: formatCurrency(progress.spent, currency) })}
+        </Typography>
+      )}
+    </Box>
+  )
+
+  return (
+    <Box
+      component="li"
+      sx={{
+        listStyle: 'none',
+        py: 1.625,
+        px: '2px',
+        borderBottom: '1px solid var(--mg-border)',
+        '&:last-of-type': { borderBottom: 'none' },
+      }}
+    >
+      {/* A SINGLE grid (no duplicated DOM). On desktop it's the comp's 3-column
+          template aligned with the header. On mobile it collapses to a 2-column
+          grid where name + pill share row 1 and spent-vs-target spans row 2. */}
+      <Box
+        sx={{
+          display: 'grid',
+          alignItems: 'center',
+          columnGap: { xs: 1.5, sm: ROW_GRID_GAP },
+          rowGap: { xs: 1.125, sm: 0 },
+          gridTemplateColumns: { xs: '1fr auto', sm: ROW_GRID_TEMPLATE },
+          gridTemplateAreas: {
+            xs: '"name target" "spent spent"',
+            sm: '"name target spent"',
+          },
+        }}
+      >
+        <Box sx={{ gridArea: 'name', minWidth: 0 }}>{nameCell}</Box>
+        <Box sx={{ gridArea: 'target', justifySelf: { xs: 'end', sm: 'stretch' } }}>
+          {targetCell}
+        </Box>
+        <Box sx={{ gridArea: 'spent', minWidth: 0 }}>{spentCell}</Box>
       </Box>
 
       {saveError ? (
         <Typography
-          sx={{ fontSize: 12, mt: 0.75, ml: { sm: '166px' } }}
+          sx={{ fontSize: 12, mt: 0.75 }}
           color="var(--mg-watch)"
           role="alert"
         >

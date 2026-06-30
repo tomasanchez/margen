@@ -38,6 +38,9 @@
     }
   },
   "groups": {
+    "colCategory": "Categoría",
+    "colTarget": "Objetivo mensual",
+    "colSpent": "Gastado vs objetivo",
     "needs": {
       "name": "Esenciales",
       "sub": "alquiler, comida, salud — lo innegociable"
@@ -61,6 +64,10 @@
     "empty": "Fijá tu ingreso neto para planificar con porcentajes y habilitar los perfiles de ahorro.",
     "useSuggested": "Usar base sugerida ({{amount}})",
     "useSuggestedAria": "Usar la base de ingreso neto sugerida de {{amount}}",
+    "avgChip": "prom. últ. 3 meses · {{amount}}",
+    "floorEdit": "Fijá un piso de gastos esenciales",
+    "floorEditComputed": "Piso (calculado) · {{amount}}",
+    "floorEditSet": "Piso · {{amount}}",
     "noSuggestion": "Una base sugerida necesita al menos 12 meses de historial de ingresos.",
     "pressure": {
       "Constrained": "Ajustado — el ingreso es {{ratio}}× tu piso de esenciales",

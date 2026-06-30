@@ -6,10 +6,12 @@
  * data-model change). For the selected month (the page owns its OWN month via
  * the shared `MonthSwitcher`, defaulting to the current month, ADR-040):
  *
- *  - a SPENDABLE-INCOME HERO pairs the net-income input ({@link NetIncomeHeader})
- *    with a stacked Needs / Wants / Savings allocation bar + a live "left to
- *    assign / over-assigned / all assigned" readout ({@link AllocationBar}) and a
- *    row of {@link QuickStartTemplates} chips;
+ *  - an ALLOCATION HERO is one unified card: a left "Spendable income" column
+ *    ({@link SpendableIncome}, folding in the income-pressure/strategy/floor) and
+ *    a right "Where it's assigned" column with the stacked Needs / Wants /
+ *    Savings allocation bar + the live "left to assign / over-assigned / all
+ *    assigned" readout ({@link AllocationBar}) and a row of
+ *    {@link QuickStartTemplates} chips;
  *  - a THIS-MONTH-VS-PLAN band ({@link PlanBand}) headlines budgeted/spent/
  *    remaining with a plain-language insight line;
  *  - three CATEGORY GROUP CARDS — Needs + Wants ({@link GroupCard}) and the
@@ -27,6 +29,7 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
+import Paper from '@mui/material/Paper'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import { SectionCard } from '../../components/SectionCard'
@@ -39,7 +42,7 @@ import {
   type ViewingMonth,
 } from '../../components/months'
 import { toYearMonth } from '../home/queries'
-import { NetIncomeHeader } from './NetIncomeHeader'
+import { SpendableIncome } from './SpendableIncome'
 import { AllocationBar } from './AllocationBar'
 import { QuickStartTemplates, type TemplateId } from './QuickStartTemplates'
 import { PlanBand } from './PlanBand'
@@ -352,48 +355,81 @@ export function BudgetsPage() {
         />
       ) : null}
 
-      {/* SPENDABLE-INCOME HERO: income input + allocation bar + templates. */}
-      <Box sx={{ mb: 2.5 }}>
-        <NetIncomeHeader
-          income={income}
-          monthLabel={monthLabel}
-          currency={currency}
-          pressure={period?.pressure ?? null}
-          suggestedStrategy={period?.suggestedStrategy ?? null}
-          saving={setIncome.isPending}
-          saveError={setIncome.isError}
-          suggestedBase={suggestedBase}
-          suggestedBaseEmpty={suggestedBaseEmpty}
-          onCommitIncome={handleCommitIncome}
-          onCommitFloor={handleCommitFloor}
-          onUseSuggested={handleUseSuggested}
-        />
-      </Box>
+      {/* ALLOCATION HERO — ONE unified card matching the comp: a gold-tinted,
+          warm-paper surface split into a left "Spendable income" column and a
+          right "Where it's assigned" column (allocation bar + legend + quick
+          start), with a divider between. Stacks on mobile. */}
+      <Paper
+        variant="outlined"
+        sx={{
+          mb: 2.5,
+          p: { xs: 2.125, md: 3 },
+          borderRadius: '18px',
+          bgcolor: 'var(--mg-paper)',
+          borderColor: 'color-mix(in srgb, var(--mg-gold) 30%, var(--mg-border))',
+        }}
+      >
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', md: '300px 1fr' },
+            gap: { xs: 2.25, md: 4.25 },
+            alignItems: 'start',
+          }}
+        >
+          {/* LEFT — spendable income (with the pressure/strategy/floor sub-line). */}
+          <Box
+            sx={{
+              pr: { md: 3.75 },
+              borderRight: { md: '1px solid var(--mg-border)' },
+              borderBottom: {
+                xs: '1px solid var(--mg-border)',
+                md: 'none',
+              },
+              pb: { xs: 2.25, md: 0 },
+            }}
+          >
+            <SpendableIncome
+              income={income}
+              monthLabel={monthLabel}
+              currency={currency}
+              pressure={period?.pressure ?? null}
+              suggestedStrategy={period?.suggestedStrategy ?? null}
+              saving={setIncome.isPending}
+              saveError={setIncome.isError}
+              suggestedBase={suggestedBase}
+              suggestedBaseEmpty={suggestedBaseEmpty}
+              onCommitIncome={handleCommitIncome}
+              onCommitFloor={handleCommitFloor}
+              onUseSuggested={handleUseSuggested}
+            />
+          </Box>
 
-      <Box sx={{ mb: 2.5 }}>
-        <SectionCard title={t('alloc.cardTitle')} subtitle={t('alloc.cardSubtitle')}>
-          {loading ? (
-            <Skeleton variant="rounded" height={22} sx={{ borderRadius: '8px' }} />
-          ) : (
-            <>
-              <AllocationBar
-                allocation={allocation}
-                segments={segments}
-                left={left}
-                incomeAmount={income?.amount ?? null}
-                currency={currency}
-              />
-              <Box sx={{ mt: 2.5 }}>
-                <QuickStartTemplates
-                  applying={applyingTemplate}
-                  disabled={templatesDisabled}
-                  onApply={handleApplyTemplate}
+          {/* RIGHT — allocation bar + legend + quick-start templates. */}
+          <Box sx={{ minWidth: 0 }}>
+            {loading ? (
+              <Skeleton variant="rounded" height={22} sx={{ borderRadius: '8px' }} />
+            ) : (
+              <>
+                <AllocationBar
+                  allocation={allocation}
+                  segments={segments}
+                  left={left}
+                  incomeAmount={income?.amount ?? null}
+                  currency={currency}
                 />
-              </Box>
-            </>
-          )}
-        </SectionCard>
-      </Box>
+                <Box sx={{ mt: 2.5 }}>
+                  <QuickStartTemplates
+                    applying={applyingTemplate}
+                    disabled={templatesDisabled}
+                    onApply={handleApplyTemplate}
+                  />
+                </Box>
+              </>
+            )}
+          </Box>
+        </Box>
+      </Paper>
 
       {/* THIS MONTH VS PLAN band. */}
       {loading ? (

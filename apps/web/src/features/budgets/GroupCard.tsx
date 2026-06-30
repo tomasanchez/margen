@@ -20,6 +20,7 @@ import Paper from '@mui/material/Paper'
 import Typography from '@mui/material/Typography'
 import { formatCurrency } from '../../lib/format'
 import { BudgetRow } from './BudgetRow'
+import { ROW_GRID_GAP, ROW_GRID_TEMPLATE } from './groupGrid'
 import { groupShareOfIncome } from './derive'
 import type { BudgetCategory } from '../../api/budgetsClient'
 import type { Category, Currency } from '../../mock/types'
@@ -139,6 +140,30 @@ export function GroupCard({
             </Typography>
           </Typography>
         </Box>
+      </Box>
+
+      {/* Column header — the comp's uppercase muted labels on the shared grid.
+          Hidden on mobile (xs) where rows stack. aria-hidden: each row's fields
+          carry their own accessible labels, so AT users don't need this. */}
+      <Box
+        aria-hidden
+        sx={{
+          display: { xs: 'none', sm: 'grid' },
+          gridTemplateColumns: ROW_GRID_TEMPLATE,
+          gap: ROW_GRID_GAP,
+          px: '2px',
+          pb: 1.125,
+          borderBottom: '1px solid var(--mg-border)',
+          fontSize: 10.5,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          fontWeight: 600,
+          color: 'text.disabled',
+        }}
+      >
+        <Box>{t('groups.colCategory')}</Box>
+        <Box>{t('groups.colTarget')}</Box>
+        <Box>{t('groups.colSpent')}</Box>
       </Box>
 
       <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 0 }}>

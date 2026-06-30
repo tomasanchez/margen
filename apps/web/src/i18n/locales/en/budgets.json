@@ -38,6 +38,9 @@
     }
   },
   "groups": {
+    "colCategory": "Category",
+    "colTarget": "Monthly target",
+    "colSpent": "Spent vs target",
     "needs": {
       "name": "Needs",
       "sub": "rent, food, health — the non-negotiables"
@@ -61,6 +64,10 @@
     "empty": "Set your net income to plan with percentages and unlock saving profiles.",
     "useSuggested": "Use suggested base ({{amount}})",
     "useSuggestedAria": "Use the suggested net-income base of {{amount}}",
+    "avgChip": "avg last 3 mo · {{amount}}",
+    "floorEdit": "Set a household essentials floor",
+    "floorEditComputed": "Floor (computed) · {{amount}}",
+    "floorEditSet": "Floor · {{amount}}",
     "noSuggestion": "A suggested base needs at least 12 months of income history.",
     "pressure": {
       "Constrained": "Constrained — income is {{ratio}}× your essentials floor",
