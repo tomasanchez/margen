@@ -81,6 +81,12 @@ function period(month: string): BudgetPeriod {
   }
 }
 
+/**
+ * Render the page behind a memory router so its <Link>s resolve — the category
+ * rows drill into <Link to="/transactions"> (the spend inspector) and the
+ * unconverted note links to <Link to="/settings"> (ADR-152). Both target routes
+ * are registered as stubs so Link can build the href without navigating.
+ */
 function renderPage(displayCurrency?: Partial<DisplayCurrencyValue>) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -89,42 +95,39 @@ function renderPage(displayCurrency?: Partial<DisplayCurrencyValue>) {
     ...DEFAULT_DISPLAY_CURRENCY_VALUE,
     ...displayCurrency,
   }
-  return render(
-    <QueryClientProvider client={queryClient}>
+  const rootRoute = createRootRoute({
+    component: () => (
       <DisplayCurrencyContext.Provider value={value}>
         <ColorModeProvider>
           <BudgetsPage />
         </ColorModeProvider>
       </DisplayCurrencyContext.Provider>
-    </QueryClientProvider>,
-  )
-}
-
-/**
- * Render the page behind a memory router so the unconverted-note <Link to
- * "/settings"> resolves (ADR-152). Used only by the unconverted-note test.
- */
-function renderPageWithRouter() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    ),
   })
-  const rootRoute = createRootRoute({ component: () => <BudgetsPage /> })
+  const transactionsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/transactions',
+    component: () => null,
+  })
   const settingsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/settings',
     component: () => null,
   })
   const router = createRouter({
-    routeTree: rootRoute.addChildren([settingsRoute]),
+    routeTree: rootRoute.addChildren([transactionsRoute, settingsRoute]),
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <ColorModeProvider>
-        <RouterProvider router={router} />
-      </ColorModeProvider>
+      <RouterProvider router={router} />
     </QueryClientProvider>,
   )
+}
+
+/** Back-compat alias — renderPage now always wraps in a router. */
+function renderPageWithRouter() {
+  return renderPage()
 }
 
 describe('BudgetsPage', () => {
@@ -146,9 +149,9 @@ describe('BudgetsPage', () => {
   test('renders each category with its target, spent and progress', async () => {
     renderPage()
 
-    // The page heading names the route landmark (renders immediately).
+    // The page heading names the route landmark (shown during loading too).
     expect(
-      screen.getByRole('heading', { name: 'Budgets', level: 1 }),
+      await screen.findByRole('heading', { name: 'Budgets', level: 1 }),
     ).toBeInTheDocument()
 
     // Every category is present (incl. the untargeted Transport) once loaded.

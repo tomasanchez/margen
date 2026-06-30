@@ -527,6 +527,7 @@ export function BudgetsPage() {
               groupTotal={allocation.needs}
               incomeAmount={income?.amount ?? null}
               currency={currency}
+              month={yearMonth}
               savingCategory={savingCategory}
               errorCategory={errorCategory}
               onCommit={handleCommit}
@@ -539,6 +540,7 @@ export function BudgetsPage() {
               groupTotal={allocation.wants}
               incomeAmount={income?.amount ?? null}
               currency={currency}
+              month={yearMonth}
               savingCategory={savingCategory}
               errorCategory={errorCategory}
               onCommit={handleCommit}

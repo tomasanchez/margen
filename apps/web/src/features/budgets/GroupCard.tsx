@@ -38,6 +38,8 @@ export interface GroupCardProps {
   incomeAmount: string | null
   /** Period currency (ARS for the MVP). */
   currency: Currency
+  /** The budget's month as `YYYY-MM`, forwarded to each row's Transactions drilldown. */
+  month: string
   /** The category whose write is in flight on this page, or null. */
   savingCategory: Category | null
   /** The category whose last write errored, or null. */
@@ -60,6 +62,7 @@ export function GroupCard({
   groupTotal,
   incomeAmount,
   currency,
+  month,
   savingCategory,
   errorCategory,
   onCommit,
@@ -172,6 +175,7 @@ export function GroupCard({
             key={line.category}
             line={line}
             currency={currency}
+            month={month}
             avg3mo={avgByCategory.get(line.category) ?? null}
             saving={savingCategory === line.category}
             saveError={errorCategory === line.category}

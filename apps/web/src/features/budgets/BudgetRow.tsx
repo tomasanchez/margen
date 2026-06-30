@@ -22,11 +22,13 @@
 
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Link } from '@tanstack/react-router'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import CircularProgress from '@mui/material/CircularProgress'
 import InputBase from '@mui/material/InputBase'
 import Typography from '@mui/material/Typography'
+import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded'
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined'
 import { formatCurrency } from '../../lib/format'
 import { categoryDotColor, categoryLabel } from '../transactions/presentation'
@@ -41,6 +43,8 @@ export interface BudgetRowProps {
   line: BudgetCategory
   /** Period currency for formatting (ARS for the MVP). */
   currency: Currency
+  /** The budget's month as `YYYY-MM` — drills the category into Transactions for that month. */
+  month: string
   /** Whether this row's target write is in flight. */
   saving?: boolean
   /** Whether this row's last target write failed (shows a calm retry hint). */
@@ -88,6 +92,7 @@ function normalizeAmount(raw: string): string | null {
 export function BudgetRow({
   line,
   currency,
+  month,
   saving = false,
   saveError = false,
   avg3mo = null,
@@ -167,9 +172,30 @@ export function BudgetRow({
           bgcolor: categoryDotColor(line.category),
         }}
       />
-      <Typography sx={{ fontSize: 14, fontWeight: 600 }} color="text.primary" noWrap>
-        {label}
-      </Typography>
+      {/* Drill into Transactions filtered by this category for the budget's month
+          (ADR-116/134 drilldown contract): inspect where the money went. */}
+      <Link
+        to="/transactions"
+        search={{ category: line.category, month }}
+        aria-label={t('row.viewTransactions', { category: label })}
+        style={{ textDecoration: 'none', minWidth: 0, display: 'inline-flex', alignItems: 'center' }}
+      >
+        <Typography
+          sx={{
+            fontSize: 14,
+            fontWeight: 600,
+            '&:hover': { textDecoration: 'underline' },
+          }}
+          color="text.primary"
+          noWrap
+        >
+          {label}
+        </Typography>
+        <ChevronRightRoundedIcon
+          aria-hidden
+          sx={{ fontSize: 16, color: 'text.disabled', flex: 'none' }}
+        />
+      </Link>
       {progress.overBudget ? (
         <Box
           component="span"

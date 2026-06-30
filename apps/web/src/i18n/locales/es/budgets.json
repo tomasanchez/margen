@@ -140,6 +140,7 @@
     "over": "Excedido",
     "useAvg": "↳ usar {{amount}}",
     "useAvgAria": "Fijar el objetivo de {{category}} en su promedio de 3 meses de {{amount}}",
+    "viewTransactions": "Ver transacciones de {{category}} de este mes",
     "noTargetHint": "Sin objetivo — ingresá un monto para empezar a seguir esta categoría.",
     "meterAria": "{{category}}: {{pct}}% del objetivo gastado",
     "meterNoTargetAria": "{{category}}: sin objetivo"

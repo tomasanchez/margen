@@ -140,6 +140,7 @@
     "over": "Over budget",
     "useAvg": "↳ use {{amount}}",
     "useAvgAria": "Set {{category}}'s target to its 3-month average of {{amount}}",
+    "viewTransactions": "View {{category}} transactions for this month",
     "noTargetHint": "No target set — enter an amount to start tracking this category.",
     "meterAria": "{{category}}: {{pct}}% of target spent",
     "meterNoTargetAria": "{{category}}: no target set"
