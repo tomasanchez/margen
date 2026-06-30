@@ -54,6 +54,22 @@
     "rowLabel": "{{category}}, {{amount}} — view transactions",
     "rowLabelUp": "{{category}}, {{amount}}, up {{up}} — view transactions"
   },
+  "budgets": {
+    "title": "Budget progress",
+    "subtitle": "This month · budgeted vs spent",
+    "manage": "Manage budgets →",
+    "spentOfBudgeted": "{{spent}} of {{budgeted}}",
+    "overallMeterAria": "{{pct}}% of your monthly budget spent",
+    "remaining": "{{amount}} left this month",
+    "overBy": "{{amount}} over budget this month",
+    "attentionTitle": "Closest to limit",
+    "attentionPct": "{{pct}}%",
+    "attentionOver": "Over",
+    "emptyBody": "Set monthly targets per category to see how your spending tracks against plan.",
+    "setUp": "Set up budgets",
+    "errorTitle": "Budget data unavailable",
+    "errorDescription": "We couldn't load this month's budget progress. Try again."
+  },
   "monotributo": {
     "title": "Monotributo",
     "titleWithCategory": "Monotributo · Category {{category}}",

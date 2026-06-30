@@ -1,0 +1,34 @@
+{
+  "title": "Budgets",
+  "subtitle": "Set a monthly target per category and track it against what you spend.",
+  "summary": {
+    "budgeted": "Budgeted",
+    "spent": "Spent",
+    "remaining": "Remaining",
+    "overLabel": "Over budget",
+    "overCount_one": "{{count}} category over budget",
+    "overCount_other": "{{count}} categories over budget"
+  },
+  "list": {
+    "title": "Categories",
+    "subtitle": "Targets apply to the selected month only.",
+    "empty": "No categories to budget for this month yet."
+  },
+  "row": {
+    "targetLabel": "{{category}} target",
+    "targetPlaceholder": "Set a target",
+    "saving": "Saving",
+    "saveError": "Couldn't save that target — try again.",
+    "spent": "Spent {{amount}}",
+    "remaining": "{{amount}} left",
+    "overBy": "{{amount}} over",
+    "over": "Over budget",
+    "noTargetHint": "No target set — enter an amount to start tracking this category.",
+    "meterAria": "{{category}}: {{pct}}% of target spent",
+    "meterNoTargetAria": "{{category}}: no target set"
+  },
+  "error": {
+    "title": "Can't load your budgets",
+    "description": "We couldn't reach the server. Check your connection and try again."
+  }
+}

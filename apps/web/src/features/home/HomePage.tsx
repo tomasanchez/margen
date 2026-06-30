@@ -55,6 +55,9 @@ import { Insights } from './Insights'
 import { RecentActivity } from './RecentActivity'
 import { NetWorthCard } from './NetWorthCard'
 import { useNetWorth } from '../accounts/queries'
+import { BudgetProgressCard } from './BudgetProgressCard'
+import { useBudgets } from '../budgets/queries'
+import { toYearMonth } from './queries'
 
 /** Percentage change from `previous` to `current`; 0 when previous is 0. */
 function pctChange(current: number, previous: number): number {
@@ -86,6 +89,9 @@ export function HomePage() {
   const summaryQuery = useSummary(viewingMonth)
   // Real, month-reactive insights for the selected month (ADR-061/062).
   const insightsQuery = useInsights(viewingMonth)
+  // Budget progress for the selected month (ADR-125/127): an incremental Home
+  // card; month-keyed so it tracks the navigator.
+  const budgetsQuery = useBudgets(toYearMonth(viewingMonth))
   const previousMonth = useMemo(
     () => addMonths(viewingMonth, -1),
     [viewingMonth],
@@ -187,12 +193,26 @@ export function HomePage() {
         </Typography>
       ) : null}
 
-      <Box sx={{ mb: { xs: 1.75, md: 2.25 } }}>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
+          gap: { xs: 1.75, md: 2.25 },
+          mb: { xs: 1.75, md: 2.25 },
+          alignItems: 'start',
+        }}
+      >
         <NetWorthCard
           netWorth={netWorthQuery.data}
           loading={netWorthQuery.isPending}
           isError={netWorthQuery.isError}
           onRetry={() => void netWorthQuery.refetch()}
+        />
+        <BudgetProgressCard
+          period={budgetsQuery.data}
+          loading={budgetsQuery.isPending}
+          isError={budgetsQuery.isError}
+          onRetry={() => void budgetsQuery.refetch()}
         />
       </Box>
 

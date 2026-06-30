@@ -65,10 +65,22 @@ function buildTestRouter() {
     path: '/monotributo',
     component: () => <div>monotributo route</div>,
   })
+  const accountsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/accounts',
+    component: () => <div>accounts route</div>,
+  })
+  const budgetsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/budgets',
+    component: () => <div>budgets route</div>,
+  })
   const routeTree = rootRoute.addChildren([
     homeRoute,
     transactionsRoute,
     monotributoRoute,
+    accountsRoute,
+    budgetsRoute,
   ])
   return createRouter({
     routeTree,
@@ -201,6 +213,17 @@ test('the Add-transaction seam opens via the FAB / CTA trigger', async () => {
   await user.click(addTriggers[0])
 
   expect(opened).toBeGreaterThan(0)
+})
+
+test('has a Budgets primary nav item linking to /budgets (ADR-125/127)', async () => {
+  renderShell()
+  await screen.findByRole('heading', { name: 'Your command center' })
+
+  // Budgets is a primary nav peer alongside Accounts (ADR-127). jsdom renders
+  // both the sidebar + mobile pill surfaces, so there is at least one link.
+  const budgetsLinks = screen.getAllByRole('link', { name: /Budgets/ })
+  expect(budgetsLinks.length).toBeGreaterThan(0)
+  expect(budgetsLinks[0]).toHaveAttribute('href', '/budgets')
 })
 
 test('shows the Monotributo nav item when the module is enabled (ADR-126/127)', async () => {

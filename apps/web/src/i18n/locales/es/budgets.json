@@ -1,0 +1,34 @@
+{
+  "title": "Presupuestos",
+  "subtitle": "Fijá un objetivo mensual por categoría y seguilo contra lo que gastás.",
+  "summary": {
+    "budgeted": "Presupuestado",
+    "spent": "Gastado",
+    "remaining": "Disponible",
+    "overLabel": "Excedido",
+    "overCount_one": "{{count}} categoría excedida",
+    "overCount_other": "{{count}} categorías excedidas"
+  },
+  "list": {
+    "title": "Categorías",
+    "subtitle": "Los objetivos aplican solo al mes seleccionado.",
+    "empty": "Todavía no hay categorías para presupuestar este mes."
+  },
+  "row": {
+    "targetLabel": "Objetivo de {{category}}",
+    "targetPlaceholder": "Fijá un objetivo",
+    "saving": "Guardando",
+    "saveError": "No se pudo guardar el objetivo — probá de nuevo.",
+    "spent": "Gastado {{amount}}",
+    "remaining": "Quedan {{amount}}",
+    "overBy": "{{amount}} de más",
+    "over": "Excedido",
+    "noTargetHint": "Sin objetivo — ingresá un monto para empezar a seguir esta categoría.",
+    "meterAria": "{{category}}: {{pct}}% del objetivo gastado",
+    "meterNoTargetAria": "{{category}}: sin objetivo"
+  },
+  "error": {
+    "title": "No se pueden cargar tus presupuestos",
+    "description": "No pudimos conectar con el servidor. Revisá tu conexión y probá de nuevo."
+  }
+}
