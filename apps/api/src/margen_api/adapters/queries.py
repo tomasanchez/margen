@@ -144,6 +144,39 @@ def _as_decimal(value: object) -> Decimal:
     return Decimal(str(value))
 
 
+async def month_category_expense_totals(session: AsyncSession, month: date, owner: UUID) -> dict[str, Decimal]:
+    """Return the owner's expense totals for a month keyed by category (ADR-042, ADR-108).
+
+    The canonical per-category month-expense aggregation reused by the summaries
+    reader (ADR-042), the insights reader (ADR-060) and the budgets reader as the
+    "spent" figure (ADR-125): a ``SUM`` of ``kind = 'expense'`` ``amount`` over the
+    month, grouped by category (NULL categories bucket under ``Uncategorized``),
+    scoped to the owner. Sharing one function keeps the budgets "spent" identical to
+    the summaries "amount" rather than reinventing the aggregation (ADR-125).
+
+    Args:
+        session: The async session used for the read-only query.
+        month: The first day of the requested calendar month.
+        owner: The authenticated owner the expenses are scoped to (ADR-108).
+
+    Returns:
+        Expense totals for the month keyed by category; absent categories are 0.
+    """
+    upper = date(month.year + (month.month // 12), (month.month % 12) + 1, 1)
+    statement = (
+        select(_CATEGORY.label("category"), _EXPENSE_AMOUNT.label("total"))
+        .where(
+            TransactionRecord.user_id == owner,
+            TransactionRecord.kind == Kind.EXPENSE.value,
+            TransactionRecord.occurred_on >= month,
+            TransactionRecord.occurred_on < upper,
+        )
+        .group_by(_CATEGORY)
+    )
+    result = await session.execute(statement)
+    return {str(row.category): _as_decimal(row.total) for row in result.all()}
+
+
 class SqlAlchemySummaryReader(AbstractSummaryReader):
     """Serve the monthly summary from server-side SQL aggregation (ADR-042).
 
@@ -201,20 +234,13 @@ class SqlAlchemySummaryReader(AbstractSummaryReader):
         return {f"{int(row.year):04d}-{int(row.month):02d}": _as_decimal(row.total) for row in result.all()}
 
     async def _category_totals(self, month: date, owner: UUID) -> dict[str, Decimal]:
-        """Return the owner's expense totals for the month keyed by category (ADR-108)."""
-        upper = date(month.year + (month.month // 12), (month.month % 12) + 1, 1)
-        statement = (
-            select(_CATEGORY.label("category"), _EXPENSE_AMOUNT.label("total"))
-            .where(
-                TransactionRecord.user_id == owner,
-                TransactionRecord.kind == Kind.EXPENSE.value,
-                TransactionRecord.occurred_on >= month,
-                TransactionRecord.occurred_on < upper,
-            )
-            .group_by(_CATEGORY)
-        )
-        result = await self.session.execute(statement)
-        return {str(row.category): _as_decimal(row.total) for row in result.all()}
+        """Return the owner's expense totals for the month keyed by category (ADR-108).
+
+        Delegates to the shared :func:`month_category_expense_totals` so the
+        summaries category breakdown, the insights movers and the budgets "spent"
+        all read the same per-category month-expense aggregation (ADR-042, ADR-125).
+        """
+        return await month_category_expense_totals(self.session, month, owner)
 
 
 # Savings income is the inflow kinds (income + invoice), independent of the

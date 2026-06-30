@@ -8,6 +8,7 @@ from types import TracebackType
 
 from margen_api.domain.messages import Event
 from margen_api.service_layer.account_repository import AbstractAccountRepository
+from margen_api.service_layer.budget_repository import AbstractBudgetRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.institution_repository import AbstractInstitutionRepository
 from margen_api.service_layer.monotributo_repository import AbstractMonotributoSnapshotRepository
@@ -48,6 +49,8 @@ class AbstractUnitOfWork(ABC):
             transfer create/delete handlers (ADR-135). A transfer create also stages
             its fee expense transactions through ``transactions`` in the same unit
             of work (ADR-135).
+        budgets: Repository for the ``Budget`` aggregate, written by the budget
+            upsert/clear handlers (ADR-125).
     """
 
     transactions: AbstractTransactionRepository
@@ -58,6 +61,7 @@ class AbstractUnitOfWork(ABC):
     accounts: AbstractAccountRepository
     institutions: AbstractInstitutionRepository
     transfers: AbstractTransferRepository
+    budgets: AbstractBudgetRepository
 
     async def __aenter__(self) -> AbstractUnitOfWork:
         """Enter the transaction boundary."""

@@ -15,6 +15,7 @@ from types import TracebackType
 from uuid import UUID, uuid4
 
 from margen_api.domain.models.account import Account
+from margen_api.domain.models.budget import Budget
 from margen_api.domain.models.institution import Institution
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.transfer import Transfer
@@ -22,6 +23,9 @@ from margen_api.domain.models.value_objects import Currency, Kind, TxType
 from margen_api.service_layer.account_read_models import AccountReadModel, NetWorth
 from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.account_repository import AbstractAccountRepository
+from margen_api.service_layer.budget_read_models import MonthlyBudget
+from margen_api.service_layer.budget_reader import AbstractBudgetReader
+from margen_api.service_layer.budget_repository import AbstractBudgetRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore, InvoiceDocument
 from margen_api.service_layer.insights_read_models import MonthlyInsights
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
@@ -214,6 +218,48 @@ class FakeTransferRepository(AbstractTransferRepository):
         self._staged.pop(transfer_id, None)
         self._committed.pop(transfer_id, None)
         return True
+
+
+class FakeBudgetRepository(AbstractBudgetRepository):
+    """In-memory budget repository over a committed store and a staging buffer.
+
+    Mirrors :class:`FakeAccountRepository`: ``add``/``persist`` write to the staging
+    buffer, ``commit`` promotes it, ``rollback`` clears it. The natural-key lookup
+    resolves ``(category, period)`` scoped to the owner so the upsert handler can
+    replace rather than duplicate (ADR-125), and ``delete`` is an owner-scoped hard
+    delete by the same key (ADR-130).
+    """
+
+    def __init__(self, committed: dict[UUID, Budget], staged: dict[UUID, Budget]) -> None:
+        """Initialize the repository over the unit of work's stores."""
+        self._committed = committed
+        self._staged = staged
+
+    def add(self, budget: Budget) -> None:
+        """Stage a new aggregate until the unit of work commits (ADR-130)."""
+        self._staged[budget.id] = budget
+
+    async def get_by_category_period(self, category: str, period: date, user_id: str) -> Budget | None:
+        """Return the owner's target for a category/month, or ``None`` (ADR-125, ADR-130)."""
+        for store in (self._staged, self._committed):
+            for budget in store.values():
+                if budget.user_id == user_id and budget.category == category and budget.period == period:
+                    return budget
+        return None
+
+    async def persist(self, budget: Budget) -> None:
+        """Stage a mutated aggregate for the next commit."""
+        self._staged[budget.id] = budget
+
+    async def delete(self, category: str, period: date, user_id: str) -> bool:
+        """Hard-delete the owner's target for a category/month across both stores (ADR-130)."""
+        removed = False
+        for store in (self._staged, self._committed):
+            for budget_id, budget in list(store.items()):
+                if budget.user_id == user_id and budget.category == category and budget.period == period:
+                    store.pop(budget_id, None)
+                    removed = True
+        return removed
 
 
 class FakeMonotributoSnapshotRepository(AbstractMonotributoSnapshotRepository):
@@ -511,6 +557,8 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_institutions: dict[UUID, Institution] = {}
         self.committed_transfers: dict[UUID, Transfer] = {}
         self._staged_transfers: dict[UUID, Transfer] = {}
+        self.committed_budgets: dict[UUID, Budget] = {}
+        self._staged_budgets: dict[UUID, Budget] = {}
         self.snapshots: dict[tuple[str, date], MonotributoStanding] = {}
         self.config: dict[str, str | bool] = {}
         self.used_by_window: dict[tuple[str, date, date], Decimal] = {}
@@ -526,6 +574,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.accounts = FakeAccountRepository(self.committed_accounts, self._staged_accounts)
         self.institutions = FakeInstitutionRepository(self.committed_institutions, self._staged_institutions)
         self.transfers = FakeTransferRepository(self.committed_transfers, self._staged_transfers)
+        self.budgets = FakeBudgetRepository(self.committed_budgets, self._staged_budgets)
         self.committed = False
 
     async def __aenter__(self) -> FakeUnitOfWork:
@@ -535,6 +584,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_accounts = {}
         self._staged_institutions = {}
         self._staged_transfers = {}
+        self._staged_budgets = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
         self.settings = FakeSettingsRepository(self.config)
@@ -543,6 +593,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.accounts = FakeAccountRepository(self.committed_accounts, self._staged_accounts)
         self.institutions = FakeInstitutionRepository(self.committed_institutions, self._staged_institutions)
         self.transfers = FakeTransferRepository(self.committed_transfers, self._staged_transfers)
+        self.budgets = FakeBudgetRepository(self.committed_budgets, self._staged_budgets)
         return self
 
     async def __aexit__(
@@ -560,10 +611,12 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.committed_accounts.update(self._staged_accounts)
         self.committed_institutions.update(self._staged_institutions)
         self.committed_transfers.update(self._staged_transfers)
+        self.committed_budgets.update(self._staged_budgets)
         self._staged.clear()
         self._staged_accounts.clear()
         self._staged_institutions.clear()
         self._staged_transfers.clear()
+        self._staged_budgets.clear()
         self.committed = True
 
     async def flush(self) -> None:
@@ -574,6 +627,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.committed_accounts.update(self._staged_accounts)
         self.committed_institutions.update(self._staged_institutions)
         self.committed_transfers.update(self._staged_transfers)
+        self.committed_budgets.update(self._staged_budgets)
 
     async def rollback(self) -> None:
         """Discard staged aggregates."""
@@ -581,6 +635,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_accounts.clear()
         self._staged_institutions.clear()
         self._staged_transfers.clear()
+        self._staged_budgets.clear()
 
 
 class FakeTransactionReader(AbstractTransactionReader):
@@ -731,6 +786,31 @@ class FakeTransferReader(AbstractTransferReader):
             )
             for transfer in ordered
         ]
+
+
+class FakeBudgetReader(AbstractBudgetReader):
+    """Budget reader returning a canned :class:`MonthlyBudget` for route tests (ADR-125).
+
+    The route tests assert wiring and the HTTP contract, not the target/actual join
+    (covered by the pure-function and integration tiers), so this fake records the
+    requested month and owner and returns the budget it was given (ADR-032, ADR-108).
+    """
+
+    def __init__(self, budget: MonthlyBudget) -> None:
+        """Initialize the reader with the budget every call returns.
+
+        Args:
+            budget: The monthly budget every call returns.
+        """
+        self._budget = budget
+        self.requested_month: date | None = None
+        self.requested_user_id: str | None = None
+
+    async def monthly_budget(self, month: date, user_id: str) -> MonthlyBudget:
+        """Record the requested month and owner and return the canned budget (ADR-108)."""
+        self.requested_month = month
+        self.requested_user_id = user_id
+        return self._budget
 
 
 class FakeSummaryReader(AbstractSummaryReader):

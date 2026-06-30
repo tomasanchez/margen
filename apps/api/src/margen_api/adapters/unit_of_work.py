@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from margen_api.adapters.account_repository import SqlAlchemyAccountRepository
+from margen_api.adapters.budget_repository import SqlAlchemyBudgetRepository
 from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.institution_repository import SqlAlchemyInstitutionRepository
 from margen_api.adapters.monotributo_repository import SqlAlchemyMonotributoSnapshotRepository
@@ -40,6 +41,7 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
         self.accounts = SqlAlchemyAccountRepository(self.session)
         self.institutions = SqlAlchemyInstitutionRepository(self.session)
         self.transfers = SqlAlchemyTransferRepository(self.session)
+        self.budgets = SqlAlchemyBudgetRepository(self.session)
         return self
 
     async def __aexit__(
