@@ -196,18 +196,24 @@ export function clearHistoricalRateCache(): void {
 
 /**
  * Fetch the historical preferred-source rate (ARS per USD) for a `casa` on a
- * specific `isoDate` (ADR-150). Resolution order:
+ * specific `isoDate` (ADR-150/154). Resolution order:
  *
  *  1. an in-memory cache hit for `(casa, date)` — returned without a fetch;
  *  2. the ArgentinaDatos per-date quote (`venta` leg, matching the current
  *     rate) — cached on success;
- *  3. graceful fallback to the CURRENT preferred-source rate when the date is
- *     unavailable (network failure, non-2xx, or unusable shape).
+ *  3. `null` when the date has no quote — there is NO fallback to today's rate.
  *
- * Never throws — every failure path either falls back or resolves to `null` (no
- * current rate either), so the caller can skip a row rather than guess. The
- * fallback is NOT cached against the date so a later pass can still pick up the
- * date-accurate quote.
+ * Why no current-rate fallback (ADR-154, Risk 1): ArgentinaDatos already carries
+ * the last published quote forward over weekends/holidays, so a genuinely missing
+ * quote means "no data" — not a non-business day. Stamping today's rate on a
+ * BACKDATED row would, under high-inflation ARS, materialize a wildly wrong
+ * date-accurate `usd_amount` that is indistinguishable from a real historical
+ * fill. We instead return `null` so the caller SKIPS the row (leaves it
+ * unconverted, surfaced via the unconverted note, ADR-152) for a later retry.
+ *
+ * Never throws — every failure path resolves to `null`, so the caller can skip a
+ * row rather than guess. A `null` is NOT cached against the date so a later pass
+ * can still pick up the date-accurate quote once it's published.
  */
 export async function fetchHistoricalRate(
   casa: FxCasa,
@@ -224,7 +230,8 @@ export async function fetchHistoricalRate(
     return dated
   }
 
-  // The date was unavailable — fall back to the current preferred-source rate so
-  // a snapshot can still be stamped (ADR-150). Not cached against the date.
-  return fetchCurrentRate(casa, signal)
+  // The date has no historical quote — return null so the caller skips the row
+  // (no today's-rate fallback, ADR-154). Not cached, so a retry can recover the
+  // dated quote once it's published.
+  return null
 }

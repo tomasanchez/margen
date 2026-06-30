@@ -234,34 +234,33 @@ describe('fetchHistoricalRate', () => {
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
   })
 
-  test('falls back to the CURRENT preferred-source rate when the date is unavailable', async () => {
-    // Dated endpoint 404s → fall back to the current bolsa rate (second fetch).
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response('not found', { status: 404 }))
-      .mockResolvedValueOnce(quoteResponse({ venta: 1300 }))
-    await expect(fetchHistoricalRate('bolsa', '2025-02-09')).resolves.toBe(1300)
-    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2)
-    expect(String(vi.mocked(fetch).mock.calls[1][0])).toContain(
-      'dolarapi.com/v1/dolares/bolsa',
+  test('returns null when the date is unavailable — NO fallback to today\'s rate (ADR-154)', async () => {
+    // The dated endpoint 404s. ArgentinaDatos carries quotes forward over
+    // weekends/holidays, so a true 404 means "no data" — we must NOT stamp
+    // today's rate on a backdated row. Only ONE fetch (the dated one) is made.
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response('not found', { status: 404 }),
+    )
+    await expect(fetchHistoricalRate('bolsa', '2025-02-09')).resolves.toBeNull()
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain(
+      'api.argentinadatos.com/v1/cotizaciones/dolares/bolsa/2025/02/09',
     )
   })
 
-  test('does NOT cache the current-rate fallback against the date (a retry can recover the dated quote)', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response('x', { status: 404 }))
-      .mockResolvedValueOnce(quoteResponse({ venta: 1300 }))
-    await fetchHistoricalRate('bolsa', '2025-02-09')
+  test('does NOT cache an unavailable-date null (a retry can recover the dated quote)', async () => {
+    // First pass: the dated quote 404s → null, and the null is NOT cached.
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('x', { status: 404 }))
+    await expect(fetchHistoricalRate('bolsa', '2025-02-09')).resolves.toBeNull()
 
-    // A later pass: the dated quote is now available and is used (not the cached
-    // fallback) — proving the fallback was not cached against the date.
+    // A later pass: the dated quote is now published and is used (not a cached
+    // null) — proving the null was not cached against the date.
     vi.mocked(fetch).mockResolvedValueOnce(quoteResponse({ venta: 1210 }))
     await expect(fetchHistoricalRate('bolsa', '2025-02-09')).resolves.toBe(1210)
   })
 
-  test('returns null when both the dated quote and the current fallback fail', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response('x', { status: 500 }))
-      .mockResolvedValueOnce(new Response('x', { status: 500 }))
+  test('returns null when the dated quote fails (never throws)', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('x', { status: 500 }))
     await expect(fetchHistoricalRate('bolsa', '2025-02-09')).resolves.toBeNull()
   })
 })

@@ -133,7 +133,19 @@ export function BudgetsPage() {
   const [applyingTemplate, setApplyingTemplate] = useState<TemplateId | null>(null)
 
   const period = budgetsQuery.data
-  const income = incomeQuery.data
+  // The income GET returns the base AS STORED, with its own `currency` (ADR-152):
+  // the PUT is what denominates it. If the stored income currency differs from the
+  // budget currency being viewed (e.g. income set in ARS, now viewing USD targets),
+  // mixing them would compare USD targets against an ARS figure and mislabel it —
+  // money-incorrect (ADR-154). So we treat a currency-mismatched income as UNSET on
+  // this surface: every derived figure and child receives `undefined`, which renders
+  // the "set your income" empty state, prompting a re-entry in the budget currency.
+  // We NEVER silently relabel the stored amount.
+  const rawIncome = incomeQuery.data
+  const income =
+    rawIncome != null && rawIncome.currency === budgetCurrency
+      ? rawIncome
+      : undefined
   const history = useMemo(() => historyQuery.data ?? [], [historyQuery.data])
   // The budget currency is the PREFERRED currency (ADR-152); the period echoes it.
   const currency = budgetCurrency

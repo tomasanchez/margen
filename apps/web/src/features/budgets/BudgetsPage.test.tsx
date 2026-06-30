@@ -29,6 +29,11 @@ import {
   createRouter,
 } from '@tanstack/react-router'
 import { ColorModeProvider } from '../../theme/colorMode'
+import {
+  DisplayCurrencyContext,
+  DEFAULT_DISPLAY_CURRENCY_VALUE,
+  type DisplayCurrencyValue,
+} from '../settings/displayCurrencyContext'
 import { BudgetsPage } from './BudgetsPage'
 import { budgetsClient, type BudgetPeriod } from '../../api/budgetsClient'
 
@@ -76,15 +81,21 @@ function period(month: string): BudgetPeriod {
   }
 }
 
-function renderPage() {
+function renderPage(displayCurrency?: Partial<DisplayCurrencyValue>) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
+  const value: DisplayCurrencyValue = {
+    ...DEFAULT_DISPLAY_CURRENCY_VALUE,
+    ...displayCurrency,
+  }
   return render(
     <QueryClientProvider client={queryClient}>
-      <ColorModeProvider>
-        <BudgetsPage />
-      </ColorModeProvider>
+      <DisplayCurrencyContext.Provider value={value}>
+        <ColorModeProvider>
+          <BudgetsPage />
+        </ColorModeProvider>
+      </DisplayCurrencyContext.Provider>
     </QueryClientProvider>,
   )
 }
@@ -303,6 +314,54 @@ describe('BudgetsPage', () => {
     await screen.findByText('Food')
     expect(await screen.findByText('Left to assign')).toBeInTheDocument()
     expect(screen.getByText('ARS 280.000')).toBeInTheDocument()
+  })
+
+  test('treats a currency-mismatched income as unset and shows the empty state (ADR-154)', async () => {
+    // The budget is viewed in USD (preferred), but the stored income is ARS — a
+    // mix we must NOT silently relabel. The page treats income as UNSET: it shows
+    // the "set your income" empty state and renders no left-to-assign readout, so
+    // the user re-enters income in the budget currency.
+    mockFetchIncome.mockResolvedValue({
+      month: '2026-06',
+      amount: '3000000.00',
+      currency: 'ARS',
+      source: 'manual',
+      floor: null,
+    })
+    renderPage({ preferredCurrency: 'USD', effectiveCurrency: 'USD' })
+    await screen.findByText('Food')
+
+    // The empty-state prompt is shown (income is treated as unset).
+    expect(
+      await screen.findByText(
+        'Set your net income to plan with percentages and unlock saving profiles.',
+      ),
+    ).toBeInTheDocument()
+    // No left-to-assign readout (income is unset on this surface)…
+    expect(screen.queryByText('Left to assign')).not.toBeInTheDocument()
+    // …and the stored ARS amount is NEVER relabeled as USD in the income field.
+    const incomeField = screen.getByRole('textbox', {
+      name: 'Net income for June 2026',
+    })
+    expect(incomeField).toHaveValue('')
+  })
+
+  test('uses the matching-currency income when it equals the budget currency (ADR-154)', async () => {
+    // Income stored in USD, budget viewed in USD → it is honored: USD 1.200
+    // income minus USD-denominated targets yields a left-to-assign readout.
+    mockFetch.mockResolvedValue({ ...period('2026-06'), currency: 'USD' })
+    mockFetchIncome.mockResolvedValue({
+      month: '2026-06',
+      amount: '600000.00',
+      currency: 'USD',
+      source: 'manual',
+      floor: null,
+    })
+    renderPage({ preferredCurrency: 'USD', effectiveCurrency: 'USD' })
+    await screen.findByText('Food')
+    // Income 600000 USD minus 320000 USD assigned = 280000 USD left.
+    expect(await screen.findByText('Left to assign')).toBeInTheDocument()
+    expect(screen.getByText('USD 280.000')).toBeInTheDocument()
   })
 
   test('applying "Clear all" batches a DELETE per targeted category', async () => {

@@ -50,7 +50,10 @@ export function useImportStatement() {
         const all = await transactionsClient.list()
         const imported = all.filter((tx) => created.has(tx.id))
         if (imported.length > 0) {
-          await fillSnapshots(imported, { casa })
+          // Tag import-filled rows as `'import'` (ADR-148/149) so they're
+          // distinguishable from the one-time bulk backfill (`'backfill'`,
+          // ADR-150) — distinct provenances per ADR-148.
+          await fillSnapshots(imported, { casa, fxSource: 'import' })
         }
       } catch {
         // Leave the rows unconverted; the historical backfill (#80) clears them.

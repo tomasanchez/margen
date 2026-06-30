@@ -113,6 +113,26 @@ export function SpendableIncome({
   // user opens it so the hero reads calm (ADR-139 stays available, not loud).
   const [floorOpen, setFloorOpen] = useState(false)
 
+  // Re-seed the drafts when the SAVED values change while no write is in flight
+  // (e.g. switching the budget currency clears a currency-mismatched income to
+  // undefined upstream, ADR-154): the field must follow the saved value so we
+  // never leave a stale ARS amount in a now-USD-prefixed input. This is React's
+  // "adjust state during render" pattern (a setState during render, not an
+  // effect) — it re-renders immediately with the new value and skips while
+  // `saving` so an in-flight optimistic edit isn't clobbered by the round-trip.
+  const [seededIncome, setSeededIncome] = useState(savedIncome)
+  const [seededFloor, setSeededFloor] = useState(manualFloor)
+  if (!saving && savedIncome !== seededIncome) {
+    setSeededIncome(savedIncome)
+    setIncomeDraft(savedIncome)
+    setIncomeCommitted(savedIncome)
+  }
+  if (!saving && manualFloor !== seededFloor) {
+    setSeededFloor(manualFloor)
+    setFloorDraft(manualFloor)
+    setFloorCommitted(manualFloor)
+  }
+
   const commitIncome = () => {
     const normalized = normalize(incomeDraft)
     if (normalized == null || normalized === normalize(incomeCommitted)) {

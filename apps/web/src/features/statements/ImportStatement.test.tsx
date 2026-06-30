@@ -516,9 +516,16 @@ describe('Import statement — success shows a calm confirmation', () => {
     await waitFor(() => expect(setFxSnapshotMock).toHaveBeenCalledTimes(2))
     const stamped = setFxSnapshotMock.mock.calls.map((c) => c[0])
     expect(stamped.sort()).toEqual(['t-1', 't-2'])
+    // Import-filled rows are tagged `'import'` (ADR-148/149) — distinct from the
+    // one-time bulk backfill's `'backfill'` (ADR-150) so the two provenances are
+    // distinguishable.
     expect(setFxSnapshotMock).toHaveBeenCalledWith('t-1', {
       fxRate: '1200',
-      fxSource: 'backfill',
+      fxSource: 'import',
+    })
+    expect(setFxSnapshotMock).toHaveBeenCalledWith('t-2', {
+      fxRate: '1200',
+      fxSource: 'import',
     })
     // The historical lookup used each row's backdated occurred_on (ADR-149/150).
     expect(historicalRateMock).toHaveBeenCalledWith(
