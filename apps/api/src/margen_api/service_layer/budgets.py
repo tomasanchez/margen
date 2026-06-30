@@ -10,11 +10,11 @@ SQLAlchemy in the adapter (AGENTS.md). Money is :class:`~decimal.Decimal` (ADR-0
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 
-from margen_api.domain.models.value_objects import KNOWN_CATEGORIES, SAVING_BUCKETS
-from margen_api.service_layer.budget_read_models import BudgetLine, SavingLine
+from margen_api.domain.models.value_objects import KNOWN_CATEGORIES, SAVING_BUCKETS, is_essential
+from margen_api.service_layer.budget_read_models import BudgetLine, CategoryHistoryLine, SavingLine
 
 # "Income" is an inflow bucket, not a spend category, so it never carries a budget
 # target (ADR-125 budgets per *expense* category). Every other known category is a
@@ -59,8 +59,9 @@ def build_budget_lines(
 
     For each category in :func:`budgetable_categories`, pairs its ``target`` (the
     budget amount, or ``None`` when unset) with its ``spent`` (the month's actual
-    expense total, ``0`` when none) and computes ``remaining = target - spent`` when
-    a target exists (``None`` otherwise).
+    expense total, ``0`` when none), computes ``remaining = target - spent`` when a
+    target exists (``None`` otherwise), and flags whether the category is essential
+    (a "Needs" floor category, ADR-143) so the client can group Needs vs Wants.
 
     Args:
         targets: The owner's per-category targets for the month, keyed by category.
@@ -80,6 +81,7 @@ def build_budget_lines(
                 target=target,
                 spent=category_spent,
                 remaining=remaining,
+                is_essential=is_essential(category),
             )
         )
     return lines
@@ -112,4 +114,42 @@ def build_saving_lines(savings: Mapping[str, Decimal], income: Decimal | None) -
         else:
             percent = None
         lines.append(SavingLine(bucket=bucket, amount=amount, percent=percent))
+    return lines
+
+
+_THREE = Decimal(3)
+
+
+def build_category_history(monthly_totals: Sequence[Mapping[str, Decimal]]) -> list[CategoryHistoryLine]:
+    """Assemble per-category trailing history from three prior months' totals (ADR-145).
+
+    Given the per-category expense totals of the three calendar months immediately
+    before the requested month — oldest-first, so ``monthly_totals[-1]`` is the
+    single prior month — this computes, for every category present in any window,
+    the 3-month average spend and the prior month's spend. A category absent from a
+    given month contributes ``0`` for that month, so ``avg3mo`` is always the mean
+    over three months (not over "months with spend"). The result is sorted by
+    category name for a deterministic client order.
+
+    Args:
+        monthly_totals: The three prior months' per-category expense totals
+            (ADR-042), oldest-first; the last entry is the single prior month.
+
+    Returns:
+        One :class:`CategoryHistoryLine` per expense category seen in any window,
+        sorted by category name. Empty when no category has spend in any window.
+    """
+    categories = sorted({category for totals in monthly_totals for category in totals})
+    last_month_totals = monthly_totals[-1]
+    lines: list[CategoryHistoryLine] = []
+    for category in categories:
+        total = sum((totals.get(category, _ZERO) for totals in monthly_totals), _ZERO)
+        avg3mo = (total / _THREE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        lines.append(
+            CategoryHistoryLine(
+                category=category,
+                avg3mo=avg3mo,
+                last_month=last_month_totals.get(category, _ZERO),
+            )
+        )
     return lines

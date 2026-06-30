@@ -26,6 +26,7 @@ from margen_api.entrypoint.budgets_schemas import (
     ApplyProfileRequest,
     ApplyProfileResponse,
     BudgetUpsertRequest,
+    CategoryHistoryResponse,
     MonthlyBudgetResponse,
     RepriceRequest,
 )
@@ -94,6 +95,40 @@ async def monthly_budget(
     target = _parse_month(month or _current_month())
     model = await reader.monthly_budget(target, user.id)
     return ResponseModel(data=MonthlyBudgetResponse.from_read_model(model))
+
+
+@router.get(
+    "/history",
+    name="Category spend history",
+    status_code=status.HTTP_200_OK,
+    response_model=ResponseModel[CategoryHistoryResponse],
+)
+async def category_history(
+    reader: BudgetReader,
+    user: AuthUser,
+    month: Annotated[
+        str | None,
+        Query(
+            pattern=_MONTH_PATTERN,
+            description="Target month as 'YYYY-MM'. Defaults to the current server month.",
+            examples=["2026-06"],
+        ),
+    ] = None,
+) -> ResponseModel[CategoryHistoryResponse]:
+    """Return the caller's trailing per-category spend history for a month (ADR-145, ADR-108).
+
+    For every expense category present in the trailing spend, returns the mean spend
+    over the three calendar months immediately before the requested month (``avg3mo``)
+    and the single prior month's spend (``lastMonth``), as decimal strings (ADR-025).
+    Reuses the same per-category month-expense aggregation as the budgets surface
+    (ADR-042). Scoped to ``user.id`` so a caller only sees their own spend (ADR-108).
+    A category with no spend in a window contributes 0. A malformed ``month`` yields
+    ``422``. This read-only endpoint backs the Budgets redesign templates and the
+    per-row "use avg" chips (ADR-145..147).
+    """
+    target = _parse_month(month or _current_month())
+    model = await reader.category_history(target, user.id)
+    return ResponseModel(data=CategoryHistoryResponse.from_read_model(model))
 
 
 @router.put(

@@ -133,6 +133,41 @@ class TestBudgetReader:
         assert transport.remaining is None
 
 
+class TestCategoryHistoryReader:
+    """The history reader averages the three real months before the requested one (ADR-145)."""
+
+    async def test_aggregates_three_prior_months_scoped_to_owner(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN Food expenses in 2026-03/-04/-05 for the owner and another owner's May Food
+        WHEN the owner's June history is read
+        THEN Food's avg3mo is the mean of the three months, lastMonth is May's spend, and
+             the other owner's expense never leaks (ADR-108)
+        """
+        # GIVEN — the three calendar months before June, plus a foreign owner's May spend.
+        async with session_factory() as session:
+            repository = SqlAlchemyTransactionRepository(session)
+            repository.add(_expense(date(2026, 3, 10), "30000.00", "Food"))
+            repository.add(_expense(date(2026, 4, 10), "60000.00", "Food"))
+            repository.add(_expense(date(2026, 5, 10), "90000.00", "Food"))
+            repository.add(_expense(date(2026, 5, 12), "999999.00", "Food", user_id=OTHER_OWNER))
+            await session.commit()
+
+        # WHEN
+        session = session_factory()
+        try:
+            history = await SqlAlchemyBudgetReader(session).category_history(JUNE, OWNER)
+            await session.rollback()
+        finally:
+            await session.close()
+
+        # THEN — mean(30000, 60000, 90000) = 60000; last = May's 90000; foreign owner excluded.
+        food = next(line for line in history.categories if line.category == "Food")
+        assert food.avg3mo == Decimal("60000.00")
+        assert food.last_month == Decimal("90000.00")
+
+
 class TestBudgetKindReader:
     """The kind discriminator keeps spend/saving distinct against the real schema (ADR-138)."""
 

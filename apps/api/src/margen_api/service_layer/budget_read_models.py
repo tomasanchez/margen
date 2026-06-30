@@ -31,12 +31,16 @@ class BudgetLine:
             category has no spend.
         remaining: ``target - spent`` when a target is set, else ``None`` (there is
             nothing to remain against an unset target, ADR-125).
+        is_essential: Whether the category is an essential ("Needs") spend category
+            that defines the household floor (ADR-143). Lets the client group Needs
+            vs Wants without re-listing the essential set (ADR-140/143).
     """
 
     category: str
     target: Decimal | None
     spent: Decimal
     remaining: Decimal | None
+    is_essential: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +80,43 @@ class Floor:
 
     amount: Decimal | None
     source: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CategoryHistoryLine:
+    """One expense category's trailing-spend history for budget templating (ADR-145).
+
+    Backs the Budgets redesign templates ("Match 3-mo avg" / "Match last month")
+    and the per-row "use avg" chips: for a requested month it carries the mean of
+    the three calendar months immediately before it (``avg3mo``) and the single
+    prior month's spend (``last_month``). Money is :class:`~decimal.Decimal`; a
+    category with no spend in a window contributes ``0`` there (ADR-025).
+
+    Attributes:
+        category: The expense category label.
+        avg3mo: The mean ARS-equivalent expense over the 3 calendar months
+            immediately before the requested month (e.g. for 2026-06 the mean of
+            2026-03, 2026-04 and 2026-05); ``0`` when the category had no spend.
+        last_month: The category's ARS-equivalent expense in the single prior month
+            (e.g. 2026-05 for 2026-06); ``0`` when the category had no spend.
+    """
+
+    category: str
+    avg3mo: Decimal
+    last_month: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class CategoryHistory:
+    """The trailing per-category spend history for a month (ADR-145).
+
+    Attributes:
+        categories: One :class:`CategoryHistoryLine` per expense category present in
+            the trailing spend history, sorted by category name. Empty when no spend
+            exists in any window.
+    """
+
+    categories: list[CategoryHistoryLine]
 
 
 @dataclass(frozen=True, slots=True)

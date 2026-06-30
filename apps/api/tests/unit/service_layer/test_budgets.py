@@ -15,6 +15,7 @@ from margen_api.service_layer.budgets import (
     BUDGETABLE_CATEGORIES,
     budgetable_categories,
     build_budget_lines,
+    build_category_history,
     build_saving_lines,
 )
 
@@ -109,6 +110,95 @@ class TestBuildBudgetLines:
 
         # THEN
         assert categories == sorted(categories)
+
+    def test_flags_essential_needs_vs_wants(self):
+        """
+        GIVEN an essential category (Food) and a non-essential one (Entertainment)
+        WHEN the lines are built
+        THEN Food is flagged essential and Entertainment is not (ADR-143)
+        """
+        # WHEN
+        lines = build_budget_lines({}, {})
+        food = next(line for line in lines if line.category == "Food")
+        entertainment = next(line for line in lines if line.category == "Entertainment")
+
+        # THEN
+        assert food.is_essential is True
+        assert entertainment.is_essential is False
+
+
+class TestBuildCategoryHistory:
+    """``build_category_history`` averages three prior months and reports the last (ADR-145)."""
+
+    def test_averages_three_months_and_reports_last(self):
+        """
+        GIVEN a category with spend in all three prior months
+        WHEN the history is built
+        THEN avg3mo is the mean of the three and lastMonth is the most recent month
+        """
+        # WHEN — oldest-first: 2026-03, 2026-04, 2026-05.
+        lines = build_category_history(
+            [{"Food": Decimal("30000")}, {"Food": Decimal("60000")}, {"Food": Decimal("90000")}]
+        )
+        food = next(line for line in lines if line.category == "Food")
+
+        # THEN — mean = (30000 + 60000 + 90000) / 3 = 60000; last = 90000.
+        assert food.avg3mo == Decimal("60000.00")
+        assert food.last_month == Decimal("90000")
+
+    def test_absent_month_counts_as_zero_in_the_average(self):
+        """
+        GIVEN a category present in only one of the three windows
+        WHEN the history is built
+        THEN avg3mo divides the single window's spend by three (absent months are 0)
+        """
+        # WHEN — spend only in the oldest month.
+        lines = build_category_history([{"Food": Decimal("30000")}, {}, {}])
+        food = next(line for line in lines if line.category == "Food")
+
+        # THEN — 30000 / 3 = 10000; the (absent) last month is 0.
+        assert food.avg3mo == Decimal("10000.00")
+        assert food.last_month == Decimal("0")
+
+    def test_unions_categories_across_windows_and_sorts(self):
+        """
+        GIVEN different categories appearing in different windows
+        WHEN the history is built
+        THEN every category seen in any window surfaces, sorted by name
+        """
+        # WHEN
+        lines = build_category_history(
+            [{"Transport": Decimal("5000")}, {"Food": Decimal("10000")}, {"Health": Decimal("2000")}]
+        )
+        categories = [line.category for line in lines]
+
+        # THEN
+        assert categories == ["Food", "Health", "Transport"]
+
+    def test_empty_windows_yield_no_lines(self):
+        """
+        GIVEN three empty windows (no spend anywhere)
+        WHEN the history is built
+        THEN no lines are produced
+        """
+        # WHEN
+        lines = build_category_history([{}, {}, {}])
+
+        # THEN
+        assert lines == []
+
+    def test_rounds_average_half_up_to_two_places(self):
+        """
+        GIVEN spend that does not divide evenly by three
+        WHEN the history is built
+        THEN avg3mo is rounded half-up to two decimal places (money, ADR-025)
+        """
+        # WHEN — total 10000 / 3 = 3333.33...
+        lines = build_category_history([{"Food": Decimal("10000")}, {}, {}])
+        food = next(line for line in lines if line.category == "Food")
+
+        # THEN
+        assert food.avg3mo == Decimal("3333.33")
 
 
 class TestBuildSavingLines:

@@ -24,12 +24,12 @@ JUNE = "2026-06"
 A_DATE = "2026-06-12"
 
 
-async def _seed_expense(client: httpx.AsyncClient, *, category: str, amount: str) -> None:
-    """POST an expense transaction in the given category, asserting 201."""
+async def _seed_expense(client: httpx.AsyncClient, *, category: str, amount: str, occurred_on: str = A_DATE) -> None:
+    """POST an expense transaction in the given category and month, asserting 201."""
     response = await client.post(
         TRANSACTIONS,
         json={
-            "occurredOn": A_DATE,
+            "occurredOn": occurred_on,
             "name": f"{category} spend",
             "kind": "expense",
             "amountNum": amount,
@@ -74,6 +74,9 @@ class TestBudgetSurface:
         assert food["target"] is None
         assert food["remaining"] is None
         assert food["spent"] == "0"
+        # Essentials are flagged so the client can group Needs vs Wants (ADR-143).
+        assert food["isEssential"] is True
+        assert _line(data, "Entertainment")["isEssential"] is False
         # Income is an inflow, never a budget line (ADR-125).
         assert all(line["category"] != "Income" for line in data["categories"])
 
@@ -120,6 +123,111 @@ class TestBudgetSurface:
 
         # THEN
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+class TestCategoryHistory:
+    """GET /budgets/history returns the trailing 3-month average and prior month (ADR-145)."""
+
+    def _history_line(self, data: dict, category: str) -> dict:
+        """Return the history line for a category from the response data."""
+        return next(line for line in data["categories"] if line["category"] == category)
+
+    async def test_returns_avg3mo_and_last_month_per_category(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN Food expenses in 2026-03, 2026-04 and 2026-05
+        WHEN the history for 2026-06 is requested
+        THEN Food carries avg3mo = mean of the three months and lastMonth = May's spend
+        """
+        # GIVEN — the three calendar months immediately before June.
+        await _seed_expense(test_client, category="Food", amount="30000.00", occurred_on="2026-03-10")
+        await _seed_expense(test_client, category="Food", amount="60000.00", occurred_on="2026-04-10")
+        await _seed_expense(test_client, category="Food", amount="90000.00", occurred_on="2026-05-10")
+
+        # WHEN
+        response = await test_client.get(f"{BUDGETS}/history", params={"month": JUNE})
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK, response.text
+        data = response.json()["data"]
+        food = self._history_line(data, "Food")
+        assert food["avg3mo"] == "60000.00"  # (30000 + 60000 + 90000) / 3
+        assert food["lastMonth"] == "90000.00"
+
+    async def test_absent_window_counts_as_zero_in_the_average(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN spend only in 2026-03 (the oldest of the three windows)
+        WHEN the history for 2026-06 is requested
+        THEN avg3mo divides by three (the two empty months count as 0) and lastMonth is 0
+        """
+        # GIVEN
+        await _seed_expense(test_client, category="Transport", amount="30000.00", occurred_on="2026-03-10")
+
+        # WHEN
+        data = (await test_client.get(f"{BUDGETS}/history", params={"month": JUNE})).json()["data"]
+
+        # THEN — 30000 / 3 = 10000; May had no Transport spend.
+        transport = self._history_line(data, "Transport")
+        assert transport["avg3mo"] == "10000.00"
+        assert transport["lastMonth"] == "0"
+
+    async def test_empty_history_returns_no_categories(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN no spend in any trailing window
+        WHEN the history is requested
+        THEN the categories list is empty
+        """
+        # WHEN
+        data = (await test_client.get(f"{BUDGETS}/history", params={"month": JUNE})).json()["data"]
+
+        # THEN
+        assert data["categories"] == []
+
+    @pytest.mark.parametrize("bad_month", ["2026-13", "2026-6", "june", "2026/06", "2026-00"])
+    async def test_malformed_month_returns_422(self, test_client: httpx.AsyncClient, bad_month: str):
+        """
+        GIVEN a malformed month query param
+        WHEN the history is requested
+        THEN boundary validation returns 422
+        """
+        # WHEN
+        response = await test_client.get(f"{BUDGETS}/history", params={"month": bad_month})
+
+        # THEN
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    async def test_defaults_to_current_server_month(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN no month query param
+        WHEN the history is requested
+        THEN it returns 200 for the current server month
+        """
+        # WHEN
+        response = await test_client.get(f"{BUDGETS}/history")
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK
+
+    async def test_history_is_owner_scoped(
+        self,
+        container: ApplicationContainer,
+        test_client: httpx.AsyncClient,
+        client_for_user: object,
+    ):
+        """
+        GIVEN user A has Food spend in the trailing window
+        WHEN user B requests the same month's history
+        THEN B sees no categories — A's spend is invisible to B (ADR-108, ADR-130)
+        """
+        # GIVEN — user A seeds spend in May (the prior month).
+        await _seed_expense(test_client, category="Food", amount="90000.00", occurred_on="2026-05-10")
+
+        # WHEN — user B reads over the SAME container.
+        async with client_for_user(container, STUB_AUTH_USER_B) as client_b:  # type: ignore[operator]
+            response = await client_b.get(f"{BUDGETS}/history", params={"month": JUNE})
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["data"]["categories"] == []
 
 
 class TestUpsert:

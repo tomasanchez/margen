@@ -25,7 +25,7 @@ from margen_api.service_layer.account_read_models import AccountReadModel, NetWo
 from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.account_repository import AbstractAccountRepository
 from margen_api.service_layer.budget_income_repository import AbstractBudgetIncomeRepository
-from margen_api.service_layer.budget_read_models import MonthlyBudget
+from margen_api.service_layer.budget_read_models import CategoryHistory, MonthlyBudget
 from margen_api.service_layer.budget_reader import AbstractBudgetReader
 from margen_api.service_layer.budget_repository import AbstractBudgetRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore, InvoiceDocument
@@ -874,13 +874,16 @@ class FakeBudgetReader(AbstractBudgetReader):
     requested month and owner and returns the budget it was given (ADR-032, ADR-108).
     """
 
-    def __init__(self, budget: MonthlyBudget) -> None:
-        """Initialize the reader with the budget every call returns.
+    def __init__(self, budget: MonthlyBudget, history: CategoryHistory | None = None) -> None:
+        """Initialize the reader with the budget and history every call returns.
 
         Args:
-            budget: The monthly budget every call returns.
+            budget: The monthly budget every ``monthly_budget`` call returns.
+            history: The category history every ``category_history`` call returns;
+                an empty history when not provided.
         """
         self._budget = budget
+        self._history = history if history is not None else CategoryHistory(categories=[])
         self.requested_month: date | None = None
         self.requested_user_id: str | None = None
 
@@ -889,6 +892,12 @@ class FakeBudgetReader(AbstractBudgetReader):
         self.requested_month = month
         self.requested_user_id = user_id
         return self._budget
+
+    async def category_history(self, month: date, user_id: str) -> CategoryHistory:
+        """Record the requested month and owner and return the canned history (ADR-108, ADR-145)."""
+        self.requested_month = month
+        self.requested_user_id = user_id
+        return self._history
 
 
 class FakeSummaryReader(AbstractSummaryReader):

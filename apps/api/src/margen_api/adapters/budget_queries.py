@@ -30,10 +30,10 @@ from margen_api.adapters.queries import month_category_expense_totals
 from margen_api.domain.models.budget import month_start
 from margen_api.domain.models.strategy import income_pressure, suggest_strategy
 from margen_api.domain.models.value_objects import BudgetKind, Currency
-from margen_api.service_layer.budget_read_models import Floor, MonthlyBudget
+from margen_api.service_layer.budget_read_models import CategoryHistory, Floor, MonthlyBudget
 from margen_api.service_layer.budget_reader import AbstractBudgetReader
-from margen_api.service_layer.budgets import build_budget_lines, build_saving_lines
-from margen_api.service_layer.summaries import month_key
+from margen_api.service_layer.budgets import build_budget_lines, build_category_history, build_saving_lines
+from margen_api.service_layer.summaries import add_months, month_key
 
 # For the MVP every figure is ARS-equivalent: targets are stored ARS and the spend
 # is the ARS-equivalent category total, so the surface reports ARS (ADR-125).
@@ -73,6 +73,15 @@ class SqlAlchemyBudgetReader(AbstractBudgetReader):
             suggested_strategy=self._suggested_strategy(income, floor_amount),
             pressure=self._pressure(income, floor_amount),
         )
+
+    async def category_history(self, month: date, user_id: str) -> CategoryHistory:
+        """Aggregate the owner's per-category spend over the three months before ``month`` (ADR-145, ADR-108)."""
+        owner = UUID(user_id)
+        period = month_start(month)
+        # The three calendar months immediately before the requested month, oldest-first.
+        prior_months = [add_months(period, offset) for offset in (-3, -2, -1)]
+        monthly_totals = [await month_category_expense_totals(self.session, prior, owner) for prior in prior_months]
+        return CategoryHistory(categories=build_category_history(monthly_totals))
 
     async def _targets(self, period: date, owner: UUID) -> dict[str, Decimal]:
         """Return the owner's per-category SPEND targets for the month (ADR-138, ADR-130).

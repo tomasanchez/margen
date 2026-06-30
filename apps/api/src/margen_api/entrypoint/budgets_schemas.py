@@ -33,7 +33,14 @@ from pydantic import Field
 from margen_api.domain.commands.budget import UpsertBudget
 from margen_api.domain.models.value_objects import BudgetKind, Currency
 from margen_api.entrypoint.schemas import CamelCaseModel
-from margen_api.service_layer.budget_read_models import BudgetLine, Floor, MonthlyBudget, SavingLine
+from margen_api.service_layer.budget_read_models import (
+    BudgetLine,
+    CategoryHistory,
+    CategoryHistoryLine,
+    Floor,
+    MonthlyBudget,
+    SavingLine,
+)
 
 
 class BudgetLineResponse(CamelCaseModel):
@@ -49,6 +56,9 @@ class BudgetLineResponse(CamelCaseModel):
         default=None,
         description="target - spent when a target is set; null otherwise (ADR-125).",
     )
+    is_essential: bool = Field(
+        description="Whether the category is an essential 'Needs' floor category, serialized as 'isEssential' (ADR-143).",
+    )
 
     @classmethod
     def from_read_model(cls, model: BudgetLine) -> BudgetLineResponse:
@@ -58,6 +68,7 @@ class BudgetLineResponse(CamelCaseModel):
             target=model.target,
             spent=model.spent,
             remaining=model.remaining,
+            is_essential=model.is_essential,
         )
 
 
@@ -122,6 +133,46 @@ class MonthlyBudgetResponse(CamelCaseModel):
             suggested_strategy=model.suggested_strategy,
             pressure=model.pressure,
         )
+
+
+class CategoryHistoryLineResponse(CamelCaseModel):
+    """One expense category's trailing spend history for budget templating (ADR-145)."""
+
+    category: str = Field(description="The expense category label.")
+    # Pin the alias to 'avg3mo': the camel-case generator would otherwise capitalize
+    # the segment after the digit ('avg3Mo'), breaking the pinned contract (ADR-030).
+    avg3mo: Decimal = Field(
+        alias="avg3mo",
+        description="Mean ARS-equivalent spend over the 3 calendar months before the requested month (ADR-025).",
+    )
+    last_month: Decimal = Field(
+        description="The category's ARS-equivalent spend in the single prior month; serialized as 'lastMonth'.",
+    )
+
+    @classmethod
+    def from_read_model(cls, model: CategoryHistoryLine) -> CategoryHistoryLineResponse:
+        """Build the response line from a category-history read model (ADR-030)."""
+        return cls(category=model.category, avg3mo=model.avg3mo, last_month=model.last_month)
+
+
+class CategoryHistoryResponse(CamelCaseModel):
+    """The trailing per-category spend history returned to clients (ADR-145).
+
+    Backs the Budgets redesign templates ("Match 3-mo avg" / "Match last month")
+    and the per-row "use avg" chips. Pinned JSON contract::
+
+        GET /budgets/history?month=YYYY-MM ->
+            { categories: [ { category, avg3mo, lastMonth } ] }
+    """
+
+    categories: list[CategoryHistoryLineResponse] = Field(
+        description="One line per expense category seen in the trailing spend, sorted by category name.",
+    )
+
+    @classmethod
+    def from_read_model(cls, model: CategoryHistory) -> CategoryHistoryResponse:
+        """Build the response from a category-history read model (ADR-030)."""
+        return cls(categories=[CategoryHistoryLineResponse.from_read_model(line) for line in model.categories])
 
 
 class BudgetUpsertRequest(CamelCaseModel):
