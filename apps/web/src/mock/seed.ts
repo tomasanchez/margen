@@ -11,14 +11,19 @@
 
 import type { Bank, Category } from './types'
 
-/** All categories, in the order shown in filters and the Add form. */
+/**
+ * All categories, in the order shown in filters and the Add form. `Housing`
+ * supersedes `Rent` (ADR-140); `Rent` stays a tolerated alias in the type union
+ * for historical rows but is not offered here. `Education` is added.
+ */
 export const CATEGORIES: readonly Category[] = [
   'Income',
   'Food',
-  'Rent',
+  'Housing',
   'Transport',
   'Subscriptions',
   'Health',
+  'Education',
   'Shopping',
   'Entertainment',
   'Services',
@@ -54,3 +59,12 @@ export const ARCA_SCALE_URL =
 
 /** Hardcoded MEP rate used for new USD entries (ADR-020, non-goal of live FX). */
 export const MEP_RATE = 1245
+
+/**
+ * Seed monthly-inflation suggestion for the reprice prompt (ADR-141), as a
+ * percentage. A REM-derived constant (~2.0%/mo as of mid-2026); it is ONLY a
+ * suggestion — the user always edits it, and there is no INDEC scraping in the
+ * MVP. The constant can go stale; that is acceptable precisely because it never
+ * auto-applies.
+ */
+export const REM_MONTHLY_INFLATION_PCT = 2.0

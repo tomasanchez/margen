@@ -41,13 +41,18 @@ import type {
 } from '../../api/invoicesClient'
 import type { AddPrefill } from './addContext'
 
-/** Categories shown as expense chips (everything pickable except `Income`). */
+/**
+ * Categories shown as expense chips (everything pickable except `Income`). The
+ * picker prefers `Housing` over the legacy `Rent` alias (ADR-140); `Rent` stays
+ * valid for historical rows but is not offered here. `Education` is added.
+ */
 export const EXPENSE_CATEGORIES: readonly Category[] = [
   'Food',
-  'Rent',
+  'Housing',
   'Transport',
   'Subscriptions',
   'Health',
+  'Education',
   'Shopping',
   'Entertainment',
   'Services',

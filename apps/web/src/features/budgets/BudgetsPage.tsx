@@ -29,18 +29,33 @@ import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
 import { MonthSwitcher } from '../../components/MonthSwitcher'
 import {
+  addMonths,
   currentViewingMonth,
+  formatViewingMonth,
   type ViewingMonth,
 } from '../../components/months'
 import { toYearMonth } from '../home/queries'
 import { formatCurrency } from '../../lib/format'
 import { BudgetRow } from './BudgetRow'
-import { deriveBudgetTotals } from './derive'
+import { NetIncomeHeader } from './NetIncomeHeader'
+import { SavingsSection } from './SavingsSection'
+import { RepricePrompt } from './RepricePrompt'
 import {
+  deriveBudgetTotals,
+  isRepriceRollover,
+  PROFILE_SAVINGS_PCT,
+} from './derive'
+import {
+  useApplyProfile,
+  useBudgetIncome,
   useBudgets,
   useClearBudgetTarget,
+  usePriorBudgets,
+  useReprice,
+  useSetBudgetIncome,
   useSetBudgetTarget,
 } from './queries'
+import { budgetsClient, type SavingProfile } from '../../api/budgetsClient'
 import type { Category } from '../../mock/types'
 
 /** The summary header: total budgeted vs spent for the period (ADR-125). */
@@ -121,21 +136,114 @@ export function BudgetsPage() {
   // Home only, ADR-040), defaulting to the current real calendar month.
   const [month, setMonth] = useState<ViewingMonth>(() => currentViewingMonth())
   const yearMonth = toYearMonth(month)
+  const monthLabel = formatViewingMonth(month)
+  const priorMonthValue = addMonths(month, -1)
+  const priorYearMonth = toYearMonth(priorMonthValue)
+  const priorLabel = formatViewingMonth(priorMonthValue)
 
   const budgetsQuery = useBudgets(yearMonth)
+  const incomeQuery = useBudgetIncome(yearMonth)
+  const priorQuery = usePriorBudgets(priorYearMonth)
   const setTarget = useSetBudgetTarget()
   const clearTarget = useClearBudgetTarget()
+  const setIncome = useSetBudgetIncome()
+  const applyProfile = useApplyProfile()
+  const reprice = useReprice()
 
   // Track which category's write is in flight / errored so the spinner + retry
   // hint show only on the affected row (ADR-037). Cleared on the next attempt.
   const [savingCategory, setSavingCategory] = useState<Category | null>(null)
   const [errorCategory, setErrorCategory] = useState<Category | null>(null)
 
+  // The applied profile + the floor-guard result from the last apply (ADR-138).
+  const [appliedProfile, setAppliedProfile] = useState<SavingProfile | null>(null)
+  const [applyingProfile, setApplyingProfile] = useState<SavingProfile | null>(null)
+  const [floorBreached, setFloorBreached] = useState(false)
+  const [floorGap, setFloorGap] = useState<string | null>(null)
+
+  // The pulled variable-income suggestion (lazy; null until requested).
+  const [suggestedBase, setSuggestedBase] = useState<string | null>(null)
+  const [suggestedBaseEmpty, setSuggestedBaseEmpty] = useState(false)
+
   const period = budgetsQuery.data
+  const income = incomeQuery.data
   const totals = useMemo(
     () => (period ? deriveBudgetTotals(period) : undefined),
     [period],
   )
+
+  // Reprice rollover: the current month has no spend targets while the prior one
+  // does (ADR-137). Never auto-applies — surfaces a prompt only.
+  const showReprice = useMemo(
+    () => isRepriceRollover(period, priorQuery.data),
+    [period, priorQuery.data],
+  )
+
+  const handleCommitIncome = (amount: string) =>
+    setIncome.mutate({ month: yearMonth, amount })
+
+  const handleCommitFloor = (amount: string) => {
+    // Send the income amount alongside the manual floor so the PUT upserts the
+    // row; income must already exist for the floor field to be editable.
+    if (income?.amount == null) return
+    setIncome.mutate({
+      month: yearMonth,
+      amount: income.amount,
+      floorAmount: amount,
+      floorSource: 'manual',
+    })
+  }
+
+  const handleUseSuggested = () => {
+    void budgetsClient.fetchSuggestedBase(yearMonth).then((base) => {
+      if (base == null) {
+        setSuggestedBaseEmpty(true)
+        return
+      }
+      setSuggestedBase(base)
+      setSuggestedBaseEmpty(false)
+      setIncome.mutate({ month: yearMonth, amount: base })
+    })
+  }
+
+  const handleApplyProfile = (profile: SavingProfile) => {
+    setApplyingProfile(profile)
+    applyProfile.mutate(
+      { month: yearMonth, profile },
+      {
+        onSuccess: (result) => {
+          setAppliedProfile(profile)
+          setFloorBreached(result.floorBreached)
+          setFloorGap(result.gap)
+        },
+        onSettled: () => setApplyingProfile(null),
+      },
+    )
+  }
+
+  const handleReprice = (
+    monthlyInflation: number,
+    stepUps: Record<string, string>,
+  ) =>
+    reprice.mutate({
+      fromMonth: priorYearMonth,
+      toMonth: yearMonth,
+      monthlyInflation,
+      stepUps,
+    })
+
+  // Best-effort selected profile: the to-savings % nearest the current rows.
+  const selectedProfile = useMemo<SavingProfile | null>(() => {
+    if (appliedProfile != null) return appliedProfile
+    if (!period || period.savings.length === 0) return null
+    const total = period.savings
+      .filter((s) => s.bucket !== 'MaintenanceReserve')
+      .reduce((sum, s) => sum + s.percent, 0)
+    const match = (Object.keys(PROFILE_SAVINGS_PCT) as SavingProfile[]).find(
+      (p) => PROFILE_SAVINGS_PCT[p] === total,
+    )
+    return match ?? null
+  }, [appliedProfile, period])
 
   const handleCommit = (category: Category, amount: string) => {
     setSavingCategory(category)
@@ -205,6 +313,36 @@ export function BudgetsPage() {
     <Box>
       {heading}
 
+      {showReprice && priorQuery.data ? (
+        <RepricePrompt
+          prior={priorQuery.data}
+          priorLabel={priorLabel}
+          toMonth={yearMonth}
+          toLabel={monthLabel}
+          currency={period?.currency ?? 'ARS'}
+          applying={reprice.isPending}
+          applyError={reprice.isError}
+          onConfirm={handleReprice}
+        />
+      ) : null}
+
+      <Box sx={{ mb: 2.5 }}>
+        <NetIncomeHeader
+          income={income}
+          monthLabel={monthLabel}
+          currency={period?.currency ?? income?.currency ?? 'ARS'}
+          pressure={period?.pressure ?? null}
+          suggestedStrategy={period?.suggestedStrategy ?? null}
+          saving={setIncome.isPending}
+          saveError={setIncome.isError}
+          suggestedBase={suggestedBase}
+          suggestedBaseEmpty={suggestedBaseEmpty}
+          onCommitIncome={handleCommitIncome}
+          onCommitFloor={handleCommitFloor}
+          onUseSuggested={handleUseSuggested}
+        />
+      </Box>
+
       <SectionCard title={t('list.title')} subtitle={t('list.subtitle')}>
         {budgetsQuery.isPending || !period || !totals ? (
           <Box>
@@ -252,6 +390,20 @@ export function BudgetsPage() {
           </>
         )}
       </SectionCard>
+
+      <Box sx={{ mt: 2.5 }}>
+        <SavingsSection
+          savings={period?.savings ?? []}
+          hasIncome={income?.amount != null}
+          currency={period?.currency ?? 'ARS'}
+          selectedProfile={selectedProfile}
+          applyingProfile={applyingProfile}
+          applyError={applyProfile.isError}
+          floorBreached={floorBreached}
+          floorGap={floorGap}
+          onApply={handleApplyProfile}
+        />
+      </Box>
     </Box>
   )
 }

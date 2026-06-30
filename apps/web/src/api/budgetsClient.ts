@@ -23,6 +23,31 @@ import { apiUrl } from '../config'
 import { authedFetch } from './http'
 import type { Category, Currency } from '../mock/types'
 
+/** Row discriminator (ADR-138): spend targets vs saving allocations. */
+export type BudgetKind = 'spend' | 'saving'
+
+/**
+ * The seven closed saving buckets (ADR-138). Reused as the `category` key on
+ * `kind='saving'` rows; never collides with a spend {@link Category}.
+ */
+export type SavingBucket =
+  | 'EmergencyFund'
+  | 'DebtAcceleration'
+  | 'ShortTermGoals'
+  | 'MediumTermGoals'
+  | 'LongTermInvestment'
+  | 'FxHedge'
+  | 'MaintenanceReserve'
+
+/** The three research-fixed saving-rate templates (ADR-138). */
+export type SavingProfile = 'conservative' | 'balanced' | 'aggressive'
+
+/** Income-pressure segment from the income/floor ratio (ADR-143). */
+export type IncomePressure = 'Constrained' | 'Stable' | 'Comfortable'
+
+/** Source of the household floor amount (ADR-139). */
+export type FloorSource = 'manual' | 'computed'
+
 /**
  * One category's budget line as serialized by the backend. Every expense
  * category appears (ADR-125). `target` is `null` when the user has not set one;
@@ -40,6 +65,31 @@ export interface BudgetCategoryDto {
   remaining: string | null
 }
 
+/**
+ * One saving-bucket line as serialized by the backend (ADR-138). Saving rows
+ * live in the same budgets table under `kind='saving'`; `bucket` is a key from
+ * the closed `SAVING_BUCKETS` set, `percent` is the profile percentage of net
+ * income (a number, e.g. 5 for 5%), and `amount` is the resulting ARS allocation
+ * as a Decimal string.
+ */
+export interface SavingLineDto {
+  bucket: string
+  /** Percentage of net income for this bucket (e.g. `5` for 5%). */
+  percent: number
+  /** Allocation amount as a Decimal string (`base × percent`). */
+  amount: string
+}
+
+/**
+ * The household floor co-located on the income row (ADR-139). `amount` is the
+ * essentials floor as a Decimal string; `source` is `manual` (user-typed) or
+ * `computed` (Σ of essential spend targets).
+ */
+export interface BudgetFloorDto {
+  amount: string
+  source: string
+}
+
 /** The budgets period payload of `GET /budgets` (no `{ data }` envelope). */
 export interface BudgetPeriodDto {
   /** Requested calendar month as `YYYY-MM`. */
@@ -48,6 +98,14 @@ export interface BudgetPeriodDto {
   currency: string
   /** Every expense category, with its target / spent / remaining. */
   categories: BudgetCategoryDto[]
+  /** Saving-bucket rows (ADR-138); empty until a profile is applied. */
+  savings?: SavingLineDto[]
+  /** The household essentials floor + its source (ADR-139), or `null` if unset. */
+  floor?: BudgetFloorDto | null
+  /** Suggested saving profile from the floor/income ratio (ADR-143), or `null`. */
+  suggestedStrategy?: string | null
+  /** Income-pressure segment (`Constrained`/`Stable`/`Comfortable`), or `null`. */
+  pressure?: string | null
 }
 
 /** Request body for `PUT /budgets` (upsert a category target). */
@@ -59,6 +117,8 @@ export interface BudgetWriteBody {
   amount: string
   /** Budget currency; ARS for the MVP (ADR-125). */
   currency?: Currency
+  /** Row discriminator (ADR-138); defaults to `'spend'` server-side. */
+  kind?: BudgetKind
 }
 
 /**
@@ -73,11 +133,81 @@ export interface BudgetCategory {
   remaining: string | null
 }
 
+/** One saving-bucket line in the frontend read model (ADR-138). */
+export interface SavingLine {
+  bucket: SavingBucket
+  /** Percentage of net income for this bucket (e.g. `5`). */
+  percent: number
+  /** Allocation amount as a Decimal string. */
+  amount: string
+}
+
+/** The household essentials floor in the read model (ADR-139). */
+export interface BudgetFloor {
+  amount: string
+  source: FloorSource
+}
+
 /** The adapted budgets period the page + Home card consume. */
 export interface BudgetPeriod {
   month: string
   currency: Currency
   categories: BudgetCategory[]
+  /** Saving-bucket rows (ADR-138); empty array when none applied. */
+  savings: SavingLine[]
+  /** The household essentials floor (ADR-139), or `null` when unset. */
+  floor: BudgetFloor | null
+  /** Suggested saving profile (ADR-143), or `null`. */
+  suggestedStrategy: SavingProfile | null
+  /** Income-pressure segment (ADR-143), or `null`. */
+  pressure: IncomePressure | null
+}
+
+/** `GET /budget-income` payload — the per-month net-income base + floor (ADR-139). */
+export interface BudgetIncomeDto {
+  /** Requested calendar month as `YYYY-MM`. */
+  month: string
+  /** Net spendable income as a Decimal string, or `null` when unset. */
+  amount: string | null
+  currency: string
+  /** `manual` for the MVP; `monotributo` is Phase 3. */
+  source: string
+  /** The co-located household floor + its source. */
+  floor: BudgetFloorDto | null
+}
+
+/** The adapted per-month net-income base the header consumes (ADR-139). */
+export interface BudgetIncome {
+  month: string
+  /** Net spendable income as a Decimal string, or `null` when unset. */
+  amount: string | null
+  currency: Currency
+  source: string
+  /** The household essentials floor, or `null` when unset. */
+  floor: BudgetFloor | null
+}
+
+/** Request body for `PUT /budget-income` (upsert the net-income base + floor). */
+export interface BudgetIncomeWriteBody {
+  /** Period month as `YYYY-MM`. */
+  month: string
+  /** Net spendable income as a Decimal string. */
+  amount: string
+  /** Budget currency; ARS for the MVP. */
+  currency?: Currency
+  /** Optional manual household-floor override as a Decimal string. */
+  floorAmount?: string
+  /** Source of the floor when `floorAmount` is sent (`manual` for the MVP). */
+  floorSource?: FloorSource
+}
+
+/** `POST /budgets/apply-profile` response — the refreshed month + the floor guard. */
+export interface ApplyProfileResult {
+  period: BudgetPeriod
+  /** Whether the preset pushed essentials below the floor (ADR-138). */
+  floorBreached: boolean
+  /** The shortfall amount as a Decimal string when breached, else `null`. */
+  gap: string | null
 }
 
 /** An API error that carries the HTTP status so callers can branch on it. */
@@ -118,6 +248,40 @@ function asCategory(value: string): Category {
   return value as Category
 }
 
+/** Narrow the backend floor `source` string to {@link FloorSource} (default manual). */
+function asFloorSource(value: string): FloorSource {
+  return value === 'computed' ? 'computed' : 'manual'
+}
+
+/** Adapt a backend floor DTO (or nullish) to a {@link BudgetFloor} or `null`. */
+function adaptFloor(dto: BudgetFloorDto | null | undefined): BudgetFloor | null {
+  if (dto == null) return null
+  return { amount: dto.amount, source: asFloorSource(dto.source) }
+}
+
+/** Narrow a backend strategy string to {@link SavingProfile}, else `null`. */
+function asSavingProfile(value: string | null | undefined): SavingProfile | null {
+  return value === 'conservative' || value === 'balanced' || value === 'aggressive'
+    ? value
+    : null
+}
+
+/** Narrow a backend pressure string to {@link IncomePressure}, else `null`. */
+function asPressure(value: string | null | undefined): IncomePressure | null {
+  return value === 'Constrained' || value === 'Stable' || value === 'Comfortable'
+    ? value
+    : null
+}
+
+/** Adapt one backend {@link SavingLineDto} to a {@link SavingLine}. */
+export function adaptSavingLine(dto: SavingLineDto): SavingLine {
+  return {
+    bucket: dto.bucket as SavingBucket,
+    percent: dto.percent,
+    amount: dto.amount,
+  }
+}
+
 /** Adapt one backend {@link BudgetCategoryDto} to a {@link BudgetCategory}. */
 export function adaptBudgetCategory(dto: BudgetCategoryDto): BudgetCategory {
   return {
@@ -134,6 +298,21 @@ export function adaptBudgetPeriod(dto: BudgetPeriodDto): BudgetPeriod {
     month: dto.month,
     currency: asCurrency(dto.currency),
     categories: dto.categories.map(adaptBudgetCategory),
+    savings: (dto.savings ?? []).map(adaptSavingLine),
+    floor: adaptFloor(dto.floor),
+    suggestedStrategy: asSavingProfile(dto.suggestedStrategy),
+    pressure: asPressure(dto.pressure),
+  }
+}
+
+/** Adapt the backend net-income payload to the {@link BudgetIncome} read model. */
+export function adaptBudgetIncome(dto: BudgetIncomeDto): BudgetIncome {
+  return {
+    month: dto.month,
+    amount: dto.amount,
+    currency: asCurrency(dto.currency),
+    source: dto.source,
+    floor: adaptFloor(dto.floor),
   }
 }
 
@@ -168,6 +347,8 @@ async function setTarget(body: BudgetWriteBody): Promise<void> {
       month: body.month,
       amount: body.amount,
       currency: body.currency ?? 'ARS',
+      // Default 'spend' so existing target editing is unaffected (ADR-138).
+      kind: body.kind ?? 'spend',
     }),
   })
   await ensureOk(response)
@@ -189,9 +370,127 @@ async function clearTarget(category: Category, month: string): Promise<void> {
   await ensureOk(response)
 }
 
+/**
+ * GET the per-month net-income base + household floor (ADR-139). Adapts the
+ * payload; throws {@link BudgetApiError} on a non-2xx.
+ */
+async function fetchBudgetIncome(month: string): Promise<BudgetIncome> {
+  const response = await authedFetch(
+    apiUrl(`/budget-income?month=${encodeURIComponent(month)}`),
+    { headers: { Accept: 'application/json' } },
+  )
+  await ensureOk(response)
+  const dto = (await response.json()) as BudgetIncomeDto
+  return adaptBudgetIncome(dto)
+}
+
+/**
+ * PUT the net-income base + optional manual floor for a month (upsert, ADR-139).
+ * Currency defaults to ARS. Resolves on success; throws on a non-2xx.
+ */
+async function setBudgetIncome(body: BudgetIncomeWriteBody): Promise<void> {
+  const response = await authedFetch(apiUrl('/budget-income'), {
+    method: 'PUT',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      month: body.month,
+      amount: body.amount,
+      currency: body.currency ?? 'ARS',
+      // Only send floor fields when the user supplied a manual override; an
+      // omitted floor lets the backend keep the computed-from-essentials value.
+      ...(body.floorAmount != null ? { floorAmount: body.floorAmount } : {}),
+      ...(body.floorSource != null ? { floorSource: body.floorSource } : {}),
+    }),
+  })
+  await ensureOk(response)
+}
+
+/**
+ * GET the suggested variable-income base for a month (ADR-139). Returns the
+ * Decimal-string suggestion, or `null` when there is <12 months of history.
+ */
+async function fetchSuggestedBase(month: string): Promise<string | null> {
+  const response = await authedFetch(
+    apiUrl(`/budget-income/suggested?month=${encodeURIComponent(month)}`),
+    { headers: { Accept: 'application/json' } },
+  )
+  await ensureOk(response)
+  const dto = (await response.json()) as { suggestedBase: string | null }
+  return dto.suggestedBase
+}
+
+/**
+ * POST a saving profile for a month (ADR-138). Writes the saving rows server-side
+ * and returns the refreshed month surface plus the floor-guard result
+ * (`floorBreached` + `gap`). Throws {@link BudgetApiError} on a non-2xx.
+ */
+async function applyProfile(
+  month: string,
+  profile: SavingProfile,
+): Promise<ApplyProfileResult> {
+  const response = await authedFetch(apiUrl('/budgets/apply-profile'), {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ month, profile }),
+  })
+  await ensureOk(response)
+  const dto = (await response.json()) as BudgetPeriodDto & {
+    floorBreached?: boolean
+    gap?: string | null
+  }
+  return {
+    period: adaptBudgetPeriod(dto),
+    floorBreached: dto.floorBreached === true,
+    gap: dto.gap ?? null,
+  }
+}
+
+/** Per-category inflation step-up amounts (rent/ICL, tariffs) as Decimal strings. */
+export type RepriceStepUps = Record<string, string>
+
+/** Request payload for `POST /budgets/reprice` (ADR-137). */
+export interface RepriceBody {
+  /** Month to reprice FROM (the month that has spend rows), `YYYY-MM`. */
+  fromMonth: string
+  /** Month to reprice INTO (the new, empty month), `YYYY-MM`. */
+  toMonth: string
+  /** Monthly inflation as a percentage (e.g. `2` for 2%). */
+  monthlyInflation: number
+  /** Optional per-category step-up amounts (Decimal strings). */
+  stepUps?: RepriceStepUps
+}
+
+/**
+ * POST a reprice from one month to another (ADR-137): reprices only `kind='spend'`
+ * rows by `cap × (1 + inflation/100) + stepUp`. Never auto-applies — the page
+ * confirms first. Returns the repriced target month; throws on a non-2xx.
+ */
+async function reprice(body: RepriceBody): Promise<BudgetPeriod> {
+  const response = await authedFetch(apiUrl('/budgets/reprice'), {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      fromMonth: body.fromMonth,
+      toMonth: body.toMonth,
+      monthlyInflation: body.monthlyInflation,
+      ...(body.stepUps && Object.keys(body.stepUps).length > 0
+        ? { stepUps: body.stepUps }
+        : {}),
+    }),
+  })
+  await ensureOk(response)
+  const dto = (await response.json()) as BudgetPeriodDto
+  return adaptBudgetPeriod(dto)
+}
+
 /** The budgets API client, grouped for ergonomic import. */
 export const budgetsClient = {
   fetchBudgets,
   setTarget,
   clearTarget,
+  fetchBudgetIncome,
+  setBudgetIncome,
+  fetchSuggestedBase,
+  applyProfile,
+  reprice,
 } as const

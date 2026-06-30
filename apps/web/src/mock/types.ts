@@ -27,14 +27,23 @@ export type TxType = 'expense' | 'income'
  */
 export type TxKind = 'expense' | 'income' | 'invoice'
 
-/** Spending/earning categories shown in filters and the Add form. */
+/**
+ * Spending/earning categories shown in filters and the Add form.
+ *
+ * `Housing` + `Education` are the MVP budget-category delta (ADR-140). `Rent` is
+ * RETAINED as a tolerant alias for historical rows (do NOT remove); the picker
+ * prefers `Housing`. The Phase-2 additions (Utilities/Social/DebtService/
+ * FamilySupport) are intentionally NOT here yet.
+ */
 export type Category =
   | 'Income'
   | 'Food'
+  | 'Housing'
   | 'Rent'
   | 'Transport'
   | 'Subscriptions'
   | 'Health'
+  | 'Education'
   | 'Shopping'
   | 'Entertainment'
   | 'Services'

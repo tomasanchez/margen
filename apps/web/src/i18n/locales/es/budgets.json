@@ -9,6 +9,74 @@
     "overCount_one": "{{count}} categoría excedida",
     "overCount_other": "{{count}} categorías excedidas"
   },
+  "income": {
+    "title": "Ingreso neto disponible",
+    "subtitle": "La base honesta sobre la que se aplican los porcentajes — después de impuestos y costos.",
+    "label": "Ingreso neto de {{month}}",
+    "placeholder": "Ingresá tu ingreso neto",
+    "floorLabel": "Piso de gastos esenciales",
+    "floorPlaceholder": "{{amount}}",
+    "floorHint": "Lo que cuestan los esenciales por mes. Dejalo vacío para usar el valor calculado de tus objetivos esenciales.",
+    "floorComputed": "Calculado desde tus objetivos esenciales: {{amount}}",
+    "saving": "Guardando",
+    "saveError": "No se pudo guardar — probá de nuevo.",
+    "empty": "Fijá tu ingreso neto para planificar con porcentajes y habilitar los perfiles de ahorro.",
+    "useSuggested": "Usar base sugerida ({{amount}})",
+    "useSuggestedAria": "Usar la base de ingreso neto sugerida de {{amount}}",
+    "noSuggestion": "Una base sugerida necesita al menos 12 meses de historial de ingresos.",
+    "pressure": {
+      "Constrained": "Ajustado — el ingreso es {{ratio}}× tu piso de esenciales",
+      "Stable": "Estable — el ingreso es {{ratio}}× tu piso de esenciales",
+      "Comfortable": "Holgado — el ingreso es {{ratio}}× tu piso de esenciales"
+    },
+    "suggestedStrategy": "Según tu ingreso y tu piso, un perfil {{profile}} parece buena opción. Siempre elegís vos."
+  },
+  "savings": {
+    "title": "Ahorro",
+    "subtitle": "Pagate a vos primero — un porcentaje del ingreso neto en cada objetivo.",
+    "needIncome": "Fijá tu ingreso neto arriba para aplicar un perfil de ahorro.",
+    "profileLegend": "Elegí un perfil de ahorro",
+    "profile": {
+      "conservative": "Conservador",
+      "balanced": "Equilibrado",
+      "aggressive": "Agresivo"
+    },
+    "profilePct": "{{pct}}% al ahorro",
+    "applying": "Aplicando…",
+    "applyError": "No se pudo aplicar el perfil — probá de nuevo.",
+    "empty": "Elegí un perfil para asignar el ahorro entre tus objetivos.",
+    "bucketPct": "{{pct}}% del ingreso neto",
+    "floorBreach": "Este perfil deja los esenciales por debajo de tu piso por {{gap}} — considerá Conservador.",
+    "buckets": {
+      "EmergencyFund": "Fondo de emergencia",
+      "DebtAcceleration": "Cancelación de deudas",
+      "ShortTermGoals": "Metas de corto plazo",
+      "MediumTermGoals": "Metas de mediano plazo",
+      "LongTermInvestment": "Inversión de largo plazo",
+      "FxHedge": "Cobertura USD / FX",
+      "MaintenanceReserve": "Reserva de mantenimiento"
+    }
+  },
+  "reprice": {
+    "prompt": "Un mes nuevo sin objetivos todavía. ¿Reajustar {{prior}} para {{month}}?",
+    "promptAction": "Reajustar para {{month}}",
+    "dismiss": "Ahora no",
+    "title": "Reajustar para {{month}}",
+    "intro": "Llevá los topes del mes pasado, ajustados por inflación. Revisalos antes de aplicar — nada cambia hasta que confirmes.",
+    "inflationLabel": "Inflación mensual %",
+    "inflationHint": "Sembrado con la última estimación del REM. Editalo según tu propio supuesto.",
+    "stepUpLabel": "Ajuste de {{category}}",
+    "stepUpsTitle": "Ajustes conocidos (opcional)",
+    "stepUpsHint": "Sumá un salto puntual para una categoría — índice de alquiler, aumento de tarifa.",
+    "colCategory": "Categoría",
+    "colOld": "Ahora",
+    "colNew": "Reajustado",
+    "confirm": "Aplicar reajuste",
+    "cancel": "Cancelar",
+    "applying": "Aplicando…",
+    "error": "No se pudo reajustar — probá de nuevo.",
+    "empty": "No hay objetivos para llevar desde {{prior}}."
+  },
   "list": {
     "title": "Categorías",
     "subtitle": "Los objetivos aplican solo al mes seleccionado.",

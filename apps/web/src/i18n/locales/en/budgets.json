@@ -9,6 +9,74 @@
     "overCount_one": "{{count}} category over budget",
     "overCount_other": "{{count}} categories over budget"
   },
+  "income": {
+    "title": "Net spendable income",
+    "subtitle": "The honest base every percentage is applied to — after tax and business costs.",
+    "label": "Net income for {{month}}",
+    "placeholder": "Enter your net income",
+    "floorLabel": "Household essentials floor",
+    "floorPlaceholder": "{{amount}}",
+    "floorHint": "What essentials cost each month. Leave blank to use the value computed from your essential targets.",
+    "floorComputed": "Computed from your essential targets: {{amount}}",
+    "saving": "Saving",
+    "saveError": "Couldn't save that — try again.",
+    "empty": "Set your net income to plan with percentages and unlock saving profiles.",
+    "useSuggested": "Use suggested base ({{amount}})",
+    "useSuggestedAria": "Use the suggested net-income base of {{amount}}",
+    "noSuggestion": "A suggested base needs at least 12 months of income history.",
+    "pressure": {
+      "Constrained": "Constrained — income is {{ratio}}× your essentials floor",
+      "Stable": "Stable — income is {{ratio}}× your essentials floor",
+      "Comfortable": "Comfortable — income is {{ratio}}× your essentials floor"
+    },
+    "suggestedStrategy": "Based on your income and floor, a {{profile}} profile looks like a good fit. You always choose."
+  },
+  "savings": {
+    "title": "Savings",
+    "subtitle": "Pay yourself first — a percentage of net income across buckets.",
+    "needIncome": "Set your net income above to apply a saving profile.",
+    "profileLegend": "Choose a saving profile",
+    "profile": {
+      "conservative": "Conservative",
+      "balanced": "Balanced",
+      "aggressive": "Aggressive"
+    },
+    "profilePct": "{{pct}}% to savings",
+    "applying": "Applying…",
+    "applyError": "Couldn't apply that profile — try again.",
+    "empty": "Pick a profile to allocate savings across your buckets.",
+    "bucketPct": "{{pct}}% of net income",
+    "floorBreach": "This preset leaves essentials below your floor by {{gap}} — consider Conservative.",
+    "buckets": {
+      "EmergencyFund": "Emergency fund",
+      "DebtAcceleration": "Debt acceleration",
+      "ShortTermGoals": "Short-term goals",
+      "MediumTermGoals": "Medium-term goals",
+      "LongTermInvestment": "Long-term investment",
+      "FxHedge": "USD / FX hedge",
+      "MaintenanceReserve": "Maintenance reserve"
+    }
+  },
+  "reprice": {
+    "prompt": "A new month with no targets yet. Reprice {{prior}} for {{month}}?",
+    "promptAction": "Reprice for {{month}}",
+    "dismiss": "Not now",
+    "title": "Reprice for {{month}}",
+    "intro": "Carry last month's caps forward, grown by inflation. Review before applying — nothing changes until you confirm.",
+    "inflationLabel": "Monthly inflation %",
+    "inflationHint": "Seeded from the latest REM estimate. Edit to match your own assumption.",
+    "stepUpLabel": "{{category}} step-up",
+    "stepUpsTitle": "Known step-ups (optional)",
+    "stepUpsHint": "Add a one-off jump for a category — rent index, a tariff increase.",
+    "colCategory": "Category",
+    "colOld": "Now",
+    "colNew": "Repriced",
+    "confirm": "Apply reprice",
+    "cancel": "Cancel",
+    "applying": "Applying…",
+    "error": "Couldn't reprice — try again.",
+    "empty": "No targets to carry forward from {{prior}}."
+  },
   "list": {
     "title": "Categories",
     "subtitle": "Targets apply to the selected month only.",

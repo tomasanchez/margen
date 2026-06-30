@@ -65,6 +65,8 @@
     "attentionTitle": "Más cerca del límite",
     "attentionPct": "{{pct}}%",
     "attentionOver": "Excedido",
+    "incomeSaved": "Ingreso neto {{income}} · ahorrado {{saved}}",
+    "repriceNudge": "Mes nuevo — reajustá tu presupuesto →",
     "emptyBody": "Fijá objetivos mensuales por categoría para ver cómo se compara tu gasto con lo planeado.",
     "setUp": "Configurar presupuestos",
     "errorTitle": "Datos de presupuesto no disponibles",

@@ -30,6 +30,10 @@ import type { BudgetPeriod } from '../../api/budgetsClient'
 const PERIOD: BudgetPeriod = {
   month: '2026-06',
   currency: 'ARS',
+  savings: [],
+  floor: null,
+  suggestedStrategy: null,
+  pressure: null,
   categories: [
     { category: 'Food', target: '120000.00', spent: '90000.00', remaining: '30000.00' },
     { category: 'Rent', target: '200000.00', spent: '230000.00', remaining: '-30000.00' },
@@ -40,6 +44,10 @@ const PERIOD: BudgetPeriod = {
 const EMPTY_PERIOD: BudgetPeriod = {
   month: '2026-06',
   currency: 'ARS',
+  savings: [],
+  floor: null,
+  suggestedStrategy: null,
+  pressure: null,
   categories: [
     { category: 'Food', target: null, spent: '90000.00', remaining: null },
   ],
@@ -53,6 +61,8 @@ function renderCard(props: Partial<BudgetProgressCardProps>) {
     component: () => (
       <BudgetProgressCard
         period={props.period}
+        income={props.income}
+        showRepriceNudge={props.showRepriceNudge}
         loading={props.loading ?? false}
         isError={props.isError}
         onRetry={props.onRetry}
@@ -117,5 +127,32 @@ describe('BudgetProgressCard', () => {
     expect(
       await screen.findByRole('heading', { name: 'Budget data unavailable' }),
     ).toBeInTheDocument()
+  })
+
+  test('shows the compact net-income / saved line (ADR-139)', async () => {
+    renderCard({
+      period: {
+        ...PERIOD,
+        savings: [{ bucket: 'EmergencyFund', percent: 7, amount: '70000.00' }],
+      },
+      income: {
+        month: '2026-06',
+        amount: '1000000.00',
+        currency: 'ARS',
+        source: 'manual',
+        floor: null,
+      },
+    })
+    expect(
+      await screen.findByText('Net income ARS 1.000.000 · saved ARS 70.000'),
+    ).toBeInTheDocument()
+  })
+
+  test('surfaces the reprice nudge linking to Budgets (ADR-137)', async () => {
+    renderCard({ period: PERIOD, showRepriceNudge: true })
+    const nudge = await screen.findByRole('link', {
+      name: /reprice your budget/i,
+    })
+    expect(nudge).toHaveAttribute('href', '/budgets')
   })
 })

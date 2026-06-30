@@ -57,10 +57,12 @@
   "categories": {
     "Income": "Income",
     "Food": "Food",
+    "Housing": "Housing",
     "Rent": "Rent",
     "Transport": "Transport",
     "Subscriptions": "Subscriptions",
     "Health": "Health",
+    "Education": "Education",
     "Shopping": "Shopping",
     "Entertainment": "Entertainment",
     "Services": "Services",

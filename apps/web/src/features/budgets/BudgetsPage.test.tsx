@@ -33,6 +33,11 @@ vi.mock('../../api/budgetsClient', async (importOriginal) => {
       fetchBudgets: vi.fn(),
       setTarget: vi.fn(),
       clearTarget: vi.fn(),
+      fetchBudgetIncome: vi.fn(),
+      setBudgetIncome: vi.fn(),
+      fetchSuggestedBase: vi.fn(),
+      applyProfile: vi.fn(),
+      reprice: vi.fn(),
     },
   }
 })
@@ -40,12 +45,17 @@ vi.mock('../../api/budgetsClient', async (importOriginal) => {
 const mockFetch = vi.mocked(budgetsClient.fetchBudgets)
 const mockSet = vi.mocked(budgetsClient.setTarget)
 const mockClear = vi.mocked(budgetsClient.clearTarget)
+const mockFetchIncome = vi.mocked(budgetsClient.fetchBudgetIncome)
 
 /** A period: Food under budget, Rent over budget, Transport with no target set. */
 function period(month: string): BudgetPeriod {
   return {
     month,
     currency: 'ARS',
+    savings: [],
+    floor: null,
+    suggestedStrategy: null,
+    pressure: null,
     categories: [
       { category: 'Food', target: '120000.00', spent: '90000.00', remaining: '30000.00' },
       { category: 'Rent', target: '200000.00', spent: '230000.00', remaining: '-30000.00' },
@@ -72,6 +82,13 @@ describe('BudgetsPage', () => {
     mockFetch.mockResolvedValue(period('2026-06'))
     mockSet.mockResolvedValue(undefined)
     mockClear.mockResolvedValue(undefined)
+    mockFetchIncome.mockResolvedValue({
+      month: '2026-06',
+      amount: null,
+      currency: 'ARS',
+      source: 'manual',
+      floor: null,
+    })
   })
   afterEach(() => vi.clearAllMocks())
 

@@ -348,7 +348,9 @@ export interface TransactionsSearch {
 const KNOWN_TYPES = new Set<string>(TYPE_OPTIONS.map((o) => o.id))
 const KNOWN_CURRENCIES = new Set<string>(CURRENCY_OPTIONS.map((o) => o.id))
 const KNOWN_AMOUNTS = new Set<string>(AMOUNT_RANGES.map((o) => o.id))
-const KNOWN_CATEGORIES = new Set<string>(CATEGORIES)
+// The picker offers `Housing`, but historical rows can still carry the tolerated
+// `Rent` alias (ADR-140), so URL filtering must accept it as a known category.
+const KNOWN_CATEGORIES = new Set<string>([...CATEGORIES, 'Rent'])
 
 /**
  * Parse a comma-separated multi-select param into its validated members, in

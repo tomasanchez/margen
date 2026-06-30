@@ -32,13 +32,18 @@ import { BudgetMeter } from '../budgets/BudgetMeter'
 import {
   deriveBudgetTotals,
   deriveCategoryProgress,
+  deriveIncomeSaved,
   topAttentionCategories,
 } from '../budgets/derive'
-import type { BudgetPeriod } from '../../api/budgetsClient'
+import type { BudgetIncome, BudgetPeriod } from '../../api/budgetsClient'
 
 export interface BudgetProgressCardProps {
   /** The budgets period for the viewing month, or undefined while loading. */
   period: BudgetPeriod | undefined
+  /** The net-income base + floor for the month (ADR-139), or undefined. */
+  income?: BudgetIncome | undefined
+  /** Whether to surface the one-line reprice nudge for a new month (ADR-137). */
+  showRepriceNudge?: boolean
   /** Whether the budgets query is pending. */
   loading: boolean
   /** Whether the budgets query errored (renders the calm fallback). */
@@ -76,6 +81,8 @@ function BudgetEmpty() {
 
 export function BudgetProgressCard({
   period,
+  income,
+  showRepriceNudge = false,
   loading,
   isError = false,
   onRetry,
@@ -89,6 +96,12 @@ export function BudgetProgressCard({
   const attention = useMemo(
     () => (period ? topAttentionCategories(period, 3) : []),
     [period],
+  )
+  // Net income + saved-this-month for the compact line (ADR-139).
+  const incomeSaved = useMemo(
+    () =>
+      period ? deriveIncomeSaved(income?.amount ?? null, period.savings) : undefined,
+    [period, income],
   )
 
   if (isError) {
@@ -174,6 +187,32 @@ export function BudgetProgressCard({
               amount: formatCurrency(totals.remaining, period.currency),
             })}
       </Typography>
+
+      {incomeSaved && incomeSaved.income != null ? (
+        <Typography
+          sx={{ fontSize: 12.5, mt: 1, fontVariantNumeric: 'tabular-nums' }}
+          color="text.secondary"
+        >
+          {t('budgets.incomeSaved', {
+            income: formatCurrency(incomeSaved.income, period.currency),
+            saved: formatCurrency(incomeSaved.saved, period.currency),
+          })}
+        </Typography>
+      ) : null}
+
+      {showRepriceNudge ? (
+        <Box sx={{ mt: 1.5 }}>
+          <Button
+            component={Link}
+            to="/budgets"
+            size="small"
+            variant="text"
+            sx={{ textTransform: 'none', fontWeight: 600, px: 0, minHeight: 32 }}
+          >
+            {t('budgets.repriceNudge')}
+          </Button>
+        </Box>
+      ) : null}
 
       {attention.length > 0 ? (
         <Box sx={{ mt: 2 }}>

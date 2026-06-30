@@ -17,8 +17,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   budgetsClient,
+  type ApplyProfileResult,
+  type BudgetIncome,
+  type BudgetIncomeWriteBody,
   type BudgetPeriod,
   type BudgetWriteBody,
+  type RepriceBody,
+  type SavingProfile,
 } from '../../api/budgetsClient'
 import { homeQueryKeys } from '../home/queries'
 import type { Category } from '../../mock/types'
@@ -28,6 +33,8 @@ export const budgetsKeys = {
   all: ['budgets'] as const,
   /** Period read is per-month, so the `YYYY-MM` is part of the key. */
   period: (month: string) => [...budgetsKeys.all, 'period', month] as const,
+  /** The net-income base + floor is per-month too (ADR-139). */
+  income: (month: string) => [...budgetsKeys.all, 'income', month] as const,
 }
 
 /** Read the budgets period (every category + target/spent/remaining) for a month. */
@@ -35,6 +42,27 @@ export function useBudgets(month: string) {
   return useQuery<BudgetPeriod>({
     queryKey: budgetsKeys.period(month),
     queryFn: () => budgetsClient.fetchBudgets(month),
+  })
+}
+
+/**
+ * Read the PRIOR month's budgets period (for the reprice-rollover prompt,
+ * ADR-137). Only enabled when a prior month is supplied; reuses the same
+ * per-month cache key so it's shared with a direct view of that month.
+ */
+export function usePriorBudgets(priorMonth: string | null) {
+  return useQuery<BudgetPeriod>({
+    queryKey: budgetsKeys.period(priorMonth ?? '—'),
+    queryFn: () => budgetsClient.fetchBudgets(priorMonth as string),
+    enabled: priorMonth != null,
+  })
+}
+
+/** Read the per-month net-income base + household floor (ADR-139). */
+export function useBudgetIncome(month: string) {
+  return useQuery<BudgetIncome>({
+    queryKey: budgetsKeys.income(month),
+    queryFn: () => budgetsClient.fetchBudgetIncome(month),
   })
 }
 
@@ -66,6 +94,48 @@ export function useClearBudgetTarget() {
   return useMutation<void, Error, { category: Category; month: string }>({
     mutationFn: ({ category, month }) =>
       budgetsClient.clearTarget(category, month),
+    onSuccess: invalidate,
+  })
+}
+
+/**
+ * Upsert the net-income base + optional manual floor for a month (ADR-139), then
+ * refresh budgets + Home (saving rows + pressure/strategy derive from income).
+ */
+export function useSetBudgetIncome() {
+  const invalidate = useInvalidateBudgets()
+  return useMutation<void, Error, BudgetIncomeWriteBody>({
+    mutationFn: (body) => budgetsClient.setBudgetIncome(body),
+    onSuccess: invalidate,
+  })
+}
+
+/**
+ * Apply a saving profile for a month (ADR-138), then refresh budgets + Home. The
+ * mutation result carries the floor-guard outcome (`floorBreached` + `gap`) so
+ * the caller can surface the calm warning.
+ */
+export function useApplyProfile() {
+  const invalidate = useInvalidateBudgets()
+  return useMutation<
+    ApplyProfileResult,
+    Error,
+    { month: string; profile: SavingProfile }
+  >({
+    mutationFn: ({ month, profile }) =>
+      budgetsClient.applyProfile(month, profile),
+    onSuccess: invalidate,
+  })
+}
+
+/**
+ * Reprice spend caps from one month into the next (ADR-137), then refresh
+ * budgets + Home. Never auto-applies — the caller confirms in the preview modal.
+ */
+export function useReprice() {
+  const invalidate = useInvalidateBudgets()
+  return useMutation<BudgetPeriod, Error, RepriceBody>({
+    mutationFn: (body) => budgetsClient.reprice(body),
     onSuccess: invalidate,
   })
 }

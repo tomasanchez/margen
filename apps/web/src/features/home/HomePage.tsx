@@ -56,7 +56,8 @@ import { RecentActivity } from './RecentActivity'
 import { NetWorthCard } from './NetWorthCard'
 import { useNetWorth } from '../accounts/queries'
 import { BudgetProgressCard } from './BudgetProgressCard'
-import { useBudgets } from '../budgets/queries'
+import { useBudgetIncome, useBudgets, usePriorBudgets } from '../budgets/queries'
+import { isRepriceRollover } from '../budgets/derive'
 import { toYearMonth } from './queries'
 
 /** Percentage change from `previous` to `current`; 0 when previous is 0. */
@@ -95,6 +96,14 @@ export function HomePage() {
   const previousMonth = useMemo(
     () => addMonths(viewingMonth, -1),
     [viewingMonth],
+  )
+  // Net income (for the compact saved-this-month line) + the prior month's
+  // budgets (for the reprice-rollover nudge), both month-keyed (ADR-127/137).
+  const budgetIncomeQuery = useBudgetIncome(toYearMonth(viewingMonth))
+  const priorBudgetsQuery = usePriorBudgets(toYearMonth(previousMonth))
+  const showRepriceNudge = useMemo(
+    () => isRepriceRollover(budgetsQuery.data, priorBudgetsQuery.data),
+    [budgetsQuery.data, priorBudgetsQuery.data],
   )
 
   const monthLabel = formatViewingMonth(viewingMonth)
@@ -210,6 +219,8 @@ export function HomePage() {
         />
         <BudgetProgressCard
           period={budgetsQuery.data}
+          income={budgetIncomeQuery.data}
+          showRepriceNudge={showRepriceNudge}
           loading={budgetsQuery.isPending}
           isError={budgetsQuery.isError}
           onRetry={() => void budgetsQuery.refetch()}

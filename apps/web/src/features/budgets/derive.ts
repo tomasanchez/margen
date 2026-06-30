@@ -12,7 +12,12 @@
  * module only computes the boolean + the ratio.
  */
 
-import type { BudgetCategory, BudgetPeriod } from '../../api/budgetsClient'
+import type {
+  BudgetCategory,
+  BudgetPeriod,
+  SavingLine,
+  SavingProfile,
+} from '../../api/budgetsClient'
 
 /** Parse a Decimal string to a number; nullish / non-finite → 0. */
 export function parseMoney(value: string | null | undefined): number {
@@ -124,3 +129,166 @@ export function topAttentionCategories(
     .slice(0, limit)
     .map((entry) => entry.category)
 }
+
+// ---------------------------------------------------------------------------
+// MVP budgets additions (ADR-137 reprice, ADR-138 savings, ADR-139 income/floor,
+// ADR-143 pressure/strategy). All pure: numbers / strings in, numbers / strings
+// out — no React, no i18n.
+// ---------------------------------------------------------------------------
+
+/** Round a number to 2 decimals and emit a Decimal string (ADR-025/034). */
+export function toMoneyString(value: number): string {
+  return (Math.round(value * 100) / 100).toFixed(2)
+}
+
+/**
+ * The prior calendar month for a `YYYY-MM` string, crossing year boundaries.
+ * e.g. `"2026-01"` → `"2025-12"`. Used to detect the reprice rollover.
+ */
+export function priorYearMonth(month: string): string {
+  const [yearStr, monthStr] = month.split('-')
+  const year = Number.parseInt(yearStr, 10)
+  const m = Number.parseInt(monthStr, 10) // 1-based
+  const total = year * 12 + (m - 1) - 1
+  const py = Math.floor(total / 12)
+  const pm = ((total % 12) + 12) % 12 // 0-based
+  return `${py}-${String(pm + 1).padStart(2, '0')}`
+}
+
+/** Sum of saving allocations for the period (the "saved this month" figure). */
+export function deriveSavingTotal(savings: SavingLine[]): number {
+  return savings.reduce((sum, line) => sum + parseMoney(line.amount), 0)
+}
+
+/**
+ * Whether the current month is a reprice-rollover candidate (ADR-137): it has no
+ * spend targets set, while the prior month does. The page surfaces a "Reprice
+ * for {month}?" prompt only then; it never auto-applies.
+ */
+export function isRepriceRollover(
+  current: BudgetPeriod | undefined,
+  prior: BudgetPeriod | undefined,
+): boolean {
+  if (!current || !prior) return false
+  const currentHasTargets = current.categories.some((c) => c.target != null)
+  const priorHasTargets = prior.categories.some((c) => c.target != null)
+  return !currentHasTargets && priorHasTargets
+}
+
+/** One row of the reprice preview: a category's old cap → its repriced cap. */
+export interface RepricePreviewRow {
+  category: string
+  /** Current (prior-month) target as a number. */
+  oldCap: number
+  /** The optional per-category step-up amount applied (0 when none). */
+  stepUp: number
+  /** The repriced cap: `oldCap × (1 + inflation/100) + stepUp`. */
+  newCap: number
+}
+
+/** Pure reprice of a single cap (ADR-137): `cap × (1 + infl/100) + stepUp`. */
+export function repriceCap(
+  cap: number,
+  monthlyInflation: number,
+  stepUp = 0,
+): number {
+  const grown = Math.round(cap * (1 + monthlyInflation / 100) * 100) / 100
+  return Math.round((grown + stepUp) * 100) / 100
+}
+
+/**
+ * Build the reprice preview rows from the prior month's spend targets at a
+ * monthly-inflation % with optional per-category step-up amounts (Decimal
+ * strings keyed by category). Only categories that HAVE a target are repriced;
+ * the result is sorted by descending old cap so the largest lines lead.
+ */
+export function deriveRepricePreview(
+  prior: BudgetPeriod,
+  monthlyInflation: number,
+  stepUps: Record<string, string> = {},
+): RepricePreviewRow[] {
+  return prior.categories
+    .filter((c) => c.target != null)
+    .map((c) => {
+      const oldCap = parseMoney(c.target)
+      const stepUp = parseMoney(stepUps[c.category])
+      return {
+        category: c.category,
+        oldCap,
+        stepUp,
+        newCap: repriceCap(oldCap, monthlyInflation, stepUp),
+      }
+    })
+    .sort((a, b) => b.oldCap - a.oldCap)
+}
+
+/** Net-income + saved summary for the Home card line (ADR-139). */
+export interface IncomeSavedSummary {
+  /** Net spendable income as a number, or `null` when unset. */
+  income: number | null
+  /** Total allocated to saving buckets this month. */
+  saved: number
+  /** `saved / income` in [0, 1], or `null` when income is unset / zero. */
+  savedRatio: number | null
+}
+
+/**
+ * Derive the net-income / saved-this-month summary the Home card surfaces from
+ * the income amount (Decimal string or null) and the period's saving rows.
+ */
+export function deriveIncomeSaved(
+  incomeAmount: string | null,
+  savings: SavingLine[],
+): IncomeSavedSummary {
+  const income = incomeAmount != null ? parseMoney(incomeAmount) : null
+  const saved = deriveSavingTotal(savings)
+  const savedRatio =
+    income != null && income > 0 ? Math.min(Math.max(saved / income, 0), 1) : null
+  return { income, saved, savedRatio }
+}
+
+/**
+ * Saving-profile bucket percentages (ADR-138) — the research-fixed templates,
+ * transcribed verbatim. Used by the picker to PREVIEW a profile's allocation
+ * before applying; the backend is the source of truth for what gets written.
+ * Each profile's spend-side `MaintenanceReserve` is included (5/2/2%).
+ */
+export const PROFILE_BUCKET_PCT: Record<
+  SavingProfile,
+  Record<SavingLine['bucket'], number>
+> = {
+  conservative: {
+    EmergencyFund: 5,
+    DebtAcceleration: 5,
+    ShortTermGoals: 3,
+    MediumTermGoals: 2,
+    LongTermInvestment: 3,
+    FxHedge: 2,
+    MaintenanceReserve: 5,
+  },
+  balanced: {
+    EmergencyFund: 7,
+    DebtAcceleration: 7,
+    ShortTermGoals: 4,
+    MediumTermGoals: 4,
+    LongTermInvestment: 5,
+    FxHedge: 3,
+    MaintenanceReserve: 2,
+  },
+  aggressive: {
+    EmergencyFund: 8,
+    DebtAcceleration: 10,
+    ShortTermGoals: 5,
+    MediumTermGoals: 5,
+    LongTermInvestment: 7,
+    FxHedge: 5,
+    MaintenanceReserve: 2,
+  },
+} as const
+
+/** The to-savings total for a profile (excludes the spend-side reserve): 20/30/40%. */
+export const PROFILE_SAVINGS_PCT: Record<SavingProfile, number> = {
+  conservative: 20,
+  balanced: 30,
+  aggressive: 40,
+} as const
