@@ -22,17 +22,13 @@ import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
-import Dialog from '@mui/material/Dialog'
-import DialogActions from '@mui/material/DialogActions'
-import DialogContent from '@mui/material/DialogContent'
-import DialogContentText from '@mui/material/DialogContentText'
-import DialogTitle from '@mui/material/DialogTitle'
 import IconButton from '@mui/material/IconButton'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import AddIcon from '@mui/icons-material/Add'
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlineOutlined'
+import { ResponsiveModal } from '../../components/ResponsiveModal'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
 import { formatCurrency } from '../../lib/format'
@@ -300,35 +296,30 @@ export function TransfersPage() {
       ) : null}
 
       {/* Delete confirm. Copy spells out that the transfer's fee expenses are
-          independent and are NOT removed (ADR-135). */}
-      <Dialog
+          independent and are NOT removed (ADR-135). A compact desktop size, but
+          still a bottom sheet on mobile via the shared ResponsiveModal. */}
+      <ResponsiveModal
         open={pendingDelete !== null}
         onClose={() => setPendingDelete(null)}
-        aria-labelledby="transfer-delete-title"
-        slotProps={{
-          paper: {
-            sx: {
-              bgcolor: 'var(--mg-paper-2)',
-              border: '1px solid var(--mg-border-2)',
-              borderRadius: '20px',
-            },
-          },
-        }}
+        title={t('delete.title')}
+        maxWidth={420}
       >
-        <DialogTitle id="transfer-delete-title" sx={{ fontSize: 18, fontWeight: 600 }}>
-          {t('delete.title')}
-        </DialogTitle>
-        <DialogContent>
-          <DialogContentText sx={{ fontSize: 14 }}>
-            {t('delete.body')}
-          </DialogContentText>
-          {deleteTransfer.isError ? (
-            <Typography role="alert" sx={{ fontSize: 13, mt: 1.5 }} color="error.main">
-              {t('delete.error')}
-            </Typography>
-          ) : null}
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Typography sx={{ fontSize: 14 }} color="text.secondary">
+          {t('delete.body')}
+        </Typography>
+        {deleteTransfer.isError ? (
+          <Typography role="alert" sx={{ fontSize: 13, mt: 1.5 }} color="error.main">
+            {t('delete.error')}
+          </Typography>
+        ) : null}
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            gap: 1,
+            mt: 3,
+          }}
+        >
           <Button
             type="button"
             onClick={() => setPendingDelete(null)}
@@ -347,8 +338,8 @@ export function TransfersPage() {
           >
             {t('delete.confirm')}
           </Button>
-        </DialogActions>
-      </Dialog>
+        </Box>
+      </ResponsiveModal>
     </Box>
   )
 }

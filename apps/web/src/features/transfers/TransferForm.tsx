@@ -26,10 +26,6 @@ import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
-import Dialog from '@mui/material/Dialog'
-import DialogActions from '@mui/material/DialogActions'
-import DialogContent from '@mui/material/DialogContent'
-import DialogTitle from '@mui/material/DialogTitle'
 import Divider from '@mui/material/Divider'
 import FormControl from '@mui/material/FormControl'
 import FormHelperText from '@mui/material/FormHelperText'
@@ -42,6 +38,7 @@ import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import AddIcon from '@mui/icons-material/Add'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlineOutlined'
+import { ResponsiveModal } from '../../components/ResponsiveModal'
 import type { Account, NewTransferInput, TransferFeeInput } from '../../mock/types'
 import { accountOptionLabel } from '../transactions/presentation'
 import { parseBalance, toDecimalString } from '../accounts/balance'
@@ -92,7 +89,6 @@ export function TransferForm({
 }: TransferFormProps) {
   const { t } = useTranslation('transfers')
 
-  const titleId = useId()
   const fromId = useId()
   const toId = useId()
   const sentId = useId()
@@ -201,31 +197,14 @@ export function TransferForm({
   }
 
   return (
-    <Dialog
+    <ResponsiveModal
       open={open}
       onClose={onClose}
-      maxWidth={false}
-      aria-labelledby={titleId}
-      slotProps={{
-        paper: {
-          sx: {
-            width: '100%',
-            maxWidth: '480px',
-            bgcolor: 'var(--mg-paper-2)',
-            border: '1px solid var(--mg-border-2)',
-            borderRadius: '20px',
-          },
-        },
-      }}
+      title={t('form.title')}
+      maxWidth={480}
     >
       <Box component="form" onSubmit={handleSubmit} noValidate>
-        <DialogTitle id={titleId} sx={{ fontSize: 18, fontWeight: 600 }}>
-          {t('form.title')}
-        </DialogTitle>
-
-        <DialogContent
-          sx={{ display: 'flex', flexDirection: 'column', gap: 2.25 }}
-        >
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.25 }}>
           <Typography sx={{ fontSize: 13, mt: -0.5 }} color="text.secondary">
             {t('form.intro')}
           </Typography>
@@ -447,9 +426,16 @@ export function TransferForm({
               {t('form.fees.add')}
             </Button>
           </Box>
-        </DialogContent>
+        </Box>
 
-        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            gap: 1,
+            mt: 3,
+          }}
+        >
           <Button
             type="button"
             onClick={onClose}
@@ -466,9 +452,9 @@ export function TransferForm({
           >
             {t('form.save')}
           </Button>
-        </DialogActions>
+        </Box>
       </Box>
-    </Dialog>
+    </ResponsiveModal>
   )
 }
 
