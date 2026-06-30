@@ -2,11 +2,11 @@
  * Unit tests for the budgets API client + DTO adapters (ADR-125, ADR-037).
  *
  * Asserts the contract boundary in isolation with `fetch` mocked (no real
- * backend): the period read returns the `{ month, currency, categories }` object
- * DIRECTLY (no `{ data }` envelope), `target` / `remaining` stay nullable Decimal
- * STRINGS (ADR-025/034), the category is narrowed to the union, and PUT/DELETE
- * hit the right verb + URL + body (currency defaulting to ARS). Any non-2xx
- * throws a BudgetApiError carrying the HTTP status (ADR-037).
+ * backend): every read is wrapped in the backend `{ data: T }` envelope (ADR-030)
+ * and the client unwraps it, `target` / `remaining` stay nullable Decimal STRINGS
+ * (ADR-025/034), the category is narrowed to the union, and PUT/DELETE hit the
+ * right verb + URL + body (currency defaulting to ARS). Any non-2xx throws a
+ * BudgetApiError carrying the HTTP status (ADR-037).
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -17,7 +17,7 @@ import {
   type BudgetPeriodDto,
 } from './budgetsClient'
 
-/** A complete backend budgets period (no envelope), with one set + one unset target. */
+/** A complete backend budgets period payload, with one set + one unset target. */
 const periodDto: BudgetPeriodDto = {
   month: '2026-06',
   currency: 'ARS',
@@ -25,6 +25,11 @@ const periodDto: BudgetPeriodDto = {
     { category: 'Food', target: '120000.00', spent: '90000.00', remaining: '30000.00' },
     { category: 'Transport', target: null, spent: '15000.00', remaining: null },
   ],
+}
+
+/** Wrap a payload in the backend `{ data: T }` response envelope (ADR-030). */
+function enveloped(payload: unknown): string {
+  return JSON.stringify({ data: payload })
 }
 
 describe('adaptBudgetPeriod', () => {
@@ -55,9 +60,9 @@ describe('budgetsClient.fetchBudgets', () => {
   beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
   afterEach(() => vi.unstubAllGlobals())
 
-  test('GETs /budgets?month=YYYY-MM and reads the period directly', async () => {
+  test('GETs /budgets?month=YYYY-MM and unwraps the period from the envelope', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(JSON.stringify(periodDto), { status: 200 }),
+      new Response(enveloped(periodDto), { status: 200 }),
     )
     const period = await budgetsClient.fetchBudgets('2026-06')
     const [url, init] = vi.mocked(fetch).mock.calls[0]
@@ -199,7 +204,7 @@ describe('budgetsClient.fetchBudgetIncome', () => {
   test('GETs /budget-income?month= and adapts the payload', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
+        enveloped({
           month: '2026-06',
           amount: '900000.00',
           currency: 'ARS',
@@ -219,7 +224,7 @@ describe('budgetsClient.fetchBudgetIncome', () => {
   test('keeps a null income amount null (unset)', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
+        enveloped({
           month: '2026-06',
           amount: null,
           currency: 'ARS',
@@ -277,7 +282,7 @@ describe('budgetsClient.fetchSuggestedBase', () => {
 
   test('GETs /budget-income/suggested?month= and returns the base', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(JSON.stringify({ suggestedBase: '850000.00' }), { status: 200 }),
+      new Response(enveloped({ suggestedBase: '850000.00' }), { status: 200 }),
     )
     const base = await budgetsClient.fetchSuggestedBase('2026-06')
     const [url] = vi.mocked(fetch).mock.calls[0]
@@ -287,7 +292,7 @@ describe('budgetsClient.fetchSuggestedBase', () => {
 
   test('returns null when there is too little history', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(JSON.stringify({ suggestedBase: null }), { status: 200 }),
+      new Response(enveloped({ suggestedBase: null }), { status: 200 }),
     )
     expect(await budgetsClient.fetchSuggestedBase('2026-06')).toBeNull()
   })
@@ -300,7 +305,7 @@ describe('budgetsClient.applyProfile', () => {
   test('POSTs /budgets/apply-profile and returns the refreshed period + floor guard', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
+        enveloped({
           ...periodDto,
           savings: [{ bucket: 'EmergencyFund', percent: 8, amount: '72000.00' }],
           floor: { amount: '250000.00', source: 'manual' },
@@ -325,7 +330,7 @@ describe('budgetsClient.applyProfile', () => {
 
   test('defaults floorBreached false / gap null when absent', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(JSON.stringify({ ...periodDto, savings: [] }), { status: 200 }),
+      new Response(enveloped({ ...periodDto, savings: [] }), { status: 200 }),
     )
     const result = await budgetsClient.applyProfile('2026-06', 'balanced')
     expect(result.floorBreached).toBe(false)
@@ -339,7 +344,7 @@ describe('budgetsClient.reprice', () => {
 
   test('POSTs /budgets/reprice with from/to/inflation and omits empty stepUps', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(JSON.stringify(periodDto), { status: 200 }),
+      new Response(enveloped(periodDto), { status: 200 }),
     )
     await budgetsClient.reprice({
       fromMonth: '2026-05',
@@ -358,7 +363,7 @@ describe('budgetsClient.reprice', () => {
 
   test('forwards per-category stepUps when present', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(JSON.stringify(periodDto), { status: 200 }),
+      new Response(enveloped(periodDto), { status: 200 }),
     )
     await budgetsClient.reprice({
       fromMonth: '2026-05',

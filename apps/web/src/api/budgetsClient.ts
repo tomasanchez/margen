@@ -13,15 +13,19 @@
  * and the page can show the calm error state (ADR-037).
  *
  * Money stays a Decimal STRING end-to-end (ADR-025/034); ARS is the only budget
- * currency for the MVP (ADR-125). Unlike the summaries `{ data }` envelope, the
- * budgets reader returns the period object DIRECTLY (`{ month, currency,
- * categories }`) — there is no `data` wrapper — so this client reads the JSON as
- * the period shape without unwrapping.
+ * currency for the MVP (ADR-125). Like the summaries/accounts clients, every
+ * budgets read is wrapped in the backend `{ data: T }` envelope (ADR-030), so
+ * this client unwraps `.data` before adapting to the frontend read model.
  */
 
 import { apiUrl } from '../config'
 import { authedFetch } from './http'
 import type { Category, Currency } from '../mock/types'
+
+/** The backend `{ data: T }` response envelope (ADR-030). */
+interface ResponseEnvelope<T> {
+  data: T
+}
 
 /** Row discriminator (ADR-138): spend targets vs saving allocations. */
 export type BudgetKind = 'spend' | 'saving'
@@ -253,9 +257,13 @@ function asFloorSource(value: string): FloorSource {
   return value === 'computed' ? 'computed' : 'manual'
 }
 
-/** Adapt a backend floor DTO (or nullish) to a {@link BudgetFloor} or `null`. */
+/**
+ * Adapt a backend floor DTO to a {@link BudgetFloor} or `null`. The budgets
+ * surface always sends a `floor` object (ADR-143) but with a `null` amount when
+ * unset, so treat a missing DTO or a null amount alike as "no floor".
+ */
 function adaptFloor(dto: BudgetFloorDto | null | undefined): BudgetFloor | null {
-  if (dto == null) return null
+  if (dto == null || dto.amount == null) return null
   return { amount: dto.amount, source: asFloorSource(dto.source) }
 }
 
@@ -329,8 +337,8 @@ async function fetchBudgets(month: string): Promise<BudgetPeriod> {
     { headers: { Accept: 'application/json' } },
   )
   await ensureOk(response)
-  const period = (await response.json()) as BudgetPeriodDto
-  return adaptBudgetPeriod(period)
+  const { data } = (await response.json()) as ResponseEnvelope<BudgetPeriodDto>
+  return adaptBudgetPeriod(data)
 }
 
 /**
@@ -380,8 +388,8 @@ async function fetchBudgetIncome(month: string): Promise<BudgetIncome> {
     { headers: { Accept: 'application/json' } },
   )
   await ensureOk(response)
-  const dto = (await response.json()) as BudgetIncomeDto
-  return adaptBudgetIncome(dto)
+  const { data } = (await response.json()) as ResponseEnvelope<BudgetIncomeDto>
+  return adaptBudgetIncome(data)
 }
 
 /**
@@ -415,8 +423,10 @@ async function fetchSuggestedBase(month: string): Promise<string | null> {
     { headers: { Accept: 'application/json' } },
   )
   await ensureOk(response)
-  const dto = (await response.json()) as { suggestedBase: string | null }
-  return dto.suggestedBase
+  const { data } = (await response.json()) as ResponseEnvelope<{
+    suggestedBase: string | null
+  }>
+  return data.suggestedBase
 }
 
 /**
@@ -434,14 +444,16 @@ async function applyProfile(
     body: JSON.stringify({ month, profile }),
   })
   await ensureOk(response)
-  const dto = (await response.json()) as BudgetPeriodDto & {
-    floorBreached?: boolean
-    gap?: string | null
-  }
+  const { data } = (await response.json()) as ResponseEnvelope<
+    BudgetPeriodDto & {
+      floorBreached?: boolean
+      gap?: string | null
+    }
+  >
   return {
-    period: adaptBudgetPeriod(dto),
-    floorBreached: dto.floorBreached === true,
-    gap: dto.gap ?? null,
+    period: adaptBudgetPeriod(data),
+    floorBreached: data.floorBreached === true,
+    gap: data.gap ?? null,
   }
 }
 
@@ -479,8 +491,8 @@ async function reprice(body: RepriceBody): Promise<BudgetPeriod> {
     }),
   })
   await ensureOk(response)
-  const dto = (await response.json()) as BudgetPeriodDto
-  return adaptBudgetPeriod(dto)
+  const { data } = (await response.json()) as ResponseEnvelope<BudgetPeriodDto>
+  return adaptBudgetPeriod(data)
 }
 
 /** The budgets API client, grouped for ergonomic import. */
