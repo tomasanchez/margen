@@ -21,16 +21,13 @@ import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
-import Dialog from '@mui/material/Dialog'
-import DialogActions from '@mui/material/DialogActions'
-import DialogContent from '@mui/material/DialogContent'
-import DialogTitle from '@mui/material/DialogTitle'
 import FormControl from '@mui/material/FormControl'
 import InputLabel from '@mui/material/InputLabel'
 import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
+import { ResponsiveModal } from '../../components/ResponsiveModal'
 import type { Account, Currency, Institution } from '../../mock/types'
 import type { AccountWriteBody } from '../../api/accountsClient'
 import { parseBalance, toDecimalString } from './balance'
@@ -67,7 +64,6 @@ export function AccountForm({
   const currencyId = useId()
   const balanceId = useId()
   const errorId = useId()
-  const titleId = useId()
 
   const [currency, setCurrency] = useState<Currency>(account?.currency ?? 'ARS')
   // Opening balance as the raw string the user types (Decimal string preserved).
@@ -89,34 +85,20 @@ export function AccountForm({
     })
   }
 
+  const title =
+    mode === 'edit'
+      ? t('form.editTitle', { institution: institution.name })
+      : t('form.addTitle', { institution: institution.name })
+
   return (
-    <Dialog
+    <ResponsiveModal
       open={open}
       onClose={onClose}
-      maxWidth={false}
-      aria-labelledby={titleId}
-      slotProps={{
-        paper: {
-          sx: {
-            width: '100%',
-            maxWidth: '440px',
-            bgcolor: 'var(--mg-paper-2)',
-            border: '1px solid var(--mg-border-2)',
-            borderRadius: '20px',
-          },
-        },
-      }}
+      title={title}
+      maxWidth={440}
     >
       <Box component="form" onSubmit={handleSubmit}>
-        <DialogTitle id={titleId} sx={{ fontSize: 18, fontWeight: 600 }}>
-          {mode === 'edit'
-            ? t('form.editTitle', { institution: institution.name })
-            : t('form.addTitle', { institution: institution.name })}
-        </DialogTitle>
-
-        <DialogContent
-          sx={{ display: 'flex', flexDirection: 'column', gap: 2.25 }}
-        >
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.25 }}>
           {saveError ? (
             <Typography
               id={errorId}
@@ -164,9 +146,16 @@ export function AccountForm({
             inputMode="decimal"
             helperText={t('form.openingBalance.helper')}
           />
-        </DialogContent>
+        </Box>
 
-        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            gap: 1,
+            mt: 3,
+          }}
+        >
           <Button
             type="button"
             onClick={onClose}
@@ -183,9 +172,9 @@ export function AccountForm({
           >
             {t('form.save')}
           </Button>
-        </DialogActions>
+        </Box>
       </Box>
-    </Dialog>
+    </ResponsiveModal>
   )
 }
 

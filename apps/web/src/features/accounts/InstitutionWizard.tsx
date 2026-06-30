@@ -37,10 +37,6 @@ import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
-import Dialog from '@mui/material/Dialog'
-import DialogActions from '@mui/material/DialogActions'
-import DialogContent from '@mui/material/DialogContent'
-import DialogTitle from '@mui/material/DialogTitle'
 import FormControl from '@mui/material/FormControl'
 import IconButton from '@mui/material/IconButton'
 import InputLabel from '@mui/material/InputLabel'
@@ -55,6 +51,7 @@ import AddIcon from '@mui/icons-material/Add'
 import CheckCircleOutlineRoundedIcon from '@mui/icons-material/CheckCircleOutlineRounded'
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded'
 import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded'
+import { ResponsiveModal } from '../../components/ResponsiveModal'
 import type { AccountType, Currency } from '../../mock/types'
 import { ACCOUNT_TYPES, accountTypeLabel } from './presentation'
 import { parseBalance, toDecimalString } from './balance'
@@ -122,7 +119,6 @@ export function InstitutionWizard({
 }: InstitutionWizardProps) {
   const { t } = useTranslation('accounts')
 
-  const titleId = useId()
   const nameId = useId()
   const typeId = useId()
   const errorId = useId()
@@ -200,30 +196,13 @@ export function InstitutionWizard({
   const stepLabels = [t('wizard.step1.label'), t('wizard.step2.label')]
 
   return (
-    <Dialog
+    <ResponsiveModal
       open={open}
       onClose={onClose}
-      maxWidth={false}
-      aria-labelledby={titleId}
-      slotProps={{
-        paper: {
-          sx: {
-            width: '100%',
-            maxWidth: '520px',
-            bgcolor: 'var(--mg-paper-2)',
-            border: '1px solid var(--mg-border-2)',
-            borderRadius: '20px',
-          },
-        },
-      }}
+      title={t('wizard.title')}
+      maxWidth={520}
     >
-      <DialogTitle id={titleId} sx={{ fontSize: 18, fontWeight: 600 }}>
-        {t('wizard.title')}
-      </DialogTitle>
-
-      <DialogContent
-        sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}
-      >
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
         {allDone ? (
           <Box
             role="status"
@@ -523,9 +502,17 @@ export function InstitutionWizard({
             )}
           </>
         )}
-      </DialogContent>
+      </Box>
 
-      <DialogActions sx={{ px: 3, pb: 2.5, gap: 0.5 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: 0.5,
+          mt: 3,
+        }}
+      >
         {allDone ? (
           <Button
             type="button"
@@ -593,8 +580,8 @@ export function InstitutionWizard({
             )}
           </>
         )}
-      </DialogActions>
-    </Dialog>
+      </Box>
+    </ResponsiveModal>
   )
 }
 
