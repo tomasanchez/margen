@@ -12,9 +12,11 @@ duplicate target for a month (the UNIQUE constraint, ADR-125).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import date
 
 from margen_api.domain.models.budget import Budget
+from margen_api.domain.models.value_objects import BudgetKind
 
 
 class AbstractBudgetRepository(ABC):
@@ -32,22 +34,49 @@ class AbstractBudgetRepository(ABC):
         """
 
     @abstractmethod
-    async def get_by_category_period(self, category: str, period: date, user_id: str) -> Budget | None:
-        """Load the owner's target for a category/month, or ``None`` (ADR-125, ADR-130).
+    async def get_by_category_period(
+        self,
+        category: str,
+        period: date,
+        user_id: str,
+        kind: BudgetKind = BudgetKind.SPEND,
+    ) -> Budget | None:
+        """Load the owner's row for a kind/category/month, or ``None`` (ADR-138, ADR-130).
 
-        Resolves the natural upsert key ``(user_id, category, period)`` so the
-        handler can replace an existing target rather than insert a duplicate
-        (ADR-125). Scoped to ``user_id`` so a foreign owner's target is never seen
-        (ADR-130).
+        Resolves the natural upsert key ``(user_id, kind, category, period)`` so the
+        handler can replace an existing row rather than insert a duplicate (ADR-138).
+        Scoped to ``user_id`` so a foreign owner's row is never seen (ADR-130).
+        ``kind`` defaults to ``SPEND`` so spend callers are unchanged.
 
         Args:
-            category: The expense category the target applies to.
+            category: The expense category / saving bucket the row applies to.
             period: The budget month (first day of the month).
             user_id: The authenticated owner the row must belong to.
+            kind: The spend or saving discriminator (ADR-138).
 
         Returns:
-            The aggregate, or ``None`` when the owner has no target for that
-            category/month.
+            The aggregate, or ``None`` when the owner has no such row.
+        """
+
+    @abstractmethod
+    async def list_by_period(
+        self,
+        period: date,
+        user_id: str,
+        kind: BudgetKind = BudgetKind.SPEND,
+    ) -> Sequence[Budget]:
+        """List the owner's rows of a kind for a month (ADR-137, ADR-130).
+
+        Used by the reprice handler to read the source month's ``kind='spend'`` caps
+        before repricing them into the target month. Scoped to ``user_id``.
+
+        Args:
+            period: The budget month (first day of the month).
+            user_id: The authenticated owner the rows must belong to.
+            kind: The spend or saving discriminator (ADR-138).
+
+        Returns:
+            The owner's aggregates for the kind/month (empty when none).
         """
 
     @abstractmethod
@@ -59,17 +88,25 @@ class AbstractBudgetRepository(ABC):
         """
 
     @abstractmethod
-    async def delete(self, category: str, period: date, user_id: str) -> bool:
-        """Hard-delete the owner's target for a category/month (ADR-125, ADR-130).
+    async def delete(
+        self,
+        category: str,
+        period: date,
+        user_id: str,
+        kind: BudgetKind = BudgetKind.SPEND,
+    ) -> bool:
+        """Hard-delete the owner's row for a kind/category/month (ADR-138, ADR-130).
 
-        Scoped to ``user_id`` so a foreign owner's target is never removed. Clearing
-        an absent target reports a miss so the handler stays idempotent (ADR-125).
+        Scoped to ``user_id`` so a foreign owner's row is never removed. Clearing an
+        absent row reports a miss so the handler stays idempotent (ADR-125). ``kind``
+        defaults to ``SPEND``.
 
         Args:
-            category: The expense category the target applies to.
+            category: The expense category / saving bucket the row applies to.
             period: The budget month (first day of the month).
             user_id: The authenticated owner the row must belong to.
+            kind: The spend or saving discriminator (ADR-138).
 
         Returns:
-            ``True`` when a target was removed, ``False`` when none existed.
+            ``True`` when a row was removed, ``False`` when none existed.
         """

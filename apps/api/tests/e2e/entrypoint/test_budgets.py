@@ -241,3 +241,197 @@ class TestOwnership:
         # THEN
         assert response.status_code == status.HTTP_200_OK
         assert _line(response.json()["data"], "Food")["target"] is None
+
+
+BUDGET_INCOME = "/api/v1/budget-income"
+
+
+async def _put_income(client: httpx.AsyncClient, **body: object) -> dict:
+    """PUT a net-income base and return the readout, asserting 200."""
+    defaults: dict[str, object] = {"month": JUNE, "amount": "1000000"}
+    defaults.update(body)
+    response = await client.put(BUDGET_INCOME, json=defaults)
+    assert response.status_code == status.HTTP_200_OK, response.text
+    return response.json()["data"]
+
+
+class TestExtendedSurface:
+    """GET /budgets carries savings, floor, suggestedStrategy and pressure (ADR-138, ADR-143)."""
+
+    async def test_surface_has_savings_floor_and_advisory_fields(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN no budgets and no income set
+        WHEN the surface is requested
+        THEN it carries empty savings, a null floor, and null advisory fields
+        """
+        # WHEN
+        data = (await test_client.get(BUDGETS, params={"month": JUNE})).json()["data"]
+
+        # THEN
+        assert data["savings"] == []
+        assert data["floor"] == {"amount": None, "source": None}
+        assert data["suggestedStrategy"] is None
+        assert data["pressure"] is None
+
+    async def test_income_and_floor_drive_advisory_fields(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an income base and a floor
+        WHEN the surface is requested
+        THEN the floor readout and the strategy/pressure advisory fields populate
+        """
+        # GIVEN — income 1,000,000, floor 300,000 (3.33x -> comfortable -> aggressive).
+        await _put_income(test_client, month=JUNE, amount="1000000", floorAmount="300000", floorSource="manual")
+
+        # WHEN
+        data = (await test_client.get(BUDGETS, params={"month": JUNE})).json()["data"]
+
+        # THEN
+        assert data["floor"] == {"amount": "300000.00", "source": "manual"}
+        assert data["pressure"] == "comfortable"
+        assert data["suggestedStrategy"] == "aggressive"
+
+
+class TestApplyProfile:
+    """POST /budgets/apply-profile writes saving rows and reports the floor guard."""
+
+    async def test_apply_profile_populates_savings_without_leaking_into_categories(
+        self, test_client: httpx.AsyncClient
+    ):
+        """
+        GIVEN an income base
+        WHEN the Balanced profile is applied
+        THEN savings[] is populated, floorBreached is false, and no saving bucket
+             leaks into categories[]
+        """
+        # GIVEN
+        await _put_income(test_client, month=JUNE, amount="1000000")
+
+        # WHEN
+        response = await test_client.post(f"{BUDGETS}/apply-profile", json={"month": JUNE, "profile": "balanced"})
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK, response.text
+        data = response.json()["data"]
+        buckets = {line["bucket"] for line in data["savings"]}
+        assert "EmergencyFund" in buckets
+        assert data["floorBreached"] is False
+        emergency = next(line for line in data["savings"] if line["bucket"] == "EmergencyFund")
+        assert emergency["amount"] == "70000.00"  # Balanced 7%
+        assert emergency["percent"] == "7.0"
+        # Guard: a saving bucket NEVER appears as a spend category line (ADR-138).
+        category_names = {line["category"] for line in data["categories"]}
+        assert category_names.isdisjoint(buckets)
+
+    async def test_apply_profile_reflected_on_subsequent_get(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a profile applied for the month
+        WHEN GET /budgets is requested
+        THEN the saving rows persist and surface under savings[]
+        """
+        # GIVEN
+        await _put_income(test_client, month=JUNE, amount="1000000")
+        await test_client.post(f"{BUDGETS}/apply-profile", json={"month": JUNE, "profile": "conservative"})
+
+        # WHEN
+        data = (await test_client.get(BUDGETS, params={"month": JUNE})).json()["data"]
+
+        # THEN
+        assert {line["bucket"] for line in data["savings"]}  # non-empty
+        assert all(line["category"] not in {"EmergencyFund", "FxHedge"} for line in data["categories"])
+
+    async def test_apply_profile_without_income_is_409(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN no income base for the month
+        WHEN a profile is applied
+        THEN the endpoint answers 409 (set income first)
+        """
+        # WHEN
+        response = await test_client.post(f"{BUDGETS}/apply-profile", json={"month": JUNE, "profile": "balanced"})
+
+        # THEN
+        assert response.status_code == status.HTTP_409_CONFLICT
+
+    async def test_apply_unknown_profile_is_422(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an income base but an unknown profile
+        WHEN a profile is applied
+        THEN the endpoint answers 422
+        """
+        # GIVEN
+        await _put_income(test_client, month=JUNE, amount="1000000")
+
+        # WHEN
+        response = await test_client.post(f"{BUDGETS}/apply-profile", json={"month": JUNE, "profile": "reckless"})
+
+        # THEN
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    async def test_apply_profile_flags_floor_breach_with_gap(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an income base whose floor leaves little room
+        WHEN an Aggressive profile is applied
+        THEN floorBreached is true and a gap is reported (rows still written)
+        """
+        # GIVEN — income 1000, floor 900, Aggressive saves 40% -> residual 600 < 900.
+        await _put_income(test_client, month=JUNE, amount="1000", floorAmount="900")
+
+        # WHEN
+        data = (
+            await test_client.post(f"{BUDGETS}/apply-profile", json={"month": JUNE, "profile": "aggressive"})
+        ).json()["data"]
+
+        # THEN
+        assert data["floorBreached"] is True
+        assert data["gap"] == "300.00"
+        assert data["savings"]  # rows still written
+
+
+class TestReprice:
+    """POST /budgets/reprice produces repriced spend rows in the target month (ADR-137)."""
+
+    async def test_reprice_produces_new_month_spend_rows(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a June Food target
+        WHEN June is repriced into July at 2% inflation
+        THEN July's Food target is the repriced cap
+        """
+        # GIVEN
+        await _put_budget(test_client, category="Food", month=JUNE, amount="100000")
+
+        # WHEN
+        response = await test_client.post(
+            f"{BUDGETS}/reprice",
+            json={"fromMonth": JUNE, "toMonth": "2026-07", "monthlyInflation": "2"},
+        )
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK, response.text
+        data = response.json()["data"]
+        assert data["month"] == "2026-07"
+        food = _line(data, "Food")
+        assert food["target"] == "102000.00"
+
+    async def test_reprice_applies_step_up(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a June Housing target and a Housing step-up
+        WHEN June is repriced into July
+        THEN July's Housing target adds the step-up after inflation
+        """
+        # GIVEN
+        await _put_budget(test_client, category="Housing", month=JUNE, amount="100000")
+
+        # WHEN — 100000 * 1.02 = 102000 + 20000.
+        data = (
+            await test_client.post(
+                f"{BUDGETS}/reprice",
+                json={
+                    "fromMonth": JUNE,
+                    "toMonth": "2026-07",
+                    "monthlyInflation": "2",
+                    "stepUps": {"Housing": "20000"},
+                },
+            )
+        ).json()["data"]
+
+        # THEN
+        assert _line(data, "Housing")["target"] == "122000.00"

@@ -11,18 +11,22 @@ SQLAlchemy in the adapter (AGENTS.md). Money is :class:`~decimal.Decimal` (ADR-0
 from __future__ import annotations
 
 from collections.abc import Mapping
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
-from margen_api.domain.models.value_objects import KNOWN_CATEGORIES
-from margen_api.service_layer.budget_read_models import BudgetLine
+from margen_api.domain.models.value_objects import KNOWN_CATEGORIES, SAVING_BUCKETS
+from margen_api.service_layer.budget_read_models import BudgetLine, SavingLine
 
 # "Income" is an inflow bucket, not a spend category, so it never carries a budget
 # target (ADR-125 budgets per *expense* category). Every other known category is a
-# candidate line even with no spend and no target this month.
-_NON_EXPENSE_CATEGORIES = frozenset({"Income"})
+# candidate line even with no spend and no target this month. The legacy ``Rent``
+# alias is folded into ``Housing`` for the candidate set so the surface never shows
+# both an empty ``Rent`` and an empty ``Housing`` line; a stored ``Rent`` target is
+# still surfaced (it joins via ``targets.keys()`` below).
+_NON_EXPENSE_CATEGORIES = frozenset({"Income", "Rent"})
 BUDGETABLE_CATEGORIES: frozenset[str] = KNOWN_CATEGORIES - _NON_EXPENSE_CATEGORIES
 
 _ZERO = Decimal(0)
+_PERCENT = Decimal("0.1")
 
 
 def budgetable_categories(
@@ -78,4 +82,34 @@ def build_budget_lines(
                 remaining=remaining,
             )
         )
+    return lines
+
+
+def build_saving_lines(savings: Mapping[str, Decimal], income: Decimal | None) -> list[SavingLine]:
+    """Project the month's saving-bucket allocations into sorted lines (ADR-138).
+
+    For each ``kind='saving'`` row pairs the bucket key with its ``amount`` and the
+    ``percent`` of net spendable income it represents (``amount / income x 100``,
+    rounded to one decimal place). ``percent`` is ``None`` when ``income`` is absent
+    or non-positive (no base to compute against). Sorted by bucket name for a stable
+    client order. Only known :data:`SAVING_BUCKETS` keys are surfaced, so a stray
+    non-bucket saving row never appears.
+
+    Args:
+        savings: The owner's per-bucket saving allocations for the month, keyed by
+            bucket (``kind='saving'`` rows only).
+        income: The month's net spendable income the percentages are computed
+            against, or ``None`` when no base is set.
+
+    Returns:
+        One :class:`SavingLine` per saving bucket, sorted by bucket name.
+    """
+    lines: list[SavingLine] = []
+    for bucket in sorted(savings.keys() & SAVING_BUCKETS):
+        amount = savings[bucket]
+        if income is not None and income > 0:
+            percent = (amount / income * Decimal(100)).quantize(_PERCENT, rounding=ROUND_HALF_UP)
+        else:
+            percent = None
+        lines.append(SavingLine(bucket=bucket, amount=amount, percent=percent))
     return lines

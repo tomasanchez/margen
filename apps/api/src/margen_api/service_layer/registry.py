@@ -9,7 +9,13 @@ register their handlers in one obvious place. No domain events exist yet
 from __future__ import annotations
 
 from margen_api.domain.commands.account import CreateAccount, UpdateAccount
-from margen_api.domain.commands.budget import ClearBudget, UpsertBudget
+from margen_api.domain.commands.budget import (
+    ApplySavingProfile,
+    ClearBudget,
+    RepriceMonth,
+    UpsertBudget,
+    UpsertBudgetIncome,
+)
 from margen_api.domain.commands.institution import CreateInstitution, UpdateInstitution
 from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
 from margen_api.domain.commands.settings import UpdateSettings
@@ -21,7 +27,13 @@ from margen_api.domain.commands.transaction import (
 )
 from margen_api.domain.commands.transfer import CreateTransfer, DeleteTransfer
 from margen_api.service_layer.account_handlers import create_account, update_account
-from margen_api.service_layer.budget_handlers import clear_budget, upsert_budget
+from margen_api.service_layer.budget_handlers import (
+    apply_saving_profile,
+    clear_budget,
+    reprice_month,
+    upsert_budget,
+    upsert_budget_income,
+)
 from margen_api.service_layer.handlers import (
     create_transaction,
     delete_transaction,
@@ -49,6 +61,9 @@ COMMAND_HANDLERS: dict[type, CommandHandler] = {
     DeleteTransfer: delete_transfer,
     UpsertBudget: upsert_budget,
     ClearBudget: clear_budget,
+    UpsertBudgetIncome: upsert_budget_income,
+    ApplySavingProfile: apply_saving_profile,
+    RepriceMonth: reprice_month,
 }
 
 EVENT_HANDLERS: dict[type, list[EventHandler]] = {}

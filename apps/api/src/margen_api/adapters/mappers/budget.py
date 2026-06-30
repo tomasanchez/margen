@@ -12,7 +12,7 @@ from uuid import UUID
 
 from margen_api.adapters.models.budget import BudgetRecord
 from margen_api.domain.models.budget import Budget
-from margen_api.domain.models.value_objects import Currency
+from margen_api.domain.models.value_objects import BudgetKind, Currency
 
 
 def to_domain(record: BudgetRecord) -> Budget:
@@ -34,6 +34,7 @@ def to_domain(record: BudgetRecord) -> Budget:
         period=record.period,
         amount=record.amount,
         currency=Currency.parse(record.currency),
+        kind=BudgetKind.parse(record.kind),
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
@@ -77,6 +78,7 @@ def update_record(record: BudgetRecord, budget: Budget) -> None:
     record.period = budget.period
     record.amount = budget.amount
     record.currency = budget.currency.value
+    record.kind = budget.kind.value
     if budget.user_id is None:
         msg = "Cannot persist a budget without an owning user_id (ADR-130)."
         raise ValueError(msg)

@@ -15,6 +15,8 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+from pydantic import Field
+
 from margen_api.domain.messages import Command
 
 
@@ -35,6 +37,7 @@ class UpsertBudget(Command):
     period: date
     amount: Decimal
     currency: str = "ARS"
+    kind: str = "spend"
 
 
 class ClearBudget(Command):
@@ -43,9 +46,70 @@ class ClearBudget(Command):
     Optional convenience to unset a target so the category reads back with a ``null``
     target. The handler resolves the row scoped to ``user_id`` (ADR-130) and deletes
     it; clearing an absent target is a no-op (idempotent), so the boundary answers
-    ``204`` either way.
+    ``204`` either way. ``kind`` selects the spend or saving row to clear (ADR-138);
+    it defaults to ``spend`` so existing callers are unchanged.
     """
 
     user_id: str
     category: str
     period: date
+    kind: str = "spend"
+
+
+class UpsertBudgetIncome(Command):
+    """Request to set (insert or replace) a month's net-income base + floor (ADR-139).
+
+    Upsert semantics: a :class:`BudgetIncome` is unique per ``(user_id, period)``, so
+    dispatching this for a month that already has a base *replaces* it rather than
+    creating a duplicate (ADR-139). ``amount`` is the month's net spendable income, a
+    decimal magnitude (ADR-025); ``currency`` defaults to ARS (ADR-125). The optional
+    ``floor_amount`` is the household floor (essentials the plan must cover,
+    budget-design §9.1.1) with a ``floor_source`` of ``manual`` (user typed) or
+    ``computed`` (Σ essential targets, ADR-143). ``user_id`` is the authenticated
+    owner the entrypoint stamps before dispatch (ADR-130).
+    """
+
+    user_id: str
+    period: date
+    amount: Decimal
+    currency: str = "ARS"
+    floor_amount: Decimal | None = None
+    floor_source: str = "manual"
+
+
+class ApplySavingProfile(Command):
+    """Request to apply a saving profile to a month's net-income base (ADR-138).
+
+    Writes the profile's saving-bucket allocations as ``kind='saving'`` budget rows
+    for ``period`` in one unit of work (idempotent re-apply via the widened UNIQUE).
+    Requires a :class:`BudgetIncome` base for the month (the percentages apply to it)
+    — the handler raises :class:`MissingIncomeBaseError` when absent. The handler
+    also runs the floor-before-percentages guard (budget-design §9.1.4) and reports
+    whether the chosen profile would underfund the household floor; it WARNS, never
+    silently rebalances. ``profile`` is one of ``conservative`` / ``balanced`` /
+    ``aggressive`` (ADR-138). ``user_id`` is the authenticated owner (ADR-130).
+    """
+
+    user_id: str
+    period: date
+    profile: str
+
+
+class RepriceMonth(Command):
+    """Request to reprice a month's spend caps from a prior month (ADR-137).
+
+    Reprices the owner's ``kind='spend'`` targets from ``from_period`` into
+    ``to_period`` via ``round(cap x (1 + monthly_inflation/100)) + step_up`` (saving
+    rows re-derive from the base, so they are never repriced, ADR-137/138).
+    ``monthly_inflation`` is the manual monthly inflation percentage (REM-seeded
+    suggestion the user edits, ADR-141). ``step_ups`` carries optional known
+    per-category discrete jumps (rent index/ICL, tariff increases) keyed by category;
+    a category absent from the map gets a zero step-up. ``user_id`` is the
+    authenticated owner (ADR-130).
+    """
+
+    user_id: str
+    from_period: date
+    to_period: date
+    monthly_inflation: Decimal
+    step_ups: dict[str, Decimal] = Field(default_factory=dict)

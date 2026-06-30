@@ -43,6 +43,16 @@ _TRANSFERS = "d1e2f3a4b5c6"
 # period) constraint. No data migration is involved.
 _BUDGETS = "e2f3a4b5c6d7"
 
+# The budget_income migration (ADR-139): chains after budgets. It creates the
+# ``budget_income`` table (per-month net-income base + household floor) with a NOT
+# NULL owner column and a UNIQUE(user_id, period) constraint. No data migration.
+_BUDGET_INCOME = "f1a2b3c4d5e6"
+
+# The budgets.kind + UNIQUE-swap migration (ADR-138): chains after budget_income. It
+# adds ``kind`` (default 'spend') and widens the UNIQUE to
+# (user_id, kind, category, period) via batch_alter_table.
+_BUDGET_KIND = "a2b3c4d5e6f7"
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
 # A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
@@ -293,6 +303,207 @@ class TestMigrations:
             assert "budgets" not in asyncio.run(_table_names(integration_database_url))
         finally:
             asyncio.run(_drop_everything(integration_database_url))
+
+    def test_budget_income_migration_creates_table_with_unique_constraint(self, integration_database_url: str):
+        """
+        GIVEN a database at the budgets revision
+        WHEN Alembic upgrades through the budget_income migration (ADR-139)
+        THEN the budget_income table exists with the floor columns, a duplicate
+             (user_id, period) is rejected, and the downgrade cleanly drops it again
+
+        Proves the schema add AND the UNIQUE(user_id, period) constraint on the
+        production PostgreSQL dialect: a user gets at most one income base per month
+        so the upsert never duplicates (ADR-139). No data migration.
+        """
+        # GIVEN — upgrade to the budgets revision (the head before ADR-139).
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _BUDGETS)
+        try:
+            # WHEN
+            command.upgrade(config, _BUDGET_INCOME)
+
+            # THEN — the table exists with the income + floor columns.
+            tables = asyncio.run(_table_names(integration_database_url))
+            assert "budget_income" in tables
+            columns = asyncio.run(_columns(integration_database_url, "budget_income"))
+            assert {"user_id", "period", "amount", "currency", "source", "floor_amount", "floor_source"} <= set(columns)
+
+            # THEN — a duplicate (user_id, period) violates the UNIQUE constraint.
+            assert asyncio.run(_duplicate_income_is_rejected(integration_database_url)) is True
+
+            # THEN — the downgrade cleanly drops the table again.
+            command.downgrade(config, _BUDGETS)
+            assert "budget_income" not in asyncio.run(_table_names(integration_database_url))
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
+    def test_budget_kind_migration_adds_column_and_swaps_unique(self, integration_database_url: str):
+        """
+        GIVEN a budgets table holding a spend target (seeded before the kind column)
+        WHEN Alembic upgrades through the kind + UNIQUE-swap migration (ADR-138)
+        THEN the seeded row back-fills to kind='spend', a spend and a saving row can
+             share (category, period), a duplicate spend row is rejected, and the
+             downgrade restores the original (user_id, category, period) UNIQUE
+
+        Proves the load-bearing UNIQUE swap to (user_id, kind, category, period) on
+        the production PostgreSQL dialect: distinct kinds no longer collide, but a
+        duplicate within a kind is still rejected (ADR-138).
+        """
+        # GIVEN — upgrade to budget_income (the head before ADR-138) and seed a spend row.
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _BUDGET_INCOME)
+        seeded_id = uuid.uuid4()
+        try:
+            asyncio.run(_seed_budget_without_kind(integration_database_url, seeded_id))
+
+            # WHEN
+            command.upgrade(config, _BUDGET_KIND)
+
+            # THEN — the column exists and the seeded row back-filled to 'spend'.
+            columns = asyncio.run(_columns(integration_database_url, "budgets"))
+            assert "kind" in columns
+            assert asyncio.run(_read_budget_kind(integration_database_url, seeded_id)) == "spend"
+
+            # THEN — a spend and a saving row may now share (category, period).
+            assert asyncio.run(_spend_and_saving_coexist(integration_database_url)) is True
+
+            # THEN — a duplicate WITHIN a kind is still rejected by the widened UNIQUE.
+            assert asyncio.run(_duplicate_spend_kind_is_rejected(integration_database_url)) is True
+
+            # THEN — the downgrade restores the original UNIQUE and drops kind. A
+            # downgrade only runs on a spend-only history, so the saving rows added
+            # above (which collide on the narrow key with their spend twin) are
+            # cleared first to model that realistic pre-saving state.
+            asyncio.run(_delete_saving_rows(integration_database_url))
+            command.downgrade(config, _BUDGET_INCOME)
+            assert "kind" not in asyncio.run(_columns(integration_database_url, "budgets"))
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
+
+async def _duplicate_income_is_rejected(url: str) -> bool:
+    """Insert two income rows with the same (user_id, period); return whether the 2nd fails."""
+    from sqlalchemy.exc import IntegrityError
+
+    engine = create_async_engine(url)
+    insert = text(
+        "INSERT INTO budget_income (id, user_id, period, amount, currency, source, floor_source) "
+        "VALUES (:id, :user_id, :period, :amount, :currency, :source, :floor_source)"
+    )
+    base = {
+        "user_id": uuid.UUID(_OWNER),
+        "period": datetime.date(2026, 6, 1),
+        "amount": Decimal("1000000.00"),
+        "currency": "ARS",
+        "source": "manual",
+        "floor_source": "manual",
+    }
+    rejected = False
+    async with engine.begin() as connection:
+        await connection.execute(insert, {"id": uuid.uuid4(), **base})
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(insert, {"id": uuid.uuid4(), **base})
+    except IntegrityError:
+        rejected = True
+    await engine.dispose()
+    return rejected
+
+
+async def _seed_budget_without_kind(url: str, budget_id: uuid.UUID) -> None:
+    """Insert a budget row before the kind column exists (back-fill target)."""
+    engine = create_async_engine(url)
+    insert = text(
+        "INSERT INTO budgets (id, user_id, category, period, amount, currency) "
+        "VALUES (:id, :user_id, :category, :period, :amount, :currency)"
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            insert,
+            {
+                "id": budget_id,
+                "user_id": uuid.UUID(_OWNER),
+                "category": "Food",
+                "period": datetime.date(2026, 6, 1),
+                "amount": Decimal("50000.00"),
+                "currency": "ARS",
+            },
+        )
+    await engine.dispose()
+
+
+async def _read_budget_kind(url: str, budget_id: uuid.UUID) -> str:
+    """Return the ``kind`` of the seeded budget row after the back-fill."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        result = await connection.execute(text("SELECT kind FROM budgets WHERE id = :id"), {"id": budget_id})
+        value = result.scalar_one()
+    await engine.dispose()
+    return str(value)
+
+
+async def _spend_and_saving_coexist(url: str) -> bool:
+    """Insert a spend and a saving row sharing (category, period); return whether both persist."""
+    engine = create_async_engine(url)
+    insert = text(
+        "INSERT INTO budgets (id, user_id, category, period, amount, currency, kind) "
+        "VALUES (:id, :user_id, :category, :period, :amount, :currency, :kind)"
+    )
+    base = {
+        "user_id": uuid.UUID(_OWNER_B),
+        "category": "EmergencyFund",
+        "period": datetime.date(2026, 7, 1),
+        "amount": Decimal("10000.00"),
+        "currency": "ARS",
+    }
+    async with engine.begin() as connection:
+        await connection.execute(insert, {"id": uuid.uuid4(), "kind": "spend", **base})
+        await connection.execute(insert, {"id": uuid.uuid4(), "kind": "saving", **base})
+        result = await connection.execute(
+            text("SELECT count(*) FROM budgets WHERE user_id = :u AND category = :c AND period = :p"),
+            {"u": base["user_id"], "c": base["category"], "p": base["period"]},
+        )
+        count = result.scalar_one()
+    await engine.dispose()
+    return count == 2
+
+
+async def _delete_saving_rows(url: str) -> None:
+    """Delete every ``kind='saving'`` row so the narrow-UNIQUE downgrade is safe."""
+    engine = create_async_engine(url)
+    async with engine.begin() as connection:
+        await connection.execute(text("DELETE FROM budgets WHERE kind = 'saving'"))
+    await engine.dispose()
+
+
+async def _duplicate_spend_kind_is_rejected(url: str) -> bool:
+    """Insert two spend rows on the same (user_id, kind, category, period); 2nd must fail."""
+    from sqlalchemy.exc import IntegrityError
+
+    engine = create_async_engine(url)
+    insert = text(
+        "INSERT INTO budgets (id, user_id, category, period, amount, currency, kind) "
+        "VALUES (:id, :user_id, :category, :period, :amount, :currency, 'spend')"
+    )
+    base = {
+        "user_id": uuid.UUID(_OWNER),
+        "category": "Transport",
+        "period": datetime.date(2026, 8, 1),
+        "amount": Decimal("8000.00"),
+        "currency": "ARS",
+    }
+    rejected = False
+    async with engine.begin() as connection:
+        await connection.execute(insert, {"id": uuid.uuid4(), **base})
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(insert, {"id": uuid.uuid4(), **base})
+    except IntegrityError:
+        rejected = True
+    await engine.dispose()
+    return rejected
 
 
 async def _duplicate_budget_is_rejected(url: str) -> bool:

@@ -8,6 +8,7 @@ from margen_api.adapters.models.account import AccountRecord
 from margen_api.adapters.models.app_settings import AppSettingsRecord
 from margen_api.adapters.models.base import Base
 from margen_api.adapters.models.budget import BudgetRecord
+from margen_api.adapters.models.budget_income import BudgetIncomeRecord
 from margen_api.adapters.models.institution import InstitutionRecord
 from margen_api.adapters.models.invoice_document import InvoiceDocumentRecord
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
@@ -19,6 +20,7 @@ __all__ = [
     "AccountRecord",
     "AppSettingsRecord",
     "Base",
+    "BudgetIncomeRecord",
     "BudgetRecord",
     "InstitutionRecord",
     "InvoiceDocumentRecord",

@@ -15,6 +15,7 @@ from margen_api.service_layer.budgets import (
     BUDGETABLE_CATEGORIES,
     budgetable_categories,
     build_budget_lines,
+    build_saving_lines,
 )
 
 
@@ -85,16 +86,16 @@ class TestBuildBudgetLines:
         """
         GIVEN a category with neither target nor spend
         WHEN the lines are built
-        THEN it appears with spent 0 and a null target/remaining
+        THEN it appears with spent 0 and a null target/remaining (Housing, ADR-140)
         """
         # WHEN
         lines = build_budget_lines({}, {})
-        rent = next(line for line in lines if line.category == "Rent")
+        housing = next(line for line in lines if line.category == "Housing")
 
         # THEN
-        assert rent.spent == Decimal(0)
-        assert rent.target is None
-        assert rent.remaining is None
+        assert housing.spent == Decimal(0)
+        assert housing.target is None
+        assert housing.remaining is None
 
     def test_lines_are_sorted_by_category(self):
         """
@@ -108,3 +109,60 @@ class TestBuildBudgetLines:
 
         # THEN
         assert categories == sorted(categories)
+
+
+class TestBuildSavingLines:
+    """``build_saving_lines`` projects bucket allocations, computing percent of income."""
+
+    def test_computes_percent_against_income(self):
+        """
+        GIVEN saving bucket amounts and a positive income base
+        WHEN the lines are built
+        THEN each line carries its amount and its percent of income (one decimal)
+        """
+        # WHEN
+        lines = build_saving_lines({"EmergencyFund": Decimal("70000")}, Decimal("1000000"))
+
+        # THEN
+        assert lines[0].bucket == "EmergencyFund"
+        assert lines[0].amount == Decimal("70000")
+        assert lines[0].percent == Decimal("7.0")
+
+    def test_percent_is_none_without_income(self):
+        """
+        GIVEN saving bucket amounts but no income base
+        WHEN the lines are built
+        THEN percent is None (no base to compute against)
+        """
+        # WHEN
+        lines = build_saving_lines({"EmergencyFund": Decimal("70000")}, None)
+
+        # THEN
+        assert lines[0].percent is None
+
+    def test_percent_is_none_for_zero_income(self):
+        """
+        GIVEN a zero income base
+        WHEN the lines are built
+        THEN percent is None (cannot divide by zero)
+        """
+        # WHEN
+        lines = build_saving_lines({"EmergencyFund": Decimal("70000")}, Decimal("0"))
+
+        # THEN
+        assert lines[0].percent is None
+
+    def test_ignores_non_bucket_keys_and_sorts(self):
+        """
+        GIVEN a stray non-bucket key alongside real buckets
+        WHEN the lines are built
+        THEN only known buckets surface, sorted by bucket name
+        """
+        # WHEN
+        lines = build_saving_lines(
+            {"FxHedge": Decimal("30000"), "EmergencyFund": Decimal("70000"), "Bogus": Decimal("1")},
+            Decimal("1000000"),
+        )
+
+        # THEN
+        assert [line.bucket for line in lines] == ["EmergencyFund", "FxHedge"]

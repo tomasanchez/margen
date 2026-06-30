@@ -22,7 +22,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from margen_api.domain.models.value_objects import Currency
+from margen_api.domain.models.value_objects import BudgetKind, Currency
 
 ZERO = Decimal("0")
 
@@ -67,6 +67,10 @@ class Budget:
         amount: The target spend for the category in the month, a positive
             ARS-equivalent magnitude (ADR-025).
         currency: The target's currency; ARS for the MVP (ADR-125 currency note).
+        kind: Whether the row is a ``spend`` target or a ``saving`` allocation
+            (ADR-138); defaults to ``SPEND`` so existing rows and plain
+            construction stay back-compatible. A ``saving`` row reuses ``category``
+            as a saving-bucket key and never joins the expense actuals.
         created_at: Server-managed creation timestamp.
         updated_at: Server-managed last-update timestamp.
     """
@@ -77,12 +81,14 @@ class Budget:
     period: date
     amount: Decimal = ZERO
     currency: Currency = Currency.ARS
+    kind: BudgetKind = BudgetKind.SPEND
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
         """Normalize and enforce invariants on construction."""
         self.currency = Currency.parse(self.currency)
+        self.kind = BudgetKind.parse(self.kind)
         self.period = month_start(self.period)
         self._normalize()
 
@@ -103,6 +109,7 @@ def build_budget(
     period: date,
     amount: Decimal = ZERO,
     currency: Currency | str = Currency.ARS,
+    kind: BudgetKind | str = BudgetKind.SPEND,
     user_id: str | None = None,
     budget_id: UUID | None = None,
     created_at: datetime | None = None,
@@ -120,6 +127,8 @@ def build_budget(
         period: Any date in the budget month; normalized to the first of the month.
         amount: The target spend; defaults to ``0``.
         currency: ARS (MVP) as ``Currency`` or string (ADR-125 currency note).
+        kind: ``spend`` (default) or ``saving`` (ADR-138), as ``BudgetKind`` or
+            string.
         user_id: The owning user's id (the Supabase ``sub``); ``None`` otherwise
             (ADR-130).
         budget_id: Optional identity; generated when omitted.
@@ -131,6 +140,7 @@ def build_budget(
 
     Raises:
         UnknownCurrencyError: When ``currency`` is not a known currency.
+        UnknownBudgetKindError: When ``kind`` is not a known budget kind.
     """
     now = datetime.now(UTC)
     return Budget(
@@ -140,6 +150,7 @@ def build_budget(
         period=period,
         amount=amount,
         currency=Currency.parse(currency),
+        kind=BudgetKind.parse(kind),
         created_at=created_at if created_at is not None else now,
         updated_at=updated_at if updated_at is not None else now,
     )

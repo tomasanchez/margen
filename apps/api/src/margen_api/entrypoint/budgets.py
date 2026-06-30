@@ -19,12 +19,23 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from margen_api.domain.commands.budget import ClearBudget
-from margen_api.entrypoint.budgets_schemas import BudgetUpsertRequest, MonthlyBudgetResponse
+from margen_api.domain.commands.budget import ApplySavingProfile, ClearBudget, RepriceMonth
+from margen_api.domain.models.exceptions import MissingIncomeBaseError, UnknownSavingProfileError
+from margen_api.domain.models.value_objects import BudgetKind
+from margen_api.entrypoint.budgets_schemas import (
+    ApplyProfileRequest,
+    ApplyProfileResponse,
+    BudgetUpsertRequest,
+    MonthlyBudgetResponse,
+    RepriceRequest,
+)
 from margen_api.entrypoint.dependencies import AuthUser, BudgetReader, Bus
 from margen_api.entrypoint.schemas import ResponseModel
 
 router = APIRouter(prefix="/budgets", tags=["Budgets"])
+
+# A saving profile that is not a known preset maps to 422 (lenient validation, ADR-031).
+_INVARIANT_VIOLATIONS = (UnknownSavingProfileError,)
 
 # Query param shape: a 4-digit year, a hyphen, then a 2-digit month (01-12).
 _MONTH_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
@@ -126,13 +137,82 @@ async def clear_budget(
         str,
         Query(pattern=_MONTH_PATTERN, description="The budget month as 'YYYY-MM'.", examples=["2026-06"]),
     ],
+    kind: Annotated[
+        BudgetKind,
+        Query(description="The row kind to clear: 'spend' (default) or 'saving' (ADR-138)."),
+    ] = BudgetKind.SPEND,
 ) -> None:
     """Clear a category's target for a month for the caller (ADR-125, ADR-130).
 
     Dispatches a ``ClearBudget`` command scoped to ``user.id``. Idempotent: clearing
     an absent target is a no-op, so the endpoint answers ``204`` whether or not a
-    target existed (ADR-125). Scoped to ``user.id`` so a caller can only clear their
-    own targets (ADR-130).
+    target existed (ADR-125). ``kind`` selects the spend or saving row (ADR-138).
+    Scoped to ``user.id`` so a caller can only clear their own targets (ADR-130).
     """
     period = _parse_month(month)
-    await bus.handle(ClearBudget(user_id=user.id, category=category, period=period))
+    await bus.handle(ClearBudget(user_id=user.id, category=category, period=period, kind=kind.value))
+
+
+@router.post(
+    "/apply-profile",
+    name="Apply saving profile",
+    status_code=status.HTTP_200_OK,
+    response_model=ResponseModel[ApplyProfileResponse],
+)
+async def apply_profile(
+    body: ApplyProfileRequest,
+    bus: Bus,
+    reader: BudgetReader,
+    user: AuthUser,
+) -> ResponseModel[ApplyProfileResponse]:
+    """Apply a saving profile to a month's income base and return the refreshed surface (ADR-138).
+
+    Dispatches an ``ApplySavingProfile`` command (stamped with ``user.id``), then
+    re-reads the month so the client gets the refreshed savings/floor surface plus the
+    floor-before-percentages guard result. A month with no net-income base is a
+    ``409`` (set income first, ADR-139); an unknown profile is a ``422`` (ADR-031). A
+    malformed ``month`` is ``422``.
+    """
+    period = _parse_month(body.month)
+    try:
+        result = await bus.handle(ApplySavingProfile(user_id=user.id, period=period, profile=body.profile))
+    except MissingIncomeBaseError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except _INVARIANT_VIOLATIONS as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+    model = await reader.monthly_budget(period, user.id)
+    return ResponseModel(data=ApplyProfileResponse.build(model, floor_breached=result.floor_breached, gap=result.gap))
+
+
+@router.post(
+    "/reprice",
+    name="Reprice month",
+    status_code=status.HTTP_200_OK,
+    response_model=ResponseModel[MonthlyBudgetResponse],
+)
+async def reprice(
+    body: RepriceRequest,
+    bus: Bus,
+    reader: BudgetReader,
+    user: AuthUser,
+) -> ResponseModel[MonthlyBudgetResponse]:
+    """Reprice the caller's spend caps from one month into another and return the target month (ADR-137).
+
+    Dispatches a ``RepriceMonth`` command (stamped with ``user.id``), then re-reads
+    the target month so the client gets the repriced spend surface. Only ``kind='spend'``
+    rows are repriced (saving re-derives from the base, ADR-137/138). A malformed
+    ``fromMonth``/``toMonth`` is ``422``.
+    """
+    from_period = _parse_month(body.from_month)
+    to_period = _parse_month(body.to_month)
+    await bus.handle(
+        RepriceMonth(
+            user_id=user.id,
+            from_period=from_period,
+            to_period=to_period,
+            monthly_inflation=body.monthly_inflation,
+            step_ups=body.step_ups,
+        )
+    )
+    model = await reader.monthly_budget(to_period, user.id)
+    return ResponseModel(data=MonthlyBudgetResponse.from_read_model(model))

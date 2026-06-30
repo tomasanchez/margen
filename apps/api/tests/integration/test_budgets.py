@@ -24,10 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from margen_api.adapters.budget_queries import SqlAlchemyBudgetReader
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
 from margen_api.adapters.unit_of_work import SqlAlchemyUnitOfWork
-from margen_api.domain.commands.budget import UpsertBudget
+from margen_api.domain.commands.budget import ApplySavingProfile, UpsertBudget, UpsertBudgetIncome
 from margen_api.domain.models.transaction import build_transaction
 from margen_api.domain.models.value_objects import Currency, Kind
-from margen_api.service_layer.budget_handlers import upsert_budget
+from margen_api.service_layer.budget_handlers import apply_saving_profile, upsert_budget, upsert_budget_income
 
 pytestmark = pytest.mark.integration
 
@@ -131,3 +131,45 @@ class TestBudgetReader:
         assert transport.target is None
         assert transport.spent == Decimal("8000.00")
         assert transport.remaining is None
+
+
+class TestBudgetKindReader:
+    """The kind discriminator keeps spend/saving distinct against the real schema (ADR-138)."""
+
+    async def test_saving_rows_never_leak_into_categories(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN an income base, a Food spend target and an applied Balanced profile
+        WHEN the owner's budgets surface is read
+        THEN savings carry the buckets, categories carry only spend, and no saving
+             bucket leaks into the vs-actuals categories (the widened UNIQUE + the
+             kind='spend' reader filter, ADR-138)
+        """
+        # GIVEN — an income base, a spend target, and a saving profile, all real SQL.
+        await upsert_budget_income(
+            UpsertBudgetIncome(user_id=OWNER, period=JUNE, amount=Decimal("1000000")),
+            SqlAlchemyUnitOfWork(session_factory),
+        )
+        await upsert_budget(
+            UpsertBudget(user_id=OWNER, category="Food", period=JUNE, amount=Decimal("50000")),
+            SqlAlchemyUnitOfWork(session_factory),
+        )
+        await apply_saving_profile(
+            ApplySavingProfile(user_id=OWNER, period=JUNE, profile="balanced"),
+            SqlAlchemyUnitOfWork(session_factory),
+        )
+
+        # WHEN
+        session = session_factory()
+        try:
+            model = await SqlAlchemyBudgetReader(session).monthly_budget(JUNE, OWNER)
+            await session.rollback()
+        finally:
+            await session.close()
+
+        # THEN — savings populated, the spend target present, and no leak.
+        bucket_names = {line.bucket for line in model.savings}
+        assert "EmergencyFund" in bucket_names
+        category_names = {line.category for line in model.categories}
+        assert category_names.isdisjoint(bucket_names)
+        food = _line(model.categories, "Food")
+        assert food.target == Decimal("50000.00")

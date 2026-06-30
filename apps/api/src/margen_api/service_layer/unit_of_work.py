@@ -8,6 +8,7 @@ from types import TracebackType
 
 from margen_api.domain.messages import Event
 from margen_api.service_layer.account_repository import AbstractAccountRepository
+from margen_api.service_layer.budget_income_repository import AbstractBudgetIncomeRepository
 from margen_api.service_layer.budget_repository import AbstractBudgetRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.institution_repository import AbstractInstitutionRepository
@@ -50,7 +51,10 @@ class AbstractUnitOfWork(ABC):
             its fee expense transactions through ``transactions`` in the same unit
             of work (ADR-135).
         budgets: Repository for the ``Budget`` aggregate, written by the budget
-            upsert/clear handlers (ADR-125).
+            upsert/clear, apply-profile and reprice handlers (ADR-125, ADR-137,
+            ADR-138).
+        budget_income: Repository for the ``BudgetIncome`` aggregate, written by the
+            upsert-income handler and read by the apply-profile handler (ADR-139).
     """
 
     transactions: AbstractTransactionRepository
@@ -62,6 +66,7 @@ class AbstractUnitOfWork(ABC):
     institutions: AbstractInstitutionRepository
     transfers: AbstractTransferRepository
     budgets: AbstractBudgetRepository
+    budget_income: AbstractBudgetIncomeRepository
 
     async def __aenter__(self) -> AbstractUnitOfWork:
         """Enter the transaction boundary."""

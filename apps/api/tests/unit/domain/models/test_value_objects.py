@@ -12,11 +12,14 @@ from decimal import Decimal
 import pytest
 
 from margen_api.domain.commands.transaction import CreateTransaction
+from margen_api.domain.models.exceptions import UnknownBudgetKindError
 from margen_api.domain.models.transaction import build_transaction
 from margen_api.domain.models.value_objects import (
+    BudgetKind,
     Currency,
     FxRateType,
     Kind,
+    is_essential,
     is_known_category,
     is_known_payment_method,
 )
@@ -170,3 +173,65 @@ class TestKnownPaymentMethod:
         """
         # WHEN / THEN
         assert is_known_payment_method(value) is False
+
+
+class TestBudgetKind:
+    """``BudgetKind`` is a closed enum parsed like ``Kind`` / ``Currency`` (ADR-138)."""
+
+    def test_parses_a_member_and_a_string(self):
+        """
+        GIVEN a member and a matching string
+        WHEN parsed
+        THEN both coerce to the member
+        """
+        # WHEN / THEN
+        assert BudgetKind.parse(BudgetKind.SPEND) is BudgetKind.SPEND
+        assert BudgetKind.parse("saving") is BudgetKind.SAVING
+
+    def test_unknown_kind_raises(self):
+        """
+        GIVEN an out-of-set kind
+        WHEN parsed
+        THEN UnknownBudgetKindError is raised
+        """
+        # WHEN / THEN
+        with pytest.raises(UnknownBudgetKindError):
+            BudgetKind.parse("invest")
+
+
+class TestIsEssential:
+    """``is_essential`` classifies the locked essential spend categories (ADR-143)."""
+
+    @pytest.mark.parametrize("category", ["Housing", "Rent", "Food", "Transport", "Health", "Education", "Taxes"])
+    def test_essential_categories(self, category: str):
+        """
+        GIVEN an essential category (incl. the legacy Rent alias)
+        WHEN classified
+        THEN it reports essential
+        """
+        # WHEN / THEN
+        assert is_essential(category) is True
+
+    @pytest.mark.parametrize("category", ["Entertainment", "Shopping", "Subscriptions", "Other"])
+    def test_non_essential_categories(self, category: str):
+        """
+        GIVEN a discretionary category
+        WHEN classified
+        THEN it reports non-essential
+        """
+        # WHEN / THEN
+        assert is_essential(category) is False
+
+
+class TestKnownCategoryDelta:
+    """ADR-140: Housing + Education are known; Rent is retained as an alias."""
+
+    @pytest.mark.parametrize("category", ["Housing", "Education", "Rent"])
+    def test_mvp_category_delta(self, category: str):
+        """
+        GIVEN the MVP category delta
+        WHEN membership is checked
+        THEN Housing/Education are known and Rent is retained
+        """
+        # WHEN / THEN
+        assert is_known_category(category) is True

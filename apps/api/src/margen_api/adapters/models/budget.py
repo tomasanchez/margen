@@ -6,8 +6,9 @@ the domain object remains plain Python. Column conventions mirror
 ``MonotributoSnapshotRecord`` / ``AccountRecord``: UUID pk via ``gen_random_uuid``
 (ADR-026), NUMERIC money (ADR-025), server-managed timestamps, and a NOT NULL
 ``user_id`` ownership column with no cross-schema FK to Supabase ``auth.users``
-(ADR-094, ADR-130). A ``UNIQUE(user_id, category, period)`` constraint enforces one
-target per category per month so the upsert never duplicates (ADR-125).
+(ADR-094, ADR-130). A ``UNIQUE(user_id, kind, category, period)`` constraint enforces
+one target per owner per kind/category per month so a spend/saving upsert never
+duplicates and the two taxonomies never collide (ADR-138, widening ADR-125).
 """
 
 from __future__ import annotations
@@ -50,6 +51,10 @@ class BudgetRecord(Base):
     period: Mapped[datetime.date] = mapped_column(Date(), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    # Spend vs saving discriminator (ADR-138). NOT NULL with a ``'spend'`` server
+    # default so existing rows back-fill to spend (back-compatible). Saving rows
+    # reuse ``category`` as a saving-bucket key and never join the expense actuals.
+    kind: Mapped[str] = mapped_column(String(10), nullable=False, server_default="spend")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -63,9 +68,11 @@ class BudgetRecord(Base):
     )
 
     __table_args__ = (
-        # One target per owner per category per month; the upsert resolves on this
-        # composite key so a category never has duplicate targets for a month
-        # (ADR-125). Leading with ``user_id`` also serves the owner-scoped reads.
-        UniqueConstraint("user_id", "category", "period", name="uq_budgets_user_category_period"),
+        # One target per owner per KIND per category per month; the upsert resolves
+        # on this composite key so a spend/saving row never duplicates and the two
+        # taxonomies never collide (ADR-138, widened from ADR-125's
+        # ``(user_id, category, period)``). Leading with ``user_id`` also serves the
+        # owner-scoped reads.
+        UniqueConstraint("user_id", "kind", "category", "period", name="uq_budgets_user_kind_category_period"),
         Index("ix_budgets_user_id", "user_id"),
     )

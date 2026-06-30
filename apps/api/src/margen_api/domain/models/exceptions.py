@@ -69,6 +69,46 @@ class UnknownInstitutionTypeError(TransactionError):
         super().__init__(f"unknown institution type: {institution_type!r}")
 
 
+class UnknownBudgetKindError(TransactionError):
+    """Raised when a budget kind is not one of the known kinds (ADR-138).
+
+    A budget row is either a spend target or a saving allocation; any other value
+    is a true invariant violation the boundary maps to ``422`` (ADR-031). The
+    carried ``kind`` lets the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, kind: object) -> None:
+        self.kind = kind
+        super().__init__(f"unknown budget kind: {kind!r} (expected one of spend, saving)")
+
+
+class MissingIncomeBaseError(TransactionError):
+    """Raised when applying a saving profile without a net-income base (ADR-138).
+
+    Saving allocations are a percentage of the month's net spendable income, so a
+    profile cannot be applied for a month with no :class:`BudgetIncome` base. The
+    boundary maps this to ``409 Conflict`` so the client can prompt the user to set
+    their income first. The carried ``period`` lets the entrypoint build a message.
+    """
+
+    def __init__(self, period: object) -> None:
+        self.period = period
+        super().__init__(f"a net-income base must be set before applying a saving profile for {period!r}")
+
+
+class UnknownSavingProfileError(TransactionError):
+    """Raised when a saving profile is not one of the known presets (ADR-138).
+
+    The closed ``{conservative, balanced, aggressive}`` set; any other value is a
+    true invariant violation the boundary maps to ``422`` (ADR-031). The carried
+    ``profile`` lets the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, profile: object) -> None:
+        self.profile = profile
+        super().__init__(f"unknown saving profile: {profile!r} (expected one of conservative, balanced, aggressive)")
+
+
 class AccountNotFoundError(TransactionError):
     """Raised when no account matches a referenced identity (ADR-122, ADR-130).
 
