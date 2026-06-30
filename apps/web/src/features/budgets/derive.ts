@@ -14,6 +14,7 @@
 
 import type {
   BudgetCategory,
+  BudgetHistoryLine,
   BudgetPeriod,
   SavingLine,
   SavingProfile,
@@ -292,3 +293,295 @@ export const PROFILE_SAVINGS_PCT: Record<SavingProfile, number> = {
   balanced: 30,
   aggressive: 40,
 } as const
+
+// ---------------------------------------------------------------------------
+// Zero-based allocation surface (ADR-145, ADR-146, ADR-147). All pure: the
+// math behind the allocation bar, the left-to-assign readout, the plan insight
+// line, and the quick-start template target maps. Numbers / strings in, numbers
+// / strings out — no React, no i18n.
+// ---------------------------------------------------------------------------
+
+/** The three allocation groups of the zero-based surface (ADR-146). */
+export type BudgetGroup = 'needs' | 'wants' | 'savings'
+
+/**
+ * The Needs/Wants group a (spend) category belongs to (ADR-146): essential
+ * categories are Needs, the rest are Wants. Savings is NOT a spend category — it
+ * comes from the saving profiles — so a category is only ever Needs or Wants.
+ */
+export function categoryGroup(category: BudgetCategory): 'needs' | 'wants' {
+  return category.isEssential ? 'needs' : 'wants'
+}
+
+/** Per-group + total allocation for the allocation bar + legend (ADR-145). */
+export interface GroupAllocation {
+  /** Σ targets of essential categories. */
+  needs: number
+  /** Σ targets of non-essential categories. */
+  wants: number
+  /** Σ saving-bucket amounts (the applied profile, ADR-138). */
+  savings: number
+  /** `needs + wants + savings` — everything assigned a job. */
+  totalAllocated: number
+}
+
+/**
+ * The group allocation totals from the period's category targets + saving rows
+ * (ADR-145/146). Needs = Σ essential targets, Wants = Σ non-essential targets,
+ * Savings = Σ saving-bucket amounts. Untargeted categories contribute 0.
+ */
+export function deriveGroupAllocation(period: BudgetPeriod): GroupAllocation {
+  let needs = 0
+  let wants = 0
+  for (const category of period.categories) {
+    if (category.target == null) continue
+    const target = parseMoney(category.target)
+    if (categoryGroup(category) === 'needs') needs += target
+    else wants += target
+  }
+  const savings = deriveSavingTotal(period.savings)
+  return { needs, wants, savings, totalAllocated: needs + wants + savings }
+}
+
+/** The state of the zero-based "left to assign" readout (ADR-145). */
+export type AllocationState = 'under' | 'over' | 'balanced'
+
+/** The live left-to-assign readout: income − everything assigned (ADR-145). */
+export interface LeftToAssign {
+  /** `income − totalAllocated` (signed). 0 when income is unset. */
+  amount: number
+  /** Absolute amount for display (the readout never shows a sign). */
+  display: number
+  /**
+   * `under` (income > allocation → left to assign), `over` (income <
+   * allocation → over-assigned), or `balanced` (≈ 0, all assigned). Treated as
+   * balanced within a 1-peso tolerance so rounding never flips the state.
+   */
+  state: AllocationState
+}
+
+/**
+ * The zero-based left-to-assign readout from the spendable income (Decimal
+ * string or null) and the group allocation (ADR-145). A null/zero income with
+ * nothing allocated is `balanced`; otherwise the sign of `income − allocated`
+ * picks under/over, with a 1-peso tolerance around zero for "all assigned".
+ */
+export function deriveLeftToAssign(
+  incomeAmount: string | null,
+  allocation: GroupAllocation,
+): LeftToAssign {
+  const income = incomeAmount != null ? parseMoney(incomeAmount) : 0
+  const amount = income - allocation.totalAllocated
+  let state: AllocationState
+  if (Math.abs(amount) < 1) state = 'balanced'
+  else if (amount > 0) state = 'under'
+  else state = 'over'
+  return { amount, display: Math.abs(amount), state }
+}
+
+/**
+ * A group's share of income as a ratio in [0, 1] for the legend % readout and
+ * the group progress bars. Returns `null` when income is unset/zero (so the
+ * caller renders an em-dash rather than a bogus 0%).
+ */
+export function groupShareOfIncome(
+  groupTotal: number,
+  incomeAmount: string | null,
+): number | null {
+  const income = incomeAmount != null ? parseMoney(incomeAmount) : 0
+  if (income <= 0) return null
+  return Math.min(Math.max(groupTotal / income, 0), 1)
+}
+
+/**
+ * Per-segment widths for the stacked allocation bar as ratios in [0, 1] (ADR-145).
+ * Segments are measured against the LARGER of income or total allocation, so an
+ * over-assigned month fills the whole bar (the unallocated segment is 0) and an
+ * under-assigned month leaves an unallocated tail. Income of 0 with no allocation
+ * yields all-zero widths (an empty bar).
+ */
+export interface AllocationSegments {
+  needs: number
+  wants: number
+  savings: number
+  unallocated: number
+}
+
+export function deriveAllocationSegments(
+  incomeAmount: string | null,
+  allocation: GroupAllocation,
+): AllocationSegments {
+  const income = incomeAmount != null ? parseMoney(incomeAmount) : 0
+  const denom = Math.max(income, allocation.totalAllocated, 1)
+  const ratio = (n: number) => Math.min(Math.max(n / denom, 0), 1)
+  return {
+    needs: ratio(allocation.needs),
+    wants: ratio(allocation.wants),
+    savings: ratio(allocation.savings),
+    unallocated: ratio(Math.max(0, income - allocation.totalAllocated)),
+  }
+}
+
+/**
+ * The plain-language "this month vs plan" insight (ADR-145). Derived entirely
+ * client-side from the budgeted-vs-spent totals + the per-category overspend.
+ * The page localizes the wording from this discriminated result; the math lives
+ * here so it stays testable and never drifts.
+ */
+export type PlanInsight =
+  | {
+      kind: 'over'
+      /** Total amount over plan (positive). */
+      overBy: number
+      /** The single biggest overspending category. */
+      topCategory: BudgetCategory['category']
+      /** How much that category alone is over its target (positive). */
+      topOverBy: number
+    }
+  | {
+      kind: 'someOver'
+      /** How many categories are over target while the plan is still on track. */
+      count: number
+    }
+  | {
+      kind: 'onTrack'
+      /** How far ahead of plan (remaining; ≥ 0). */
+      ahead: number
+    }
+
+/**
+ * Derive the plan-insight result from the period's BUDGETED categories (ADR-145).
+ * If the overall plan is over (spent > budgeted) and at least one category is
+ * over, the insight headlines the total overshoot + the biggest single
+ * overspender. If individual categories are over but the overall plan is not,
+ * it reports the count. Otherwise it reports how far ahead of plan you are.
+ */
+export function derivePlanInsight(period: BudgetPeriod): PlanInsight {
+  const totals = deriveBudgetTotals(period)
+  const overspenders = period.categories
+    .filter((c) => c.target != null)
+    .map((c) => ({ category: c, progress: deriveCategoryProgress(c) }))
+    .filter((entry) => entry.progress.overBudget)
+    .map((entry) => ({
+      category: entry.category.category,
+      overBy: entry.progress.spent - (entry.progress.target ?? 0),
+    }))
+    .sort((a, b) => b.overBy - a.overBy)
+
+  if (totals.remaining < 0 && overspenders.length > 0) {
+    return {
+      kind: 'over',
+      overBy: -totals.remaining,
+      topCategory: overspenders[0].category,
+      topOverBy: overspenders[0].overBy,
+    }
+  }
+  if (overspenders.length > 0) {
+    return { kind: 'someOver', count: overspenders.length }
+  }
+  return { kind: 'onTrack', ahead: Math.max(0, totals.remaining) }
+}
+
+/**
+ * A map of category → target (Decimal string) a quick-start template wants to
+ * write. A `null` value means "clear that category's target" (DELETE). The page
+ * applies the map by batching the existing per-category PUT/DELETE mutations.
+ */
+export type TemplateTargets = Partial<Record<BudgetCategory['category'], string | null>>
+
+/** Index a history list by category for O(1) lookup in the template builders. */
+function historyByCategory(
+  history: BudgetHistoryLine[],
+): Map<BudgetCategory['category'], BudgetHistoryLine> {
+  return new Map(history.map((line) => [line.category, line]))
+}
+
+/**
+ * "Match 3-mo avg" (ADR-147): each category's target = its trailing 3-month
+ * average spend. Categories whose `avg3mo` is 0 (or missing from history) are
+ * skipped — no point writing a zero target.
+ */
+export function deriveMatchAvgTargets(
+  period: BudgetPeriod,
+  history: BudgetHistoryLine[],
+): TemplateTargets {
+  const byCategory = historyByCategory(history)
+  const targets: TemplateTargets = {}
+  for (const category of period.categories) {
+    const avg = parseMoney(byCategory.get(category.category)?.avg3mo)
+    if (avg > 0) targets[category.category] = toMoneyString(avg)
+  }
+  return targets
+}
+
+/**
+ * "Match last month" (ADR-147): each category's target = last month's actual
+ * spend. Categories whose `lastMonth` is 0 (or missing) are skipped.
+ */
+export function deriveMatchLastMonthTargets(
+  period: BudgetPeriod,
+  history: BudgetHistoryLine[],
+): TemplateTargets {
+  const byCategory = historyByCategory(history)
+  const targets: TemplateTargets = {}
+  for (const category of period.categories) {
+    const last = parseMoney(byCategory.get(category.category)?.lastMonth)
+    if (last > 0) targets[category.category] = toMoneyString(last)
+  }
+  return targets
+}
+
+/**
+ * "Clear all" (ADR-147): every category that currently HAS a target is cleared
+ * (mapped to `null` → DELETE). Categories with no target are omitted (nothing to
+ * clear), so the batch only issues the deletes that actually change state.
+ */
+export function deriveClearAllTargets(period: BudgetPeriod): TemplateTargets {
+  const targets: TemplateTargets = {}
+  for (const category of period.categories) {
+    if (category.target != null) targets[category.category] = null
+  }
+  return targets
+}
+
+/**
+ * "50 / 30 / 20" spend legs (ADR-147): the Needs pool (income × 0.5) is
+ * distributed across essential categories and the Wants pool (income × 0.3)
+ * across non-essential categories, each weighted by the category's 3-month
+ * average spend. When a group's averages are all zero (no history), the pool is
+ * split EVENLY across that group's categories instead. The 20% Savings leg is
+ * NOT part of this map — the page applies it via `POST /budgets/apply-profile`
+ * with the Conservative preset (ADR-138).
+ *
+ * Returns an empty map when income is unset/zero (nothing to distribute).
+ */
+export function deriveFiftyThirtyTwentyTargets(
+  period: BudgetPeriod,
+  history: BudgetHistoryLine[],
+  incomeAmount: string | null,
+): TemplateTargets {
+  const income = incomeAmount != null ? parseMoney(incomeAmount) : 0
+  if (income <= 0) return {}
+  const byCategory = historyByCategory(history)
+  const targets: TemplateTargets = {}
+
+  const distribute = (
+    members: BudgetCategory[],
+    pool: number,
+  ) => {
+    if (members.length === 0 || pool <= 0) return
+    const weights = members.map((c) => parseMoney(byCategory.get(c.category)?.avg3mo))
+    const weightSum = weights.reduce((sum, w) => sum + w, 0)
+    members.forEach((category, i) => {
+      const share =
+        weightSum > 0 ? pool * (weights[i] / weightSum) : pool / members.length
+      targets[category.category] = toMoneyString(share)
+    })
+  }
+
+  const needs = period.categories.filter((c) => categoryGroup(c) === 'needs')
+  const wants = period.categories.filter((c) => categoryGroup(c) === 'wants')
+  distribute(needs, income * 0.5)
+  distribute(wants, income * 0.3)
+  return targets
+}

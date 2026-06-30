@@ -1,13 +1,51 @@
 {
   "title": "Budgets",
-  "subtitle": "Set a monthly target per category and track it against what you spend.",
-  "summary": {
+  "subtitle": "Assign every peso a job, then track it against what you actually spend.",
+  "alloc": {
+    "cardTitle": "Where it's assigned",
+    "cardSubtitle": "Spread your spendable income across Needs, Wants and Savings.",
+    "title": "Where it's assigned",
+    "leftToAssign": "Left to assign",
+    "overAssigned": "Over-assigned",
+    "allAssigned": "All assigned",
+    "group": {
+      "needs": "Needs",
+      "wants": "Wants",
+      "savings": "Savings"
+    }
+  },
+  "templates": {
+    "title": "Quick start",
+    "applying": "Applying…",
+    "fiftyThirtyTwenty": "50 / 30 / 20",
+    "matchAvg": "Match 3-mo avg",
+    "matchLastMonth": "Match last month",
+    "clearAll": "Clear all"
+  },
+  "plan": {
+    "title": "This month vs plan",
+    "subtitle": "How your spending tracks against the targets you set.",
     "budgeted": "Budgeted",
-    "spent": "Spent",
+    "spent": "Spent so far",
     "remaining": "Remaining",
-    "overLabel": "Over budget",
-    "overCount_one": "{{count}} category over budget",
-    "overCount_other": "{{count}} categories over budget"
+    "over": "Over budget",
+    "meterAria": "{{pct}}% of your plan spent",
+    "insight": {
+      "over": "You're {{overBy}} over plan this month — {{category}} alone is {{categoryOverBy}} over its target.",
+      "someOver_one": "{{count}} category is over target, but you're still within your overall plan.",
+      "someOver_other": "{{count}} categories are over target, but you're still within your overall plan.",
+      "onTrack": "Every category is on or under target — you're {{ahead}} ahead of plan."
+    }
+  },
+  "groups": {
+    "needs": {
+      "name": "Needs",
+      "sub": "rent, food, health — the non-negotiables"
+    },
+    "wants": {
+      "name": "Wants",
+      "sub": "lifestyle & discretionary"
+    }
   },
   "income": {
     "title": "Net spendable income",
@@ -91,6 +129,8 @@
     "remaining": "{{amount}} left",
     "overBy": "{{amount}} over",
     "over": "Over budget",
+    "useAvg": "↳ use {{amount}}",
+    "useAvgAria": "Set {{category}}'s target to its 3-month average of {{amount}}",
     "noTargetHint": "No target set — enter an amount to start tracking this category.",
     "meterAria": "{{category}}: {{pct}}% of target spent",
     "meterNoTargetAria": "{{category}}: no target set"

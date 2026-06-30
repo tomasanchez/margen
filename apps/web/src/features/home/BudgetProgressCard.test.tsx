@@ -35,9 +35,9 @@ const PERIOD: BudgetPeriod = {
   suggestedStrategy: null,
   pressure: null,
   categories: [
-    { category: 'Food', target: '120000.00', spent: '90000.00', remaining: '30000.00' },
-    { category: 'Rent', target: '200000.00', spent: '230000.00', remaining: '-30000.00' },
-    { category: 'Transport', target: null, spent: '15000.00', remaining: null },
+    { category: 'Food', target: '120000.00', spent: '90000.00', remaining: '30000.00', isEssential: true },
+    { category: 'Rent', target: '200000.00', spent: '230000.00', remaining: '-30000.00', isEssential: true },
+    { category: 'Transport', target: null, spent: '15000.00', remaining: null, isEssential: false },
   ],
 }
 
@@ -49,7 +49,7 @@ const EMPTY_PERIOD: BudgetPeriod = {
   suggestedStrategy: null,
   pressure: null,
   categories: [
-    { category: 'Food', target: null, spent: '90000.00', remaining: null },
+    { category: 'Food', target: null, spent: '90000.00', remaining: null, isEssential: true },
   ],
 }
 

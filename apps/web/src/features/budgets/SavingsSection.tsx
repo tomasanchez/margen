@@ -24,7 +24,7 @@ import Typography from '@mui/material/Typography'
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined'
 import { SectionCard } from '../../components/SectionCard'
 import { formatCurrency } from '../../lib/format'
-import { parseMoney, PROFILE_SAVINGS_PCT } from './derive'
+import { groupShareOfIncome, parseMoney, PROFILE_SAVINGS_PCT } from './derive'
 import type { SavingLine, SavingProfile } from '../../api/budgetsClient'
 import type { Currency } from '../../mock/types'
 
@@ -51,6 +51,13 @@ export interface SavingsSectionProps {
   floorBreached?: boolean
   /** The floor-breach gap as a Decimal string, when breached. */
   floorGap?: string | null
+  /**
+   * Σ of the saving-bucket amounts as a number — the Savings group total shown
+   * in the card header alongside its share of income (ADR-145). 0 when none.
+   */
+  groupTotal?: number
+  /** Spendable income as a Decimal string, or null (for the header % readout). */
+  incomeAmount?: string | null
   /** Apply a profile (the page wires the mutation). */
   onApply: (profile: SavingProfile) => void
 }
@@ -64,6 +71,8 @@ export function SavingsSection({
   applyError = false,
   floorBreached = false,
   floorGap = null,
+  groupTotal = 0,
+  incomeAmount = null,
   onApply,
 }: SavingsSectionProps) {
   const { t } = useTranslation('budgets')
@@ -78,8 +87,34 @@ export function SavingsSection({
     )
   }
 
+  // The group total + share of income, matching the Needs/Wants card headers
+  // (ADR-145). The dot + green share read this as the Savings group.
+  const share = groupShareOfIncome(groupTotal, incomeAmount)
+  const headerAction =
+    groupTotal > 0 ? (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Box
+          aria-hidden
+          sx={{ width: 10, height: 10, borderRadius: '3px', bgcolor: 'var(--mg-safe)' }}
+        />
+        <Typography
+          sx={{ fontSize: 14, fontVariantNumeric: 'tabular-nums' }}
+          color="text.primary"
+        >
+          {formatCurrency(groupTotal, currency)}
+          <Typography component="span" sx={{ fontSize: 12, ml: 0.5 }} color="text.secondary">
+            · {share == null ? '—' : `${Math.round(share * 100)}%`}
+          </Typography>
+        </Typography>
+      </Box>
+    ) : undefined
+
   return (
-    <SectionCard title={t('savings.title')} subtitle={t('savings.subtitle')}>
+    <SectionCard
+      title={t('savings.title')}
+      subtitle={t('savings.subtitle')}
+      action={headerAction}
+    >
       <ToggleButtonGroup
         exclusive
         value={selectedProfile}

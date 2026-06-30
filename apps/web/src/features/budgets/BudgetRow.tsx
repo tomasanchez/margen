@@ -23,6 +23,7 @@
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
+import Button from '@mui/material/Button'
 import CircularProgress from '@mui/material/CircularProgress'
 import InputAdornment from '@mui/material/InputAdornment'
 import TextField from '@mui/material/TextField'
@@ -31,7 +32,7 @@ import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined
 import { formatCurrency } from '../../lib/format'
 import { categoryDotColor, categoryLabel } from '../transactions/presentation'
 import { BudgetMeter } from './BudgetMeter'
-import { deriveCategoryProgress } from './derive'
+import { deriveCategoryProgress, parseMoney, toMoneyString } from './derive'
 import type { BudgetCategory } from '../../api/budgetsClient'
 import type { Currency } from '../../mock/types'
 
@@ -44,6 +45,12 @@ export interface BudgetRowProps {
   saving?: boolean
   /** Whether this row's last target write failed (shows a calm retry hint). */
   saveError?: boolean
+  /**
+   * The category's trailing 3-month average spend as a Decimal string (ADR-147),
+   * or null when unknown. On an UNTARGETED row with a positive average, a dashed
+   * "↳ use {avg}" chip lets the user seed the target from history in one tap.
+   */
+  avg3mo?: string | null
   /** Commit a non-empty target (the raw Decimal string the input holds). */
   onCommit: (amount: string) => void
   /** Clear the target (empty / zero committed). */
@@ -83,6 +90,7 @@ export function BudgetRow({
   currency,
   saving = false,
   saveError = false,
+  avg3mo = null,
   onCommit,
   onClear,
 }: BudgetRowProps) {
@@ -97,6 +105,20 @@ export function BudgetRow({
   const [draft, setDraft] = useState(savedDraft)
   // Track the value last committed so a no-op blur never fires a write.
   const [committed, setCommitted] = useState(savedDraft)
+
+  // The "use avg" suggestion shows only on an untargeted row when the trailing
+  // 3-month average is positive (ADR-147); tapping it commits that target.
+  const suggestionAmount =
+    !progress.hasTarget && avg3mo != null && parseMoney(avg3mo) > 0
+      ? parseMoney(avg3mo)
+      : null
+  const applySuggestion = () => {
+    if (suggestionAmount == null) return
+    const value = toMoneyString(suggestionAmount)
+    setCommitted(value)
+    setDraft(value)
+    onCommit(value)
+  }
 
   const commit = () => {
     const normalized = normalizeAmount(draft)
@@ -274,6 +296,40 @@ export function BudgetRow({
               overBudget={progress.overBudget}
               label={meterLabel}
             />
+          ) : suggestionAmount != null ? (
+            // Untargeted row with history: offer a one-tap "use the 3-mo avg"
+            // suggestion alongside the no-target hint (ADR-147).
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
+              <Typography sx={{ fontSize: 12.5 }} color="text.disabled" role="note">
+                {t('row.noTargetHint')}
+              </Typography>
+              <Button
+                onClick={applySuggestion}
+                size="small"
+                variant="outlined"
+                aria-label={t('row.useAvgAria', {
+                  category: label,
+                  amount: formatCurrency(suggestionAmount, currency),
+                })}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '8px',
+                  borderStyle: 'dashed',
+                  borderColor: 'var(--mg-border-2)',
+                  color: 'var(--mg-gold)',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  fontVariantNumeric: 'tabular-nums',
+                  px: 1.25,
+                  minHeight: 32,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {t('row.useAvg', {
+                  amount: formatCurrency(suggestionAmount, currency),
+                })}
+              </Button>
+            </Box>
           ) : (
             <Typography
               sx={{ fontSize: 12.5 }}

@@ -18,6 +18,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   budgetsClient,
   type ApplyProfileResult,
+  type BudgetHistoryLine,
   type BudgetIncome,
   type BudgetIncomeWriteBody,
   type BudgetPeriod,
@@ -35,6 +36,8 @@ export const budgetsKeys = {
   period: (month: string) => [...budgetsKeys.all, 'period', month] as const,
   /** The net-income base + floor is per-month too (ADR-139). */
   income: (month: string) => [...budgetsKeys.all, 'income', month] as const,
+  /** Trailing per-category spend history is per-month (ADR-147). */
+  history: (month: string) => [...budgetsKeys.all, 'history', month] as const,
 }
 
 /** Read the budgets period (every category + target/spent/remaining) for a month. */
@@ -55,6 +58,20 @@ export function usePriorBudgets(priorMonth: string | null) {
     queryKey: budgetsKeys.period(priorMonth ?? '—'),
     queryFn: () => budgetsClient.fetchBudgets(priorMonth as string),
     enabled: priorMonth != null,
+  })
+}
+
+/**
+ * Read the trailing per-category spend history for a month (ADR-147): each
+ * category's 3-month average + last-month spend. Powers the quick-start
+ * templates + the per-row "use avg" suggestion chips. Month-keyed so a month
+ * switch refetches; history is read-only so it never invalidates on a write.
+ */
+export function useBudgetHistory(month: string) {
+  return useQuery<BudgetHistoryLine[]>({
+    queryKey: budgetsKeys.history(month),
+    queryFn: () => budgetsClient.fetchHistory(month),
+    staleTime: 5 * 60 * 1000,
   })
 }
 
@@ -106,6 +123,41 @@ export function useSetBudgetIncome() {
   const invalidate = useInvalidateBudgets()
   return useMutation<void, Error, BudgetIncomeWriteBody>({
     mutationFn: (body) => budgetsClient.setBudgetIncome(body),
+    onSuccess: invalidate,
+  })
+}
+
+/**
+ * Apply a quick-start template for a month (ADR-147): a batch of per-category
+ * target writes (a Decimal string upserts via PUT; `null` clears via DELETE)
+ * optionally followed by applying a saving profile (the 50/30/20 Savings leg).
+ * The writes run via `Promise.all` over the EXISTING per-category endpoints, then
+ * budgets + Home invalidate ONCE so the surface refreshes in a single pass.
+ */
+export function useApplyTemplate() {
+  const invalidate = useInvalidateBudgets()
+  return useMutation<
+    void,
+    Error,
+    {
+      month: string
+      /** category → target (Decimal string upserts; `null` clears). */
+      targets: Partial<Record<Category, string | null>>
+      /** Optional saving profile to apply after the targets (50/30/20 leg). */
+      profile?: SavingProfile
+    }
+  >({
+    mutationFn: async ({ month, targets, profile }) => {
+      const writes = Object.entries(targets).map(([category, amount]) =>
+        amount == null
+          ? budgetsClient.clearTarget(category as Category, month)
+          : budgetsClient.setTarget({ category: category as Category, month, amount }),
+      )
+      await Promise.all(writes)
+      if (profile != null) {
+        await budgetsClient.applyProfile(month, profile)
+      }
+    },
     onSuccess: invalidate,
   })
 }

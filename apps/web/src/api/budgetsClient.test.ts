@@ -197,6 +197,66 @@ describe('adaptBudgetPeriod (extended fields)', () => {
   })
 })
 
+describe('adaptBudgetPeriod (isEssential grouping)', () => {
+  test('stamps isEssential per category, defaulting a missing flag to false', () => {
+    const period = adaptBudgetPeriod({
+      ...periodDto,
+      categories: [
+        { category: 'Food', target: '1', spent: '0', remaining: '1', isEssential: true },
+        { category: 'Shopping', target: '1', spent: '0', remaining: '1', isEssential: false },
+        // No flag → defaults to false (Wants).
+        { category: 'Other', target: null, spent: '0', remaining: null },
+      ],
+    })
+    expect(period.categories[0].isEssential).toBe(true)
+    expect(period.categories[1].isEssential).toBe(false)
+    expect(period.categories[2].isEssential).toBe(false)
+  })
+})
+
+describe('budgetsClient.fetchHistory', () => {
+  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  afterEach(() => vi.unstubAllGlobals())
+
+  test('GETs /budgets/history?month= and unwraps + adapts the lines', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        enveloped({
+          categories: [
+            { category: 'Food', avg3mo: '60000.00', lastMonth: '90000.00' },
+            { category: 'Transport', avg3mo: '10000.00', lastMonth: '0' },
+          ],
+        }),
+        { status: 200 },
+      ),
+    )
+    const history = await budgetsClient.fetchHistory('2026-06')
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/v1/budgets/history?month=2026-06')
+    expect(init?.method).toBeUndefined()
+    expect(history).toEqual([
+      { category: 'Food', avg3mo: '60000.00', lastMonth: '90000.00' },
+      { category: 'Transport', avg3mo: '10000.00', lastMonth: '0' },
+    ])
+    // Money stays a Decimal string (ADR-025/034).
+    expect(typeof history[0].avg3mo).toBe('string')
+  })
+
+  test('returns an empty list when the month has no history', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(enveloped({ categories: [] }), { status: 200 }),
+    )
+    expect(await budgetsClient.fetchHistory('2026-06')).toEqual([])
+  })
+
+  test('a non-2xx response throws a BudgetApiError', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('boom', { status: 500 }))
+    await expect(budgetsClient.fetchHistory('2026-06')).rejects.toBeInstanceOf(
+      BudgetApiError,
+    )
+  })
+})
+
 describe('budgetsClient.fetchBudgetIncome', () => {
   beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
   afterEach(() => vi.unstubAllGlobals())

@@ -1,13 +1,51 @@
 {
   "title": "Presupuestos",
-  "subtitle": "Fijá un objetivo mensual por categoría y seguilo contra lo que gastás.",
-  "summary": {
+  "subtitle": "Asigná un trabajo a cada peso y seguilo contra lo que gastás de verdad.",
+  "alloc": {
+    "cardTitle": "Cómo está asignado",
+    "cardSubtitle": "Repartí tu ingreso disponible entre Esenciales, Gustos y Ahorro.",
+    "title": "Cómo está asignado",
+    "leftToAssign": "Falta asignar",
+    "overAssigned": "Sobreasignado",
+    "allAssigned": "Todo asignado",
+    "group": {
+      "needs": "Esenciales",
+      "wants": "Gustos",
+      "savings": "Ahorro"
+    }
+  },
+  "templates": {
+    "title": "Inicio rápido",
+    "applying": "Aplicando…",
+    "fiftyThirtyTwenty": "50 / 30 / 20",
+    "matchAvg": "Igualar prom. 3 meses",
+    "matchLastMonth": "Igualar mes pasado",
+    "clearAll": "Borrar todo"
+  },
+  "plan": {
+    "title": "Este mes vs plan",
+    "subtitle": "Cómo va tu gasto contra los objetivos que fijaste.",
     "budgeted": "Presupuestado",
-    "spent": "Gastado",
+    "spent": "Gastado hasta ahora",
     "remaining": "Disponible",
-    "overLabel": "Excedido",
-    "overCount_one": "{{count}} categoría excedida",
-    "overCount_other": "{{count}} categorías excedidas"
+    "over": "Excedido",
+    "meterAria": "{{pct}}% de tu plan gastado",
+    "insight": {
+      "over": "Estás {{overBy}} por encima del plan este mes — {{category}} sola está {{categoryOverBy}} por encima de su objetivo.",
+      "someOver_one": "{{count}} categoría está excedida, pero seguís dentro de tu plan general.",
+      "someOver_other": "{{count}} categorías están excedidas, pero seguís dentro de tu plan general.",
+      "onTrack": "Todas las categorías están en o por debajo del objetivo — estás {{ahead}} adelantado al plan."
+    }
+  },
+  "groups": {
+    "needs": {
+      "name": "Esenciales",
+      "sub": "alquiler, comida, salud — lo innegociable"
+    },
+    "wants": {
+      "name": "Gustos",
+      "sub": "estilo de vida y discrecional"
+    }
   },
   "income": {
     "title": "Ingreso neto disponible",
@@ -91,6 +129,8 @@
     "remaining": "Quedan {{amount}}",
     "overBy": "{{amount}} de más",
     "over": "Excedido",
+    "useAvg": "↳ usar {{amount}}",
+    "useAvgAria": "Fijar el objetivo de {{category}} en su promedio de 3 meses de {{amount}}",
     "noTargetHint": "Sin objetivo — ingresá un monto para empezar a seguir esta categoría.",
     "meterAria": "{{category}}: {{pct}}% del objetivo gastado",
     "meterNoTargetAria": "{{category}}: sin objetivo"

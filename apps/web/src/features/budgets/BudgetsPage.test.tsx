@@ -31,6 +31,7 @@ vi.mock('../../api/budgetsClient', async (importOriginal) => {
     ...actual,
     budgetsClient: {
       fetchBudgets: vi.fn(),
+      fetchHistory: vi.fn(),
       setTarget: vi.fn(),
       clearTarget: vi.fn(),
       fetchBudgetIncome: vi.fn(),
@@ -43,9 +44,11 @@ vi.mock('../../api/budgetsClient', async (importOriginal) => {
 })
 
 const mockFetch = vi.mocked(budgetsClient.fetchBudgets)
+const mockFetchHistory = vi.mocked(budgetsClient.fetchHistory)
 const mockSet = vi.mocked(budgetsClient.setTarget)
 const mockClear = vi.mocked(budgetsClient.clearTarget)
 const mockFetchIncome = vi.mocked(budgetsClient.fetchBudgetIncome)
+const mockApplyProfile = vi.mocked(budgetsClient.applyProfile)
 
 /** A period: Food under budget, Rent over budget, Transport with no target set. */
 function period(month: string): BudgetPeriod {
@@ -57,9 +60,9 @@ function period(month: string): BudgetPeriod {
     suggestedStrategy: null,
     pressure: null,
     categories: [
-      { category: 'Food', target: '120000.00', spent: '90000.00', remaining: '30000.00' },
-      { category: 'Rent', target: '200000.00', spent: '230000.00', remaining: '-30000.00' },
-      { category: 'Transport', target: null, spent: '15000.00', remaining: null },
+      { category: 'Food', target: '120000.00', spent: '90000.00', remaining: '30000.00', isEssential: true },
+      { category: 'Rent', target: '200000.00', spent: '230000.00', remaining: '-30000.00', isEssential: true },
+      { category: 'Transport', target: null, spent: '15000.00', remaining: null, isEssential: false },
     ],
   }
 }
@@ -80,6 +83,7 @@ function renderPage() {
 describe('BudgetsPage', () => {
   beforeEach(() => {
     mockFetch.mockResolvedValue(period('2026-06'))
+    mockFetchHistory.mockResolvedValue([])
     mockSet.mockResolvedValue(undefined)
     mockClear.mockResolvedValue(undefined)
     mockFetchIncome.mockResolvedValue({
@@ -203,14 +207,90 @@ describe('BudgetsPage', () => {
     expect(screen.getByRole('button', { name: /Retry/ })).toBeInTheDocument()
   })
 
-  test('the period summary totals budgeted vs spent over budgeted categories', async () => {
+  test('the plan band totals budgeted vs spent over budgeted categories', async () => {
     renderPage()
     await screen.findByText('Food')
     // Budgeted = 120000 + 200000 = 320000; spent (budgeted only) = 90000 +
-    // 230000 = 320000; Transport's 15000 is excluded. Both the Budgeted + Spent
-    // figures read ARS 320.000, so two occurrences appear in the summary.
+    // 230000 = 320000; Transport's 15000 is excluded. Both read ARS 320.000.
     expect(screen.getByText('Budgeted')).toBeInTheDocument()
-    expect(screen.getByText('Spent', { selector: 'p' })).toBeInTheDocument()
+    expect(screen.getByText('Spent so far')).toBeInTheDocument()
     expect(screen.getAllByText('ARS 320.000').length).toBeGreaterThanOrEqual(2)
+  })
+
+  test('groups categories into Needs and Wants by isEssential', async () => {
+    renderPage()
+    await screen.findByText('Food')
+    // The group cards name themselves; Needs holds Food + Rent (essential),
+    // Wants holds Transport (non-essential).
+    expect(
+      screen.getByRole('heading', { name: 'Needs', level: 2 }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'Wants', level: 2 }),
+    ).toBeInTheDocument()
+  })
+
+  test('shows the left-to-assign readout once an income base is set', async () => {
+    // Income 600000; allocated targets = 320000 → 280000 left to assign.
+    mockFetchIncome.mockResolvedValue({
+      month: '2026-06',
+      amount: '600000.00',
+      currency: 'ARS',
+      source: 'manual',
+      floor: null,
+    })
+    renderPage()
+    await screen.findByText('Food')
+    expect(await screen.findByText('Left to assign')).toBeInTheDocument()
+    expect(screen.getByText('ARS 280.000')).toBeInTheDocument()
+  })
+
+  test('applying "Clear all" batches a DELETE per targeted category', async () => {
+    const user = userEvent.setup()
+    mockFetchIncome.mockResolvedValue({
+      month: '2026-06',
+      amount: '600000.00',
+      currency: 'ARS',
+      source: 'manual',
+      floor: null,
+    })
+    renderPage()
+    await screen.findByText('Food')
+
+    await user.click(screen.getByRole('button', { name: 'Clear all' }))
+
+    await waitFor(() => {
+      // Food + Rent have targets; Transport does not → two deletes, no PUTs.
+      expect(mockClear).toHaveBeenCalledWith('Food', '2026-06')
+      expect(mockClear).toHaveBeenCalledWith('Rent', '2026-06')
+    })
+    expect(mockClear).toHaveBeenCalledTimes(2)
+  })
+
+  test('applying "50 / 30 / 20" writes targets and the Conservative profile', async () => {
+    const user = userEvent.setup()
+    mockApplyProfile.mockResolvedValue({
+      period: period('2026-06'),
+      floorBreached: false,
+      gap: null,
+    })
+    mockFetchIncome.mockResolvedValue({
+      month: '2026-06',
+      amount: '1000000.00',
+      currency: 'ARS',
+      source: 'manual',
+      floor: null,
+    })
+    renderPage()
+    await screen.findByText('Food')
+
+    await user.click(screen.getByRole('button', { name: '50 / 30 / 20' }))
+
+    await waitFor(() => {
+      // The 20% Savings leg is the Conservative preset (ADR-147/138).
+      expect(mockApplyProfile).toHaveBeenCalledWith('2026-06', 'conservative')
+    })
+    // Needs categories (Food, Rent) get a share of the 50% pool.
+    expect(mockSet).toHaveBeenCalled()
   })
 })

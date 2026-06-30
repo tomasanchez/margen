@@ -32,6 +32,8 @@ function renderSection(props: Partial<SavingsSectionProps> = {}) {
         applyError={props.applyError}
         floorBreached={props.floorBreached}
         floorGap={props.floorGap}
+        groupTotal={props.groupTotal}
+        incomeAmount={props.incomeAmount}
         onApply={onApply}
       />
     </ColorModeProvider>,
@@ -75,6 +77,19 @@ describe('SavingsSection', () => {
     renderSection({ applyError: true })
     expect(
       screen.getByText("Couldn't apply that profile — try again."),
+    ).toBeInTheDocument()
+  })
+
+  test('renders the Savings group total + share of income in the header', () => {
+    // groupTotal 200000 against income 1000000 → 20% of income. The amount text
+    // is split by the nested "· 20%" span, so match on the container node.
+    renderSection({ groupTotal: 200000, incomeAmount: '1000000' })
+    // The amount + the "· 20%" share read in one <p> (text split across nodes).
+    expect(
+      screen.getByText(
+        (_, node) =>
+          node?.tagName === 'P' && node.textContent === 'ARS 200.000· 20%',
+      ),
     ).toBeInTheDocument()
   })
 })

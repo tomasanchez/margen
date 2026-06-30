@@ -67,6 +67,12 @@ export interface BudgetCategoryDto {
   spent: string
   /** `target − spent` as a Decimal string when a target exists, else `null`. */
   remaining: string | null
+  /**
+   * Whether the category is an essential "Needs" floor category (ADR-146). The
+   * backend stamps this from the `ESSENTIAL_CATEGORIES` constant; the frontend
+   * groups Needs/Wants solely off this field (never duplicating the list).
+   */
+  isEssential?: boolean
 }
 
 /**
@@ -112,6 +118,33 @@ export interface BudgetPeriodDto {
   pressure?: string | null
 }
 
+/**
+ * One category's trailing-spend history line as serialized by the backend
+ * (ADR-147). Powers the quick-start templates + the per-row "use avg" chip. All
+ * money values are Decimal strings.
+ */
+export interface BudgetHistoryLineDto {
+  category: string
+  /** Trailing 3-month average spend as a Decimal string. */
+  avg3mo: string
+  /** The single prior month's spend as a Decimal string. */
+  lastMonth: string
+}
+
+/** `GET /budgets/history` payload (under the `{ data }` envelope, ADR-030). */
+export interface BudgetHistoryDto {
+  categories: BudgetHistoryLineDto[]
+}
+
+/** One category's trailing-spend history in the frontend read model (ADR-147). */
+export interface BudgetHistoryLine {
+  category: Category
+  /** Trailing 3-month average spend as a Decimal string. */
+  avg3mo: string
+  /** The single prior month's spend as a Decimal string. */
+  lastMonth: string
+}
+
 /** Request body for `PUT /budgets` (upsert a category target). */
 export interface BudgetWriteBody {
   category: Category
@@ -135,6 +168,8 @@ export interface BudgetCategory {
   target: string | null
   spent: string
   remaining: string | null
+  /** Whether the category belongs to the Needs group (essential, ADR-146). */
+  isEssential: boolean
 }
 
 /** One saving-bucket line in the frontend read model (ADR-138). */
@@ -297,6 +332,7 @@ export function adaptBudgetCategory(dto: BudgetCategoryDto): BudgetCategory {
     target: dto.target,
     spent: dto.spent,
     remaining: dto.remaining,
+    isEssential: dto.isEssential === true,
   }
 }
 
@@ -310,6 +346,17 @@ export function adaptBudgetPeriod(dto: BudgetPeriodDto): BudgetPeriod {
     floor: adaptFloor(dto.floor),
     suggestedStrategy: asSavingProfile(dto.suggestedStrategy),
     pressure: asPressure(dto.pressure),
+  }
+}
+
+/** Adapt one backend {@link BudgetHistoryLineDto} to a {@link BudgetHistoryLine}. */
+export function adaptBudgetHistoryLine(
+  dto: BudgetHistoryLineDto,
+): BudgetHistoryLine {
+  return {
+    category: asCategory(dto.category),
+    avg3mo: dto.avg3mo,
+    lastMonth: dto.lastMonth,
   }
 }
 
@@ -339,6 +386,22 @@ async function fetchBudgets(month: string): Promise<BudgetPeriod> {
   await ensureOk(response)
   const { data } = (await response.json()) as ResponseEnvelope<BudgetPeriodDto>
   return adaptBudgetPeriod(data)
+}
+
+/**
+ * GET the trailing per-category spend history for `month` (`YYYY-MM`, ADR-147):
+ * each category's 3-month average + last-month spend, used to seed the quick-start
+ * templates + the "use avg" chips. Unwraps the `{ data }` envelope (ADR-030) and
+ * adapts each line. Throws {@link BudgetApiError} on a non-2xx.
+ */
+async function fetchHistory(month: string): Promise<BudgetHistoryLine[]> {
+  const response = await authedFetch(
+    apiUrl(`/budgets/history?month=${encodeURIComponent(month)}`),
+    { headers: { Accept: 'application/json' } },
+  )
+  await ensureOk(response)
+  const { data } = (await response.json()) as ResponseEnvelope<BudgetHistoryDto>
+  return (data.categories ?? []).map(adaptBudgetHistoryLine)
 }
 
 /**
@@ -498,6 +561,7 @@ async function reprice(body: RepriceBody): Promise<BudgetPeriod> {
 /** The budgets API client, grouped for ergonomic import. */
 export const budgetsClient = {
   fetchBudgets,
+  fetchHistory,
   setTarget,
   clearTarget,
   fetchBudgetIncome,
