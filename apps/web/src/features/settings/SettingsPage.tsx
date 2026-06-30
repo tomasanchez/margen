@@ -36,10 +36,12 @@ import { SettingsApiError } from '../../api/settingsClient'
 import type {
   DisplayCurrency,
   FxDefaultRateType,
+  PreferredRateSource,
   SettingsPatch,
 } from '../../api/settingsClient'
 import { useSettings, useUpdateSettings } from './queries'
 import { ManualThresholdNote } from './ManualThresholdNote'
+import { BackfillFxPanel } from './BackfillFxPanel'
 
 /** The A–K Monotributo categories (the maintained scale, ADR-051). */
 const CATEGORY_LETTERS = [
@@ -107,6 +109,7 @@ export function SettingsPage() {
 
   const displayCurrencyId = useId()
   const fxDefaultId = useId()
+  const rateSourceId = useId()
   const categoryId = useId()
   const monoModuleId = useId()
   const errorId = useId()
@@ -249,7 +252,49 @@ export function SettingsPage() {
                 </FormControl>
               }
             />
+
+            {/* The persisted preferred FX rate source (ADR-151): the SINGLE
+                source of truth driving transaction capture, historical backfill,
+                budget conversion, and the net-worth card's rate selector.
+                Values are dolarapi `casa` segments — Bolsa (MEP) / Official. */}
+            <SettingRow
+              label={t('display.rateSource.label')}
+              helper={t('display.rateSource.helper')}
+              htmlFor={rateSourceId}
+              control={
+                <FormControl size="small" sx={{ minWidth: 168 }} disabled={saving}>
+                  <InputLabel id={`${rateSourceId}-label`}>
+                    {t('display.rateSource.selectLabel')}
+                  </InputLabel>
+                  <Select
+                    id={rateSourceId}
+                    labelId={`${rateSourceId}-label`}
+                    label={t('display.rateSource.selectLabel')}
+                    value={settings.preferredRateSource}
+                    onChange={(event) =>
+                      save({
+                        preferredRateSource: event.target
+                          .value as PreferredRateSource,
+                      })
+                    }
+                    sx={{ borderRadius: '10px', bgcolor: 'var(--mg-paper)' }}
+                  >
+                    <MenuItem value="bolsa">
+                      {t('display.rateSource.bolsa')}
+                    </MenuItem>
+                    <MenuItem value="oficial">
+                      {t('display.rateSource.oficial')}
+                    </MenuItem>
+                  </Select>
+                </FormControl>
+              }
+            />
           </SectionCard>
+
+          {/* One-time historical FX backfill (ADR-150): stamps a per-row USD
+              snapshot on transactions that predate the FX-snapshot model, so USD
+              budgets read historically-accurate spend (ADR-152). */}
+          <BackfillFxPanel />
 
           <SectionCard title={t('monotributo.title')}>
             {/* Module visibility toggle (ADR-126): when off, the Monotributo nav

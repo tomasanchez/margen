@@ -38,6 +38,8 @@ function renderColumn(props: Partial<SpendableIncomeProps> = {}) {
         suggestedStrategy={props.suggestedStrategy ?? null}
         suggestedBase={props.suggestedBase}
         suggestedBaseEmpty={props.suggestedBaseEmpty}
+        suggestedSparse={props.suggestedSparse}
+        suggestedMonths={props.suggestedMonths}
         onCommitIncome={onCommitIncome}
         onCommitFloor={onCommitFloor}
         onUseSuggested={onUseSuggested}
@@ -100,7 +102,18 @@ describe('SpendableIncome', () => {
   test('shows the no-suggestion note when the lookup returned nothing', () => {
     renderColumn({ suggestedBaseEmpty: true })
     expect(
-      screen.getByText(/needs at least 12 months of income history/),
+      screen.getByText(/needs at least one month of recorded income/),
+    ).toBeInTheDocument()
+  })
+
+  test('labels a sparse estimate with the number of months backing it (ADR-153)', () => {
+    renderColumn({
+      suggestedBase: '1200.00',
+      suggestedSparse: true,
+      suggestedMonths: 3,
+    })
+    expect(
+      screen.getByText('Estimate from 3 months of history'),
     ).toBeInTheDocument()
   })
 })

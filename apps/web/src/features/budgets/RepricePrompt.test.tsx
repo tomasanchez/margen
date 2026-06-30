@@ -20,6 +20,7 @@ const PRIOR: BudgetPeriod = {
   floor: null,
   suggestedStrategy: null,
   pressure: null,
+  unconverted: 0,
   categories: [
     { category: 'Housing', target: '300000.00', spent: '0', remaining: null, isEssential: true },
     { category: 'Food', target: '100000.00', spent: '0', remaining: null, isEssential: true },

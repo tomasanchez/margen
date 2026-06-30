@@ -28,14 +28,19 @@ import { InvoicesApiError, type InvoiceParse } from '../../api/invoicesClient'
 
 // Mock the HTTP clients so the flow never touches a real backend (ADR-038), and
 // the dolarapi FX adapter + settings so USD prefills seed without real network.
-const { createMock, parseInvoiceMock, fxMock, fetchSettingsMock } = vi.hoisted(
-  () => ({
-    createMock: vi.fn(),
-    parseInvoiceMock: vi.fn(),
-    fxMock: vi.fn(),
-    fetchSettingsMock: vi.fn(),
-  }),
-)
+const {
+  createMock,
+  parseInvoiceMock,
+  fxMock,
+  currentRateMock,
+  fetchSettingsMock,
+} = vi.hoisted(() => ({
+  createMock: vi.fn(),
+  parseInvoiceMock: vi.fn(),
+  fxMock: vi.fn(),
+  currentRateMock: vi.fn(),
+  fetchSettingsMock: vi.fn(),
+}))
 
 vi.mock('../../api/transactionsClient', () => ({
   transactionsClient: {
@@ -58,6 +63,7 @@ vi.mock('../../api/invoicesClient', async () => {
 
 vi.mock('../../api/fxClient', () => ({
   fetchSuggestedRates: fxMock,
+  fetchCurrentRate: currentRateMock,
 }))
 
 vi.mock('../../api/settingsClient', async () => {
@@ -70,9 +76,11 @@ vi.mock('../../api/settingsClient', async () => {
 
 beforeEach(() => {
   fxMock.mockResolvedValue({ mep: 1245, official: 1045 })
+  currentRateMock.mockResolvedValue(1245)
   fetchSettingsMock.mockResolvedValue({
     preferredDisplayCurrency: 'ARS',
     fxDefaultRateType: 'MEP',
+    preferredRateSource: 'bolsa',
     monotributoCurrentCategory: 'C',
     monotributoActivityType: 'services',
     monotributoEnabled: true,

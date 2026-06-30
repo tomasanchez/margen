@@ -52,8 +52,12 @@ export interface SpendableIncomeProps {
   saveError?: boolean
   /** The pulled suggested base (Decimal string), or null when none / not yet fetched. */
   suggestedBase?: string | null
-  /** Whether the suggested-base lookup ran and returned nothing (<12mo history). */
+  /** Whether the suggested-base lookup ran and returned nothing (zero inflow months). */
   suggestedBaseEmpty?: boolean
+  /** Whether the suggested base is backed by < 12 months of history (ADR-153). */
+  suggestedSparse?: boolean
+  /** Count of months backing the suggested base, surfaced when sparse (ADR-153). */
+  suggestedMonths?: number
   /** Commit the net income (raw Decimal string) — upserts via PUT. */
   onCommitIncome: (amount: string) => void
   /** Commit a manual floor amount (raw Decimal string) — upserts via PUT. */
@@ -89,6 +93,8 @@ export function SpendableIncome({
   saveError = false,
   suggestedBase = null,
   suggestedBaseEmpty = false,
+  suggestedSparse = false,
+  suggestedMonths = 0,
   onCommitIncome,
   onCommitFloor,
   onUseSuggested,
@@ -278,6 +284,18 @@ export function SpendableIncome({
             {t('income.avgChip', { amount: '…' })}
           </Button>
         )}
+
+        {/* Sparse-estimate caveat (ADR-153): when fewer than 12 months back the
+            suggestion, say how many so the user reads it as provisional. */}
+        {suggestedBaseLabel != null && suggestedSparse ? (
+          <Typography
+            sx={{ fontSize: 11.5, mt: 0.5 }}
+            color="text.secondary"
+            role="note"
+          >
+            {t('income.estimateFrom', { count: suggestedMonths })}
+          </Typography>
+        ) : null}
       </Box>
 
       {/* Compact pressure / strategy readout (ADR-143), folded in subtly. */}

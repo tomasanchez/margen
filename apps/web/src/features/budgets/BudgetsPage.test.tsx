@@ -11,8 +11,9 @@
  *  - stepping the month navigator refetches for the new YYYY-MM;
  *  - a GET failure surfaces the calm error state.
  *
- * The page renders no router <Link>s, so a plain QueryClient + ColorMode wrapper
- * suffices. English-pinned (ADR-105); money asserted via the shared es-AR
+ * Most tests use a plain QueryClient + ColorMode wrapper; the unconverted-note
+ * test (ADR-152) renders behind a memory router so its <Link to="/settings">
+ * resolves. English-pinned (ADR-105); money asserted via the shared es-AR
  * formatter.
  */
 
@@ -20,6 +21,13 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  RouterProvider,
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from '@tanstack/react-router'
 import { ColorModeProvider } from '../../theme/colorMode'
 import { BudgetsPage } from './BudgetsPage'
 import { budgetsClient, type BudgetPeriod } from '../../api/budgetsClient'
@@ -59,6 +67,7 @@ function period(month: string): BudgetPeriod {
     floor: null,
     suggestedStrategy: null,
     pressure: null,
+    unconverted: 0,
     categories: [
       { category: 'Food', target: '120000.00', spent: '90000.00', remaining: '30000.00', isEssential: true },
       { category: 'Rent', target: '200000.00', spent: '230000.00', remaining: '-30000.00', isEssential: true },
@@ -75,6 +84,33 @@ function renderPage() {
     <QueryClientProvider client={queryClient}>
       <ColorModeProvider>
         <BudgetsPage />
+      </ColorModeProvider>
+    </QueryClientProvider>,
+  )
+}
+
+/**
+ * Render the page behind a memory router so the unconverted-note <Link to
+ * "/settings"> resolves (ADR-152). Used only by the unconverted-note test.
+ */
+function renderPageWithRouter() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const rootRoute = createRootRoute({ component: () => <BudgetsPage /> })
+  const settingsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/settings',
+    component: () => null,
+  })
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([settingsRoute]),
+    history: createMemoryHistory({ initialEntries: ['/'] }),
+  })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ColorModeProvider>
+        <RouterProvider router={router} />
       </ColorModeProvider>
     </QueryClientProvider>,
   )
@@ -133,6 +169,27 @@ describe('BudgetsPage', () => {
     expect(screen.getByText('ARS 30.000 over')).toBeInTheDocument()
   })
 
+  test('surfaces the unconverted note with a link to the backfill when rows lack a snapshot (ADR-152)', async () => {
+    mockFetch.mockResolvedValue({ ...period('2026-06'), unconverted: 4 })
+    renderPageWithRouter()
+
+    expect(
+      await screen.findByText(
+        "4 transactions aren't converted to USD yet, so spend may be understated.",
+      ),
+    ).toBeInTheDocument()
+    // The calm note links to Settings (the one-time backfill, #80).
+    const link = screen.getByRole('link', { name: 'Convert them' })
+    expect(link).toHaveAttribute('href', '/settings')
+  })
+
+  test('hides the unconverted note when every row is converted', async () => {
+    mockFetch.mockResolvedValue({ ...period('2026-06'), unconverted: 0 })
+    renderPage()
+    await screen.findByText('Food')
+    expect(screen.queryByText(/aren't converted to USD/)).not.toBeInTheDocument()
+  })
+
   test('typing a target and blurring PUTs the upsert for that category', async () => {
     const user = userEvent.setup()
     renderPage()
@@ -149,6 +206,7 @@ describe('BudgetsPage', () => {
         category: 'Transport',
         month: '2026-06',
         amount: '50000',
+        currency: 'ARS',
       })
     })
   })

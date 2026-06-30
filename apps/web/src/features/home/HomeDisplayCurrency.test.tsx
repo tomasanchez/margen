@@ -168,6 +168,7 @@ describe('USD preferred with a live rate', () => {
     fetchSettingsMock.mockResolvedValue({
       preferredDisplayCurrency: 'USD',
       fxDefaultRateType: 'MEP',
+      preferredRateSource: 'bolsa',
       monotributoCurrentCategory: 'C',
       monotributoActivityType: 'services',
       monotributoEnabled: true,
@@ -194,6 +195,7 @@ describe('USD preferred but the rate is unavailable', () => {
     fetchSettingsMock.mockResolvedValue({
       preferredDisplayCurrency: 'USD',
       fxDefaultRateType: 'MEP',
+      preferredRateSource: 'bolsa',
       monotributoCurrentCategory: 'C',
       monotributoActivityType: 'services',
       monotributoEnabled: true,

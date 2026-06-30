@@ -24,6 +24,7 @@ import {
 const SETTINGS: Settings = {
   preferredDisplayCurrency: 'ARS',
   fxDefaultRateType: 'MEP',
+  preferredRateSource: 'bolsa',
   monotributoCurrentCategory: 'C',
   monotributoActivityType: 'services',
   monotributoEnabled: true,

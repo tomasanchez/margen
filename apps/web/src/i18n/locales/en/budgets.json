@@ -68,7 +68,9 @@
     "floorEdit": "Set a household essentials floor",
     "floorEditComputed": "Floor (computed) · {{amount}}",
     "floorEditSet": "Floor · {{amount}}",
-    "noSuggestion": "A suggested base needs at least 12 months of income history.",
+    "noSuggestion": "A suggested base needs at least one month of recorded income.",
+    "estimateFrom_one": "Estimate from {{count}} month of history",
+    "estimateFrom_other": "Estimate from {{count}} months of history",
     "pressure": {
       "Constrained": "Constrained — income is {{ratio}}× your essentials floor",
       "Stable": "Stable — income is {{ratio}}× your essentials floor",
@@ -145,5 +147,10 @@
   "error": {
     "title": "Can't load your budgets",
     "description": "We couldn't reach the server. Check your connection and try again."
+  },
+  "unconverted": {
+    "note_one": "{{count}} transaction isn't converted to USD yet, so spend may be understated.",
+    "note_other": "{{count}} transactions aren't converted to USD yet, so spend may be understated.",
+    "action": "Convert them"
   }
 }

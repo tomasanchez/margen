@@ -55,6 +55,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     preferredDisplayCurrency: 'ARS',
     fxDefaultRateType: 'MEP',
+    preferredRateSource: 'bolsa',
     monotributoCurrentCategory: 'C',
     monotributoActivityType: 'services',
     monotributoEnabled: true,
@@ -124,6 +125,7 @@ describe('USD preferred with a live rate', () => {
       makeSettings({
         preferredDisplayCurrency: 'USD',
         fxDefaultRateType: 'official',
+        preferredRateSource: 'bolsa',
       }),
     )
 

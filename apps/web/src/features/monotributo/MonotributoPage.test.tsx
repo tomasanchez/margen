@@ -194,6 +194,7 @@ beforeEach(() => {
   updateMock.mockResolvedValue({
     preferredDisplayCurrency: 'ARS',
     fxDefaultRateType: 'MEP',
+    preferredRateSource: 'bolsa',
     monotributoCurrentCategory: 'D',
     monotributoActivityType: 'services',
     monotributoEnabled: true,

@@ -57,6 +57,7 @@ function periodOf(categories: BudgetCategory[]): BudgetPeriod {
     floor: null,
     suggestedStrategy: null,
     pressure: null,
+    unconverted: 0,
     categories,
   }
 }
@@ -103,6 +104,7 @@ describe('deriveBudgetTotals', () => {
     floor: null,
     suggestedStrategy: null,
     pressure: null,
+    unconverted: 0,
     categories: [
       line('Food', '100000', '130000', '-30000'),
       line('Rent', '200000', '200000', '0'),
@@ -140,6 +142,7 @@ describe('topAttentionCategories', () => {
       floor: null,
       suggestedStrategy: null,
       pressure: null,
+      unconverted: 0,
       categories: [
         line('Food', '100000', '50000', '50000'), // 50%
         line('Rent', '100000', '130000', '-30000'), // over

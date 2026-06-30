@@ -67,9 +67,31 @@ describe('budgetsClient.fetchBudgets', () => {
     const period = await budgetsClient.fetchBudgets('2026-06')
     const [url, init] = vi.mocked(fetch).mock.calls[0]
     expect(String(url)).toContain('/api/v1/budgets?month=2026-06')
+    expect(String(url)).toContain('currency=ARS')
     expect(init?.method).toBeUndefined()
     expect(period.month).toBe('2026-06')
     expect(period.categories[0].category).toBe('Food')
+  })
+
+  test('threads the budget currency as the currency query param (ADR-152)', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(enveloped({ ...periodDto, currency: 'USD' }), { status: 200 }),
+    )
+    const period = await budgetsClient.fetchBudgets('2026-06', 'USD')
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('currency=USD')
+    expect(period.currency).toBe('USD')
+  })
+
+  test('adapts the unconverted count, defaulting to 0 when absent (ADR-152)', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(enveloped({ ...periodDto, unconverted: 5 }), { status: 200 }),
+    )
+    expect((await budgetsClient.fetchBudgets('2026-06', 'USD')).unconverted).toBe(5)
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(enveloped(periodDto), { status: 200 }),
+    )
+    expect((await budgetsClient.fetchBudgets('2026-06')).unconverted).toBe(0)
   })
 
   test('a non-2xx response throws a BudgetApiError carrying the status', async () => {
@@ -230,9 +252,11 @@ describe('budgetsClient.fetchHistory', () => {
         { status: 200 },
       ),
     )
-    const history = await budgetsClient.fetchHistory('2026-06')
+    const history = await budgetsClient.fetchHistory('2026-06', 'USD')
     const [url, init] = vi.mocked(fetch).mock.calls[0]
     expect(String(url)).toContain('/api/v1/budgets/history?month=2026-06')
+    // The budget currency denominates the history (ADR-152).
+    expect(String(url)).toContain('currency=USD')
     expect(init?.method).toBeUndefined()
     expect(history).toEqual([
       { category: 'Food', avg3mo: '60000.00', lastMonth: '90000.00' },
@@ -340,21 +364,45 @@ describe('budgetsClient.fetchSuggestedBase', () => {
   beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
   afterEach(() => vi.unstubAllGlobals())
 
-  test('GETs /budget-income/suggested?month= and returns the base', async () => {
+  test('GETs /budget-income/suggested with the month + currency and returns the full suggestion', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(enveloped({ suggestedBase: '850000.00' }), { status: 200 }),
+      new Response(
+        enveloped({
+          suggestedBase: '1200.00',
+          monthsAvailable: 3,
+          isSparse: true,
+          currency: 'USD',
+        }),
+        { status: 200 },
+      ),
     )
-    const base = await budgetsClient.fetchSuggestedBase('2026-06')
+    const suggestion = await budgetsClient.fetchSuggestedBase('2026-06', 'USD')
     const [url] = vi.mocked(fetch).mock.calls[0]
     expect(String(url)).toContain('/api/v1/budget-income/suggested?month=2026-06')
-    expect(base).toBe('850000.00')
+    expect(String(url)).toContain('currency=USD')
+    expect(suggestion).toEqual({
+      suggestedBase: '1200.00',
+      monthsAvailable: 3,
+      isSparse: true,
+      currency: 'USD',
+    })
   })
 
-  test('returns null when there is too little history', async () => {
+  test('returns a null base (with zero months) when there is no inflow history', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(enveloped({ suggestedBase: null }), { status: 200 }),
+      new Response(
+        enveloped({
+          suggestedBase: null,
+          monthsAvailable: 0,
+          isSparse: false,
+          currency: 'ARS',
+        }),
+        { status: 200 },
+      ),
     )
-    expect(await budgetsClient.fetchSuggestedBase('2026-06')).toBeNull()
+    const suggestion = await budgetsClient.fetchSuggestedBase('2026-06')
+    expect(suggestion.suggestedBase).toBeNull()
+    expect(suggestion.monthsAvailable).toBe(0)
   })
 })
 

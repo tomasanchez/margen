@@ -196,6 +196,14 @@ export interface Transaction {
   fxRateAsOf?: string
   recurring?: boolean
   /**
+   * Provenance of the per-transaction FX snapshot (ADR-148), e.g. `'bolsa'`,
+   * `'oficial'`, `'manual'`, or `'backfill'`. Present once a snapshot has been
+   * captured (on create, import rate-fill, or backfill); absent on rows still
+   * pending a snapshot — those are excluded from USD spend with a calm note
+   * (ADR-152). Distinct from {@link Transaction.fxRateType} (the ADR-044 family).
+   */
+  fxSource?: string
+  /**
    * Optional free-text note carried from the backend contract (ADR-088, mirrors
    * `name`). Seeded back into the Add/Edit form on edit so it survives a re-save.
    */
@@ -252,6 +260,19 @@ export interface NewTransactionInput {
    * transaction's date; sent for USD entries, omitted for ARS.
    */
   fxRateAsOf?: string
+  /**
+   * Per-transaction FX snapshot rate as a Decimal STRING (ARS per 1 USD,
+   * ADR-148/149). Supplied by the CLIENT on create so the backend materializes
+   * `usd_amount = amount ÷ fxRate`. Captured from the day's preferred-source rate
+   * (ADR-151); omitted for ARS rows with no USD involvement.
+   */
+  fxRate?: string
+  /**
+   * Provenance of {@link NewTransactionInput.fxRate} (ADR-148), e.g. `'bolsa'`,
+   * `'oficial'`, `'manual'`, or `'backfill'`. Sent alongside `fxRate` so the
+   * snapshot records which source was used.
+   */
+  fxSource?: string
   recurring?: boolean
   /** Optional free-text note, distinct from `name` (backend contract, ADR-033). */
   notes?: string

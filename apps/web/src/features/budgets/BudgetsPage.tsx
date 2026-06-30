@@ -28,6 +28,7 @@
 
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Link } from '@tanstack/react-router'
 import Box from '@mui/material/Box'
 import Paper from '@mui/material/Paper'
 import Skeleton from '@mui/material/Skeleton'
@@ -75,7 +76,12 @@ import {
   useSetBudgetIncome,
   useSetBudgetTarget,
 } from './queries'
-import { budgetsClient, type SavingProfile } from '../../api/budgetsClient'
+import {
+  budgetsClient,
+  type SavingProfile,
+  type SuggestedBase,
+} from '../../api/budgetsClient'
+import { useDisplayCurrency } from '../settings/displayCurrencyContext'
 import type { Category } from '../../mock/types'
 
 export function BudgetsPage() {
@@ -89,10 +95,16 @@ export function BudgetsPage() {
   const priorYearMonth = toYearMonth(priorMonthValue)
   const priorLabel = formatViewingMonth(priorMonthValue)
 
-  const budgetsQuery = useBudgets(yearMonth)
+  // The budget is denominated in the user's PREFERRED display currency (ADR-152):
+  // USD sums each row's `usd_amount`, ARS sums `amount`. We use the PREFERRED
+  // currency (not the rate-dependent effective one) — targets/income/spend are
+  // all native to it, so no client-side conversion ever happens here.
+  const budgetCurrency = useDisplayCurrency().preferredCurrency
+
+  const budgetsQuery = useBudgets(yearMonth, budgetCurrency)
   const incomeQuery = useBudgetIncome(yearMonth)
-  const historyQuery = useBudgetHistory(yearMonth)
-  const priorQuery = usePriorBudgets(priorYearMonth)
+  const historyQuery = useBudgetHistory(yearMonth, budgetCurrency)
+  const priorQuery = usePriorBudgets(priorYearMonth, budgetCurrency)
   const setTarget = useSetBudgetTarget()
   const clearTarget = useClearBudgetTarget()
   const setIncome = useSetBudgetIncome()
@@ -111,9 +123,11 @@ export function BudgetsPage() {
   const [floorBreached, setFloorBreached] = useState(false)
   const [floorGap, setFloorGap] = useState<string | null>(null)
 
-  // The pulled variable-income suggestion (lazy; null until requested).
+  // The pulled variable-income suggestion (lazy; null until requested). The
+  // sparsity flag + months-available (ADR-153) caveat a partial-year estimate.
   const [suggestedBase, setSuggestedBase] = useState<string | null>(null)
   const [suggestedBaseEmpty, setSuggestedBaseEmpty] = useState(false)
+  const [suggestedMeta, setSuggestedMeta] = useState<SuggestedBase | null>(null)
 
   // Which quick-start template is applying, for the calm pending state (ADR-147).
   const [applyingTemplate, setApplyingTemplate] = useState<TemplateId | null>(null)
@@ -121,7 +135,11 @@ export function BudgetsPage() {
   const period = budgetsQuery.data
   const income = incomeQuery.data
   const history = useMemo(() => historyQuery.data ?? [], [historyQuery.data])
-  const currency = period?.currency ?? income?.currency ?? 'ARS'
+  // The budget currency is the PREFERRED currency (ADR-152); the period echoes it.
+  const currency = budgetCurrency
+  // Count of the month's expense rows lacking a USD snapshot (ADR-152): surfaced
+  // as a calm note with a link to the historical backfill (#80) when > 0.
+  const unconverted = period?.unconverted ?? 0
 
   const totals = useMemo(
     () => (period ? deriveBudgetTotals(period) : undefined),
@@ -174,28 +192,36 @@ export function BudgetsPage() {
   )
 
   const handleCommitIncome = (amount: string) =>
-    setIncome.mutate({ month: yearMonth, amount })
+    setIncome.mutate({ month: yearMonth, amount, currency: budgetCurrency })
 
   const handleCommitFloor = (amount: string) => {
     if (income?.amount == null) return
     setIncome.mutate({
       month: yearMonth,
       amount: income.amount,
+      currency: budgetCurrency,
       floorAmount: amount,
       floorSource: 'manual',
     })
   }
 
   const handleUseSuggested = () => {
-    void budgetsClient.fetchSuggestedBase(yearMonth).then((base) => {
-      if (base == null) {
-        setSuggestedBaseEmpty(true)
-        return
-      }
-      setSuggestedBase(base)
-      setSuggestedBaseEmpty(false)
-      setIncome.mutate({ month: yearMonth, amount: base })
-    })
+    void budgetsClient
+      .fetchSuggestedBase(yearMonth, budgetCurrency)
+      .then((suggestion) => {
+        setSuggestedMeta(suggestion)
+        if (suggestion.suggestedBase == null) {
+          setSuggestedBaseEmpty(true)
+          return
+        }
+        setSuggestedBase(suggestion.suggestedBase)
+        setSuggestedBaseEmpty(false)
+        setIncome.mutate({
+          month: yearMonth,
+          amount: suggestion.suggestedBase,
+          currency: budgetCurrency,
+        })
+      })
   }
 
   const handleApplyProfile = (profile: SavingProfile) => {
@@ -236,7 +262,7 @@ export function BudgetsPage() {
         break
     }
     applyTemplate.mutate(
-      { month: yearMonth, targets, profile },
+      { month: yearMonth, targets, profile, currency: budgetCurrency },
       {
         onSuccess: () => {
           if (profile != null) setAppliedProfile(profile)
@@ -274,7 +300,7 @@ export function BudgetsPage() {
     setSavingCategory(category)
     setErrorCategory(null)
     setTarget.mutate(
-      { category, month: yearMonth, amount },
+      { category, month: yearMonth, amount, currency: budgetCurrency },
       {
         onSettled: () => setSavingCategory(null),
         onError: () => setErrorCategory(category),
@@ -342,6 +368,26 @@ export function BudgetsPage() {
     <Box>
       {heading}
 
+      {/* Calm unconverted note (ADR-152): some of this month's expense rows lack
+          a USD snapshot, so the USD spend may be understated. Never an error — a
+          quiet line linking to the one-time backfill (#80, ADR-150). Only shown
+          for a USD budget (ARS budgets always report 0). */}
+      {unconverted > 0 ? (
+        <Typography
+          sx={{ fontSize: 12.5, mb: 1.75 }}
+          color="text.secondary"
+          role="note"
+        >
+          {t('unconverted.note', { count: unconverted })}{' '}
+          <Link
+            to="/settings"
+            style={{ color: 'var(--mg-gold)', fontWeight: 600 }}
+          >
+            {t('unconverted.action')}
+          </Link>
+        </Typography>
+      ) : null}
+
       {showReprice && priorQuery.data ? (
         <RepricePrompt
           prior={priorQuery.data}
@@ -399,6 +445,8 @@ export function BudgetsPage() {
               saveError={setIncome.isError}
               suggestedBase={suggestedBase}
               suggestedBaseEmpty={suggestedBaseEmpty}
+              suggestedSparse={suggestedMeta?.isSparse ?? false}
+              suggestedMonths={suggestedMeta?.monthsAvailable ?? 0}
               onCommitIncome={handleCommitIncome}
               onCommitFloor={handleCommitFloor}
               onUseSuggested={handleUseSuggested}

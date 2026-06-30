@@ -12,10 +12,14 @@
  * status-carrying error on any non-2xx so TanStack Query treats it as a failure
  * and the page can show the calm error state (ADR-037).
  *
- * Money stays a Decimal STRING end-to-end (ADR-025/034); ARS is the only budget
- * currency for the MVP (ADR-125). Like the summaries/accounts clients, every
- * budgets read is wrapped in the backend `{ data: T }` envelope (ADR-030), so
- * this client unwraps `.data` before adapting to the frontend read model.
+ * Money stays a Decimal STRING end-to-end (ADR-025/034). Budgets are now
+ * denominated in the user's preferred currency — ARS or USD (ADR-152, supersedes
+ * the ARS-only ADR-125): the `currency` query param threads through the period,
+ * history, and suggested reads, and is written on the target/income PUTs. USD
+ * spend sums each row's `usd_amount` and reports an `unconverted` count for rows
+ * lacking a snapshot. Like the summaries/accounts clients, every budgets read is
+ * wrapped in the backend `{ data: T }` envelope (ADR-030), so this client unwraps
+ * `.data` before adapting to the frontend read model.
  */
 
 import { apiUrl } from '../config'
@@ -116,6 +120,12 @@ export interface BudgetPeriodDto {
   suggestedStrategy?: string | null
   /** Income-pressure segment (`Constrained`/`Stable`/`Comfortable`), or `null`. */
   pressure?: string | null
+  /**
+   * Count of the month's expense rows lacking a USD snapshot (ADR-152). Always
+   * `0` for ARS budgets; for USD budgets it's the number of rows excluded from
+   * the USD spend sum (run the historical backfill, ADR-150, to clear them).
+   */
+  unconverted?: number
 }
 
 /**
@@ -200,6 +210,12 @@ export interface BudgetPeriod {
   suggestedStrategy: SavingProfile | null
   /** Income-pressure segment (ADR-143), or `null`. */
   pressure: IncomePressure | null
+  /**
+   * Count of the month's expense rows lacking a USD snapshot (ADR-152); `0` for
+   * ARS budgets. Surfaced as a calm "N not yet converted" note with a link to the
+   * historical backfill (ADR-150) when > 0.
+   */
+  unconverted: number
 }
 
 /** `GET /budget-income` payload — the per-month net-income base + floor (ADR-139). */
@@ -238,6 +254,22 @@ export interface BudgetIncomeWriteBody {
   floorAmount?: string
   /** Source of the floor when `floorAmount` is sent (`manual` for the MVP). */
   floorSource?: FloorSource
+}
+
+/**
+ * The suggested variable-income base (ADR-139/153). `suggestedBase` is `null`
+ * only when zero inflow months exist. `monthsAvailable` + `isSparse` let the UI
+ * caveat a partial-year estimate (< 12 months). `currency` echoes the request.
+ */
+export interface SuggestedBase {
+  /** The conservative net-income estimate as a Decimal string, or `null`. */
+  suggestedBase: string | null
+  /** Count of distinct inflow months backing the estimate (≥ 0, ADR-153). */
+  monthsAvailable: number
+  /** Whether fewer than 12 months back the estimate (label it, ADR-153). */
+  isSparse: boolean
+  /** The budget currency the estimate is denominated in. */
+  currency: Currency
 }
 
 /** `POST /budgets/apply-profile` response — the refreshed month + the floor guard. */
@@ -346,6 +378,7 @@ export function adaptBudgetPeriod(dto: BudgetPeriodDto): BudgetPeriod {
     floor: adaptFloor(dto.floor),
     suggestedStrategy: asSavingProfile(dto.suggestedStrategy),
     pressure: asPressure(dto.pressure),
+    unconverted: typeof dto.unconverted === 'number' ? dto.unconverted : 0,
   }
 }
 
@@ -378,9 +411,16 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' } as const
  * its target / spent / remaining (ADR-125). Reads the period object directly (no
  * `{ data }` envelope) and adapts it. Throws {@link BudgetApiError} on a non-2xx.
  */
-async function fetchBudgets(month: string): Promise<BudgetPeriod> {
+async function fetchBudgets(
+  month: string,
+  currency: Currency = 'ARS',
+): Promise<BudgetPeriod> {
   const response = await authedFetch(
-    apiUrl(`/budgets?month=${encodeURIComponent(month)}`),
+    apiUrl(
+      `/budgets?month=${encodeURIComponent(month)}&currency=${encodeURIComponent(
+        currency,
+      )}`,
+    ),
     { headers: { Accept: 'application/json' } },
   )
   await ensureOk(response)
@@ -394,9 +434,16 @@ async function fetchBudgets(month: string): Promise<BudgetPeriod> {
  * templates + the "use avg" chips. Unwraps the `{ data }` envelope (ADR-030) and
  * adapts each line. Throws {@link BudgetApiError} on a non-2xx.
  */
-async function fetchHistory(month: string): Promise<BudgetHistoryLine[]> {
+async function fetchHistory(
+  month: string,
+  currency: Currency = 'ARS',
+): Promise<BudgetHistoryLine[]> {
   const response = await authedFetch(
-    apiUrl(`/budgets/history?month=${encodeURIComponent(month)}`),
+    apiUrl(
+      `/budgets/history?month=${encodeURIComponent(
+        month,
+      )}&currency=${encodeURIComponent(currency)}`,
+    ),
     { headers: { Accept: 'application/json' } },
   )
   await ensureOk(response)
@@ -405,8 +452,9 @@ async function fetchHistory(month: string): Promise<BudgetHistoryLine[]> {
 }
 
 /**
- * PUT a category's target for a month (upsert, ADR-125). The currency defaults
- * to ARS (the only budget currency for the MVP). Resolves on success; throws
+ * PUT a category's target for a month (upsert, ADR-125/152). The `currency`
+ * denominates the target — the page passes the user's preferred currency
+ * (ADR-152); it defaults to ARS when omitted. Resolves on success; throws
  * {@link BudgetApiError} on a non-2xx.
  */
 async function setTarget(body: BudgetWriteBody): Promise<void> {
@@ -446,6 +494,9 @@ async function clearTarget(category: Category, month: string): Promise<void> {
  * payload; throws {@link BudgetApiError} on a non-2xx.
  */
 async function fetchBudgetIncome(month: string): Promise<BudgetIncome> {
+  // The income GET returns the base as STORED (its own `currency`); the PUT is
+  // what denominates it (ADR-152). No `currency` query param is sent — the
+  // budget currency is enforced on write, not read.
   const response = await authedFetch(
     apiUrl(`/budget-income?month=${encodeURIComponent(month)}`),
     { headers: { Accept: 'application/json' } },
@@ -480,16 +531,32 @@ async function setBudgetIncome(body: BudgetIncomeWriteBody): Promise<void> {
  * GET the suggested variable-income base for a month (ADR-139). Returns the
  * Decimal-string suggestion, or `null` when there is <12 months of history.
  */
-async function fetchSuggestedBase(month: string): Promise<string | null> {
+async function fetchSuggestedBase(
+  month: string,
+  currency: Currency = 'ARS',
+): Promise<SuggestedBase> {
   const response = await authedFetch(
-    apiUrl(`/budget-income/suggested?month=${encodeURIComponent(month)}`),
+    apiUrl(
+      `/budget-income/suggested?month=${encodeURIComponent(
+        month,
+      )}&currency=${encodeURIComponent(currency)}`,
+    ),
     { headers: { Accept: 'application/json' } },
   )
   await ensureOk(response)
   const { data } = (await response.json()) as ResponseEnvelope<{
     suggestedBase: string | null
+    monthsAvailable?: number
+    isSparse?: boolean
+    currency?: string
   }>
-  return data.suggestedBase
+  return {
+    suggestedBase: data.suggestedBase,
+    monthsAvailable:
+      typeof data.monthsAvailable === 'number' ? data.monthsAvailable : 0,
+    isSparse: data.isSparse === true,
+    currency: asCurrency(data.currency ?? currency),
+  }
 }
 
 /**

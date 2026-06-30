@@ -55,6 +55,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     preferredDisplayCurrency: 'ARS',
     fxDefaultRateType: 'MEP',
+    preferredRateSource: 'bolsa',
     monotributoCurrentCategory: 'C',
     monotributoActivityType: 'services',
     monotributoEnabled: true,

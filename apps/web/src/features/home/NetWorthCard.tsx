@@ -44,6 +44,8 @@
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from '@tanstack/react-router'
+import { useSettings, useUpdateSettings } from '../settings/queries'
+import type { PreferredRateSource } from '../../api/settingsClient'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Collapse from '@mui/material/Collapse'
@@ -74,9 +76,21 @@ import type { NetWorth, NetWorthAccount } from '../../api/accountsClient'
 /**
  * Which live FX source the user chose to convert net worth with (ADR-044/133).
  * Default is `'mep'` (the dollar most Argentines transact at); `'official'` is
- * the alternate. Local component state only — it resets to MEP on reload.
+ * the alternate. Backed by the PERSISTED `preferredRateSource` setting (ADR-151)
+ * — the SINGLE source of truth shared with capture, backfill, and budgets — so a
+ * change here writes through to settings rather than holding transient state.
  */
 export type RateSource = 'mep' | 'official'
+
+/** Map the persisted `preferredRateSource` (`casa`) to the card's {@link RateSource}. */
+function sourceFromSetting(casa: PreferredRateSource | undefined): RateSource {
+  return casa === 'oficial' ? 'official' : 'mep'
+}
+
+/** Map the card's {@link RateSource} back to the persisted `preferredRateSource`. */
+function settingFromSource(source: RateSource): PreferredRateSource {
+  return source === 'official' ? 'oficial' : 'bolsa'
+}
 
 /** Shared class for the clickable net-worth breakdown rows (account drilldown). */
 const breakdownRowLinkClass = 'mg-networth-row-link'
@@ -442,9 +456,25 @@ export function NetWorthCard({
   // minutes, cancellable. We never fabricate a rate — a `null` for the selected
   // source (failure) and `isPending` (loading) each degrade.
   const ratesQuery = useFxRates()
-  // Which live FX source drives every conversion. Local-only (no persistence):
-  // defaults to MEP and resets to MEP on reload (ADR-133 amendment).
-  const [source, setSource] = useState<RateSource>('mep')
+  // Which live FX source drives every conversion. Backed by the PERSISTED
+  // `preferredRateSource` setting (ADR-151) — one source of truth across the
+  // app. A local override lets the picker react instantly while the write is in
+  // flight; once it lands the setting and the override agree. Defaults to MEP
+  // until settings resolve (the ARS-only default reads `'bolsa'`).
+  const settingsQuery = useSettings()
+  const updateSettings = useUpdateSettings()
+  const persistedSource = sourceFromSetting(
+    settingsQuery.data?.preferredRateSource,
+  )
+  const [override, setOverride] = useState<RateSource | null>(null)
+  const source = override ?? persistedSource
+  const setSource = (next: RateSource) => {
+    // Optimistic local switch for instant recompute, then persist the choice so
+    // capture/backfill/budgets share it (ADR-151). The mutation seeds the cache
+    // on success, after which the override and the persisted value agree.
+    setOverride(next)
+    updateSettings.mutate({ preferredRateSource: settingFromSource(next) })
+  }
   // Local-only expand state (persistence not required); default COLLAPSED for a
   // compact summary card the user opens for detail.
   const [detailsOpen, setDetailsOpen] = useState(false)

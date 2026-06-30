@@ -27,50 +27,61 @@ import {
   type SavingProfile,
 } from '../../api/budgetsClient'
 import { homeQueryKeys } from '../home/queries'
-import type { Category } from '../../mock/types'
+import type { Category, Currency } from '../../mock/types'
 
-/** Stable query-key factory for the budgets domain. */
+/**
+ * Stable query-key factory for the budgets domain. The budget CURRENCY (ADR-152)
+ * is part of the period + history keys because it changes the spend figures
+ * (USD sums `usd_amount`, ARS sums `amount`), so switching the preferred currency
+ * refetches the right denomination.
+ */
 export const budgetsKeys = {
   all: ['budgets'] as const,
-  /** Period read is per-month, so the `YYYY-MM` is part of the key. */
-  period: (month: string) => [...budgetsKeys.all, 'period', month] as const,
-  /** The net-income base + floor is per-month too (ADR-139). */
+  /** Period read is per-(month, currency) — the currency denominates spend (ADR-152). */
+  period: (month: string, currency: Currency = 'ARS') =>
+    [...budgetsKeys.all, 'period', month, currency] as const,
+  /** The net-income base + floor is per-month (ADR-139); its currency is read as stored. */
   income: (month: string) => [...budgetsKeys.all, 'income', month] as const,
-  /** Trailing per-category spend history is per-month (ADR-147). */
-  history: (month: string) => [...budgetsKeys.all, 'history', month] as const,
+  /** Trailing per-category spend history is per-(month, currency) (ADR-147/152). */
+  history: (month: string, currency: Currency = 'ARS') =>
+    [...budgetsKeys.all, 'history', month, currency] as const,
 }
 
-/** Read the budgets period (every category + target/spent/remaining) for a month. */
-export function useBudgets(month: string) {
+/** Read the budgets period (every category + target/spent/remaining) for a month + currency. */
+export function useBudgets(month: string, currency: Currency = 'ARS') {
   return useQuery<BudgetPeriod>({
-    queryKey: budgetsKeys.period(month),
-    queryFn: () => budgetsClient.fetchBudgets(month),
+    queryKey: budgetsKeys.period(month, currency),
+    queryFn: () => budgetsClient.fetchBudgets(month, currency),
   })
 }
 
 /**
  * Read the PRIOR month's budgets period (for the reprice-rollover prompt,
  * ADR-137). Only enabled when a prior month is supplied; reuses the same
- * per-month cache key so it's shared with a direct view of that month.
+ * per-(month, currency) cache key so it's shared with a direct view of that month.
  */
-export function usePriorBudgets(priorMonth: string | null) {
+export function usePriorBudgets(
+  priorMonth: string | null,
+  currency: Currency = 'ARS',
+) {
   return useQuery<BudgetPeriod>({
-    queryKey: budgetsKeys.period(priorMonth ?? '—'),
-    queryFn: () => budgetsClient.fetchBudgets(priorMonth as string),
+    queryKey: budgetsKeys.period(priorMonth ?? '—', currency),
+    queryFn: () => budgetsClient.fetchBudgets(priorMonth as string, currency),
     enabled: priorMonth != null,
   })
 }
 
 /**
- * Read the trailing per-category spend history for a month (ADR-147): each
- * category's 3-month average + last-month spend. Powers the quick-start
- * templates + the per-row "use avg" suggestion chips. Month-keyed so a month
- * switch refetches; history is read-only so it never invalidates on a write.
+ * Read the trailing per-category spend history for a month + currency (ADR-147/152):
+ * each category's 3-month average + last-month spend in the budget currency. Powers
+ * the quick-start templates + the per-row "use avg" suggestion chips. Keyed by
+ * (month, currency) so a month or currency switch refetches; history is read-only so
+ * it never invalidates on a write.
  */
-export function useBudgetHistory(month: string) {
+export function useBudgetHistory(month: string, currency: Currency = 'ARS') {
   return useQuery<BudgetHistoryLine[]>({
-    queryKey: budgetsKeys.history(month),
-    queryFn: () => budgetsClient.fetchHistory(month),
+    queryKey: budgetsKeys.history(month, currency),
+    queryFn: () => budgetsClient.fetchHistory(month, currency),
     staleTime: 5 * 60 * 1000,
   })
 }
@@ -145,13 +156,20 @@ export function useApplyTemplate() {
       targets: Partial<Record<Category, string | null>>
       /** Optional saving profile to apply after the targets (50/30/20 leg). */
       profile?: SavingProfile
+      /** The budget currency the targets are denominated in (ADR-152); default ARS. */
+      currency?: Currency
     }
   >({
-    mutationFn: async ({ month, targets, profile }) => {
+    mutationFn: async ({ month, targets, profile, currency }) => {
       const writes = Object.entries(targets).map(([category, amount]) =>
         amount == null
           ? budgetsClient.clearTarget(category as Category, month)
-          : budgetsClient.setTarget({ category: category as Category, month, amount }),
+          : budgetsClient.setTarget({
+              category: category as Category,
+              month,
+              amount,
+              currency,
+            }),
       )
       await Promise.all(writes)
       if (profile != null) {

@@ -26,6 +26,7 @@ const {
   createMock,
   updateMock,
   fxMock,
+  currentRateMock,
   fetchSettingsMock,
   monotributoMock,
   navigateMock,
@@ -33,6 +34,7 @@ const {
   createMock: vi.fn(),
   updateMock: vi.fn(),
   fxMock: vi.fn(),
+  currentRateMock: vi.fn(),
   fetchSettingsMock: vi.fn(),
   monotributoMock: vi.fn(),
   navigateMock: vi.fn(),
@@ -47,8 +49,12 @@ vi.mock('../../api/transactionsClient', () => ({
   },
 }))
 
+// The add mutation now captures the day's preferred-source rate before create
+// (ADR-148/149); mock both the suggest-confirm rates and the current-rate fetch
+// the capture uses so no real network is hit.
 vi.mock('../../api/fxClient', () => ({
   fetchSuggestedRates: fxMock,
+  fetchCurrentRate: currentRateMock,
 }))
 
 // The Expense path reads the Monotributo snapshot to autofill the monthly cuota
@@ -85,10 +91,13 @@ vi.mock('@tanstack/react-router', async () => {
 beforeEach(() => {
   // Default: dolarapi suggests MEP 1245 + official 1045 (seeded prototype values).
   fxMock.mockResolvedValue({ mep: 1245, official: 1045 })
+  // Default: the day's current preferred-source rate the add capture stamps.
+  currentRateMock.mockResolvedValue(1245)
   // Default: the configured FX default is MEP (existing behavior).
   fetchSettingsMock.mockResolvedValue({
     preferredDisplayCurrency: 'ARS',
     fxDefaultRateType: 'MEP',
+    preferredRateSource: 'bolsa',
     monotributoCurrentCategory: 'C',
     monotributoActivityType: 'services',
     monotributoEnabled: true,
@@ -323,6 +332,7 @@ describe('Add flow — USD picks an explicit FX source (ADR-044/045)', () => {
     fetchSettingsMock.mockResolvedValue({
       preferredDisplayCurrency: 'ARS',
       fxDefaultRateType: 'official',
+      preferredRateSource: 'bolsa',
       monotributoCurrentCategory: 'C',
       monotributoActivityType: 'services',
       monotributoEnabled: true,

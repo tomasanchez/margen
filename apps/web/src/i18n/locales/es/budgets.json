@@ -68,7 +68,9 @@
     "floorEdit": "Fijá un piso de gastos esenciales",
     "floorEditComputed": "Piso (calculado) · {{amount}}",
     "floorEditSet": "Piso · {{amount}}",
-    "noSuggestion": "Una base sugerida necesita al menos 12 meses de historial de ingresos.",
+    "noSuggestion": "Una base sugerida necesita al menos un mes de ingresos registrados.",
+    "estimateFrom_one": "Estimado a partir de {{count}} mes de historial",
+    "estimateFrom_other": "Estimado a partir de {{count}} meses de historial",
     "pressure": {
       "Constrained": "Ajustado — el ingreso es {{ratio}}× tu piso de esenciales",
       "Stable": "Estable — el ingreso es {{ratio}}× tu piso de esenciales",
@@ -145,5 +147,10 @@
   "error": {
     "title": "No se pueden cargar tus presupuestos",
     "description": "No pudimos conectar con el servidor. Revisá tu conexión y probá de nuevo."
+  },
+  "unconverted": {
+    "note_one": "{{count}} transacción todavía no está convertida a USD, así que el gasto puede estar subestimado.",
+    "note_other": "{{count}} transacciones todavía no están convertidas a USD, así que el gasto puede estar subestimado.",
+    "action": "Convertirlas"
   }
 }
