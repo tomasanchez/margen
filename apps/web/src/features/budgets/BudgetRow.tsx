@@ -184,8 +184,8 @@ export function BudgetRow({
             flex: 'none',
             fontSize: 11,
             fontWeight: 600,
-            color: 'var(--mg-watch)',
-            bgcolor: 'color-mix(in srgb, var(--mg-watch) 12%, transparent)',
+            color: 'var(--mg-risk)',
+            bgcolor: 'color-mix(in srgb, var(--mg-risk) 12%, transparent)',
           }}
         >
           <ReportProblemOutlinedIcon sx={{ fontSize: 13 }} aria-hidden />
@@ -280,7 +280,7 @@ export function BudgetRow({
             {progress.remaining != null ? (
               <Typography
                 sx={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}
-                color={progress.overBudget ? 'var(--mg-watch)' : 'var(--mg-safe)'}
+                color={progress.overBudget ? 'var(--mg-risk)' : 'var(--mg-safe)'}
               >
                 {progress.overBudget
                   ? t('row.overBy', {

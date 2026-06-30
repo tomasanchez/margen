@@ -8,6 +8,7 @@
 
 import { describe, expect, test } from 'vitest'
 import {
+  budgetMeterColor,
   categoryGroup,
   deriveAllocationSegments,
   deriveBudgetTotals,
@@ -446,5 +447,23 @@ describe('quick-start template target maps', () => {
 
   test('50/30/20: empty map when income is unset', () => {
     expect(deriveFiftyThirtyTwentyTargets(period, history, null)).toEqual({})
+  })
+})
+
+describe('budgetMeterColor', () => {
+  test('graduates by ratio: <40 green, 40-60 white, 60-85 gold, 85+ red', () => {
+    expect(budgetMeterColor(0)).toBe('var(--mg-safe)')
+    expect(budgetMeterColor(0.39)).toBe('var(--mg-safe)')
+    expect(budgetMeterColor(0.4)).toBe('var(--mg-text)')
+    expect(budgetMeterColor(0.59)).toBe('var(--mg-text)')
+    expect(budgetMeterColor(0.6)).toBe('var(--mg-watch)')
+    expect(budgetMeterColor(0.84)).toBe('var(--mg-watch)')
+    expect(budgetMeterColor(0.85)).toBe('var(--mg-risk)')
+    expect(budgetMeterColor(1)).toBe('var(--mg-risk)')
+  })
+
+  test('over budget is always red regardless of ratio', () => {
+    expect(budgetMeterColor(0.1, true)).toBe('var(--mg-risk)')
+    expect(budgetMeterColor(0, true)).toBe('var(--mg-risk)')
   })
 })

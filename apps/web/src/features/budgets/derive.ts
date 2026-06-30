@@ -59,6 +59,20 @@ export function deriveCategoryProgress(
   return { target, spent, remaining, ratio, overBudget, hasTarget }
 }
 
+/**
+ * The meter fill color for a spent/target ratio (theme tokens). Graduated bands
+ * so the bar reads at a glance: under 40% safe (green), 40–60% neutral (white),
+ * 60–85% watch (gold/amber), 85%+ risk (red). Over budget is ALWAYS risk (red) —
+ * the row keeps its striped/icon over-budget treatment beyond color (ADR-019).
+ * `ratio` is the clamped [0,1] spent/target; `overBudget` covers spend > target.
+ */
+export function budgetMeterColor(ratio: number, overBudget = false): string {
+  if (overBudget || ratio >= 0.85) return 'var(--mg-risk)'
+  if (ratio >= 0.6) return 'var(--mg-watch)'
+  if (ratio >= 0.4) return 'var(--mg-text)'
+  return 'var(--mg-safe)'
+}
+
 /** Aggregate totals across the period's categories that HAVE a target set. */
 export interface BudgetTotals {
   /** Sum of targets across budgeted categories. */
