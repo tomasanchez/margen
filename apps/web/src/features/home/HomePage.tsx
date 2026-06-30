@@ -75,7 +75,7 @@ export function HomePage() {
 
   // Calm note when USD is preferred but the live rate couldn't be fetched, so
   // the cards + summaries fall back to ARS (ADR-056/037). Null otherwise.
-  const { fallbackNote } = useDisplayCurrency()
+  const { fallbackNote, preferredCurrency } = useDisplayCurrency()
 
   // The Monotributo Home card is part of the optional module (ADR-126): hide it
   // when the module is disabled. Treated as hidden until settings resolve so it
@@ -92,7 +92,10 @@ export function HomePage() {
   const insightsQuery = useInsights(viewingMonth)
   // Budget progress for the selected month (ADR-125/127): an incremental Home
   // card; month-keyed so it tracks the navigator.
-  const budgetsQuery = useBudgets(toYearMonth(viewingMonth))
+  // Budgets follow the PREFERRED currency (not the rate-fallback effective one):
+  // USD spend is summed from each row's stored usd_amount, so it never needs the
+  // live rate (ADR-152). The card then formats in the period's (preferred) currency.
+  const budgetsQuery = useBudgets(toYearMonth(viewingMonth), preferredCurrency)
   const previousMonth = useMemo(
     () => addMonths(viewingMonth, -1),
     [viewingMonth],
@@ -100,7 +103,7 @@ export function HomePage() {
   // Net income (for the compact saved-this-month line) + the prior month's
   // budgets (for the reprice-rollover nudge), both month-keyed (ADR-127/137).
   const budgetIncomeQuery = useBudgetIncome(toYearMonth(viewingMonth))
-  const priorBudgetsQuery = usePriorBudgets(toYearMonth(previousMonth))
+  const priorBudgetsQuery = usePriorBudgets(toYearMonth(previousMonth), preferredCurrency)
   const showRepriceNudge = useMemo(
     () => isRepriceRollover(budgetsQuery.data, priorBudgetsQuery.data),
     [budgetsQuery.data, priorBudgetsQuery.data],
@@ -219,7 +222,14 @@ export function HomePage() {
         />
         <BudgetProgressCard
           period={budgetsQuery.data}
-          income={budgetIncomeQuery.data}
+          income={
+            // Only feed income to the card when it's denominated in the budget
+            // currency, else the saved-this-month line would mislabel an ARS
+            // amount as USD (ADR-154 income-currency guard).
+            budgetIncomeQuery.data?.currency === preferredCurrency
+              ? budgetIncomeQuery.data
+              : undefined
+          }
           showRepriceNudge={showRepriceNudge}
           loading={budgetsQuery.isPending}
           isError={budgetsQuery.isError}
