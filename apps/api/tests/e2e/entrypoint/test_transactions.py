@@ -538,6 +538,54 @@ class TestSetFxSnapshot:
         assert data["rate"] == "1000"
         assert data["fxSource"] == "bolsa"
 
+    async def test_sets_snapshot_on_ars_row_materializes_usd_amount(
+        self, client: httpx.AsyncClient, uow: FakeUnitOfWork
+    ):
+        """
+        GIVEN a committed ARS expense lacking a snapshot
+        WHEN the FX snapshot is set with a rate and source
+        THEN usd_amount is materialized for the ARS row and the snapshot persists (ADR-152)
+        """
+        # GIVEN — an ARS expense of 50000 with no snapshot yet (the bulk-of-spend case).
+        transaction = _seed(uow, currency=Currency.ARS, amount=Decimal("50000"), name="Coto")
+
+        # WHEN — the client supplies the ARS-per-USD rate and its provenance.
+        response = await client.put(
+            f"{TRANSACTIONS}/{transaction.id}/fx",
+            json={"fxRate": "1000", "fxSource": "bolsa"},
+        )
+
+        # THEN — the ARS row carries a materialized USD figure: 50000 / 1000 = 50.00.
+        assert response.status_code == status.HTTP_200_OK, response.text
+        data = response.json()["data"]
+        assert data["usd"] == "50.00"
+        assert data["fxSource"] == "bolsa"
+        # The persisted aggregate keeps the snapshot — it survives the rebuild for ARS.
+        committed = uow.committed_aggregates[transaction.id]
+        assert committed.currency is Currency.ARS
+        assert committed.usd_amount == Decimal("50.00")
+        assert committed.fx_source == "bolsa"
+
+    async def test_sets_snapshot_on_ars_row_without_source_defaults_provenance(
+        self, client: httpx.AsyncClient, uow: FakeUnitOfWork
+    ):
+        """
+        GIVEN a committed ARS expense lacking a snapshot
+        WHEN the FX snapshot is set with a rate but NO source
+        THEN usd_amount survives the rebuild and provenance defaults to 'manual' (ADR-152)
+        """
+        # GIVEN
+        transaction = _seed(uow, currency=Currency.ARS, amount=Decimal("50000"), name="Coto")
+
+        # WHEN — no fxSource supplied.
+        response = await client.put(f"{TRANSACTIONS}/{transaction.id}/fx", json={"fxRate": "1000"})
+
+        # THEN — the snapshot still persists for the ARS row; provenance defaults to 'manual'.
+        assert response.status_code == status.HTTP_200_OK, response.text
+        committed = uow.committed_aggregates[transaction.id]
+        assert committed.usd_amount == Decimal("50.00")
+        assert committed.fx_source == "manual"
+
     async def test_non_positive_rate_returns_422(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
         """
         GIVEN a committed transaction

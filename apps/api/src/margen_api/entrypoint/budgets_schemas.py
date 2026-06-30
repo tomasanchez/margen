@@ -230,6 +230,10 @@ class ApplyProfileRequest(CamelCaseModel):
 
     month: str = Field(description="The budget month as 'YYYY-MM'.")
     profile: str = Field(description="The saving profile: 'conservative', 'balanced' or 'aggressive'.")
+    currency: Currency = Field(
+        default=Currency.ARS,
+        description="The budget currency the refreshed surface is denominated in (ADR-152).",
+    )
 
 
 class ApplyProfileResponse(CamelCaseModel):
@@ -283,4 +287,8 @@ class RepriceRequest(CamelCaseModel):
     step_ups: dict[str, Decimal] = Field(
         default_factory=dict,
         description="Optional per-category discrete step-ups (rent index, tariff), keyed by category.",
+    )
+    currency: Currency = Field(
+        default=Currency.ARS,
+        description="The budget currency the repriced surface is denominated in (ADR-152).",
     )

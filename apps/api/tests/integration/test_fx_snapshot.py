@@ -23,13 +23,18 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from uuid import UUID
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from margen_api.adapters.budget_income_queries import SqlAlchemyBudgetIncomeReader
 from margen_api.adapters.budget_queries import SqlAlchemyBudgetReader
-from margen_api.adapters.queries import SqlAlchemyTransactionReader
+from margen_api.adapters.queries import (
+    SqlAlchemyTransactionReader,
+    month_category_expense_totals,
+    month_expense_unconverted_count,
+)
 from margen_api.adapters.settings_repository import SqlAlchemySettingsRepository
 from margen_api.adapters.unit_of_work import SqlAlchemyUnitOfWork
 from margen_api.domain.commands.budget import UpsertBudget
@@ -69,6 +74,37 @@ async def _create_usd_expense(
             kind=kind,
             amount=Decimal(amount),
             currency=Currency.USD,
+            category=category,
+            fx_rate=fx_rate,
+            fx_source=fx_source,
+        ),
+        SqlAlchemyUnitOfWork(session_factory),
+    )
+
+
+async def _create_ars_expense(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    amount: str,
+    category: str = "Food",
+    fx_rate: Decimal | None = None,
+    fx_source: str | None = None,
+    user_id: str = OWNER,
+    occurred_on: date = A_DATE,
+):
+    """Create an ARS expense through the real handler and return its id.
+
+    When ``fx_rate`` + ``fx_source`` are supplied the snapshot materializes
+    ``usd_amount`` for the ARS row (ADR-152 — ARS expenses convert to USD too).
+    """
+    return await create_transaction(
+        CreateTransaction(
+            user_id=user_id,
+            occurred_on=occurred_on,
+            name=f"{category} ars",
+            kind=Kind.EXPENSE,
+            amount=Decimal(amount),
+            currency=Currency.ARS,
             category=category,
             fx_rate=fx_rate,
             fx_source=fx_source,
@@ -287,6 +323,116 @@ class TestUsdBudgetSpend:
         food = next(line for line in model.categories if line.category == "Food")
         assert food.spent == Decimal("50000.00")
         assert model.unconverted == 0
+
+
+class TestArsExpenseUsdSnapshot:
+    """ARS expenses carry a USD snapshot too — the bulk-of-spend case (ADR-152)."""
+
+    async def test_create_ars_with_snapshot_materializes_usd_amount(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN an ARS expense created with an fx_rate + fx_source snapshot
+        WHEN it is created through the real handler
+        THEN usd_amount is materialized for the ARS row and the snapshot persists (ADR-152)
+        """
+        # GIVEN / WHEN — 50000 ARS @ 1000 ARS/USD -> 50.00 USD.
+        transaction_id = await _create_ars_expense(
+            session_factory, amount="50000", fx_rate=Decimal("1000"), fx_source="bolsa"
+        )
+
+        # THEN
+        model = await _read_transaction(session_factory, transaction_id)
+        assert model is not None
+        assert model.currency is Currency.ARS
+        assert model.usd_amount == Decimal("50.00")
+        assert model.fx_source == "bolsa"
+
+    async def test_set_snapshot_on_ars_row_persists_usd_amount(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN an ARS expense created WITHOUT a snapshot
+        WHEN PUT /transactions/{id}/fx sets a rate (the rate-fill path)
+        THEN usd_amount survives the rebuild for the ARS row and persists (ADR-152)
+        """
+        # GIVEN — an ARS expense with no snapshot.
+        transaction_id = await _create_ars_expense(session_factory, amount="50000")
+
+        # WHEN — the snapshot setter stamps a rate (no source -> provenance defaults).
+        await set_transaction_fx_snapshot(
+            SetTransactionFxSnapshot(id=transaction_id, user_id=OWNER, fx_rate=Decimal("1000")),
+            SqlAlchemyUnitOfWork(session_factory),
+        )
+
+        # THEN — the materialized USD figure persists for the ARS row (not wiped on rebuild).
+        model = await _read_transaction(session_factory, transaction_id)
+        assert model is not None
+        assert model.currency is Currency.ARS
+        assert model.usd_amount == Decimal("50.00")
+
+    async def test_ars_snapshot_in_usd_spend_and_history_not_unconverted(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN an ARS expense with a snapshot in June and a snapshotted ARS expense in May
+        WHEN the USD budget surface and history are read
+        THEN both materialize into USD spend and neither is counted as unconverted (ADR-152)
+        """
+        # GIVEN — June 50000 ARS @ 1000 -> 50.00; May 60000 ARS @ 1000 -> 60.00.
+        await _create_ars_expense(session_factory, amount="50000", fx_rate=Decimal("1000"), fx_source="bolsa")
+        await _create_ars_expense(
+            session_factory,
+            amount="60000",
+            fx_rate=Decimal("1000"),
+            fx_source="bolsa",
+            occurred_on=date(2026, 5, 10),
+        )
+
+        # WHEN
+        session = session_factory()
+        try:
+            reader = SqlAlchemyBudgetReader(session)
+            budget = await reader.monthly_budget(JUNE, OWNER, Currency.USD)
+            history = await reader.category_history(JUNE, OWNER, Currency.USD)
+            await session.rollback()
+        finally:
+            await session.close()
+
+        # THEN — June spend is the materialized 50.00, unconverted is 0; May shows in history.
+        food = next(line for line in budget.categories if line.category == "Food")
+        assert food.spent == Decimal("50.00")
+        assert budget.unconverted == 0
+        food_history = next(line for line in history.categories if line.category == "Food")
+        assert food_history.last_month == Decimal("60.00")
+
+
+class TestUnconvertedCountMatchesSpendExclusion:
+    """The unconverted count and the USD spend SUM exclude EXACTLY the same rows (ADR-152)."""
+
+    async def test_count_and_sum_partition_the_expense_set(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN a mix of expenses: ARS-with-snapshot, USD-with-snapshot, and two without
+        WHEN the USD spend totals and the unconverted count are read for the month
+        THEN the count equals the rows with usd_amount IS NULL and the SUM sums the rest
+        """
+        # GIVEN — two convertible (one ARS, one USD), two unconverted (one ARS, one USD).
+        await _create_ars_expense(session_factory, amount="50000", fx_rate=Decimal("1000"), fx_source="bolsa")
+        await _create_usd_expense(session_factory, amount="30000", fx_rate=Decimal("1000"), fx_source="bolsa")
+        await _create_ars_expense(session_factory, amount="40000")
+        await _create_usd_expense(session_factory, amount="20000")
+
+        # WHEN
+        owner = UUID(OWNER)
+        session = session_factory()
+        try:
+            totals = await month_category_expense_totals(session, JUNE, owner, Currency.USD)
+            count = await month_expense_unconverted_count(session, JUNE, owner)
+            await session.rollback()
+        finally:
+            await session.close()
+
+        # THEN — the two unconverted rows are counted; the SUM holds the two converted (50 + 30 = 80).
+        assert count == 2
+        assert totals["Food"] == Decimal("80.00")
 
 
 class TestUsdCategoryHistory:

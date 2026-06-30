@@ -341,18 +341,45 @@ class TestFxSnapshotMaterialization:
         assert transaction.fx_rate == Decimal("1000")
         assert transaction.usd_amount == Decimal("50.00")
 
-    async def test_ars_row_drops_fx_source(self):
+    async def test_snapshot_source_without_rate_does_not_materialize(self):
         """
-        GIVEN an ARS transaction carrying an fx_source
+        GIVEN a row carrying an fx_source snapshot but NO fx_rate
         WHEN the transaction is built
-        THEN fx_source is dropped to None alongside the rest of the FX block (ADR-029)
+        THEN usd_amount is left unmaterialized — there is no rate to divide by (ADR-148)
         """
-        # WHEN
-        transaction = _build(currency=Currency.ARS, fx_rate=Decimal("1000"), fx_source="bolsa")
+        # WHEN — a USD row with a source and an explicit rate family but no rate.
+        transaction = _build(
+            currency=Currency.USD,
+            amount=Decimal("50000"),
+            fx_source="bolsa",
+            fx_rate_type=FxRateType.OFFICIAL,
+        )
 
-        # THEN
-        assert transaction.fx_source is None
+        # THEN — the snapshot source and family are kept but no USD figure is computed.
+        assert transaction.fx_source == "bolsa"
+        assert transaction.fx_rate is None
         assert transaction.usd_amount is None
+        assert transaction.fx_rate_type is FxRateType.OFFICIAL
+
+    async def test_ars_row_with_snapshot_materializes_usd(self):
+        """
+        GIVEN an ARS transaction carrying an fx_source snapshot with a positive rate
+        WHEN the transaction is built
+        THEN usd_amount is materialized from amount ÷ rate and the snapshot is kept (ADR-152)
+        """
+        # WHEN — 50000 ARS @ 1000 ARS/USD with a 'bolsa' snapshot.
+        transaction = _build(
+            currency=Currency.ARS,
+            amount=Decimal("50000"),
+            fx_rate=Decimal("1000"),
+            fx_source="bolsa",
+        )
+
+        # THEN — the snapshot survives and the USD figure is materialized: 50000 / 1000 = 50.00.
+        assert transaction.currency is Currency.ARS
+        assert transaction.fx_source == "bolsa"
+        assert transaction.fx_rate == Decimal("1000")
+        assert transaction.usd_amount == Decimal("50.00")
 
 
 class TestUnknownValueObjects:

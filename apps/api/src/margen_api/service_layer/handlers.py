@@ -441,10 +441,13 @@ async def set_transaction_fx_snapshot(command: SetTransactionFxSnapshot, uow: Ab
         if existing is None:
             raise TransactionNotFoundError(command.id)
         # The snapshot setter is the explicit backfill/rate-fill path (ADR-149): always
-        # re-materialize the USD figure from the authoritative amount, even when no
-        # fx_source is given. Passing the computed usd_amount makes the recompute hold
-        # for a USD row whether or not the domain's snapshot-keyed recompute fires.
+        # re-materialize the USD figure from the authoritative amount. The domain keys
+        # its recompute (and, for ARS rows, the survival of the FX block) on a non-null
+        # fx_source, so default the provenance to 'manual' when the client omits one —
+        # setting a rate IS a snapshot (ADR-148). This keeps the snapshot persisting for
+        # an ARS row, not just a USD row, when the rebuild re-normalizes (ADR-152).
         usd_amount = materialize_usd_amount(existing.amount, command.fx_rate)
+        fx_source = command.fx_source if command.fx_source is not None else "manual"
         snapshotted = build_transaction(
             transaction_id=existing.id,
             created_at=existing.created_at,
@@ -457,7 +460,7 @@ async def set_transaction_fx_snapshot(command: SetTransactionFxSnapshot, uow: Ab
             currency=existing.currency,
             usd_amount=usd_amount,
             fx_rate=command.fx_rate,
-            fx_source=command.fx_source,
+            fx_source=fx_source,
             fx_rate_type=existing.fx_rate_type,
             fx_rate_as_of=existing.fx_rate_as_of,
             category=existing.category,

@@ -636,6 +636,69 @@ class TestUsdBudgetSpend:
         assert food["spent"] == "50.00"
         assert food["remaining"] == "150.00"
 
+    async def test_ars_expense_with_snapshot_counts_in_usd_spend(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an ARS expense stamped with an FX snapshot (the bulk-of-spend case)
+        WHEN the USD budgets surface is requested
+        THEN its materialized usd_amount counts in spend and it is NOT unconverted (ADR-152)
+        """
+        # GIVEN — an ARS expense of 50000 stamped at 1000 ARS/USD via PUT /fx -> usd 50.00.
+        created = await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": A_DATE,
+                "name": "Coto groceries",
+                "kind": "expense",
+                "amountNum": "50000",
+                "currency": "ARS",
+                "category": "Food",
+            },
+        )
+        assert created.status_code == status.HTTP_201_CREATED, created.text
+        row = created.json()["data"]
+        snap = await test_client.put(f"{TRANSACTIONS}/{row['id']}/fx", json={"fxRate": "1000", "fxSource": "bolsa"})
+        assert snap.status_code == status.HTTP_200_OK, snap.text
+        assert snap.json()["data"]["usd"] == "50.00"
+
+        # WHEN
+        data = (await test_client.get(BUDGETS, params={"month": JUNE, "currency": "USD"})).json()["data"]
+
+        # THEN — the ARS row's snapshot is summed and it is not counted as unconverted.
+        assert data["currency"] == "USD"
+        assert _line(data, "Food")["spent"] == "50.00"
+        assert data["unconverted"] == 0
+
+    async def test_ars_expense_with_snapshot_in_usd_history(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an ARS expense in a prior month stamped with an FX snapshot
+        WHEN the USD category history is requested
+        THEN its materialized usd_amount appears in avg3mo / lastMonth (ADR-145, ADR-152)
+        """
+        # GIVEN — May ARS expense of 60000 stamped at 1000 -> usd 60.00.
+        created = await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": "2026-05-10",
+                "name": "Coto groceries",
+                "kind": "expense",
+                "amountNum": "60000",
+                "currency": "ARS",
+                "category": "Food",
+            },
+        )
+        assert created.status_code == status.HTTP_201_CREATED, created.text
+        row = created.json()["data"]
+        snap = await test_client.put(f"{TRANSACTIONS}/{row['id']}/fx", json={"fxRate": "1000", "fxSource": "bolsa"})
+        assert snap.status_code == status.HTTP_200_OK, snap.text
+
+        # WHEN
+        data = (await test_client.get(f"{BUDGETS}/history", params={"month": JUNE, "currency": "USD"})).json()["data"]
+
+        # THEN — only the snapshotted May row counts: avg3mo = 60.00 / 3 = 20.00; lastMonth = 60.00.
+        food = next(line for line in data["categories"] if line["category"] == "Food")
+        assert food["avg3mo"] == "20.00"
+        assert food["lastMonth"] == "60.00"
+
 
 class TestUsdCategoryHistory:
     """GET /budgets/history?currency=USD sums usd_amount over the trailing window (ADR-145, ADR-152)."""
@@ -678,3 +741,77 @@ class TestUsdCategoryHistory:
         food = self._history_line(data, "Food")
         assert food["avg3mo"] == "20.00"
         assert food["lastMonth"] == "60.00"
+
+
+class TestWriteEndpointsReadInBudgetCurrency:
+    """The write endpoints re-read the refreshed surface in the budget currency (ADR-152).
+
+    A USD budget's upsert/apply-profile/reprice must return a USD-denominated surface
+    (USD spend + the unconverted note), not the ARS default the re-read used before.
+    """
+
+    async def test_upsert_usd_returns_usd_surface(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a snapshotted USD expense and an unsnapshotted one in Food
+        WHEN a USD target is upserted for Food
+        THEN the returned surface is USD-denominated: spent sums the snapshot, unconverted counts the other
+        """
+        # GIVEN — 50000 ARS @ 1000 -> usd 50.00 (snapshotted); 30000 ARS no snapshot.
+        await _seed_usd_expense(test_client, category="Food", amount="50000", rate="1000")
+        await _seed_usd_expense(test_client, category="Food", amount="30000", rate=None)
+
+        # WHEN — the upsert body carries the USD target currency.
+        data = await _put_budget(test_client, category="Food", month=JUNE, amount="200", currency="USD")
+
+        # THEN — the re-read uses the USD spend path, not the ARS default.
+        assert data["currency"] == "USD"
+        food = _line(data, "Food")
+        assert food["spent"] == "50.00"
+        assert food["remaining"] == "150.00"
+        assert data["unconverted"] == 1
+
+    async def test_apply_profile_usd_returns_usd_surface(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a USD income base and an unsnapshotted USD expense
+        WHEN a saving profile is applied with currency=USD
+        THEN the refreshed surface is USD-denominated and reports the unconverted note
+        """
+        # GIVEN — a USD income base and one unsnapshotted USD expense.
+        await _put_income(test_client, month=JUNE, amount="5000", currency="USD")
+        await _seed_usd_expense(test_client, category="Food", amount="30000", rate=None)
+
+        # WHEN
+        response = await test_client.post(
+            f"{BUDGETS}/apply-profile",
+            json={"month": JUNE, "profile": "balanced", "currency": "USD"},
+        )
+
+        # THEN — the re-read is USD-denominated, surfacing the unconverted row.
+        assert response.status_code == status.HTTP_200_OK, response.text
+        data = response.json()["data"]
+        assert data["currency"] == "USD"
+        assert data["unconverted"] == 1
+
+    async def test_reprice_usd_returns_usd_surface(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a snapshotted USD expense in the target month and a USD cap to reprice
+        WHEN June is repriced into June with currency=USD
+        THEN the repriced surface is USD-denominated: spent sums the snapshot, unconverted counts the rest
+        """
+        # GIVEN — a USD target in May to reprice into June, and June spend (one snapshot, one not).
+        await _put_budget(test_client, category="Food", month="2026-05", amount="200", currency="USD")
+        await _seed_usd_expense(test_client, category="Food", amount="50000", rate="1000")
+        await _seed_usd_expense(test_client, category="Food", amount="30000", rate=None)
+
+        # WHEN — reprice May into June at 0% inflation, USD-denominated.
+        response = await test_client.post(
+            f"{BUDGETS}/reprice",
+            json={"fromMonth": "2026-05", "toMonth": JUNE, "monthlyInflation": "0", "currency": "USD"},
+        )
+
+        # THEN — the re-read uses the USD spend path.
+        assert response.status_code == status.HTTP_200_OK, response.text
+        data = response.json()["data"]
+        assert data["currency"] == "USD"
+        assert _line(data, "Food")["spent"] == "50.00"
+        assert data["unconverted"] == 1

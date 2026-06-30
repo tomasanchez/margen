@@ -154,26 +154,37 @@ class Transaction:
         if self.kind is Kind.EXPENSE:
             self.counts_toward_monotributo = False
 
-        if self.currency is Currency.USD:
-            # USD rows default to the MEP rate family; usd_amount / fx_rate may be
-            # absent (accepted as incomplete — amount stands authoritative).
+        self._normalize_fx()
+
+    def _normalize_fx(self) -> None:
+        """Normalize the FX snapshot block on construction (ADR-148, ADR-149, ADR-152).
+
+        A client-supplied FX snapshot (a non-null ``fx_source``) applies to ANY row
+        regardless of currency: ARS expenses — the bulk of spend — are converted to
+        USD via the snapshot, and USD rows snapshot just the same. When the snapshot
+        carries a positive rate the server materializes the USD figure from the
+        authoritative amount (``round(amount ÷ fx_rate, 2)``) rather than trusting a
+        client-supplied ``usd_amount``, keeping the stored snapshot a faithful
+        round-trip. With NO snapshot, the legacy ADR-029 USD flow stands untouched and
+        an ARS row's FX metadata is dropped rather than rejected (ADR-031).
+        """
+        if self.fx_rate is not None and not isinstance(self.fx_rate, Decimal):
+            self.fx_rate = Decimal(str(self.fx_rate))
+
+        if self.fx_source is not None:
             if self.fx_rate_type is None:
                 self.fx_rate_type = FxRateType.MEP
-            # When the client sets an FX snapshot (a non-null fx_source) with a
-            # positive rate, the server materializes the USD figure from the
-            # authoritative amount (ADR-148, ADR-149: round(amount ÷ fx_rate, 2))
-            # rather than trusting a client-supplied usd_amount — keeping the stored
-            # snapshot a faithful round-trip. The legacy ADR-029 flow (a USD row
-            # carrying usd + rate with no fx_source) is preserved untouched.
-            if self.fx_rate is not None and not isinstance(self.fx_rate, Decimal):
-                self.fx_rate = Decimal(str(self.fx_rate))
-            if self.fx_source is not None and self.fx_rate is not None and self.fx_rate > ZERO:
+            if self.fx_rate is not None and self.fx_rate > ZERO:
                 self.usd_amount = materialize_usd_amount(self.amount, self.fx_rate)
+        elif self.currency is Currency.USD:
+            # No snapshot: USD rows default to the MEP rate family; usd_amount / fx_rate
+            # may carry the legacy figure or be absent (amount stays authoritative).
+            if self.fx_rate_type is None:
+                self.fx_rate_type = FxRateType.MEP
         else:
-            # ARS rows must not carry FX metadata; drop it rather than reject.
+            # An ARS row with NO snapshot must not carry FX metadata; drop it.
             self.usd_amount = None
             self.fx_rate = None
-            self.fx_source = None
             self.fx_rate_type = None
             self.fx_rate_as_of = None
 

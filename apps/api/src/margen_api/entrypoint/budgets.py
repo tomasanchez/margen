@@ -171,7 +171,9 @@ async def upsert_budget(
     """
     period = _parse_month(body.month)
     await bus.handle(body.to_command(period, user.id))
-    model = await reader.monthly_budget(period, user.id)
+    # Re-read in the budget currency so a USD budget reports USD spend/unconverted, not
+    # the ARS default (ADR-152). ``use_enum_values`` may yield a string; normalize.
+    model = await reader.monthly_budget(period, user.id, Currency(body.currency))
     return ResponseModel(data=MonthlyBudgetResponse.from_read_model(model))
 
 
@@ -231,7 +233,9 @@ async def apply_profile(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
     except _INVARIANT_VIOLATIONS as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
-    model = await reader.monthly_budget(period, user.id)
+    # Re-read in the budget currency so the surface the frontend consumes reports the
+    # USD spend/unconverted for a USD budget, not the ARS default (ADR-152).
+    model = await reader.monthly_budget(period, user.id, Currency(body.currency))
     return ResponseModel(data=ApplyProfileResponse.build(model, floor_breached=result.floor_breached, gap=result.gap))
 
 
@@ -265,5 +269,7 @@ async def reprice(
             step_ups=body.step_ups,
         )
     )
-    model = await reader.monthly_budget(to_period, user.id)
+    # Re-read in the budget currency so the repriced surface the frontend consumes
+    # reports the USD spend/unconverted for a USD budget, not the ARS default (ADR-152).
+    model = await reader.monthly_budget(to_period, user.id, Currency(body.currency))
     return ResponseModel(data=MonthlyBudgetResponse.from_read_model(model))
