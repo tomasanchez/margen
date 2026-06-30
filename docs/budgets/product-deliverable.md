@@ -2,7 +2,7 @@
 
 **Owner:** Tomas Sanchez · **Author role:** PM + economist · **Date:** 2026-06-30 · **Status:** Draft for architecture review
 **Supersedes/expands:** ADR-125 (per-category monthly targets). **Sits alongside:** Reports (#52, ADR-128), Forecast (#53, ADR-129).
-**Source research:** `C:\Users\imtom\Downloads\personal-budgeting-and-saving.md` (INDEC May 2026: 2.1% m/m, 33.2% y/y CPI; REM 23.3% expected 12-mo inflation; REM FX ~ARS 1,422/USD Jun-26 → ~ARS 1,658/USD Dec-26).
+**Source research:** `C:\Users\imtom\Downloads\personal-budgeting-and-saving.md` (INDEC May 2026: 2.1% m/m, 33.2% y/y CPI; REM 23.3% expected 12-mo inflation; REM FX ~ARS 1,422/USD Jun-26 → ~ARS 1,658/USD Dec-26) **+** `C:\Users\imtom\Downloads\budget-design.md` (the "rules-engine" vision — household floors via INDEC CBT + canasta de crianza, income-pressure segments, trigger-based rebalancing, scenario simulation, macro-snapshot/provenance — folded in §7).
 
 ---
 
@@ -72,29 +72,9 @@ Turn non-monthly costs into monthly lines so school fees, insurance renewals, an
 
 Model as a lightweight bucket variant (`type = sinking`, with `annual_cost` + `due_date`) feeding the **Inflation/maintenance reserve** family or a named goal.
 
-### 2.5 Category taxonomy — research → existing app categories
+### 2.5 Category taxonomy
 
-The app's canonical set (`domain/models/value_objects.py` `KNOWN_CATEGORIES`, mirrored in `apps/web/src/mock/types.ts`) today is:
-`Income, Food, Rent, Transport, Subscriptions, Health, Shopping, Entertainment, Services, Taxes, Fees, Other`.
-Categories are tolerant strings (ADR-027/083), so additions are low-risk but must be added to all canonical lists (value_objects.py, types.ts, seed.ts).
-
-| Research category | Map to existing | Action |
-|---|---|---|
-| Housing (rent/mortgage, building charges, repairs, insurance) | `Rent` | **Rename/extend → `Housing`** (rent is one line of housing; keep `Rent` as alias for back-compat). |
-| Utilities & connectivity | `Services` + `Subscriptions` | Keep; `Services` = utilities, `Subscriptions` = streaming/apps. Adequate. |
-| Food at home | `Food` | Keep. |
-| Transport | `Transport` | Keep. |
-| Healthcare & insurance | `Health` | Keep (covers obra social/prepaga, meds, copays). |
-| **Education & childcare** | — | **Add `Education`** (separate INDEC division; reprices in lumps → sinking-fund candidate). |
-| Personal & household | `Shopping` | Keep. |
-| Entertainment & eating out | `Entertainment` | Keep. |
-| **Remittances / family support** | `Other` today | **Add `FamilySupport`** (optional) — stops "helping family" cannibalizing rent. Low priority. |
-| Taxes & social security | `Taxes` | Keep for paid taxes; **tax *reserve* is a savings bucket, not a spend category** (see §2.1). |
-| Inflation & maintenance reserve | — | Modeled as a **bucket** (§2.3), not a spend category. |
-| Currency exposure (USD/MEP/CCL) | — | Modeled as the **USD/FX-hedge bucket** + real USD Accounts. |
-| Transfer fees | `Fees` | Keep (ADR-135). |
-
-**Net category changes:** add **`Housing`** (extends `Rent`), add **`Education`**; optionally add **`FamilySupport`**. Everything else maps to existing categories. Tax reserve, inflation reserve, and FX exposure are **buckets, not categories**.
+> **Superseded by §7.1.** The category reconciliation originally drafted here has been replaced by the **final merged set in §7.1**, which reconciles three inputs: the two research docs' category trees, margen's current `KNOWN_CATEGORIES`, and what the broader product already covers via Accounts/Transfers/Monotributo. Summary of the final decision: keep **Food, Transport, Health, Entertainment, Subscriptions, Fees, Other**; rename `Rent`→**Housing**; split `Services`→**Utilities** + keep Eating-out distinct from Food; add **Education**, **DebtService**, **FamilySupport**; keep `Taxes` for non-monotributo taxes only; and **DROP** Savings-ARS / Savings-USD / Investments / Dollarized-expenses / Cash-informal / FX-purchases as categories because the product already models them as Accounts, Transfers, per-account currency, and tags. See §7.1 for the full mapping table and rationale.
 
 ### 2.6 Monthly inflation-reprice loop
 
@@ -120,7 +100,10 @@ Decisive cut: **MVP is the inflation reprice loop + saving-profile presets**, be
 | **Net-income base field** (salaried take-home; independent = manual net) per month | Anchors everything to honest income, not gross | **S** |
 | **Saving-profile presets** (Conservative/Balanced/Aggressive) that seed savings-bucket targets as % of net income, stored as budget rows of a new `kind = saving` | Savings become explicit allocations, pay-yourself-first | **M** |
 | **Monthly reprice action** — one inflation % + per-category step-ups → `cap × (1+infl) + step-up`, applied on user confirm at month rollover | Kills inflation drift; the single highest-value change | **M** |
-| Category additions: `Housing`, `Education` | Matches AR reality / INDEC divisions | **S** |
+| Category change: rename `Rent`→`Housing`, add `Education` (MVP subset of §7.1) | Matches AR reality / INDEC divisions | **S** |
+| **Household-floor readout** (manual floor entry; show essentials-floor vs net income) — from budget-design.md §7.2 | Grounds the plan in survival reality, prevents underfunding essentials | **S** |
+| **Strategy suggestion** (adequacy = income÷floor + debt-ratio → suggest conservative/balanced/aggressive; user still picks) — §7.2 | Trust/retention; ratio-to-floor beats nominal bands | **S** |
+| **Floor-before-percentages** allocation rule (raise essentials to floor before applying preset %) — §7.2 | Correctness: a preset must never underfund survival | **S** |
 | Reprice/preset surfaces in i18n (en/es, namespace `budgets`) | Consistency with ADR-100/101 | **S** |
 
 **Explicitly MVP-deferred:** rollover/envelope balances, buckets-as-accounts, tax-reserve automation, FX-denominated goals, variable-income true-up automation, forecast integration.
@@ -162,7 +145,7 @@ Decisive cut: **MVP is the inflation reprice loop + saving-profile presets**, be
 - Add a per-user **`budget_income`** concept (net spendable income per month) — small new row/table keyed `(user_id, period)`.
 - Add a **reprice service**: pure function `next_cap = round(cap × (1+infl)) + step_up`; entrypoint applies it across the month's `spend` rows on user confirm.
 - `BudgetsPage`: add net-income header, profile-preset selector, and a "Reprice for {month}" review action. Add a **Savings** section listing `kind=saving` rows with profile %.
-- Category list: add `Housing`, `Education` to `value_objects.py`, `types.ts`, `seed.ts`.
+- Category list (MVP subset of the §7.1 final set): rename `Rent`→`Housing` and add `Education` in `value_objects.py`, `types.ts`, `seed.ts`. `Utilities`, `EatingOut`, `DebtService`, `FamilySupport` follow in Phase 2 (low-risk — categories are tolerant strings, ADR-027/083).
 
 ### Replace / restructure (Phase 2+)
 - Promote savings buckets out of the flat budget row into a **dedicated `savings_buckets` aggregate** once targets/due-dates/account links are needed — at that point the `kind=saving` rows migrate into it. Follow the cosmic-python aggregate+repo+UoW pattern (as Account/Transfer/Budget do).
@@ -192,6 +175,76 @@ Decisive cut: **MVP is the inflation reprice loop + saving-profile presets**, be
 
 ## 6. Recommended Next Step
 
-**Architect designs the MVP slice first** — specifically the data + service shape for (a) the **net-income base** `(user_id, period)`, (b) the **`kind` discriminator** on budget rows so saving-profile allocations reuse the existing `budgets` table, and (c) the **pure reprice function** `next_cap = cap × (1+infl) + step_up` plus its confirm-on-rollover entrypoint. Capture three new ADRs (none exist today): **inflation-reprice model**, **saving-profile presets + savings as `kind` rows**, and **net-income base / variable-income rule**. Add `Housing`/`Education` categories in the same slice. Defer the `savings_buckets` aggregate and Transfer-funding to a Phase 2 design once the MVP proves the reprice loop earns its keep.
+**Architect designs the MVP slice first** — specifically the data + service shape for (a) the **net-income base** `(user_id, period)`, (b) the **`kind` discriminator** on budget rows so saving-profile allocations reuse the existing `budgets` table, and (c) the **pure reprice function** `next_cap = cap × (1+infl) + step_up` plus its confirm-on-rollover entrypoint. Capture **four** new ADRs (none exist today): **inflation-reprice model**, **saving-profile presets + savings as `kind` rows**, **net-income base / variable-income rule**, and the **final merged budget-category set (§7.1)** — the last is the owner's explicit main ask and should be recorded as a `data` ADR so the dropped-because-covered-elsewhere rationale is durable. Apply the MVP category change (`Rent`→`Housing`, add `Education`) in the same slice. Defer the `savings_buckets` aggregate, Transfer-funding, the household-floor engine, macro snapshots, and trigger-based rebalancing to Phase 2/3 designs once the MVP proves the reprice loop earns its keep.
 
 Run this through `/deep-plan` to land the ADRs before any code.
+
+---
+
+## 7. Incorporating budget-design.md (the "rules-engine" vision)
+
+`budget-design.md` is a more ambitious design: it treats the budget as a **rules engine over a volatile macro regime** — household floors from official baskets, income-pressure segments as ratios-to-floor, a strategy *recommendation* engine, trigger-based rebalancing, scenario simulation, and a macro-snapshot/provenance/confidence layer fed by official sources (INDEC/BCRA/ARCA). Most of it overlaps §2–§6. The genuinely-new, worthwhile parts are folded below, **MVP-first** — but the bulk of the rules-engine/macro-feed machinery is correctly Phase 2/3, because the official-data feeds are a large maintenance and legal cost the owner is still researching (kept **suggestion-only, never hardcoded**; see §7.3).
+
+### 7.1 FINAL merged budget-category set (the owner's main ask)
+
+Three inputs reconciled: (a) both docs' category trees, (b) margen's current `KNOWN_CATEGORIES` = `Income, Food, Rent, Transport, Subscriptions, Health, Shopping, Entertainment, Services, Taxes, Fees, Other`, (c) **what the product already covers elsewhere** (Accounts incl. a Cash institution, Transfers + funding, per-account/per-transaction currency, the Monotributo module). **Principle: fewest meaningful expense categories; zero duplication with Accounts/Transfers/Monotributo.** A budget category is an *expense* line only — money that leaves the household for consumption or obligation. Anything that is a *movement of the user's own money* (savings, investments, FX purchase, transfer-to-cash) is **not** a category.
+
+| Doc category (budget-design.md) | Decision | Where it lives / why |
+|---|---|---|
+| Housing (rent, mortgage, expensas, maintenance, property tax, insurance) | **RENAME existing** `Rent` → **`Housing`** | Rent is one line of housing. Keep `Rent` accepted as a tolerant alias (ADR-027). |
+| Utilities & regulated services (electricity, gas, water, internet, mobile, garrafa) | **SPLIT existing** `Services` → **`Utilities`** | `Services` is ambiguous; `Utilities` is the INDEC-aligned essential. Carries `subsidy_status` tag later (§7.2). |
+| Food at home | **KEEP** `Food` | — |
+| Eating out (restaurants, bars, cafés, takeout) | **ADD `EatingOut`** | Research splits discretionary dining from essential groceries; distinct essentiality. Was folded into `Food`/`Entertainment` before — separate it. |
+| Transport (SUBE, fuel, tolls, ride-hailing, vehicle) | **KEEP** `Transport` | — |
+| Health (prepaga, obra social, meds, dentistry) | **KEEP** `Health` | — |
+| Education & childcare | **ADD `Education`** | Separate INDEC division; reprices in lumps → sinking-fund candidate. |
+| Personal / clothing / household goods | **KEEP** `Shopping` | Covers clothing + low-ticket home replacement. |
+| Entertainment / recreation / subscriptions-above-essentials | **KEEP** `Entertainment` | — |
+| Streaming / app subscriptions | **KEEP** `Subscriptions` | Distinct recurring digital; keep separate from `Utilities`. |
+| Taxes & social security (Ganancias, IIBB, autónomos, domestic-worker, provincial/municipal) | **KEEP `Taxes`** — *non-monotributo only* | **Monotributo cuota is NOT this category** — it is owned by the Monotributo module (ADR-046/112/126) and feeds the tax-*reserve* bucket (§2.1). `Taxes` here = paid Ganancias/IIBB/provincial. |
+| **Debt service** (card payment, loan instalments, BNPL, overdraft) | **ADD `DebtService`** | A real recurring *expense* (interest + principal leaving the household). Distinct from the *debt-acceleration savings bucket* (extra payoff, §2.2). Decision: **category for the obligation, bucket for the extra**. |
+| **Transfers & remittances / family support** | **ADD `FamilySupport`** *(expense)* — but distinguish from account-to-account transfers | Money *given away* (parents, child support, cross-border) is an expense → `FamilySupport`. Money moved between the *user's own* accounts is **not** this — it is the **Transfer** feature (ADR-135). |
+| Transfer fees | **KEEP** `Fees` | Already created by ADR-135 (fees-as-expenses). |
+| **Dollarized expenses** (USD rent, imported subs, foreign platforms) | **DROP as category** | Currency is **per-account / per-transaction** (ARS/USD, ADR-123/134) + a `rate_type` tag (§7.2), **not** a category. A USD Netflix charge is `Subscriptions` on a USD account — tagged `mep`, not a separate "Dollarized" line. |
+| **Savings in ARS** (emergency, sinking, plazo fijo, remunerated acct) | **DROP as category** | Modeled as **savings buckets** (§2.3) funded by a **Transfer** to an ARS savings **Account** (ADR-135). Not an expense. |
+| **Savings in USD** (cash dollars, USD bank, MEP bucket) | **DROP as category** | Modeled as the **USD/FX-hedge bucket** + a USD **Account**; funded by a Transfer / FX purchase. Not an expense. |
+| **Investments** (bonds, CEDEARs, FCI, broker) | **DROP as category** | Modeled as the **long-term-investment bucket** + a (future) investment Account; net worth covers it (ADR-122 defers non-liquid). Not an expense, and **no product recommendations** (§6 out-of-scope). |
+| **Cash & informal economy** (ATM withdrawals, ferias, non-invoiced) | **DROP as category** | A **withdrawal** is a Transfer to the **Cash** institution/Account (ADR-134 `cash` type); the subsequent *spend* lands in its real category (Food, etc.) tagged `evidence_quality = estimated/cash`. "Cash" is a payment channel + account, **not** a spend category. |
+| FX purchases / account-to-account moves | **DROP as category** | The **Transfer** feature (ADR-135) — explicitly "not a transaction." |
+| `Income` | **KEEP** (system) | Not a budgetable expense category; it is the inflow side. |
+| `Other` | **KEEP** (fallback) | Uncategorized bucket; ADR-042 buckets nulls as "Uncategorized". |
+
+**FINAL EXPENSE-CATEGORY SET (12 budgetable + Income + Other):**
+`Housing, Utilities, Food, EatingOut, Transport, Health, Education, Shopping, Entertainment, Subscriptions, Taxes, DebtService, FamilySupport, Fees` — plus `Income` (inflow) and `Other` (fallback).
+
+**Dropped because the product already covers them:** Savings-ARS, Savings-USD, Investments → **Accounts + savings buckets + Transfers** (ADR-122/134/135). Dollarized-expenses → **per-account/transaction currency + `rate_type` tag** (ADR-123/134). Cash & informal → **Cash account + `evidence_quality` tag** (ADR-134). FX purchases / transfers → **Transfer feature** (ADR-135). Monotributo cuota → **Monotributo module** (ADR-046/112/126).
+
+**MVP category delta:** rename `Rent`→`Housing`, add `Education` (matches §3 MVP). **Phase 2 delta:** split `Services`→`Utilities`, add `EatingOut`, `DebtService`, `FamilySupport`. Each is a tolerant-string addition across `value_objects.py`, `types.ts`, `seed.ts` (ADR-027/083) — no schema migration.
+
+### 7.2 New ideas folded in — phase decision per item
+
+| Idea (budget-design.md) | Phase | Why |
+|---|---|---|
+| **Household floor concept** (`floor = CBT + actual housing + debt minimums + health minimum + child costs + essential transport`) | **MVP (concept only)** | Ship as an *informational* "your essentials floor vs your income" readout, with floor entered/estimated **manually**. The CBT/canasta-de-crianza *auto-fetch* is Phase 3 (feed cost, §7.3). The concept is too valuable to omit — it's what stops a preset from underfunding survival. |
+| **Strategy *recommendation*** (adequacy = income÷floor, volatility, debt-ratio, FX-exposure → suggest conservative/balanced/aggressive) | **MVP (lightweight)** | A one-screen suggestion using inputs the user already gives (net income, floor, debt) — `adequacy < 1.3 → conservative`, `> 2.5 & stable → aggressive`, else balanced. Pure function, no feed. Big trust/retention win; cheap. The user still picks. |
+| **Floor-before-percentages allocation** (fund the floor first, then apply preset %; if preset essentials < floor, top up from non-essential buckets) | **MVP** | This is a correctness fix to §2.2, not new machinery: a preset must never underfund essentials. Fold the "if essentials < floor, raise to floor and reduce savings buckets" rule into the allocation step. |
+| **Income-pressure segments as ratio-to-floor** (Constrained <1.3×, Stable 1.3–2.5×, Comfortable >2.5×) | **MVP (drives the suggestion)** | Replaces nominal income bands (which age badly under inflation) with ratios. Reuses the adequacy score above; no extra cost. |
+| **Multi-currency `rate_type` tag** on lines/transactions (official/mep/ccl/blue) | **Phase 2** | Useful provenance for USD-linked lines; ride on the per-account currency already in ADR-123/134. Not needed for the ARS-only MVP. |
+| **Trigger-based rebalancing** (overspend >10%×2mo, inflation accel >1pp, FX shock >5%, subsidy/tax-rule change → propose rebalance) | **Phase 2** | High value but needs the reprice loop + macro history first. MVP reprices on a single manual inflation %; triggers come once macro snapshots exist. |
+| **Scenario simulation** (currency shock, regulated-price catch-up, hyperinflation repricing) | **Phase 3** | "See fragility before reality humiliates you" — excellent, but a forward-modeling feature that should build on the Forecast slice (#53/ADR-129), not the budget MVP. |
+| **MacroSnapshot entity** (immutable CPI/wage/FX/rates/subsidy/tax snapshot for recalculation without mutating history) | **Phase 2/3** | The right engineering backbone for everything dynamic — but only worth building once there's a feed to populate it. Until then the single manual inflation % is the "snapshot." |
+| **Provenance / confidence layer + source-priority/fallback** (official→provincial→media→private; show whether a number is synced/estimated/official/unofficial) | **Phase 3** | "In a country with multiple valid prices, provenance is part of the product." True, and it pairs with the macro feed. Premature before feeds exist; the MVP's one number is user-entered (implicitly "user estimate"). |
+| **Override governance** (reason code, source snapshot, old/new value, expiry, audit) | **Phase 3** | Matters only once *automation* proposes changes (rebalancing). MVP changes are all user-driven, so no governance surface needed yet. |
+| **Split emergency fund** (1–2 mo liquid ARS → 2–4 mo ARS/UVA → resilience slice in USD) | **Phase 2** | A refinement of the emergency-fund bucket (§2.3) once buckets map to real Accounts; informational guidance can appear in MVP copy. |
+| **Tenure/household-aware default templates** (renter vs owner housing weights; family-with-children) | **Phase 3** | Needs the onboarding profile (household_size, ages, tenure) the second doc proposes — a larger onboarding build. Defer. |
+
+### 7.3 The macro-feed question (unchanged headline risk — now sharper)
+
+`budget-design.md` wants official feeds (INDEC CPI + baskets, BCRA FX/rates/CER/UVA/ICL, ARCA tax rules, subsidy rules) refreshed daily/monthly/event-driven, with coded per-variable fallback. This is the **single largest maintenance and legal/ops cost** in the whole vision and the owner is still researching it. **Recommendation stands and is reinforced:**
+
+- **MVP:** one **manual** monthly inflation % (REM-seeded suggestion) + the existing client-side dolarapi MEP (`fxClient.fetchSuggestedMepRate()`, ADR-044/133). No official feed.
+- **Feeds are suggestion-only, never hardcoded into accounting** — exactly the doc's own "truth over vibes / parameterize, never hardcode" stance and margen's dolarapi pattern (fetch → suggest → user confirms). A stale/failed feed degrades to the last user value with a "pending official release" label, never silently switches sources.
+- The blue dollar and any unofficial rate are **stress-test only** unless the user explicitly opts them into planning, with provenance shown (Phase 3 provenance layer).
+- INDEC/ARCA have **no clean official JSON API**; BCRA does expose statistical APIs. So *if* a feed is built, BCRA market data (FX/rates) is the cheapest first candidate (Phase 2 `rate_type`/snapshot), and INDEC CPI/baskets stay manual-with-suggestion longest (Phase 3). The legal/ToS surface of scraping INDEC/ARCA is the owner's open research item.
+
+**Net effect on MVP scope:** unchanged from §3 — net-income base + saving-profile presets + manual inflation reprice + the `Rent`→`Housing`/`Education` category change — **plus** two cheap additions from this doc: the **household-floor readout (manual)** and the **strategy-suggestion (ratio-to-floor)**, both pure-function and feed-free.
