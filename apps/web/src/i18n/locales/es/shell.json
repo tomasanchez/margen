@@ -4,6 +4,7 @@
     "home": "Inicio",
     "transactions": "Movimientos",
     "accounts": "Cuentas",
+    "budgets": "Presupuestos",
     "transfers": "Transferencias",
     "monotributo": "Monotributo",
     "import": "Importar resumen",
@@ -11,6 +12,7 @@
     "homeShort": "Inicio",
     "transactionsShort": "Actividad",
     "accountsShort": "Cuentas",
+    "budgetsShort": "Presupuestos",
     "transfersShort": "Transferencias",
     "monotributoShort": "Mono",
     "importShort": "Importar"

@@ -18,6 +18,7 @@ import enCommon from './locales/en/common.json'
 import enShell from './locales/en/shell.json'
 import enAccount from './locales/en/account.json'
 import enAccounts from './locales/en/accounts.json'
+import enBudgets from './locales/en/budgets.json'
 import enAuth from './locales/en/auth.json'
 import enHome from './locales/en/home.json'
 import enInsights from './locales/en/insights.json'
@@ -32,6 +33,7 @@ import esCommon from './locales/es/common.json'
 import esShell from './locales/es/shell.json'
 import esAccount from './locales/es/account.json'
 import esAccounts from './locales/es/accounts.json'
+import esBudgets from './locales/es/budgets.json'
 import esAuth from './locales/es/auth.json'
 import esHome from './locales/es/home.json'
 import esInsights from './locales/es/insights.json'
@@ -58,6 +60,7 @@ export const NAMESPACES = [
   'shell',
   'account',
   'accounts',
+  'budgets',
   'auth',
   'home',
   'insights',
@@ -83,6 +86,7 @@ export const resources = {
     shell: enShell,
     account: enAccount,
     accounts: enAccounts,
+    budgets: enBudgets,
     auth: enAuth,
     home: enHome,
     insights: enInsights,
@@ -97,6 +101,7 @@ export const resources = {
     shell: esShell,
     account: esAccount,
     accounts: esAccounts,
+    budgets: esBudgets,
     auth: esAuth,
     home: esHome,
     insights: esInsights,

@@ -4,6 +4,7 @@
     "home": "Home",
     "transactions": "Transactions",
     "accounts": "Accounts",
+    "budgets": "Budgets",
     "transfers": "Transfers",
     "monotributo": "Monotributo",
     "import": "Import statement",
@@ -11,6 +12,7 @@
     "homeShort": "Home",
     "transactionsShort": "Activity",
     "accountsShort": "Accounts",
+    "budgetsShort": "Budgets",
     "transfersShort": "Transfers",
     "monotributoShort": "Mono",
     "importShort": "Import"

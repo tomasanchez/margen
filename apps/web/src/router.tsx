@@ -9,6 +9,7 @@ import { AppShell } from './components/AppShell'
 import { AddTransactionProvider } from './features/transactions/AddTransactionProvider'
 import { HomePage } from './features/home/HomePage'
 import { AccountsPage } from './features/accounts/AccountsPage'
+import { BudgetsPage } from './features/budgets/BudgetsPage'
 import { TransfersPage } from './features/transfers/TransfersPage'
 import { ImportStatement } from './features/statements/ImportStatement'
 import { MonotributoRoute } from './features/monotributo/MonotributoRoute'
@@ -110,6 +111,12 @@ const accountsRoute = createRoute({
   component: AccountsPage,
 })
 
+const budgetsRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: '/budgets',
+  component: BudgetsPage,
+})
+
 const transfersRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/transfers',
@@ -142,6 +149,7 @@ const routeTree = rootRoute.addChildren([
     homeRoute,
     transactionsRoute,
     accountsRoute,
+    budgetsRoute,
     transfersRoute,
     importStatementRoute,
     monotributoRoute,

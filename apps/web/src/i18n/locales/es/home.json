@@ -54,6 +54,22 @@
     "rowLabel": "{{category}}, {{amount}} — ver transacciones",
     "rowLabelUp": "{{category}}, {{amount}}, subió {{up}} — ver transacciones"
   },
+  "budgets": {
+    "title": "Avance del presupuesto",
+    "subtitle": "Este mes · presupuestado vs gastado",
+    "manage": "Administrar presupuestos →",
+    "spentOfBudgeted": "{{spent}} de {{budgeted}}",
+    "overallMeterAria": "{{pct}}% de tu presupuesto mensual gastado",
+    "remaining": "Quedan {{amount}} este mes",
+    "overBy": "{{amount}} excedido este mes",
+    "attentionTitle": "Más cerca del límite",
+    "attentionPct": "{{pct}}%",
+    "attentionOver": "Excedido",
+    "emptyBody": "Fijá objetivos mensuales por categoría para ver cómo se compara tu gasto con lo planeado.",
+    "setUp": "Configurar presupuestos",
+    "errorTitle": "Datos de presupuesto no disponibles",
+    "errorDescription": "No pudimos cargar el avance del presupuesto de este mes. Probá de nuevo."
+  },
   "monotributo": {
     "title": "Monotributo",
     "titleWithCategory": "Monotributo · Categoría {{category}}",

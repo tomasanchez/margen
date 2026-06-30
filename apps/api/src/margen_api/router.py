@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 
 from margen_api.entrypoint import (
     accounts,
+    budgets,
     insights,
     institutions,
     invoices,
@@ -53,6 +54,7 @@ api_router_v1.include_router(transactions.router, dependencies=_auth)
 api_router_v1.include_router(transfers.router, dependencies=_auth)
 api_router_v1.include_router(accounts.router, dependencies=_auth)
 api_router_v1.include_router(institutions.router, dependencies=_auth)
+api_router_v1.include_router(budgets.router, dependencies=_auth)
 api_router_v1.include_router(invoices.router, dependencies=_auth)
 api_router_v1.include_router(statements.router, dependencies=_auth)
 api_router_v1.include_router(summaries.router, dependencies=_auth)

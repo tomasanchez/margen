@@ -38,6 +38,11 @@ _INSTITUTION_HIERARCHY = "c0d1e2f3a4b5"
 # column. No data migration is involved.
 _TRANSFERS = "d1e2f3a4b5c6"
 
+# The budgets migration (ADR-125): chains after transfers. It creates the
+# ``budgets`` table with a NOT NULL owner column and a UNIQUE(user_id, category,
+# period) constraint. No data migration is involved.
+_BUDGETS = "e2f3a4b5c6d7"
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
 # A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
@@ -254,6 +259,73 @@ class TestMigrations:
             assert "transfers" not in asyncio.run(_table_names(integration_database_url))
         finally:
             asyncio.run(_drop_everything(integration_database_url))
+
+    def test_budgets_migration_creates_table_with_unique_constraint(self, integration_database_url: str):
+        """
+        GIVEN a database at the transfers revision
+        WHEN Alembic upgrades through the budgets migration (ADR-125)
+        THEN the budgets table exists, a duplicate (user_id, category, period) is rejected,
+             and the downgrade cleanly drops it again
+
+        Proves the schema add AND the UNIQUE(user_id, category, period) constraint on
+        the production PostgreSQL dialect: a category gets at most one target per month
+        so the upsert never duplicates (ADR-125). No data migration.
+        """
+        # GIVEN — upgrade to the transfers revision (the head before ADR-125).
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _TRANSFERS)
+        try:
+            # WHEN
+            command.upgrade(config, _BUDGETS)
+
+            # THEN — the budgets table exists with the expected columns.
+            tables = asyncio.run(_table_names(integration_database_url))
+            assert "budgets" in tables
+            budget_columns = asyncio.run(_columns(integration_database_url, "budgets"))
+            assert {"user_id", "category", "period", "amount", "currency"} <= set(budget_columns)
+
+            # THEN — a duplicate (user_id, category, period) violates the UNIQUE constraint.
+            assert asyncio.run(_duplicate_budget_is_rejected(integration_database_url)) is True
+
+            # THEN — the downgrade cleanly drops the table again.
+            command.downgrade(config, _TRANSFERS)
+            assert "budgets" not in asyncio.run(_table_names(integration_database_url))
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
+
+async def _duplicate_budget_is_rejected(url: str) -> bool:
+    """Insert two budgets with the same (user_id, category, period); return whether the 2nd fails.
+
+    Proves the UNIQUE(user_id, category, period) constraint backs the upsert: a
+    category gets one target per month (ADR-125). The first insert succeeds; the
+    second, identical on the natural key, must raise an IntegrityError.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    engine = create_async_engine(url)
+    insert = text(
+        "INSERT INTO budgets (id, user_id, category, period, amount, currency) "
+        "VALUES (:id, :user_id, :category, :period, :amount, :currency)"
+    )
+    base = {
+        "user_id": uuid.UUID(_OWNER),
+        "category": "Food",
+        "period": datetime.date(2026, 6, 1),
+        "amount": Decimal("50000.00"),
+        "currency": "ARS",
+    }
+    rejected = False
+    async with engine.begin() as connection:
+        await connection.execute(insert, {"id": uuid.uuid4(), **base})
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(insert, {"id": uuid.uuid4(), **base})
+    except IntegrityError:
+        rejected = True
+    await engine.dispose()
+    return rejected
 
 
 async def _seed_transactions(
