@@ -25,6 +25,7 @@ import {
 } from '@tanstack/react-router'
 import { ColorModeProvider } from '../../theme/colorMode'
 import { BudgetProgressCard, type BudgetProgressCardProps } from './BudgetProgressCard'
+import { maskAmount } from '../../lib/format'
 import type { BudgetPeriod } from '../../api/budgetsClient'
 
 const PERIOD: BudgetPeriod = {
@@ -68,6 +69,7 @@ function renderCard(props: Partial<BudgetProgressCardProps>) {
         loading={props.loading ?? false}
         isError={props.isError}
         onRetry={props.onRetry}
+        hidden={props.hidden}
       />
     ),
   })
@@ -148,6 +150,50 @@ describe('BudgetProgressCard', () => {
     expect(
       await screen.findByText('Net income ARS 1.000.000 · saved ARS 70.000'),
     ).toBeInTheDocument()
+  })
+
+  test('masks the money amounts but keeps percentages, categories + the link when hidden (ADR-157)', async () => {
+    renderCard({
+      period: {
+        ...PERIOD,
+        savings: [{ bucket: 'EmergencyFund', percent: 7, amount: '70000.00' }],
+      },
+      income: {
+        month: '2026-06',
+        amount: '1000000.00',
+        currency: 'ARS',
+        source: 'manual',
+        floor: null,
+      },
+      hidden: true,
+    })
+
+    // The budgeted-vs-spent headline is masked (with the accessible "hidden"
+    // label), and the real figures are gone.
+    expect(
+      await screen.findByLabelText('hidden'),
+    ).toHaveTextContent(maskAmount())
+    expect(
+      screen.queryByText('ARS 320.000 of ARS 320.000'),
+    ).not.toBeInTheDocument()
+    // The income + saved amounts are masked inline (copy stays, amounts hidden).
+    expect(
+      screen.queryByText('Net income ARS 1.000.000 · saved ARS 70.000'),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText(`Net income ${maskAmount()} · saved ${maskAmount()}`),
+    ).toBeInTheDocument()
+
+    // KEEP visible: the attention list heading + a category name + its "Over"
+    // percentage cue, and the Manage link.
+    expect(screen.getByText('Closest to limit')).toBeInTheDocument()
+    expect(screen.getByText('Rent')).toBeInTheDocument()
+    expect(screen.getByText('Over')).toBeInTheDocument()
+    expect(
+      screen.getByRole('link', { name: /Manage budgets/ }),
+    ).toHaveAttribute('href', '/budgets')
+    // The overall meter (ARIA meter role) stays rendered.
+    expect(screen.getByRole('meter')).toBeInTheDocument()
   })
 
   test('surfaces the reprice nudge linking to Budgets (ADR-137)', async () => {

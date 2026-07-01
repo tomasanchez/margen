@@ -30,6 +30,10 @@
     "addExpense": "Expense",
     "addInvoice": "Invoice"
   },
+  "privacy": {
+    "hide": "Hide amounts",
+    "show": "Show amounts"
+  },
   "metrics": {
     "income": "Income",
     "expenses": "Expenses",

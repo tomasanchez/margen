@@ -30,6 +30,10 @@
     "addExpense": "Gasto",
     "addInvoice": "Factura"
   },
+  "privacy": {
+    "hide": "Ocultar montos",
+    "show": "Mostrar montos"
+  },
   "metrics": {
     "income": "Ingresos",
     "expenses": "Gastos",

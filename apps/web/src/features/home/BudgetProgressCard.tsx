@@ -26,7 +26,8 @@ import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
-import { formatCurrency } from '../../lib/format'
+import { formatCurrency, maskAmount } from '../../lib/format'
+import { MaskedAmount } from './MaskedAmount'
 import { categoryDotColor, categoryLabel } from '../transactions/presentation'
 import { BudgetMeter } from '../budgets/BudgetMeter'
 import {
@@ -50,6 +51,12 @@ export interface BudgetProgressCardProps {
   isError?: boolean
   /** Retry handler for the error state. */
   onRetry?: () => void
+  /**
+   * When true, mask the money amounts (budgeted/spent, remaining/over, and the
+   * income + saved line) per the Home privacy toggle (ADR-157). The meter, all
+   * percentages, category names, and the Manage link stay visible.
+   */
+  hidden?: boolean
 }
 
 /** Neutral prompt shown when no targets are set yet for the month. */
@@ -86,6 +93,7 @@ export function BudgetProgressCard({
   loading,
   isError = false,
   onRetry,
+  hidden = false,
 }: BudgetProgressCardProps) {
   const { t } = useTranslation('home')
 
@@ -131,6 +139,17 @@ export function BudgetProgressCard({
   const overall = totals.budgeted > 0 ? totals.spent / totals.budgeted : 0
   const over = totals.remaining < 0
 
+  // Under the privacy toggle the money amounts are masked; the mask keeps the
+  // surrounding copy + percentages intact (ADR-157).
+  const mask = maskAmount()
+  const money = (value: number, currency: BudgetPeriod['currency']) =>
+    hidden ? mask : formatCurrency(value, currency)
+
+  const spentBudgetedText = t('budgets.spentOfBudgeted', {
+    spent: money(totals.spent, period.currency),
+    budgeted: money(totals.budgeted, period.currency),
+  })
+
   return (
     <SectionCard
       title={t('budgets.title')}
@@ -155,15 +174,16 @@ export function BudgetProgressCard({
           mb: 0.75,
         }}
       >
-        <Typography
-          sx={{ fontSize: 18, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}
-          color={over ? 'var(--mg-watch)' : 'text.primary'}
-        >
-          {t('budgets.spentOfBudgeted', {
-            spent: formatCurrency(totals.spent, period.currency),
-            budgeted: formatCurrency(totals.budgeted, period.currency),
-          })}
-        </Typography>
+        <MaskedAmount hidden={hidden} figure={spentBudgetedText} mask={mask}>
+          {(content) => (
+            <Typography
+              sx={{ fontSize: 18, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}
+              color={over ? 'var(--mg-watch)' : 'text.primary'}
+            >
+              {content}
+            </Typography>
+          )}
+        </MaskedAmount>
       </Box>
 
       <BudgetMeter
@@ -181,10 +201,10 @@ export function BudgetProgressCard({
       >
         {over
           ? t('budgets.overBy', {
-              amount: formatCurrency(Math.abs(totals.remaining), period.currency),
+              amount: money(Math.abs(totals.remaining), period.currency),
             })
           : t('budgets.remaining', {
-              amount: formatCurrency(totals.remaining, period.currency),
+              amount: money(totals.remaining, period.currency),
             })}
       </Typography>
 
@@ -194,8 +214,8 @@ export function BudgetProgressCard({
           color="text.secondary"
         >
           {t('budgets.incomeSaved', {
-            income: formatCurrency(incomeSaved.income, period.currency),
-            saved: formatCurrency(incomeSaved.saved, period.currency),
+            income: money(incomeSaved.income, period.currency),
+            saved: money(incomeSaved.saved, period.currency),
           })}
         </Typography>
       ) : null}

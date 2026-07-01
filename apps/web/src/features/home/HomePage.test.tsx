@@ -35,6 +35,8 @@ import { MonthSwitcher } from '../../components/MonthSwitcher'
 import { useViewingMonth } from '../../components/monthContext'
 import { type ViewingMonth } from '../../components/months'
 import { HomePage } from './HomePage'
+import { HOME_PRIVACY_STORAGE_KEY } from './useHomePrivacy'
+import { maskAmount } from '../../lib/format'
 import { homeQueryKeys } from './queries'
 import { settingsQueryKeys } from '../settings/queries'
 import { AddTransactionProvider } from '../transactions/AddTransactionProvider'
@@ -305,6 +307,63 @@ test('the Monotributo card shows the real standing and the invoice drill-in link
   expect(
     scoped.getByRole('link', { name: 'See the 0 invoices behind this →' }),
   ).toHaveAttribute('href', '/transactions?type=invoice&month=last12')
+})
+
+/** The metric card whose overline label matches, located by its <p> label. */
+function metricCard(label: string) {
+  return screen
+    .getByText(label, { selector: 'p' })
+    .closest('.MuiPaper-root') as HTMLElement
+}
+
+test('the privacy toggle masks the headline figures and persists to localStorage', async () => {
+  const user = userEvent.setup()
+  window.localStorage.removeItem(HOME_PRIVACY_STORAGE_KEY)
+  renderHome({ year: 2026, month: 5 }) // June 2026: income 1.000, expenses 400
+
+  await screen.findByText(/· June 2026/)
+
+  // Default OFF: the Income / Expenses / Est. savings values are visible (scoped
+  // to their metric cards — the same amounts also appear in the breakdown/trend).
+  await screen.findByText('Income', { selector: 'p' })
+  expect(within(metricCard('Income')).getByText('ARS 1.000')).toBeInTheDocument()
+  expect(within(metricCard('Expenses')).getByText('ARS 400')).toBeInTheDocument()
+  expect(within(metricCard('Est. savings')).getByText('ARS 600')).toBeInTheDocument()
+  expect(
+    within(metricCard('Income')).queryByText(maskAmount()),
+  ).not.toBeInTheDocument()
+
+  // Flip the toggle on.
+  await user.click(screen.getByRole('button', { name: 'Hide amounts' }))
+
+  // The three headline values are now masked in their cards; the delta captions
+  // and the Monotributo margin stay visible (never masked).
+  expect(
+    within(metricCard('Income')).queryByText('ARS 1.000'),
+  ).not.toBeInTheDocument()
+  expect(within(metricCard('Income')).getByText(maskAmount())).toBeInTheDocument()
+  expect(within(metricCard('Expenses')).getByText(maskAmount())).toBeInTheDocument()
+  expect(
+    within(metricCard('Est. savings')).getByText(maskAmount()),
+  ).toBeInTheDocument()
+  // Delta caption stays (income rose from May 500 to June 1.000 = +100%).
+  expect(within(metricCard('Income')).getByText('+100% vs. May')).toBeInTheDocument()
+  // The Monotributo margin figure is never masked.
+  expect(
+    within(metricCard('Monotributo margin')).getByText('ARS 8.400.001'),
+  ).toBeInTheDocument()
+
+  // The preference persisted to localStorage, and the button now offers to show.
+  expect(window.localStorage.getItem(HOME_PRIVACY_STORAGE_KEY)).toBe('1')
+  const showToggle = screen.getByRole('button', { name: 'Show amounts' })
+  expect(showToggle).toHaveAttribute('aria-pressed', 'true')
+
+  // Toggling off is instant (values were still fetched) and clears the key.
+  await user.click(showToggle)
+  expect(
+    within(metricCard('Income')).getByText('ARS 1.000'),
+  ).toBeInTheDocument()
+  expect(window.localStorage.getItem(HOME_PRIVACY_STORAGE_KEY)).toBeNull()
 })
 
 test('a month with no transactions shows the calm empty state', async () => {

@@ -58,6 +58,9 @@
     "plus": "plus",
     "minus": "minus"
   },
+  "privacy": {
+    "hidden": "hidden"
+  },
   "categories": {
     "Income": "Income",
     "Food": "Food",

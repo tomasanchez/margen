@@ -51,6 +51,17 @@ function safe(n: number | null | undefined): number {
 }
 
 /**
+ * The privacy mask string shown in place of a headline figure when the Home
+ * "hide amounts" toggle is on (ADR-157). A short run of bullets that preserves
+ * the row's layout without hinting at magnitude; the value is still fetched, so
+ * this masks display only. A single source of truth so the mask reads
+ * identically across every card and stays testable.
+ */
+export function maskAmount(): string {
+  return '••••••'
+}
+
+/**
  * Format an ARS amount as a grouped string WITHOUT a currency prefix or sign.
  * Negative inputs are formatted by magnitude; callers add the sign via the
  * signed helpers. e.g. 1234567 -> "1.234.567".

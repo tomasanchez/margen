@@ -17,6 +17,7 @@ import { AddTransactionProvider } from './features/transactions/AddTransactionPr
 import { HomePage } from './features/home/HomePage'
 import { TransactionsPage } from './features/transactions/TransactionsPage'
 import { settingsQueryKeys } from './features/settings/queries'
+import { transactionsKeys } from './features/transactions/queries'
 import type { Settings } from './api/settingsClient'
 import {
   AddTransactionContext,
@@ -96,6 +97,13 @@ function renderShell(seed?: Settings) {
   // Seed the settings flag (ADR-126) so the nav reads a deterministic value
   // without a fetch; when omitted, the module stays hidden (flag unknown).
   if (seed) queryClient.setQueryData(settingsQueryKeys.detail(), seed)
+  // Seed an empty transactions list so HomePage renders its stable, settled
+  // content immediately. Without it, Home's `useTransactions` fetch (rejected in
+  // tests) drives a pending→error transition whose timing raced this shell smoke
+  // test's `findByRole` for the Home <h1> — the CI-only flake this fixes. An
+  // empty list is the calm ADR-020 empty-month path; the shell assertions here
+  // don't depend on any rows.
+  queryClient.setQueryData(transactionsKeys.list(), [])
   const router = buildTestRouter()
   return render(
     <QueryClientProvider client={queryClient}>
@@ -166,8 +174,11 @@ test('the month navigator exposes accessible controls in both presentations', as
 test('the Add-transaction seam opens via the FAB / CTA trigger', async () => {
   const user = userEvent.setup()
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   })
+  // Seed an empty transactions list so Home renders settled content (see the
+  // note in `renderShell`) — keeps this seam test free of fetch-timing churn.
+  queryClient.setQueryData(transactionsKeys.list(), [])
 
   // Spy on the seam: a controlled provider records openAdd calls.
   let opened = 0

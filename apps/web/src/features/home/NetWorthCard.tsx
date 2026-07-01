@@ -58,7 +58,8 @@ import Typography from '@mui/material/Typography'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
-import { formatARS, formatCurrency } from '../../lib/format'
+import { formatARS, formatCurrency, maskAmount } from '../../lib/format'
+import { MaskedAmount } from './MaskedAmount'
 import { useFxRates } from './queries'
 import {
   type InstitutionGroup,
@@ -165,11 +166,14 @@ function NetWorthHeadline({
   displayCurrency,
   mep,
   source,
+  hidden,
 }: {
   decomp: Decomposition
   displayCurrency: Currency
   mep: number | null
   source: RateSource
+  /** When true, mask the headline total + the ARS/USD breakdown amounts (ADR-157). */
+  hidden: boolean
 }) {
   const { t } = useTranslation('accounts')
   // Headline value: the converted total when a rate exists, else the native
@@ -180,25 +184,43 @@ function NetWorthHeadline({
     decomp.hasOther && decomp.convertedOther != null && mep != null
   const showNoRate = decomp.hasOther && (decomp.convertedOther == null || mep == null)
 
-  const nativeStr = formatCurrency(decomp.nativeDisplay, displayCurrency)
-  const otherStr = formatCurrency(decomp.otherNative, decomp.otherCurrency)
+  // Under the privacy toggle the ARS/USD breakdown amounts are masked; the FX
+  // rate + structure stay so the line still reads as a decomposition (ADR-157).
+  const mask = maskAmount()
+  const nativeStr = hidden
+    ? mask
+    : formatCurrency(decomp.nativeDisplay, displayCurrency)
+  const otherStr = hidden
+    ? mask
+    : formatCurrency(decomp.otherNative, decomp.otherCurrency)
+  const convertedStr = hidden
+    ? mask
+    : formatCurrency(decomp.convertedOther ?? 0, displayCurrency)
 
   return (
     <Box>
       <Typography sx={{ fontSize: 12.5 }} color="text.secondary">
         {t('netWorth.totalLabel')}
       </Typography>
-      <Typography
-        sx={{
-          fontSize: { xs: 26, md: 30 },
-          fontWeight: 700,
-          fontVariantNumeric: 'tabular-nums',
-          letterSpacing: '-0.01em',
-        }}
-        color="text.primary"
+      <MaskedAmount
+        hidden={hidden}
+        figure={formatCurrency(headlineValue, displayCurrency)}
+        mask={mask}
       >
-        {formatCurrency(headlineValue, displayCurrency)}
-      </Typography>
+        {(content) => (
+          <Typography
+            sx={{
+              fontSize: { xs: 26, md: 30 },
+              fontWeight: 700,
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: '-0.01em',
+            }}
+            color="text.primary"
+          >
+            {content}
+          </Typography>
+        )}
+      </MaskedAmount>
 
       {showConverted ? (
         <Typography
@@ -207,7 +229,7 @@ function NetWorthHeadline({
         >
           {t('netWorth.decomposition', {
             native: nativeStr,
-            converted: formatCurrency(decomp.convertedOther ?? 0, displayCurrency),
+            converted: convertedStr,
             other: otherStr,
             rate: t('netWorth.rateUnit', {
               source: t(`netWorth.rateSource.${source}`),
@@ -443,6 +465,11 @@ export interface NetWorthCardProps {
   isError?: boolean
   /** Retry handler for the error state. */
   onRetry?: () => void
+  /**
+   * When true, mask the headline total + the ARS/USD breakdown amounts (privacy
+   * toggle, ADR-157). Display-only: balances are still fetched.
+   */
+  hidden?: boolean
 }
 
 export function NetWorthCard({
@@ -450,6 +477,7 @@ export function NetWorthCard({
   loading,
   isError = false,
   onRetry,
+  hidden = false,
 }: NetWorthCardProps) {
   const { t } = useTranslation('accounts')
   // Live suggested FX rates (ADR-044/133): both MEP + Official, cached for a few
@@ -534,6 +562,7 @@ export function NetWorthCard({
         displayCurrency={displayCurrency}
         mep={mep}
         source={source}
+        hidden={hidden}
       />
 
       {netWorth.accounts.length === 0 ? (
