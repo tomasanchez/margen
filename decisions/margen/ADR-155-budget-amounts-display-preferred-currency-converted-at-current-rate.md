@@ -4,7 +4,7 @@ adr: 155
 title: Budget amounts display in the preferred currency, converted at the current rate; native original is authoritative
 category: architecture
 date: 2026-06-30
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -39,3 +39,4 @@ Budgets store targets and income in the currency they were created in (native, A
 ## Status History
 
 - 2026-06-30: accepted
+- 2026-07-01: superseded by ADR-156

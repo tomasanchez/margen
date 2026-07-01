@@ -42,6 +42,8 @@ export interface GroupCardProps {
   month: string
   /** The category whose write is in flight on this page, or null. */
   savingCategory: Category | null
+  /** The category whose target JUST saved (transient "Saved ✓" flash), or null. */
+  justSavedCategory: Category | null
   /** The category whose last write errored, or null. */
   errorCategory: Category | null
   /** Commit a category's target (raw Decimal string). */
@@ -64,6 +66,7 @@ export function GroupCard({
   currency,
   month,
   savingCategory,
+  justSavedCategory,
   errorCategory,
   onCommit,
   onClear,
@@ -172,12 +175,18 @@ export function GroupCard({
       <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 0 }}>
         {lines.map((line) => (
           <BudgetRow
-            key={line.category}
+            // Key by category AND month so a month switch REMOUNTS the row with
+            // the new month's saved target (never carrying the prior month's
+            // draft into a blur that would commit a stale value, ADR-125). The
+            // in-row derived-state re-sync is a second guard when the instance is
+            // reused for other reasons.
+            key={`${line.category}:${month}`}
             line={line}
             currency={currency}
             month={month}
             avg3mo={avgByCategory.get(line.category) ?? null}
             saving={savingCategory === line.category}
+            justSaved={justSavedCategory === line.category}
             saveError={errorCategory === line.category}
             onCommit={(amount) => onCommit(line.category, amount)}
             onClear={() => onClear(line.category)}

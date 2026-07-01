@@ -92,6 +92,14 @@ export async function captureFxForCreate(
   // Already stamped (e.g. a future pre-fill path) — leave it be.
   if (input.fxRate != null) return input
 
+  // ARS INCOME is never snapshotted (ADR-156): the user doesn't convert those
+  // pesos to USD at receipt, so a frozen per-date `usd_amount` would be
+  // misleading. Its USD-equivalent, if ever shown, is computed DYNAMICALLY at the
+  // live rate — never stored. Return the input UNCHANGED so `usd_amount` stays
+  // null. NOTE: this is DIFFERENT from an ARS EXPENSE, which KEEPS its per-date
+  // snapshot for accurate historical USD spend (handled by the ARS branch below).
+  if (input.kind === 'income' && input.currency === 'ARS') return input
+
   // USD-account flow (ADR-029): reuse the confirmed rate as the snapshot.
   if (input.currency === 'USD' && typeof input.rate === 'number' && input.rate > 0) {
     return {

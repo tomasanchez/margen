@@ -15,12 +15,10 @@
 import type {
   BudgetCategory,
   BudgetHistoryLine,
-  BudgetIncome,
   BudgetPeriod,
   SavingLine,
   SavingProfile,
 } from '../../api/budgetsClient'
-import type { Currency } from '../../mock/types'
 
 /** Parse a Decimal string to a number; nullish / non-finite → 0. */
 export function parseMoney(value: string | null | undefined): number {
@@ -600,143 +598,4 @@ export function deriveFiftyThirtyTwentyTargets(
   distribute(needs, income * 0.5)
   distribute(wants, income * 0.3)
   return targets
-}
-
-// ---------------------------------------------------------------------------
-// Preferred-currency conversion (ADR-152/155). Budgets store targets + income in
-// their NATIVE created-in currency (authoritative, never migrated); the UI shows
-// everything in the user's preferred display currency, re-expressing any
-// non-preferred amount at the CURRENT preferred-rate-source rate (live, client
-// side). SPEND already arrives in the preferred currency from the backend (the
-// `currency` query param drives usd_amount vs amount), so it is NEVER converted
-// here. All pure: amounts + currencies + rate in, converted strings out — no
-// React, no i18n. The rate is ARS per 1 USD.
-// ---------------------------------------------------------------------------
-
-/**
- * Convert a numeric amount between ARS and USD at `rate` (ARS per 1 USD).
- *
- *  - same currency → unchanged;
- *  - → ARS: `amount × rate`;
- *  - → USD: `amount ÷ rate`.
- *
- * Returns `null` when a conversion is needed but the rate is missing/invalid
- * (`null`, non-finite, or ≤ 0) — the caller renders the native value or a calm
- * pending state rather than a NaN. A no-op conversion (same currency) never
- * needs the rate, so it always succeeds.
- */
-export function convertAmount(
-  amount: number,
-  from: Currency,
-  to: Currency,
-  rate: number | null,
-): number | null {
-  if (from === to) return amount
-  if (rate == null || !Number.isFinite(rate) || rate <= 0) return null
-  // ARS per 1 USD: to ARS multiply, to USD divide.
-  return to === 'ARS' ? amount * rate : amount / rate
-}
-
-/**
- * Convert a Decimal-string money amount between currencies, returning a Decimal
- * string (ADR-025/034) in `to`. `null` in (no amount) → `null` out; an
- * unavailable rate for a needed conversion → `null` so the caller can degrade
- * gracefully (show native / pending) instead of emitting NaN.
- */
-export function convertMoneyString(
-  amount: string | null | undefined,
-  from: Currency,
-  to: Currency,
-  rate: number | null,
-): string | null {
-  if (amount == null) return null
-  const converted = convertAmount(parseMoney(amount), from, to, rate)
-  return converted == null ? null : toMoneyString(converted)
-}
-
-/**
- * Re-express a {@link BudgetPeriod} in the `preferred` display currency at the
- * live `rate` (ADR-155). Each category's TARGET is converted from its native
- * `targetCurrency` → preferred and `remaining` is recomputed as
- * `convertedTarget − spent`; SPEND is left exactly as the backend supplied it
- * (already in the preferred currency, ADR-152). Saving rows are converted from
- * the period's native currency → preferred. The returned period's `currency`
- * (and every line's `targetCurrency`) is the preferred currency, so all the
- * downstream pure derivations + display components operate on a single,
- * already-converted denomination.
- *
- * When a needed conversion can't be made (rate missing/invalid), that target
- * (and its `remaining`) falls back to its NATIVE value rather than NaN — the
- * surface shows the honest native number and a calm pending note elsewhere. A
- * period already wholly in the preferred currency is returned structurally
- * unchanged (no rate required).
- */
-export function convertBudgetPeriod(
-  period: BudgetPeriod,
-  preferred: Currency,
-  rate: number | null,
-): BudgetPeriod {
-  const categories = period.categories.map((c) => {
-    if (c.target == null || c.targetCurrency == null) {
-      // No target → nothing to convert; spent/remaining already preferred.
-      return { ...c, targetCurrency: preferred }
-    }
-    const converted = convertMoneyString(c.target, c.targetCurrency, preferred, rate)
-    if (converted == null) {
-      // Unavailable rate → keep the line's NATIVE figures untouched (honest,
-      // never NaN). We do NOT recompute `remaining` here because spend is already
-      // in the preferred currency while the target stays native — mixing them
-      // would mislead. The surface shows a calm pending note instead (ADR-155).
-      return c
-    }
-    // Converted target is now in the preferred currency; spend already is, so the
-    // recomputed remaining is a clean same-currency subtraction.
-    const remaining = toMoneyString(parseMoney(converted) - parseMoney(c.spent))
-    return {
-      ...c,
-      target: converted,
-      targetCurrency: preferred,
-      remaining,
-    }
-  })
-  const savings = period.savings.map((line) => {
-    const converted = convertMoneyString(line.amount, period.currency, preferred, rate)
-    return converted == null ? line : { ...line, amount: converted }
-  })
-  return { ...period, currency: preferred, categories, savings }
-}
-
-/**
- * Re-express a {@link BudgetIncome} in the `preferred` display currency at the
- * live `rate` (ADR-155). The income amount and the household floor are converted
- * from the income's native `currency` → preferred; the returned income's
- * `currency` is the preferred currency. An unavailable rate leaves the amount in
- * its native currency (the surface shows native + a calm pending note rather
- * than NaN). Income already in the preferred currency is returned unchanged.
- */
-export function convertBudgetIncome(
-  income: BudgetIncome,
-  preferred: Currency,
-  rate: number | null,
-): BudgetIncome {
-  if (income.currency === preferred) return income
-  const amount = convertMoneyString(income.amount, income.currency, preferred, rate)
-  const floorAmount = convertMoneyString(
-    income.floor?.amount,
-    income.currency,
-    preferred,
-    rate,
-  )
-  // A needed conversion that the rate can't satisfy → keep the native income so
-  // the figure stays honest (the caller surfaces a calm pending note).
-  if (income.amount != null && amount == null) return income
-  return {
-    ...income,
-    amount: amount ?? income.amount,
-    currency: preferred,
-    floor:
-      income.floor != null && floorAmount != null
-        ? { ...income.floor, amount: floorAmount }
-        : income.floor,
-  }
 }

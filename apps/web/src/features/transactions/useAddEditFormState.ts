@@ -848,7 +848,13 @@ export function useAddEditFormState(
       // NEITHER (the row is created without a snapshot and backfilled later,
       // ADR-150). This is the authoritative path; `captureFxForCreate` is a
       // fallback that leaves an already-stamped input untouched.
-      if (Number.isFinite(arsRate)) {
+      //
+      // EXCEPTION — ARS INCOME is never snapshotted (ADR-156): the user doesn't
+      // convert those pesos to USD at receipt, so a frozen per-date `usd_amount`
+      // would be misleading; its USD-equivalent is computed dynamically at the
+      // live rate if ever needed, never stored. So send NEITHER for ARS income.
+      // ARS EXPENSE snapshotting is unchanged (accurate historical USD spend).
+      if (kind !== 'income' && Number.isFinite(arsRate)) {
         base.fxRate = toRateString(arsRate)
         base.fxSource = arsRateSource
       } else {

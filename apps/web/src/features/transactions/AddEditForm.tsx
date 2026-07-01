@@ -246,6 +246,12 @@ export function AddEditForm({
 
   const isExpense = form.type === 'expense'
   const isUsd = form.currency === 'USD'
+  // ARS INCOME (non-invoice) is never FX-snapshotted (ADR-156) — the user doesn't
+  // convert those pesos to USD at receipt, so a per-date USD rate is irrelevant.
+  // Hide the editable ARS-rate field for it. ARS EXPENSE (and ARS invoices, which
+  // count toward Monotributo) keep the field so their historical USD materializes.
+  const isArsIncomeNoSnapshot =
+    !isUsd && form.type === 'income' && !form.countsTowardMonotributo
   const currencySymbol = isUsd ? 'USD' : 'ARS'
 
   const title =
@@ -796,8 +802,9 @@ export function AddEditForm({
           for this transaction. The USD equivalent it produces is shown alongside
           so it's obvious what the rate yields. The stored `fxRate` drives
           `usd_amount` (ADR-148/151/152). Optional — a blank rate simply omits the
-          snapshot (backfilled later, ADR-150). */}
-      {!isUsd ? (
+          snapshot (backfilled later, ADR-150). Hidden for ARS income (ADR-156):
+          it isn't snapshotted, so a per-date USD rate is irrelevant there. */}
+      {!isUsd && !isArsIncomeNoSnapshot ? (
         <Box
           sx={{
             mt: 1.5,

@@ -43,6 +43,21 @@ function arsExpense(over: Partial<NewTransactionInput> = {}): NewTransactionInpu
   }
 }
 
+/** A minimal ARS income input (never FX-snapshotted, ADR-156). */
+function arsIncome(over: Partial<NewTransactionInput> = {}): NewTransactionInput {
+  return {
+    occurredOn: '2025-02-09',
+    dispDate: 'Feb 09',
+    name: 'Salary',
+    category: 'Income',
+    currency: 'ARS',
+    type: 'income',
+    kind: 'income',
+    amountNum: 900000,
+    ...over,
+  }
+}
+
 /** A minimal USD expense input carrying a confirmed rate (ADR-029). */
 function usdExpense(over: Partial<NewTransactionInput> = {}): NewTransactionInput {
   return {
@@ -140,6 +155,42 @@ describe('captureFxForCreate — ARS rows', () => {
     mockCurrent.mockResolvedValue(0)
     const result = await captureFxForCreate(arsExpense(), 'bolsa')
     expect(result.fxRate).toBeUndefined()
+  })
+})
+
+describe('captureFxForCreate — ARS income is never snapshotted (ADR-156)', () => {
+  test('an ARS income create does NOT stamp fxRate/fxSource (usd stays null, no fetch)', async () => {
+    const input = arsIncome()
+    const result = await captureFxForCreate(input, 'bolsa', { cachedRate: 1233 })
+    // No snapshot: the user doesn't convert those pesos to USD at receipt, so a
+    // frozen usd_amount would be misleading — its USD-equivalent is computed
+    // dynamically if ever shown, never stored. The input passes through unchanged.
+    expect(result.fxRate).toBeUndefined()
+    expect(result.fxSource).toBeUndefined()
+    expect(result.usd).toBeUndefined()
+    expect(result).toEqual(input)
+    expect(mockCurrent).not.toHaveBeenCalled()
+  })
+
+  test('an ARS EXPENSE create still stamps its per-date snapshot (unchanged)', async () => {
+    // The contrast case: ARS expense keeps its historical USD snapshot for
+    // accurate historical spend.
+    const result = await captureFxForCreate(arsExpense(), 'bolsa', {
+      cachedRate: 1233,
+    })
+    expect(result.fxRate).toBe('1233')
+    expect(result.fxSource).toBe('bolsa')
+  })
+
+  test('a USD income stays native (no fetch; the ARS-income skip does not apply)', async () => {
+    // USD income carries its own amount as its USD value; the skip is ARS-only.
+    const result = await captureFxForCreate(
+      arsIncome({ currency: 'USD', rate: 1000, fxRateType: 'MEP' }),
+      'bolsa',
+    )
+    expect(result.fxRate).toBe('1000')
+    expect(result.fxSource).toBe('bolsa')
+    expect(mockCurrent).not.toHaveBeenCalled()
   })
 })
 

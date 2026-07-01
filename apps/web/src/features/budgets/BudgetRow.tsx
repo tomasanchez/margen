@@ -41,12 +41,18 @@ import type { Currency } from '../../mock/types'
 export interface BudgetRowProps {
   /** The category's budget line (target / spent / remaining). */
   line: BudgetCategory
-  /** Period currency for formatting (ARS for the MVP). */
+  /** Budget currency for formatting (= the income currency, ADR-156). */
   currency: Currency
   /** The budget's month as `YYYY-MM` — drills the category into Transactions for that month. */
   month: string
   /** Whether this row's target write is in flight. */
   saving?: boolean
+  /**
+   * Whether this row's target JUST saved successfully — drives the transient
+   * "Saved ✓" flash (the page auto-clears it after ~2s). Since targets auto-save
+   * on blur/Enter (no explicit Save button), this confirms the write persisted.
+   */
+  justSaved?: boolean
   /** Whether this row's last target write failed (shows a calm retry hint). */
   saveError?: boolean
   /**
@@ -94,6 +100,7 @@ export function BudgetRow({
   currency,
   month,
   saving = false,
+  justSaved = false,
   saveError = false,
   avg3mo = null,
   onCommit,
@@ -109,6 +116,22 @@ export function BudgetRow({
   const [draft, setDraft] = useState(savedDraft)
   // Track the value last committed so a no-op blur never fires a write.
   const [committed, setCommitted] = useState(savedDraft)
+
+  // Re-sync the draft to the currently-loaded line's target when it changes and
+  // no write is in flight — the derived-state pattern (a setState during render,
+  // not an effect). This is the ROOT-CAUSE fix for the month-switch bug: rows can
+  // be reused across a month switch, so seeding the draft from `useState` once
+  // would leave the PREVIOUS month's draft in the input, and a later blur would
+  // commit that stale value into the new month. Following `line.target` here (and
+  // the category+month key in GroupCard) guarantees the input always reflects the
+  // loaded month's saved target and never writes a stale draft. Skipped while
+  // `saving` so an in-flight optimistic edit isn't clobbered by the round-trip.
+  const [seeded, setSeeded] = useState(savedDraft)
+  if (!saving && savedDraft !== seeded) {
+    setSeeded(savedDraft)
+    setDraft(savedDraft)
+    setCommitted(savedDraft)
+  }
 
   // The "use avg" suggestion shows only on an untargeted row when the trailing
   // 3-month average is positive (ADR-147); tapping it commits that target.
@@ -399,8 +422,32 @@ export function BudgetRow({
         }}
       >
         <Box sx={{ gridArea: 'name', minWidth: 0 }}>{nameCell}</Box>
-        <Box sx={{ gridArea: 'target', justifySelf: { xs: 'end', sm: 'stretch' } }}>
+        <Box
+          sx={{
+            gridArea: 'target',
+            justifySelf: { xs: 'end', sm: 'stretch' },
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: { xs: 'flex-end', sm: 'stretch' },
+          }}
+        >
           {targetCell}
+          {/* Per-row save-status (targets auto-save on blur/Enter, so confirm the
+              write persisted): "Saving…" while in flight, a transient "Saved ✓"
+              (safe/green) on success, or the calm error/retry hint (watch/red) on
+              failure. An aria-live="polite" region announces the transition
+              without stealing focus; idle shows nothing. */}
+          <Box aria-live="polite" sx={{ minHeight: 0 }}>
+            {saving ? (
+              <Typography sx={{ fontSize: 11.5, mt: 0.5 }} color="text.secondary">
+                {t('row.saving')}
+              </Typography>
+            ) : justSaved ? (
+              <Typography sx={{ fontSize: 11.5, mt: 0.5 }} color="var(--mg-safe)">
+                {t('row.saved')}
+              </Typography>
+            ) : null}
+          </Box>
         </Box>
         <Box sx={{ gridArea: 'spent', minWidth: 0 }}>{spentCell}</Box>
       </Box>
