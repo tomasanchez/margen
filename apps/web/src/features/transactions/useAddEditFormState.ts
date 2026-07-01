@@ -447,6 +447,18 @@ export function useAddEditFormState(
   const [arsRateOverridden, setArsRateOverridden] = useState<boolean>(
     prefill?.currency !== 'USD' && prefill?.fxSource === 'manual',
   )
+  // The row's SAVED snapshot source on an ARS edit (ADR-148/149). When a stored
+  // rate is re-seeded above, its provenance must be preserved too — otherwise a
+  // re-save would silently RE-TAG the snapshot with the user's CURRENT preferred
+  // source (e.g. bolsa→oficial) while keeping the old rate value, producing an
+  // inconsistent rate/source pair. Kept null on a fresh add / a null-snapshot row
+  // (backfill, ADR-150), where the current preferred source is the right tag.
+  const savedArsSource =
+    prefill?.currency !== 'USD' &&
+    typeof prefill?.fxRate === 'string' &&
+    typeof prefill?.fxSource === 'string'
+      ? prefill.fxSource
+      : null
   const setArsRateText = useCallback((next: string) => {
     setArsRateTextRaw(next)
     setArsRateEdited(true)
@@ -764,11 +776,15 @@ export function useAddEditFormState(
     return Math.round((amountArs / arsRate) * 100) / 100
   }, [currency, amountArs, arsRate])
 
-  // Provenance tag for the ARS snapshot: 'manual' once overridden, else the
-  // preferred source's casa ('bolsa'|'oficial'). Sent alongside `fxRate`.
+  // Provenance tag for the ARS snapshot, sent alongside `fxRate`:
+  //   - 'manual' once the user overrides the rate;
+  //   - else, on an ARS edit whose stored rate we re-seeded, the row's OWN saved
+  //     source, so re-saving keeps the snapshot's rate/source pair intact (never
+  //     silently re-tagged to today's preferred source);
+  //   - else (fresh add / null-snapshot row), the current preferred source's casa.
   const arsRateSource: string = arsRateOverridden
     ? 'manual'
-    : casaForSource(arsRatePreferredSource)
+    : (savedArsSource ?? casaForSource(arsRatePreferredSource))
   // Calm loading flag: the cached rate is still resolving AND we have nothing to
   // show yet (so the field can render a "fetching" placeholder, not an error).
   const arsRateLoading =
