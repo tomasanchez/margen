@@ -35,6 +35,7 @@ import {
 } from '@tanstack/react-router'
 import { ColorModeProvider } from '../../theme/colorMode'
 import { NetWorthCard, type NetWorthCardProps } from './NetWorthCard'
+import { maskAmount } from '../../lib/format'
 import { fetchSuggestedRates } from '../../api/fxClient'
 import type { NetWorth } from '../../api/accountsClient'
 
@@ -165,6 +166,39 @@ describe('NetWorthCard', () => {
         'ARS 150.000 + ~ ARS 900.000 (USD 720 at MEP ARS 1.250 / USD)',
       ),
     ).toBeInTheDocument()
+  })
+
+  test('masks the headline total + the ARS/USD breakdown amounts when hidden', async () => {
+    renderCard({ netWorth: CONVERTED, loading: false, hidden: true })
+
+    // Wait for the card to resolve (the FX-source picker appears once converted).
+    await screen.findByLabelText('Rate')
+
+    // The headline total is masked — the real ARS 1.050.000 is gone, replaced by
+    // a standalone mask carrying the accessible "hidden" label.
+    expect(screen.queryByText('ARS 1.050.000')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('hidden')).toHaveTextContent(maskAmount())
+
+    // The decomposition's balance amounts are masked, but its structure + the
+    // public FX rate (not a balance) remain.
+    expect(
+      screen.queryByText(
+        'ARS 150.000 + ~ ARS 900.000 (USD 720 at MEP ARS 1.250 / USD)',
+      ),
+    ).not.toBeInTheDocument()
+    // The masked decomposition line keeps the rate + shape (masks inline).
+    expect(
+      screen.getByText(
+        `${maskAmount()} + ~ ${maskAmount()} (${maskAmount()} at MEP ARS 1.250 / USD)`,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  test('shows the real net-worth figures when not hidden', async () => {
+    renderCard({ netWorth: CONVERTED, loading: false, hidden: false })
+
+    expect(await screen.findByText('ARS 1.050.000')).toBeInTheDocument()
+    expect(screen.queryByLabelText('hidden')).not.toBeInTheDocument()
   })
 
   test('computes the headline symmetrically when display = USD', async () => {

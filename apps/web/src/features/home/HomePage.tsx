@@ -28,9 +28,14 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
+import IconButton from '@mui/material/IconButton'
+import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
+import VisibilityRounded from '@mui/icons-material/VisibilityRounded'
+import VisibilityOffRounded from '@mui/icons-material/VisibilityOffRounded'
 import { visuallyHidden } from '@mui/utils'
 import { ErrorState } from '../../components/ErrorState'
+import { useHomePrivacy } from './useHomePrivacy'
 import { useDisplayCurrency } from '../settings/displayCurrencyContext'
 import { useMonotributoEnabled } from '../settings/queries'
 import { useInsights, useMonotributo, useSummary } from './queries'
@@ -72,6 +77,9 @@ function pctChange(current: number, previous: number): number {
 
 export function HomePage() {
   const { t } = useTranslation('home')
+  // Per-device "hide amounts" privacy toggle (ADR-157): masks the headline
+  // figures on Home only; display-only, so the values are still fetched.
+  const { hidden: amountsHidden, toggle: toggleAmounts } = useHomePrivacy()
   const monotributoQuery = useMonotributo()
   const transactionsQuery = useTransactions()
   // Net worth (ADR-122/123/127): an incremental Home addition below the hero.
@@ -172,6 +180,28 @@ export function HomePage() {
     ? pctChange(metrics.expenses, previousMetrics.expenses)
     : 0
 
+  const privacyLabel = amountsHidden ? t('privacy.show') : t('privacy.hide')
+
+  // The Home-only privacy toggle — an eye / eye-off button placed by the page
+  // title landmark (ADR-157). Tooltip + aria-label flip with state.
+  const privacyToggle = (
+    <Tooltip title={privacyLabel}>
+      <IconButton
+        onClick={toggleAmounts}
+        aria-label={privacyLabel}
+        aria-pressed={amountsHidden}
+        size="small"
+        sx={{ color: 'var(--mg-text-2)' }}
+      >
+        {amountsHidden ? (
+          <VisibilityOffRounded fontSize="small" />
+        ) : (
+          <VisibilityRounded fontSize="small" />
+        )}
+      </IconButton>
+    </Tooltip>
+  )
+
   if (transactionsQuery.isError) {
     return (
       <Box>
@@ -188,9 +218,19 @@ export function HomePage() {
 
   return (
     <Box>
-      <Typography component="h1" sx={visuallyHidden}>
-        {t('srHeading')}
-      </Typography>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          mb: { xs: 1, md: 1.5 },
+        }}
+      >
+        <Typography component="h1" sx={visuallyHidden}>
+          {t('srHeading')}
+        </Typography>
+        {privacyToggle}
+      </Box>
 
       <StatusHero
         monotributo={monotributoQuery.data}
@@ -207,6 +247,7 @@ export function HomePage() {
         expenseDeltaPct={expenseDeltaPct}
         previousMonthLabel={previousMonthLabel}
         loading={transactionsQuery.isPending || monotributoQuery.isPending}
+        hidden={amountsHidden}
       />
 
       {fallbackNote ? (
@@ -233,6 +274,7 @@ export function HomePage() {
           loading={netWorthQuery.isPending}
           isError={netWorthQuery.isError}
           onRetry={() => void netWorthQuery.refetch()}
+          hidden={amountsHidden}
         />
         <BudgetProgressCard
           period={budgetPeriod}

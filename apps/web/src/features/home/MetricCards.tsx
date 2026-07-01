@@ -16,8 +16,9 @@ import Paper from '@mui/material/Paper'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import { monoFontFamily } from '../../theme'
-import { formatCurrency, formatDelta } from '../../lib/format'
+import { formatCurrency, formatDelta, maskAmount } from '../../lib/format'
 import { useDisplayCurrency } from '../settings/displayCurrencyContext'
+import { MaskedAmount } from './MaskedAmount'
 import type { MonotributoState } from '../../mock/types'
 import type { MonthMetrics } from './homeMetrics'
 
@@ -39,6 +40,8 @@ interface MetricCardProps {
   captionTone?: DeltaTone
   /** Subtle gold tint used to set the Monotributo margin card apart. */
   highlight?: boolean
+  /** When true, mask the figure (privacy toggle, ADR-157). Caption stays shown. */
+  masked?: boolean
 }
 
 function MetricCard({
@@ -47,6 +50,7 @@ function MetricCard({
   caption,
   captionTone = 'neutral',
   highlight = false,
+  masked = false,
 }: MetricCardProps) {
   return (
     <Paper
@@ -68,23 +72,27 @@ function MetricCard({
       <Typography variant="overline" component="p" noWrap>
         {label}
       </Typography>
-      <Typography
-        component="p"
-        sx={{
-          fontFamily: monoFontFamily,
-          fontVariantNumeric: 'tabular-nums',
-          fontSize: { xs: '1.0625rem', md: '1.5rem' },
-          fontWeight: 500,
-          letterSpacing: '-0.01em',
-          mt: 1.25,
-          color: 'text.primary',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {figure}
-      </Typography>
+      <MaskedAmount hidden={masked} figure={figure} mask={maskAmount()}>
+        {(content) => (
+          <Typography
+            component="p"
+            sx={{
+              fontFamily: monoFontFamily,
+              fontVariantNumeric: 'tabular-nums',
+              fontSize: { xs: '1.0625rem', md: '1.5rem' },
+              fontWeight: 500,
+              letterSpacing: '-0.01em',
+              mt: 1.25,
+              color: 'text.primary',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {content}
+          </Typography>
+        )}
+      </MaskedAmount>
       <Typography
         component="p"
         sx={{ fontSize: 12.5, mt: 1, color: DELTA_COLOR[captionTone] }}
@@ -105,6 +113,11 @@ export interface MetricCardsProps {
   /** Previous month label for the delta captions, e.g. "May". */
   previousMonthLabel: string
   loading?: boolean
+  /**
+   * When true, mask the Income / Expenses / Est. savings VALUES (privacy
+   * toggle, ADR-157). The delta captions and the Monotributo margin stay shown.
+   */
+  hidden?: boolean
 }
 
 /** Responsive 2-col (mobile) / 4-col (desktop) grid of the headline metrics. */
@@ -115,6 +128,7 @@ export function MetricCards({
   expenseDeltaPct,
   previousMonthLabel,
   loading = false,
+  hidden = false,
 }: MetricCardsProps) {
   const { t } = useTranslation('home')
   // Income / Expenses / Est. savings are ARS-stored figures the user may prefer
@@ -161,6 +175,7 @@ export function MetricCards({
       <MetricCard
         label={t('metrics.income')}
         figure={formatMoney(metrics.income)}
+        masked={hidden}
         caption={t('metrics.delta', {
           delta: formatDelta(incomeDeltaPct),
           month: previousMonthLabel,
@@ -170,6 +185,7 @@ export function MetricCards({
       <MetricCard
         label={t('metrics.expenses')}
         figure={formatMoney(metrics.expenses)}
+        masked={hidden}
         caption={t('metrics.delta', {
           delta: formatDelta(expenseDeltaPct),
           month: previousMonthLabel,
@@ -179,6 +195,7 @@ export function MetricCards({
       <MetricCard
         label={t('metrics.savings')}
         figure={formatMoney(metrics.savings)}
+        masked={hidden}
         caption={savingsCaption}
         captionTone="neutral"
       />
