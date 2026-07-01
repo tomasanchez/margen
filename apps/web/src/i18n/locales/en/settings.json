@@ -25,6 +25,13 @@
       "selectLabel": "Rate source",
       "mep": "MEP",
       "official": "Official"
+    },
+    "rateSource": {
+      "label": "Preferred rate source",
+      "helper": "The single dollar rate Margen uses across the app — capturing transactions, backfilling history, converting budgets, and the net-worth card.",
+      "selectLabel": "Preferred source",
+      "bolsa": "MEP (Bolsa)",
+      "oficial": "Official"
     }
   },
   "monotributo": {
@@ -41,6 +48,21 @@
     },
     "activityServices": "Services",
     "activityServicesTitle": "Activity type is services in this version"
+  },
+  "backfill": {
+    "title": "Convert past transactions to USD",
+    "subtitle": "Stamp older transactions with the dollar rate from the day they happened, so USD budgets show accurate historical spend.",
+    "allConverted": "All your transactions are already converted.",
+    "pending_one": "{{count}} transaction hasn't been converted to USD yet.",
+    "pending_other": "{{count}} transactions haven't been converted to USD yet.",
+    "progress": "Converting {{done}} / {{total}}…",
+    "progressAria": "Backfill {{pct}}% complete",
+    "summary_one": "Converted {{done}} transaction.",
+    "summary_other": "Converted {{done}} transactions.",
+    "summaryWithFailures": "Converted {{done}} · {{failed}} couldn't be priced (try again later).",
+    "run": "Convert now",
+    "runAgain": "Convert remaining",
+    "running": "Converting…"
   },
   "manualThreshold": {
     "note": "Thresholds are manually maintained · AFIP scale {{year}}"

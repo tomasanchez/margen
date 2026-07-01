@@ -18,8 +18,10 @@ from margen_api.domain.models.monotributo_scale import (
 from margen_api.domain.models.settings import (
     KNOWN_DISPLAY_CURRENCIES,
     KNOWN_FX_DEFAULT_RATE_TYPES,
+    KNOWN_RATE_SOURCES,
     UnknownDisplayCurrencyError,
     UnknownFxRateTypeError,
+    UnknownRateSourceError,
 )
 from margen_api.service_layer.settings_read_models import AppSettings
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
@@ -49,11 +51,14 @@ async def update_settings(command: UpdateSettings, uow: AbstractUnitOfWork) -> A
     Raises:
         UnknownDisplayCurrencyError: When a provided currency is not ``ARS``/``USD``.
         UnknownFxRateTypeError: When a provided FX default is not ``MEP``/``official``.
+        UnknownRateSourceError: When a provided rate source is not ``bolsa``/``oficial``
+            (ADR-151).
         UnknownCategoryError: When a provided category is not a known A-K letter.
             The entrypoint maps each of these to ``422`` (ADR-030).
     """
     currency = _validated_currency(command.preferred_display_currency)
     fx_default = _validated_fx_default(command.fx_default_rate_type)
+    rate_source = _validated_rate_source(command.preferred_rate_source)
     category = _validated_category(command.monotributo_current_category)
     activity_type = command.monotributo_activity_type.strip() if command.monotributo_activity_type is not None else None
     async with uow:
@@ -61,6 +66,7 @@ async def update_settings(command: UpdateSettings, uow: AbstractUnitOfWork) -> A
             command.user_id,
             preferred_display_currency=currency,
             fx_default_rate_type=fx_default,
+            preferred_rate_source=rate_source,
             monotributo_current_category=category,
             monotributo_activity_type=activity_type,
             monotributo_enabled=command.monotributo_enabled,
@@ -87,6 +93,16 @@ def _validated_fx_default(value: str | None) -> str | None:
     if rate_type not in KNOWN_FX_DEFAULT_RATE_TYPES:
         raise UnknownFxRateTypeError(value)
     return rate_type
+
+
+def _validated_rate_source(value: str | None) -> str | None:
+    """Normalize and validate the preferred rate source, or pass through ``None`` (ADR-151)."""
+    if value is None:
+        return None
+    rate_source = value.strip().lower()
+    if rate_source not in KNOWN_RATE_SOURCES:
+        raise UnknownRateSourceError(value)
+    return rate_source
 
 
 def _validated_category(value: str | None) -> str | None:

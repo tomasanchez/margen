@@ -83,6 +83,7 @@ class CreateTransaction(Command):
     currency: Currency = Currency.ARS
     usd_amount: Decimal | None = None
     fx_rate: Decimal | None = None
+    fx_source: str | None = None
     fx_rate_type: FxRateType | None = None
     fx_rate_as_of: datetime | None = None
     category: str | None = None
@@ -115,6 +116,7 @@ class UpdateTransaction(Command):
     currency: Currency | None = None
     usd_amount: Decimal | None = None
     fx_rate: Decimal | None = None
+    fx_source: str | None = None
     fx_rate_type: FxRateType | None = None
     fx_rate_as_of: datetime | None = None
     category: str | None = None
@@ -123,6 +125,32 @@ class UpdateTransaction(Command):
     recurring: bool | None = None
     counts_toward_monotributo: bool | None = None
     account_id: UUID | None = None
+
+
+class SetTransactionFxSnapshot(Command):
+    """Request to set or replace the FX snapshot on an existing transaction (ADR-148, ADR-149).
+
+    Powers the client import rate-fill step and the one-time historical backfill
+    (ADR-149/150): the client supplies the ARS-per-1-USD ``fx_rate`` and its
+    ``fx_source`` provenance, and the handler re-materializes ``usd_amount`` as pure
+    arithmetic (``round(amount ÷ fx_rate, 2)``, ADR-148) — the backend never calls an
+    FX feed. The aggregate is loaded by ``id`` **scoped to ``user_id``** so a foreign
+    owner's id is not found (a cross-tenant snapshot is a 404, ADR-108/ADR-111).
+    ``user_id`` is the authenticated owner the entrypoint sets from ``AuthUser.id``
+    before dispatch.
+
+    Attributes:
+        id: The transaction whose snapshot is being set.
+        user_id: The authenticated owner the load/persist is scoped to.
+        fx_rate: The ARS-per-1-USD rate the client captured (ADR-149).
+        fx_source: The rate's provenance, e.g. ``'bolsa'`` / ``'mep'`` / ``'oficial'``
+            / ``'manual'`` / ``'backfill'`` (ADR-148); optional.
+    """
+
+    id: UUID
+    user_id: str
+    fx_rate: Decimal
+    fx_source: str | None = None
 
 
 class DeleteTransaction(Command):

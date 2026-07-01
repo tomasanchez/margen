@@ -29,8 +29,9 @@ class TransactionReadModel:
         type: High-level direction derived from ``kind`` (ADR-027).
         amount: Positive ARS-equivalent magnitude.
         currency: ARS (base) or USD.
-        usd_amount: Original USD amount for USD rows, else ``None``.
-        fx_rate: Rate used for the USD to ARS conversion, else ``None``.
+        usd_amount: Materialized USD equivalent for USD rows, else ``None`` (ADR-148).
+        fx_rate: Rate used for the USD to ARS conversion (ARS per 1 USD), else ``None``.
+        fx_source: Provenance of the FX snapshot rate (ADR-148), else ``None``.
         fx_rate_type: Rate family, else ``None``.
         fx_rate_as_of: Timestamp the rate was observed, else ``None``.
         category: Validated category string, optional.
@@ -59,6 +60,7 @@ class TransactionReadModel:
     currency: Currency
     usd_amount: Decimal | None
     fx_rate: Decimal | None
+    fx_source: str | None
     fx_rate_type: FxRateType | None
     fx_rate_as_of: datetime | None
     category: str | None

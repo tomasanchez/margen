@@ -27,14 +27,23 @@ export type TxType = 'expense' | 'income'
  */
 export type TxKind = 'expense' | 'income' | 'invoice'
 
-/** Spending/earning categories shown in filters and the Add form. */
+/**
+ * Spending/earning categories shown in filters and the Add form.
+ *
+ * `Housing` + `Education` are the MVP budget-category delta (ADR-140). `Rent` is
+ * RETAINED as a tolerant alias for historical rows (do NOT remove); the picker
+ * prefers `Housing`. The Phase-2 additions (Utilities/Social/DebtService/
+ * FamilySupport) are intentionally NOT here yet.
+ */
 export type Category =
   | 'Income'
   | 'Food'
+  | 'Housing'
   | 'Rent'
   | 'Transport'
   | 'Subscriptions'
   | 'Health'
+  | 'Education'
   | 'Shopping'
   | 'Entertainment'
   | 'Services'
@@ -128,6 +137,12 @@ export type MonthName =
   | 'April'
   | 'May'
   | 'June'
+  | 'July'
+  | 'August'
+  | 'September'
+  | 'October'
+  | 'November'
+  | 'December'
 
 /**
  * A single transaction.
@@ -187,6 +202,21 @@ export interface Transaction {
   fxRateAsOf?: string
   recurring?: boolean
   /**
+   * Provenance of the per-transaction FX snapshot (ADR-148), e.g. `'bolsa'`,
+   * `'oficial'`, `'manual'`, or `'backfill'`. Present once a snapshot has been
+   * captured (on create, import rate-fill, or backfill); absent on rows still
+   * pending a snapshot — those are excluded from USD spend with a calm note
+   * (ADR-152). Distinct from {@link Transaction.fxRateType} (the ADR-044 family).
+   */
+  fxSource?: string
+  /**
+   * The captured per-transaction FX snapshot rate (ARS per 1 USD) as a Decimal
+   * STRING (ADR-148). Present once a snapshot exists; carried through so the
+   * Add/Edit form can SHOW and re-seed the stored rate on edit. Distinct from the
+   * USD-row {@link Transaction.rate} (a number for the USD→ARS conversion).
+   */
+  fxRate?: string
+  /**
    * Optional free-text note carried from the backend contract (ADR-088, mirrors
    * `name`). Seeded back into the Add/Edit form on edit so it survives a re-save.
    */
@@ -243,6 +273,19 @@ export interface NewTransactionInput {
    * transaction's date; sent for USD entries, omitted for ARS.
    */
   fxRateAsOf?: string
+  /**
+   * Per-transaction FX snapshot rate as a Decimal STRING (ARS per 1 USD,
+   * ADR-148/149). Supplied by the CLIENT on create so the backend materializes
+   * `usd_amount = amount ÷ fxRate`. Captured from the day's preferred-source rate
+   * (ADR-151); omitted for ARS rows with no USD involvement.
+   */
+  fxRate?: string
+  /**
+   * Provenance of {@link NewTransactionInput.fxRate} (ADR-148), e.g. `'bolsa'`,
+   * `'oficial'`, `'manual'`, or `'backfill'`. Sent alongside `fxRate` so the
+   * snapshot records which source was used.
+   */
+  fxSource?: string
   recurring?: boolean
   /** Optional free-text note, distinct from `name` (backend contract, ADR-033). */
   notes?: string

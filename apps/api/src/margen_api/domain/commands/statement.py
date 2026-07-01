@@ -98,6 +98,9 @@ class StatementLineInput(Message):
         currency: ``ARS`` or ``USD``.
         usd_amount: The stated dollar figure for a USD line, else ``None``.
         fx_rate: The stated cotización for a USD line, else ``None`` (manual confirm).
+        fx_source: Provenance of the FX snapshot rate when one is supplied (ADR-148),
+            else ``None``; statement imports usually leave it null for the client
+            rate-fill step (ADR-149).
         fx_rate_type: ``OFFICIAL`` when a rate is stated, else ``None``.
         category: A category label, editable in review, or ``None``.
         payment_method: The normalized bank label, e.g. ``"Galicia"`` or
@@ -117,6 +120,7 @@ class StatementLineInput(Message):
     currency: Currency = Currency.ARS
     usd_amount: Decimal | None = None
     fx_rate: Decimal | None = None
+    fx_source: str | None = None
     fx_rate_type: FxRateType | None = None
     fx_rate_as_of: datetime | None = None
     category: str | None = None

@@ -9,7 +9,13 @@ register their handlers in one obvious place. No domain events exist yet
 from __future__ import annotations
 
 from margen_api.domain.commands.account import CreateAccount, UpdateAccount
-from margen_api.domain.commands.budget import ClearBudget, UpsertBudget
+from margen_api.domain.commands.budget import (
+    ApplySavingProfile,
+    ClearBudget,
+    RepriceMonth,
+    UpsertBudget,
+    UpsertBudgetIncome,
+)
 from margen_api.domain.commands.institution import CreateInstitution, UpdateInstitution
 from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
 from margen_api.domain.commands.settings import UpdateSettings
@@ -17,15 +23,23 @@ from margen_api.domain.commands.statement import ImportStatement
 from margen_api.domain.commands.transaction import (
     CreateTransaction,
     DeleteTransaction,
+    SetTransactionFxSnapshot,
     UpdateTransaction,
 )
 from margen_api.domain.commands.transfer import CreateTransfer, DeleteTransfer
 from margen_api.service_layer.account_handlers import create_account, update_account
-from margen_api.service_layer.budget_handlers import clear_budget, upsert_budget
+from margen_api.service_layer.budget_handlers import (
+    apply_saving_profile,
+    clear_budget,
+    reprice_month,
+    upsert_budget,
+    upsert_budget_income,
+)
 from margen_api.service_layer.handlers import (
     create_transaction,
     delete_transaction,
     import_statement,
+    set_transaction_fx_snapshot,
     update_transaction,
 )
 from margen_api.service_layer.institution_handlers import create_institution, update_institution
@@ -37,6 +51,7 @@ from margen_api.service_layer.transfer_handlers import create_transfer, delete_t
 COMMAND_HANDLERS: dict[type, CommandHandler] = {
     CreateTransaction: create_transaction,
     UpdateTransaction: update_transaction,
+    SetTransactionFxSnapshot: set_transaction_fx_snapshot,
     DeleteTransaction: delete_transaction,
     ImportStatement: import_statement,
     CaptureMonotributoSnapshot: capture_monotributo_snapshot,
@@ -49,6 +64,9 @@ COMMAND_HANDLERS: dict[type, CommandHandler] = {
     DeleteTransfer: delete_transfer,
     UpsertBudget: upsert_budget,
     ClearBudget: clear_budget,
+    UpsertBudgetIncome: upsert_budget_income,
+    ApplySavingProfile: apply_saving_profile,
+    RepriceMonth: reprice_month,
 }
 
 EVENT_HANDLERS: dict[type, list[EventHandler]] = {}

@@ -73,6 +73,12 @@ export interface TransactionDto {
   amountNum: string
   usd?: string | null
   rate?: string | null
+  /** Materialized USD equivalent of the FX snapshot (ADR-148); absent pre-snapshot. */
+  usdAmount?: string | null
+  /** The captured FX snapshot rate, ARS per 1 USD as a Decimal string (ADR-148). */
+  fxRate?: string | null
+  /** Provenance of the FX snapshot rate (ADR-148): 'bolsa'/'oficial'/'manual'/'backfill'. */
+  fxSource?: string | null
   fxRateType?: string | null
   fxRateAsOf?: string | null
   recurring: boolean
@@ -118,6 +124,10 @@ interface TransactionCreateBody {
   accountId?: string | null
   usd?: number
   rate?: number
+  /** Client-supplied FX snapshot rate as a Decimal string (ARS per 1 USD, ADR-148/149). */
+  fxRate?: string
+  /** Provenance of the FX snapshot rate (ADR-148): 'bolsa'/'oficial'/'manual'/'backfill'. */
+  fxSource?: string
   fxRateType?: FxRateType
   fxRateAsOf?: string
   recurring?: boolean
@@ -165,18 +175,33 @@ function parseMoney(value: string | null | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
+/**
+ * Whether a client-supplied `fxRate` Decimal string is a valid POSITIVE rate.
+ * The FX snapshot only materializes `usd_amount` when the rate is > 0 (ADR-148);
+ * an absent, empty, non-numeric, or non-positive rate means "no snapshot".
+ */
+function hasPositiveFxRate(value: string | undefined): value is string {
+  if (value === undefined) return false
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) && parsed > 0
+}
+
 /** Narrow an arbitrary string to one of the prototype's known categories. */
 function asCategory(value: string | null | undefined): Category {
   return (value ?? 'Other') as Category
 }
 
 /**
- * Narrow an arbitrary string to one of the six normalized banks (ADR-117). The
- * backend normalizes `bank` to the known set, but unknown legacy strings are
- * still tolerated (cast through) and absent values default to `'Transfer'`.
+ * Narrow an arbitrary string to one of the normalized banks (ADR-117). The
+ * `bank` column was DECOMMISSIONED (ADR-136): attribution now comes from the
+ * linked account, and the backend no longer sends `bank` for manual rows. An
+ * absent value therefore maps to the EMPTY "no bank" sentinel (`''`) — NOT to
+ * `'Transfer'`, which would fabricate a bogus tag on every unlinked row. A
+ * genuine legacy `bank` string is still tolerated (cast through) so imported /
+ * historical rows keep their tag; only a real 'Transfer' value renders as one.
  */
 function asBank(value: string | null | undefined): Bank {
-  return (value ?? 'Transfer') as Bank
+  return (value ?? '') as Bank
 }
 
 /** Narrow the backend month name to the prototype's {@link MonthName} union. */
@@ -231,6 +256,12 @@ export function adaptTransaction(dto: TransactionDto): Transaction {
     // carry them, so keep them off ARS rows to keep the shape clean.
     ...(fxRateType !== undefined ? { fxRateType } : {}),
     ...(fxRateAsOf !== undefined ? { fxRateAsOf } : {}),
+    // FX snapshot provenance + rate (ADR-148): present once a row carries a
+    // snapshot; the budgets surface uses `fxSource`'s presence to count
+    // unconverted rows (ADR-152), and the Add/Edit form re-seeds the stored
+    // `fxRate` so an edit shows the rate that was captured.
+    ...(dto.fxSource ? { fxSource: dto.fxSource } : {}),
+    ...(dto.fxRate ? { fxRate: dto.fxRate } : {}),
     ...(dto.recurring ? { recurring: dto.recurring } : {}),
     ...(dto.notes ? { notes: dto.notes } : {}),
   }
@@ -266,6 +297,20 @@ export function toCreateBody(input: NewTransactionInput): TransactionCreateBody 
   if (input.accountId !== undefined) body.accountId = input.accountId
   if (input.usd !== undefined) body.usd = input.usd
   if (input.rate !== undefined) body.rate = input.rate
+  // The per-transaction FX snapshot (ADR-148/149): the client supplies the rate
+  // + provenance so the backend materializes `usd_amount`. Sent when captured
+  // (the add mutation stamps the day's preferred-source rate, ADR-151).
+  //
+  // INVARIANT (ADR-148): `fxRate` and `fxSource` travel TOGETHER. The backend
+  // only materializes `usd_amount` when BOTH a `fx_source` AND a positive
+  // `fx_rate` are present; a source without a rate tags the row but leaves it
+  // permanently unconverted. So we only include the pair when a valid positive
+  // rate accompanies it; absent/non-positive rate → send NEITHER (the row is
+  // created without a snapshot and backfilled later, ADR-150/152).
+  if (hasPositiveFxRate(input.fxRate)) {
+    body.fxRate = input.fxRate
+    if (input.fxSource !== undefined) body.fxSource = input.fxSource
+  }
   if (input.fxRateType !== undefined) body.fxRateType = input.fxRateType
   if (input.fxRateAsOf !== undefined) body.fxRateAsOf = input.fxRateAsOf
   if (input.recurring !== undefined) body.recurring = input.recurring
@@ -303,6 +348,14 @@ export function toPatchBody(
   if (patch.accountId !== undefined) body.accountId = patch.accountId
   if (patch.usd !== undefined) body.usd = patch.usd
   if (patch.rate !== undefined) body.rate = patch.rate
+  // Same FX pairing invariant as the create body (ADR-148): only send the
+  // snapshot when a positive `fxRate` accompanies its `fxSource`, so a patch can
+  // never tag a row with a source-without-rate (which would leave `usd_amount`
+  // null). A patch carrying neither leaves the stored snapshot unchanged.
+  if (hasPositiveFxRate(patch.fxRate)) {
+    body.fxRate = patch.fxRate
+    if (patch.fxSource !== undefined) body.fxSource = patch.fxSource
+  }
   if (patch.fxRateType !== undefined) body.fxRateType = patch.fxRateType
   if (patch.fxRateAsOf !== undefined) body.fxRateAsOf = patch.fxRateAsOf
   if (patch.recurring !== undefined) body.recurring = patch.recurring
@@ -360,10 +413,43 @@ async function remove(id: string): Promise<void> {
   await ensureOk(response)
 }
 
+/** Body for `PUT /transactions/{id}/fx` — the client-captured FX snapshot (ADR-148/149). */
+export interface FxSnapshotBody {
+  /** ARS per 1 USD as a Decimal string; must be positive (the backend 422s otherwise). */
+  fxRate: string
+  /** Provenance of the rate (ADR-148): 'bolsa'/'oficial'/'manual'/'backfill'. */
+  fxSource?: string
+}
+
+/**
+ * PUT the FX snapshot on an existing transaction (ADR-148/149). The client
+ * supplies the captured ARS-per-1-USD `fxRate` + its `fxSource`; the backend
+ * re-materializes `usd_amount` and returns the full refreshed row. Powers the
+ * statement-import rate-fill (ADR-149) and the one-time historical backfill
+ * (ADR-150). A cross-tenant/absent id is a 404; a non-positive rate a 422.
+ */
+async function setFxSnapshot(
+  id: string,
+  body: FxSnapshotBody,
+): Promise<Transaction> {
+  const response = await authedFetch(apiUrl(`/transactions/${id}/fx`), {
+    method: 'PUT',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      fxRate: body.fxRate,
+      ...(body.fxSource != null ? { fxSource: body.fxSource } : {}),
+    }),
+  })
+  await ensureOk(response)
+  const envelope = (await response.json()) as ResponseEnvelope<TransactionDto>
+  return adaptTransaction(envelope.data)
+}
+
 /** The transactions API client, grouped for ergonomic import. */
 export const transactionsClient = {
   list,
   create,
   update,
   remove,
+  setFxSnapshot,
 } as const

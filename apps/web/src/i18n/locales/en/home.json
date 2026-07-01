@@ -65,6 +65,8 @@
     "attentionTitle": "Closest to limit",
     "attentionPct": "{{pct}}%",
     "attentionOver": "Over",
+    "incomeSaved": "Net income {{income}} · saved {{saved}}",
+    "repriceNudge": "New month — reprice your budget →",
     "emptyBody": "Set monthly targets per category to see how your spending tracks against plan.",
     "setUp": "Set up budgets",
     "errorTitle": "Budget data unavailable",

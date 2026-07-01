@@ -18,6 +18,23 @@
 const DOLARAPI_MEP_URL = 'https://dolarapi.com/v1/dolares/bolsa'
 const DOLARAPI_OFFICIAL_URL = 'https://dolarapi.com/v1/dolares/oficial'
 
+/**
+ * The `casa` (house) path segment for each persisted rate source (ADR-151). The
+ * preferred-rate-source setting is `'bolsa'` (MEP, default) or `'oficial'`; both
+ * the current and the historical endpoints take the same segment, so capture,
+ * backfill, and budgets all resolve to ONE source of truth.
+ */
+export type FxCasa = 'bolsa' | 'oficial'
+
+/**
+ * ArgentinaDatos historical per-date quote base. Path is
+ * `/v1/cotizaciones/dolares/{casa}/{yyyy}/{mm}/{dd}`; the endpoint carries the
+ * last published quote forward over weekends/holidays (no 404 on a non-business
+ * day) and returns `{ compra, venta, fecha }` (ADR-150 — VERIFIED source).
+ */
+const ARGENTINADATOS_HISTORICAL_BASE =
+  'https://api.argentinadatos.com/v1/cotizaciones/dolares'
+
 /** Abort the fetch if dolarapi is slow so the form never hangs on the suggestion. */
 const FETCH_TIMEOUT_MS = 6000
 
@@ -126,4 +143,113 @@ export async function fetchSuggestedRates(
     fetchSuggestedOfficialRate(signal),
   ])
   return { mep, official }
+}
+
+/** Map the persisted preferred-rate-source `casa` to its CURRENT dolarapi URL. */
+function currentUrlFor(casa: FxCasa): string {
+  return casa === 'oficial' ? DOLARAPI_OFFICIAL_URL : DOLARAPI_MEP_URL
+}
+
+/**
+ * Fetch the CURRENT preferred-source rate (ARS per USD) for the given `casa`
+ * (ADR-149/151). Returns the `venta` (sell) leg — the same leg the suggested
+ * rates + net-worth conversion use, so capture is consistent with display.
+ * Returns `null` on any failure (never throws); the caller treats a `null` as
+ * "no rate captured" rather than guessing.
+ */
+export function fetchCurrentRate(
+  casa: FxCasa,
+  signal?: AbortSignal,
+): Promise<number | null> {
+  return fetchVentaRate(currentUrlFor(casa), signal)
+}
+
+/**
+ * Build the ArgentinaDatos historical URL for a `casa` + ISO date. The ISO date
+ * (`YYYY-MM-DD`) is split into the path segments the endpoint expects
+ * (`/{yyyy}/{mm}/{dd}`); only the date portion is consumed, so a full ISO
+ * timestamp is tolerated.
+ */
+export function historicalUrlFor(casa: FxCasa, isoDate: string): string {
+  const [yyyy, mm, dd] = isoDate.slice(0, 10).split('-')
+  return `${ARGENTINADATOS_HISTORICAL_BASE}/${casa}/${yyyy}/${mm}/${dd}`
+}
+
+/**
+ * In-memory cache of resolved historical rates, keyed by `casa|YYYY-MM-DD`. The
+ * backfill (ADR-150) and import rate-fill (ADR-149) batch by unique date, so a
+ * month of transactions sharing a date hits the network once. Only successful,
+ * usable numeric resolutions are cached — a `null` (unavailable date) is NOT
+ * cached so a later retry can still recover. Lives for the page session.
+ */
+const historicalCache = new Map<string, number>()
+
+/** Cache key for a (casa, date) pair — the date is normalized to `YYYY-MM-DD`. */
+function historicalCacheKey(casa: FxCasa, isoDate: string): string {
+  return `${casa}|${isoDate.slice(0, 10)}`
+}
+
+/** Clear the historical-rate cache (test seam; never needed in normal use). */
+export function clearHistoricalRateCache(): void {
+  historicalCache.clear()
+}
+
+/** Local calendar date as `YYYY-MM-DD` (local parts — avoids a UTC off-by-one). */
+function localTodayIso(now: Date = new Date()): string {
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+/**
+ * Fetch the historical preferred-source rate (ARS per USD) for a `casa` on a
+ * specific `isoDate` (ADR-150/154). Resolution order:
+ *
+ *  1. an in-memory cache hit for `(casa, date)` — returned without a fetch;
+ *  2. the ArgentinaDatos per-date quote (`venta` leg, matching the current
+ *     rate) — cached on success;
+ *  3. for TODAY or a later date with no published quote yet, the CURRENT
+ *     dolarapi rate (its latest) — the right rate for a same-day row;
+ *  4. `null` for a genuinely OLDER missing date — no wrong-date guess.
+ *
+ * The today+ fallback (ADR-154 refinement): ArgentinaDatos publishes through the
+ * PREVIOUS business day, so a same-day transaction has no dated quote yet — its
+ * correct rate is the live one, so we use `fetchCurrentRate` (dolarapi's latest).
+ * For an OLDER missing date we still return `null` (the caller SKIPS the row,
+ * ADR-152/154): ArgentinaDatos carries the last quote forward over weekends, so a
+ * genuinely missing OLD date means "no data", and stamping today's rate on a
+ * backdated row would materialize a wildly wrong `usd_amount` under high inflation.
+ *
+ * Never throws — every failure path resolves to `null`. A resolved rate (dated or
+ * the today+ current fallback) is cached against the date; a `null` is not, so a
+ * later pass can still recover the dated quote once it's published.
+ */
+export async function fetchHistoricalRate(
+  casa: FxCasa,
+  isoDate: string,
+  signal?: AbortSignal,
+): Promise<number | null> {
+  const key = historicalCacheKey(casa, isoDate)
+  const cached = historicalCache.get(key)
+  if (cached !== undefined) return cached
+
+  const dated = await fetchVentaRate(historicalUrlFor(casa, isoDate), signal)
+  if (dated != null) {
+    historicalCache.set(key, dated)
+    return dated
+  }
+
+  // No dated quote. For TODAY or later the historical series simply hasn't
+  // published it yet — use the current preferred-source rate (dolarapi's latest)
+  // rather than skipping the row. For an OLDER missing date, return null so the
+  // caller skips it (no wrong-date guess, ADR-154).
+  if (isoDate.slice(0, 10) >= localTodayIso()) {
+    const current = await fetchCurrentRate(casa, signal)
+    if (current != null) {
+      historicalCache.set(key, current)
+      return current
+    }
+  }
+  return null
 }

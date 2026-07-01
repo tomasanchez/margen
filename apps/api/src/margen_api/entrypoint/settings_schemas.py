@@ -34,6 +34,10 @@ class SettingsUpdateRequest(CamelCaseModel):
         default=None,
         description="Default FX rate type ('MEP' or 'official'); omit to leave unchanged.",
     )
+    preferred_rate_source: str | None = Field(
+        default=None,
+        description="Preferred FX rate source ('bolsa' or 'oficial'); omit to leave unchanged (ADR-151).",
+    )
     monotributo_current_category: str | None = Field(
         default=None,
         description="Monotributo category letter A-K; omit to leave unchanged.",
@@ -59,6 +63,7 @@ class SettingsUpdateRequest(CamelCaseModel):
             user_id=user_id,
             preferred_display_currency=self.preferred_display_currency,
             fx_default_rate_type=self.fx_default_rate_type,
+            preferred_rate_source=self.preferred_rate_source,
             monotributo_current_category=self.monotributo_current_category,
             monotributo_activity_type=self.monotributo_activity_type,
             monotributo_enabled=self.monotributo_enabled,
@@ -70,6 +75,7 @@ class SettingsResponse(CamelCaseModel):
 
     preferred_display_currency: str = Field(description="Display currency ('ARS' or 'USD').")
     fx_default_rate_type: str = Field(description="Default FX rate type ('MEP' or 'official').")
+    preferred_rate_source: str = Field(description="Preferred FX rate source ('bolsa' or 'oficial') (ADR-151).")
     monotributo_current_category: str = Field(description="Monotributo category letter A-K in effect.")
     monotributo_activity_type: str = Field(description="Monotributo activity type ('services' or 'bienes').")
     monotributo_enabled: bool = Field(description="Whether the optional Monotributo module is enabled (ADR-126).")
@@ -80,6 +86,7 @@ class SettingsResponse(CamelCaseModel):
         return cls(
             preferred_display_currency=model.preferred_display_currency,
             fx_default_rate_type=model.fx_default_rate_type,
+            preferred_rate_source=model.preferred_rate_source,
             monotributo_current_category=model.monotributo_current_category,
             monotributo_activity_type=model.monotributo_activity_type,
             monotributo_enabled=model.monotributo_enabled,

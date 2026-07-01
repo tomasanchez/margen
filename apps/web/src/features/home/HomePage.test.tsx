@@ -157,6 +157,7 @@ function renderHome(initialMonth: ViewingMonth) {
   queryClient.setQueryData(settingsQueryKeys.detail(), {
     preferredDisplayCurrency: 'ARS',
     fxDefaultRateType: 'MEP',
+    preferredRateSource: 'bolsa',
     monotributoCurrentCategory: 'C',
     monotributoActivityType: 'services',
     monotributoEnabled: true,

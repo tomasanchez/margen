@@ -23,6 +23,7 @@ const {
   createMock,
   updateMock,
   fxMock,
+  currentRateMock,
   fetchSettingsMock,
   monotributoMock,
   accountsListMock,
@@ -31,6 +32,7 @@ const {
   createMock: vi.fn(),
   updateMock: vi.fn(),
   fxMock: vi.fn(),
+  currentRateMock: vi.fn(),
   fetchSettingsMock: vi.fn(),
   monotributoMock: vi.fn(),
   accountsListMock: vi.fn(),
@@ -46,7 +48,10 @@ vi.mock('../../api/transactionsClient', () => ({
   },
 }))
 
-vi.mock('../../api/fxClient', () => ({ fetchSuggestedRates: fxMock }))
+vi.mock('../../api/fxClient', () => ({
+  fetchSuggestedRates: fxMock,
+  fetchCurrentRate: currentRateMock,
+}))
 
 vi.mock('../../api/monotributoClient', () => ({
   fetchMonotributo: monotributoMock,
@@ -86,9 +91,11 @@ vi.mock('@tanstack/react-router', async () => {
 
 beforeEach(() => {
   fxMock.mockResolvedValue({ mep: 1245, official: 1045 })
+  currentRateMock.mockResolvedValue(1245)
   fetchSettingsMock.mockResolvedValue({
     preferredDisplayCurrency: 'ARS',
     fxDefaultRateType: 'MEP',
+    preferredRateSource: 'bolsa',
     monotributoCurrentCategory: 'C',
     monotributoActivityType: 'services',
     monotributoEnabled: true,

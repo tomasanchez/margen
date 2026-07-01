@@ -11,9 +11,13 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  clearHistoricalRateCache,
+  fetchCurrentRate,
+  fetchHistoricalRate,
   fetchSuggestedMepRate,
   fetchSuggestedOfficialRate,
   fetchSuggestedRates,
+  historicalUrlFor,
 } from './fxClient'
 
 /** Build a 200 JSON Response with the given quote body. */
@@ -155,5 +159,128 @@ describe('fetchSuggestedRates (both in parallel)', () => {
       mep: null,
       official: null,
     })
+  })
+})
+
+describe('fetchCurrentRate (preferred source by casa)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  test('bolsa hits the MEP/Bolsa endpoint and returns its venta', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(quoteResponse({ venta: 1245 }))
+    await expect(fetchCurrentRate('bolsa')).resolves.toBe(1245)
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain(
+      'dolarapi.com/v1/dolares/bolsa',
+    )
+  })
+
+  test('oficial hits the official endpoint and returns its venta', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(quoteResponse({ venta: 1045 }))
+    await expect(fetchCurrentRate('oficial')).resolves.toBe(1045)
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain(
+      'dolarapi.com/v1/dolares/oficial',
+    )
+  })
+
+  test('returns null on failure (never throws)', async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('offline'))
+    await expect(fetchCurrentRate('bolsa')).resolves.toBeNull()
+  })
+})
+
+describe('historicalUrlFor', () => {
+  test('builds the ArgentinaDatos /{casa}/{yyyy}/{mm}/{dd} path from an ISO date', () => {
+    expect(historicalUrlFor('bolsa', '2025-02-09')).toBe(
+      'https://api.argentinadatos.com/v1/cotizaciones/dolares/bolsa/2025/02/09',
+    )
+  })
+
+  test('tolerates a full ISO timestamp (only the date portion is used)', () => {
+    expect(historicalUrlFor('oficial', '2024-12-25T10:30:00Z')).toBe(
+      'https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial/2024/12/25',
+    )
+  })
+})
+
+describe('fetchHistoricalRate', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+    clearHistoricalRateCache()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    clearHistoricalRateCache()
+  })
+
+  test('returns the per-date venta from ArgentinaDatos and hits the dated URL', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      quoteResponse({ compra: 1180, venta: 1200, fecha: '2025-02-09' }),
+    )
+    await expect(fetchHistoricalRate('bolsa', '2025-02-09')).resolves.toBe(1200)
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain(
+      'api.argentinadatos.com/v1/cotizaciones/dolares/bolsa/2025/02/09',
+    )
+  })
+
+  test('caches by (casa, date) so a repeat lookup makes no second request', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(quoteResponse({ venta: 1200 }))
+    await fetchHistoricalRate('bolsa', '2025-02-09')
+    // A second call for the same (casa, date) resolves from cache — no new fetch.
+    await expect(fetchHistoricalRate('bolsa', '2025-02-09')).resolves.toBe(1200)
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
+  })
+
+  test('returns null when the date is unavailable — NO fallback to today\'s rate (ADR-154)', async () => {
+    // The dated endpoint 404s. ArgentinaDatos carries quotes forward over
+    // weekends/holidays, so a true 404 means "no data" — we must NOT stamp
+    // today's rate on a backdated row. Only ONE fetch (the dated one) is made.
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response('not found', { status: 404 }),
+    )
+    await expect(fetchHistoricalRate('bolsa', '2025-02-09')).resolves.toBeNull()
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain(
+      'api.argentinadatos.com/v1/cotizaciones/dolares/bolsa/2025/02/09',
+    )
+  })
+
+  test('does NOT cache an unavailable-date null (a retry can recover the dated quote)', async () => {
+    // First pass: the dated quote 404s → null, and the null is NOT cached.
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('x', { status: 404 }))
+    await expect(fetchHistoricalRate('bolsa', '2025-02-09')).resolves.toBeNull()
+
+    // A later pass: the dated quote is now published and is used (not a cached
+    // null) — proving the null was not cached against the date.
+    vi.mocked(fetch).mockResolvedValueOnce(quoteResponse({ venta: 1210 }))
+    await expect(fetchHistoricalRate('bolsa', '2025-02-09')).resolves.toBe(1210)
+  })
+
+  test('returns null when the dated quote fails (never throws)', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('x', { status: 500 }))
+    await expect(fetchHistoricalRate('bolsa', '2025-02-09')).resolves.toBeNull()
+  })
+
+  test('for TODAY, falls back to the current dolarapi rate when the dated quote is not published yet', async () => {
+    // ArgentinaDatos publishes through the previous business day, so a same-day
+    // row 404s on the dated endpoint. For TODAY (or later) we use the CURRENT
+    // dolarapi rate (its latest) instead of skipping (ADR-154 refinement).
+    const now = new Date()
+    const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response('not found', { status: 404 })) // dated: not yet
+      .mockResolvedValueOnce(quoteResponse({ venta: 1519 })) // current dolarapi
+    await expect(fetchHistoricalRate('bolsa', todayIso)).resolves.toBe(1519)
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2)
+    // The dated endpoint first, then the CURRENT dolarapi endpoint.
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain(
+      'api.argentinadatos.com/v1/cotizaciones/dolares/bolsa/',
+    )
+    expect(String(vi.mocked(fetch).mock.calls[1][0])).toContain(
+      'dolarapi.com/v1/dolares/bolsa',
+    )
   })
 })

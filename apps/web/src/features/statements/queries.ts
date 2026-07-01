@@ -15,17 +15,51 @@ import {
   type StatementImportRequest,
   type StatementImportResult,
 } from '../../api/statementsClient'
+import { transactionsClient } from '../../api/transactionsClient'
 import { transactionsKeys } from '../transactions/queries'
 import { homeQueryKeys } from '../home/queries'
+import { useSettings } from '../settings/queries'
+import { casaForSource } from '../transactions/captureFx'
+import { fillSnapshots } from '../fx/fillSnapshots'
 
 /**
  * Import the reviewed statement selection, then refresh the shared transactions
  * list + Home derived queries so the created expenses appear everywhere.
+ *
+ * Statement rows are parsed + created server-side WITHOUT an FX snapshot (the
+ * server has no FX feed, ADR-149). After a successful import this hook runs a
+ * client-side RATE-FILL step (ADR-149/150): it re-reads the transactions, finds
+ * the just-created rows still lacking a snapshot, and stamps each with the rate
+ * in effect on its (backdated) `occurred_on`, using the preferred source
+ * (ADR-151). The fill is best-effort — a failure leaves the rows unconverted
+ * (surfaced in budgets, ADR-152) for a later backfill (ADR-150), and never fails
+ * the import itself. A final invalidate refreshes everything once the snapshots
+ * land.
  */
 export function useImportStatement() {
   const queryClient = useQueryClient()
+  const settingsQuery = useSettings()
+  const casa = casaForSource(settingsQuery.data?.preferredRateSource)
   return useMutation<StatementImportResult, Error, StatementImportRequest>({
-    mutationFn: (payload) => statementsClient.importStatement(payload),
+    mutationFn: async (payload) => {
+      const result = await statementsClient.importStatement(payload)
+      // Rate-fill the just-created rows (ADR-149). Best-effort: never throw out
+      // of the import on a fill failure — the rows simply stay unconverted.
+      try {
+        const created = new Set(result.createdTransactionIds)
+        const all = await transactionsClient.list()
+        const imported = all.filter((tx) => created.has(tx.id))
+        if (imported.length > 0) {
+          // Tag import-filled rows as `'import'` (ADR-148/149) so they're
+          // distinguishable from the one-time bulk backfill (`'backfill'`,
+          // ADR-150) — distinct provenances per ADR-148.
+          await fillSnapshots(imported, { casa, fxSource: 'import' })
+        }
+      } catch {
+        // Leave the rows unconverted; the historical backfill (#80) clears them.
+      }
+      return result
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: transactionsKeys.all })
       void queryClient.invalidateQueries({ queryKey: homeQueryKeys.all })

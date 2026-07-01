@@ -40,6 +40,13 @@ vi.mock('../../api/transactionsClient', () => ({
 let store: Transaction[] = []
 
 beforeEach(() => {
+  // Pin "today" inside the multi-month fixture window (June 2026). The page
+  // defaults its month to the CURRENT month (ADR-040), so an unpinned clock on a
+  // month outside the fixture (e.g. July) would leave the default view empty and
+  // make these date-independent assertions flaky. `selectAllTime` still widens
+  // scope where a test needs the full fixture.
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  vi.setSystemTime(new Date(2026, 5, 15, 12))
   store = TRANSACTIONS_FIXTURE.map((t) => ({ ...t }))
   listMock.mockImplementation(() => Promise.resolve(store.map((t) => ({ ...t }))))
   removeMock.mockImplementation((id: string) => {
@@ -49,6 +56,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.clearAllMocks()
 })
 

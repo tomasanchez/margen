@@ -17,6 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict
 
 from margen_api.adapters.account_queries import SqlAlchemyAccountReader
+from margen_api.adapters.budget_income_queries import SqlAlchemyBudgetIncomeReader
 from margen_api.adapters.budget_queries import SqlAlchemyBudgetReader
 from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.institution_queries import SqlAlchemyInstitutionReader
@@ -31,6 +32,7 @@ from margen_api.adapters.statement_store import SqlAlchemyStatementStore
 from margen_api.adapters.transfer_queries import SqlAlchemyTransferReader
 from margen_api.bootstrap import ApplicationContainer
 from margen_api.service_layer.account_reader import AbstractAccountReader
+from margen_api.service_layer.budget_income_reader import AbstractBudgetIncomeReader
 from margen_api.service_layer.budget_reader import AbstractBudgetReader
 from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
@@ -432,3 +434,20 @@ async def get_budget_reader(container: Container) -> AsyncIterator[AbstractBudge
 
 
 BudgetReader = Annotated[AbstractBudgetReader, Depends(get_budget_reader)]
+
+
+async def get_budget_income_reader(container: Container) -> AsyncIterator[AbstractBudgetIncomeReader]:
+    """Yield a budget-income reader over a request-scoped read-only session (ADR-139).
+
+    Query paths bypass the unit of work by design (ADR-028); the session opened here
+    is closed when the request finishes. Income writes go through the message bus /
+    unit of work instead, keeping this reader read-only.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemyBudgetIncomeReader(session)
+    finally:
+        await session.close()
+
+
+BudgetIncomeReader = Annotated[AbstractBudgetIncomeReader, Depends(get_budget_income_reader)]

@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from sqlalchemy import Select
 
+from margen_api.adapters.budget_queries import SqlAlchemyBudgetReader
 from margen_api.adapters.models.app_settings import AppSettingsRecord
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
 from margen_api.adapters.models.transaction import TransactionRecord
@@ -677,3 +678,89 @@ class TestSettingsReader:
         assert settings.monotributo_current_category == DEFAULT_MONOTRIBUTO_CATEGORY
         assert settings.monotributo_activity_type == DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE
         assert settings.monotributo_enabled == DEFAULT_MONOTRIBUTO_ENABLED
+
+
+class TestBudgetCategoryHistory:
+    """``category_history`` aggregates the three months before the requested one (ADR-145)."""
+
+    async def test_aggregates_three_prior_months_scoped_to_owner(self):
+        """
+        GIVEN a session whose three executes return the 2026-03/-04/-05 category totals
+        WHEN category_history runs for June 2026
+        THEN avg3mo is the mean across the three months, lastMonth is May's spend, and
+             every aggregation query is scoped to the owner (ADR-108)
+        """
+        # GIVEN — execute called 3x, oldest-first: March, April, May.
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([_category_row("Food", Decimal("30000.00"))]),
+            _result([_category_row("Food", Decimal("60000.00"))]),
+            _result([_category_row("Food", Decimal("90000.00")), _category_row("Transport", Decimal("9000.00"))]),
+        ]
+        reader = SqlAlchemyBudgetReader(session)
+
+        # WHEN
+        history = await reader.category_history(date(2026, 6, 15), A_USER)
+
+        # THEN — three owner-scoped expense aggregations ran as Selects (ADR-108).
+        assert session.execute.await_count == 3
+        for call in session.execute.await_args_list:
+            (statement,) = call.args
+            assert isinstance(statement, Select)
+            assert "user_id" in str(statement).lower()
+
+        # THEN — Food: mean(30000, 60000, 90000) = 60000; last = May's 90000.
+        food = next(line for line in history.categories if line.category == "Food")
+        assert food.avg3mo == Decimal("60000.00")
+        assert food.last_month == Decimal("90000.00")
+        # Transport spent only in May -> 9000 / 3 = 3000; last = 9000.
+        transport = next(line for line in history.categories if line.category == "Transport")
+        assert transport.avg3mo == Decimal("3000.00")
+        assert transport.last_month == Decimal("9000.00")
+
+    async def test_empty_history_yields_no_categories(self):
+        """
+        GIVEN a session whose three executes return no spend
+        WHEN category_history runs
+        THEN no category lines are produced
+        """
+        # GIVEN
+        session = AsyncMock()
+        session.execute.side_effect = [_result([]), _result([]), _result([])]
+        reader = SqlAlchemyBudgetReader(session)
+
+        # WHEN
+        history = await reader.category_history(date(2026, 6, 1), A_USER)
+
+        # THEN
+        assert history.categories == []
+
+    async def test_usd_history_sums_snapshot_and_excludes_null_rows(self):
+        """
+        GIVEN a USD history request whose three executes return usd_amount totals
+        WHEN category_history runs with currency=USD
+        THEN it aggregates the snapshot totals AND each query excludes null-snapshot rows
+             (the USD spend path's exclusion threads through, ADR-152)
+        """
+        # GIVEN — three months of USD-denominated Food spend (oldest-first).
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([_category_row("Food", Decimal("30.00"))]),
+            _result([_category_row("Food", Decimal("60.00"))]),
+            _result([_category_row("Food", Decimal("90.00"))]),
+        ]
+        reader = SqlAlchemyBudgetReader(session)
+
+        # WHEN
+        history = await reader.category_history(date(2026, 6, 15), A_USER, Currency.USD)
+
+        # THEN — each query filters out rows lacking a usd_amount snapshot (ADR-152).
+        assert session.execute.await_count == 3
+        for call in session.execute.await_args_list:
+            (statement,) = call.args
+            assert "usd_amount is not null" in str(statement).lower()
+
+        # THEN — USD history sums the snapshot: mean(30, 60, 90) = 60.00; last = May's 90.00.
+        food = next(line for line in history.categories if line.category == "Food")
+        assert food.avg3mo == Decimal("60.00")
+        assert food.last_month == Decimal("90.00")

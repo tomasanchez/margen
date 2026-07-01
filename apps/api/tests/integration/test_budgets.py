@@ -24,10 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from margen_api.adapters.budget_queries import SqlAlchemyBudgetReader
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
 from margen_api.adapters.unit_of_work import SqlAlchemyUnitOfWork
-from margen_api.domain.commands.budget import UpsertBudget
+from margen_api.domain.commands.budget import ApplySavingProfile, UpsertBudget, UpsertBudgetIncome
 from margen_api.domain.models.transaction import build_transaction
 from margen_api.domain.models.value_objects import Currency, Kind
-from margen_api.service_layer.budget_handlers import upsert_budget
+from margen_api.service_layer.budget_handlers import apply_saving_profile, upsert_budget, upsert_budget_income
 
 pytestmark = pytest.mark.integration
 
@@ -126,8 +126,88 @@ class TestBudgetReader:
         assert food.target == Decimal("50000.00")
         assert food.spent == Decimal("20000.00")  # the other owner's 999999 is excluded
         assert food.remaining == Decimal("30000.00")
-        # Transport has spend but no target -> null target/remaining.
+        # The stored native currency surfaces from the target's own row (ADR-152/155).
+        assert food.target_currency == "ARS"
+        # Transport has spend but no target -> null target/remaining/currency.
         transport = _line(model.categories, "Transport")
         assert transport.target is None
         assert transport.spent == Decimal("8000.00")
         assert transport.remaining is None
+        assert transport.target_currency is None
+
+
+class TestCategoryHistoryReader:
+    """The history reader averages the three real months before the requested one (ADR-145)."""
+
+    async def test_aggregates_three_prior_months_scoped_to_owner(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN Food expenses in 2026-03/-04/-05 for the owner and another owner's May Food
+        WHEN the owner's June history is read
+        THEN Food's avg3mo is the mean of the three months, lastMonth is May's spend, and
+             the other owner's expense never leaks (ADR-108)
+        """
+        # GIVEN — the three calendar months before June, plus a foreign owner's May spend.
+        async with session_factory() as session:
+            repository = SqlAlchemyTransactionRepository(session)
+            repository.add(_expense(date(2026, 3, 10), "30000.00", "Food"))
+            repository.add(_expense(date(2026, 4, 10), "60000.00", "Food"))
+            repository.add(_expense(date(2026, 5, 10), "90000.00", "Food"))
+            repository.add(_expense(date(2026, 5, 12), "999999.00", "Food", user_id=OTHER_OWNER))
+            await session.commit()
+
+        # WHEN
+        session = session_factory()
+        try:
+            history = await SqlAlchemyBudgetReader(session).category_history(JUNE, OWNER)
+            await session.rollback()
+        finally:
+            await session.close()
+
+        # THEN — mean(30000, 60000, 90000) = 60000; last = May's 90000; foreign owner excluded.
+        food = next(line for line in history.categories if line.category == "Food")
+        assert food.avg3mo == Decimal("60000.00")
+        assert food.last_month == Decimal("90000.00")
+
+
+class TestBudgetKindReader:
+    """The kind discriminator keeps spend/saving distinct against the real schema (ADR-138)."""
+
+    async def test_saving_rows_never_leak_into_categories(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN an income base, a Food spend target and an applied Balanced profile
+        WHEN the owner's budgets surface is read
+        THEN savings carry the buckets, categories carry only spend, and no saving
+             bucket leaks into the vs-actuals categories (the widened UNIQUE + the
+             kind='spend' reader filter, ADR-138)
+        """
+        # GIVEN — an income base, a spend target, and a saving profile, all real SQL.
+        await upsert_budget_income(
+            UpsertBudgetIncome(user_id=OWNER, period=JUNE, amount=Decimal("1000000")),
+            SqlAlchemyUnitOfWork(session_factory),
+        )
+        await upsert_budget(
+            UpsertBudget(user_id=OWNER, category="Food", period=JUNE, amount=Decimal("50000")),
+            SqlAlchemyUnitOfWork(session_factory),
+        )
+        await apply_saving_profile(
+            ApplySavingProfile(user_id=OWNER, period=JUNE, profile="balanced"),
+            SqlAlchemyUnitOfWork(session_factory),
+        )
+
+        # WHEN
+        session = session_factory()
+        try:
+            model = await SqlAlchemyBudgetReader(session).monthly_budget(JUNE, OWNER)
+            await session.rollback()
+        finally:
+            await session.close()
+
+        # THEN — savings populated, the spend target present, and no leak.
+        bucket_names = {line.bucket for line in model.savings}
+        assert "EmergencyFund" in bucket_names
+        category_names = {line.category for line in model.categories}
+        assert category_names.isdisjoint(bucket_names)
+        food = _line(model.categories, "Food")
+        assert food.target == Decimal("50000.00")

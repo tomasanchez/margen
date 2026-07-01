@@ -1,13 +1,128 @@
 {
   "title": "Budgets",
-  "subtitle": "Set a monthly target per category and track it against what you spend.",
-  "summary": {
+  "subtitle": "Assign every peso a job, then track it against what you actually spend.",
+  "alloc": {
+    "cardTitle": "Where it's assigned",
+    "cardSubtitle": "Spread your spendable income across Needs, Wants and Savings.",
+    "title": "Where it's assigned",
+    "leftToAssign": "Left to assign",
+    "overAssigned": "Over-assigned",
+    "allAssigned": "All assigned",
+    "group": {
+      "needs": "Needs",
+      "wants": "Wants",
+      "savings": "Savings"
+    }
+  },
+  "templates": {
+    "title": "Quick start",
+    "applying": "Applying…",
+    "fiftyThirtyTwenty": "50 / 30 / 20",
+    "matchAvg": "Match 3-mo avg",
+    "matchLastMonth": "Match last month",
+    "clearAll": "Clear all"
+  },
+  "plan": {
+    "title": "This month vs plan",
+    "subtitle": "How your spending tracks against the targets you set.",
     "budgeted": "Budgeted",
-    "spent": "Spent",
+    "spent": "Spent so far",
     "remaining": "Remaining",
-    "overLabel": "Over budget",
-    "overCount_one": "{{count}} category over budget",
-    "overCount_other": "{{count}} categories over budget"
+    "over": "Over budget",
+    "meterAria": "{{pct}}% of your plan spent",
+    "insight": {
+      "over": "You're {{overBy}} over plan this month — {{category}} alone is {{categoryOverBy}} over its target.",
+      "someOver_one": "{{count}} category is over target, but you're still within your overall plan.",
+      "someOver_other": "{{count}} categories are over target, but you're still within your overall plan.",
+      "onTrack": "Every category is on or under target — you're {{ahead}} ahead of plan."
+    }
+  },
+  "groups": {
+    "colCategory": "Category",
+    "colTarget": "Monthly target",
+    "colSpent": "Spent vs target",
+    "needs": {
+      "name": "Needs",
+      "sub": "rent, food, health — the non-negotiables"
+    },
+    "wants": {
+      "name": "Wants",
+      "sub": "lifestyle & discretionary"
+    }
+  },
+  "income": {
+    "title": "Net spendable income",
+    "subtitle": "The honest base every percentage is applied to — after tax and business costs.",
+    "label": "Net income for {{month}}",
+    "placeholder": "Enter your net income",
+    "floorLabel": "Household essentials floor",
+    "floorPlaceholder": "{{amount}}",
+    "floorHint": "What essentials cost each month. Leave blank to use the value computed from your essential targets.",
+    "floorComputed": "Computed from your essential targets: {{amount}}",
+    "saving": "Saving",
+    "saveError": "Couldn't save that — try again.",
+    "empty": "Set your net income to plan with percentages and unlock saving profiles.",
+    "useSuggested": "Use suggested base ({{amount}})",
+    "useSuggestedAria": "Use the suggested net-income base of {{amount}}",
+    "avgChip": "avg last 3 mo · {{amount}}",
+    "floorEdit": "Set a household essentials floor",
+    "floorEditComputed": "Floor (computed) · {{amount}}",
+    "floorEditSet": "Floor · {{amount}}",
+    "noSuggestion": "A suggested base needs at least one month of recorded income.",
+    "estimateFrom_one": "Estimate from {{count}} month of history",
+    "estimateFrom_other": "Estimate from {{count}} months of history",
+    "pressure": {
+      "Constrained": "Constrained — income is {{ratio}}× your essentials floor",
+      "Stable": "Stable — income is {{ratio}}× your essentials floor",
+      "Comfortable": "Comfortable — income is {{ratio}}× your essentials floor"
+    },
+    "suggestedStrategy": "Based on your income and floor, a {{profile}} profile looks like a good fit. You always choose."
+  },
+  "savings": {
+    "title": "Savings",
+    "subtitle": "Pay yourself first — a percentage of net income across buckets.",
+    "needIncome": "Set your net income above to apply a saving profile.",
+    "profileLegend": "Choose a saving profile",
+    "profile": {
+      "conservative": "Conservative",
+      "balanced": "Balanced",
+      "aggressive": "Aggressive"
+    },
+    "profilePct": "{{pct}}% to savings",
+    "applying": "Applying…",
+    "applyError": "Couldn't apply that profile — try again.",
+    "empty": "Pick a profile to allocate savings across your buckets.",
+    "bucketPct": "{{pct}}% of net income",
+    "floorBreach": "This preset leaves essentials below your floor by {{gap}} — consider Conservative.",
+    "buckets": {
+      "EmergencyFund": "Emergency fund",
+      "DebtAcceleration": "Debt acceleration",
+      "ShortTermGoals": "Short-term goals",
+      "MediumTermGoals": "Medium-term goals",
+      "LongTermInvestment": "Long-term investment",
+      "FxHedge": "USD / FX hedge",
+      "MaintenanceReserve": "Maintenance reserve"
+    }
+  },
+  "reprice": {
+    "prompt": "A new month with no targets yet. Reprice {{prior}} for {{month}}?",
+    "promptAction": "Reprice for {{month}}",
+    "dismiss": "Not now",
+    "title": "Reprice for {{month}}",
+    "intro": "Carry last month's caps forward, grown by inflation. Review before applying — nothing changes until you confirm.",
+    "inflationLabel": "Monthly inflation %",
+    "inflationHint": "Seeded from the latest REM estimate. Edit to match your own assumption.",
+    "stepUpLabel": "{{category}} step-up",
+    "stepUpsTitle": "Known step-ups (optional)",
+    "stepUpsHint": "Add a one-off jump for a category — rent index, a tariff increase.",
+    "colCategory": "Category",
+    "colOld": "Now",
+    "colNew": "Repriced",
+    "confirm": "Apply reprice",
+    "cancel": "Cancel",
+    "applying": "Applying…",
+    "error": "Couldn't reprice — try again.",
+    "empty": "No targets to carry forward from {{prior}}."
   },
   "list": {
     "title": "Categories",
@@ -23,6 +138,9 @@
     "remaining": "{{amount}} left",
     "overBy": "{{amount}} over",
     "over": "Over budget",
+    "useAvg": "↳ use {{amount}}",
+    "useAvgAria": "Set {{category}}'s target to its 3-month average of {{amount}}",
+    "viewTransactions": "View {{category}} transactions for this month",
     "noTargetHint": "No target set — enter an amount to start tracking this category.",
     "meterAria": "{{category}}: {{pct}}% of target spent",
     "meterNoTargetAria": "{{category}}: no target set"
@@ -30,5 +148,13 @@
   "error": {
     "title": "Can't load your budgets",
     "description": "We couldn't reach the server. Check your connection and try again."
+  },
+  "unconverted": {
+    "note_one": "{{count}} transaction isn't converted to USD yet, so spend may be understated.",
+    "note_other": "{{count}} transactions aren't converted to USD yet, so spend may be understated.",
+    "action": "Convert them"
+  },
+  "rate": {
+    "pending": "Showing amounts in their original currency while we fetch today's rate."
   }
 }

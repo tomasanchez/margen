@@ -64,6 +64,35 @@ describe('filterTransactions', () => {
     expect(june.items[1].dispDate).toBe('Jun 11')
   })
 
+  test('groups a row in a month OUTSIDE the old fixed Jan–June window (ADR-040)', () => {
+    // Regression: the previous grouping iterated a hardcoded Jan–June MONTH_ORDER
+    // and matched by bare month name, so a July-dated row passed the filter yet
+    // was dropped from every group (it never appeared in the list). Grouping now
+    // covers ANY present month, so a today-dated July row shows.
+    const julyRow: Transaction = {
+      id: 'july-1',
+      occurredOn: '2026-07-01',
+      dispDate: 'Jul 01',
+      month: 'July',
+      name: 'Mercado Pago top-up',
+      category: 'Other',
+      bank: '' as Transaction['bank'],
+      currency: 'ARS',
+      type: 'expense',
+      kind: 'expense',
+      amountNum: 12000,
+    }
+    const result = filterTransactions([julyRow, ...SEED_TRANSACTIONS], {
+      ...DEFAULT_FILTERS,
+    })
+    // The July row is present in the flat rows AND in a July group, sorted first
+    // (newest occurredOn).
+    expect(result.rows.some((t) => t.id === 'july-1')).toBe(true)
+    expect(result.groups[0]?.month).toBe('July')
+    expect(result.groups[0]?.items[0]?.id).toBe('july-1')
+    expect(result.filteredCount).toBe(SEED_TRANSACTIONS.length + 1)
+  })
+
   test('totals: inflow, outflow and net are consistent', () => {
     const result = filterTransactions(SEED_TRANSACTIONS, DEFAULT_FILTERS)
     const expectedIn = SEED_TRANSACTIONS.filter((t) => t.type === 'income')
@@ -285,6 +314,26 @@ describe('buildEditPrefill', () => {
   test('omits card from the prefill when the row has none (ADR-117)', () => {
     const noCard: Transaction = { ...SEED_TRANSACTIONS[0], card: undefined }
     expect('card' in buildEditPrefill(noCard)).toBe(false)
+  })
+
+  test('carries the FX snapshot rate + source so an ARS edit reseeds it (ADR-148)', () => {
+    const withSnapshot: Transaction = {
+      ...SEED_TRANSACTIONS[1],
+      currency: 'ARS',
+      fxRate: '1240.5',
+      fxSource: 'bolsa',
+    }
+    const prefill = buildEditPrefill(withSnapshot)
+    expect(prefill.fxRate).toBe('1240.5')
+    expect(prefill.fxSource).toBe('bolsa')
+    // A row with no snapshot omits both (the field then prefills from the cache).
+    const noSnapshot: Transaction = {
+      ...SEED_TRANSACTIONS[1],
+      fxRate: undefined,
+      fxSource: undefined,
+    }
+    expect('fxRate' in buildEditPrefill(noSnapshot)).toBe(false)
+    expect('fxSource' in buildEditPrefill(noSnapshot)).toBe(false)
   })
 })
 

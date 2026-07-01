@@ -13,6 +13,7 @@ boundary (ADR-094).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date
 from uuid import UUID
 
@@ -22,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from margen_api.adapters.mappers.budget import to_domain, to_record, update_record
 from margen_api.adapters.models.budget import BudgetRecord
 from margen_api.domain.models.budget import Budget
+from margen_api.domain.models.value_objects import BudgetKind
 from margen_api.service_layer.budget_repository import AbstractBudgetRepository
 
 
@@ -44,14 +46,22 @@ class SqlAlchemyBudgetRepository(AbstractBudgetRepository):
         """
         self.session.add(to_record(budget))
 
-    async def get_by_category_period(self, category: str, period: date, user_id: str) -> Budget | None:
-        """Load the owner's target for a category/month, or ``None`` (ADR-125, ADR-130).
+    async def get_by_category_period(
+        self,
+        category: str,
+        period: date,
+        user_id: str,
+        kind: BudgetKind = BudgetKind.SPEND,
+    ) -> Budget | None:
+        """Load the owner's row for a kind/category/month, or ``None`` (ADR-138, ADR-130).
 
-        Scopes the lookup by ``user_id`` so a foreign owner's target is not found.
-        The upsert handler uses this to decide insert vs replace (ADR-125).
+        Scopes the lookup by ``user_id`` and ``kind`` so a foreign owner's row — or a
+        row of the other kind — is not found. The upsert handler uses this to decide
+        insert vs replace on the widened key (ADR-138).
         """
         statement = select(BudgetRecord).where(
             BudgetRecord.user_id == UUID(user_id),
+            BudgetRecord.kind == kind.value,
             BudgetRecord.category == category,
             BudgetRecord.period == period,
         )
@@ -59,6 +69,21 @@ class SqlAlchemyBudgetRepository(AbstractBudgetRepository):
         if record is None:
             return None
         return to_domain(record)
+
+    async def list_by_period(
+        self,
+        period: date,
+        user_id: str,
+        kind: BudgetKind = BudgetKind.SPEND,
+    ) -> Sequence[Budget]:
+        """List the owner's rows of a kind for a month (ADR-137, ADR-130)."""
+        statement = select(BudgetRecord).where(
+            BudgetRecord.user_id == UUID(user_id),
+            BudgetRecord.kind == kind.value,
+            BudgetRecord.period == period,
+        )
+        result = await self.session.execute(statement)
+        return [to_domain(record) for record in result.scalars().all()]
 
     async def persist(self, budget: Budget) -> None:
         """Apply a mutated aggregate to its attached row (update semantics).
@@ -74,16 +99,24 @@ class SqlAlchemyBudgetRepository(AbstractBudgetRepository):
             return
         update_record(record, budget)
 
-    async def delete(self, category: str, period: date, user_id: str) -> bool:
-        """Hard-delete the owner's target for a category/month (ADR-125, ADR-130).
+    async def delete(
+        self,
+        category: str,
+        period: date,
+        user_id: str,
+        kind: BudgetKind = BudgetKind.SPEND,
+    ) -> bool:
+        """Hard-delete the owner's row for a kind/category/month (ADR-138, ADR-130).
 
-        Scoped to ``user_id`` so a foreign owner's target is never removed. Returns
-        whether a row was deleted so the handler can stay idempotent (ADR-125).
-        Fetches then deletes the attached row (mirroring the transfer/transaction
-        repositories) so the cascade and ORM state stay consistent.
+        Scoped to ``user_id`` and ``kind`` so a foreign owner's row — or a row of the
+        other kind — is never removed. Returns whether a row was deleted so the
+        handler can stay idempotent (ADR-125). Fetches then deletes the attached row
+        (mirroring the transfer/transaction repositories) so the cascade and ORM
+        state stay consistent.
         """
         statement = select(BudgetRecord).where(
             BudgetRecord.user_id == UUID(user_id),
+            BudgetRecord.kind == kind.value,
             BudgetRecord.category == category,
             BudgetRecord.period == period,
         )

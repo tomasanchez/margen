@@ -16,6 +16,7 @@
  */
 
 import Box from '@mui/material/Box'
+import { budgetMeterColor } from './derive'
 
 export interface BudgetMeterProps {
   /** Fill ratio in [0, 1] (spent / target, clamped). */
@@ -29,6 +30,8 @@ export interface BudgetMeterProps {
 /** Spent-vs-target meter with a non-color over-budget treatment (ADR-019). */
 export function BudgetMeter({ ratio, overBudget = false, label }: BudgetMeterProps) {
   const pct = Math.round(Math.min(Math.max(ratio, 0), 1) * 100)
+  // Graduated fill color by ratio (green/white/gold/red); over budget is red.
+  const fill = budgetMeterColor(pct / 100, overBudget)
   return (
     <Box
       role="meter"
@@ -40,10 +43,10 @@ export function BudgetMeter({ ratio, overBudget = false, label }: BudgetMeterPro
         height: 8,
         borderRadius: '5px',
         overflow: 'hidden',
-        // Over budget: the track itself takes the Watch tint as a redundant cue
+        // Over budget: the track itself takes the Risk tint as a redundant cue
         // alongside the striped fill + the text/icon the row renders (ADR-019).
         bgcolor: overBudget
-          ? 'color-mix(in srgb, var(--mg-watch) 18%, transparent)'
+          ? 'color-mix(in srgb, var(--mg-risk) 18%, transparent)'
           : 'var(--mg-raised)',
       }}
     >
@@ -53,7 +56,7 @@ export function BudgetMeter({ ratio, overBudget = false, label }: BudgetMeterPro
           // Over budget always fills the track (spend ≥ target).
           width: `${overBudget ? 100 : pct}%`,
           borderRadius: '5px',
-          bgcolor: overBudget ? 'var(--mg-watch)' : 'var(--mg-gold)',
+          bgcolor: fill,
           // Non-color cue: a diagonal hatch on the over-budget fill so the state
           // reads without relying on hue (ADR-019).
           ...(overBudget

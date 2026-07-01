@@ -35,6 +35,7 @@ from margen_api.entrypoint.schemas import ResponseModel
 from margen_api.entrypoint.transactions_schemas import (
     InvalidDocumentBase64Error,
     TransactionCreateRequest,
+    TransactionFxSnapshotRequest,
     TransactionPatchRequest,
     TransactionResponse,
 )
@@ -177,6 +178,43 @@ async def update_transaction(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Account {error.account_id} not found.",
         ) from error
+    except _INVARIANT_VIOLATIONS as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+
+    model = await reader.get_transaction(transaction_id, user.id)
+    if model is None:  # pragma: no cover - the row was just updated
+        raise _not_found(transaction_id)
+    return ResponseModel(data=TransactionResponse.from_read_model(model))
+
+
+@router.put(
+    "/{transaction_id}/fx",
+    name="Set transaction FX snapshot",
+    status_code=status.HTTP_200_OK,
+    response_model=ResponseModel[TransactionResponse],
+)
+async def set_transaction_fx(
+    transaction_id: UUID,
+    body: TransactionFxSnapshotRequest,
+    bus: Bus,
+    reader: TransactionReader,
+    user: AuthUser,
+) -> ResponseModel[TransactionResponse]:
+    """Set or replace the FX snapshot on the caller's transaction (ADR-148, ADR-149).
+
+    Dispatches a ``SetTransactionFxSnapshot`` command (stamped with ``user.id``)
+    through the message bus: the client supplies the ARS-per-1-USD ``fxRate`` and its
+    ``fxSource`` provenance, and the handler re-materializes ``usd_amount`` as pure
+    arithmetic — the backend never calls an FX feed (ADR-149). Scoped to ``user.id``:
+    a missing id OR another user's id both surface :class:`TransactionNotFoundError`
+    mapped to ``404`` (ADR-111); a non-positive ``fxRate`` is rejected at boundary
+    validation with ``422``. Powers the client import rate-fill and the one-time
+    historical backfill (ADR-149/150).
+    """
+    try:
+        await bus.handle(body.to_command(transaction_id, user.id))
+    except TransactionNotFoundError as error:
+        raise _not_found(transaction_id) from error
     except _INVARIANT_VIOLATIONS as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
 

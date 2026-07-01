@@ -24,6 +24,7 @@ from margen_api.adapters.settings_repository import (
     DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
     DEFAULT_MONOTRIBUTO_CATEGORY,
     DEFAULT_MONOTRIBUTO_ENABLED,
+    DEFAULT_PREFERRED_RATE_SOURCE,
 )
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
 from margen_api.service_layer.insights import build_monthly_insights
@@ -67,6 +68,7 @@ def _to_read_model(record: TransactionRecord) -> TransactionReadModel:
         currency=Currency.parse(record.currency),
         usd_amount=record.usd_amount,
         fx_rate=record.fx_rate,
+        fx_source=record.fx_source,
         fx_rate_type=FxRateType(record.fx_rate_type) if record.fx_rate_type is not None else None,
         fx_rate_as_of=record.fx_rate_as_of,
         category=record.category,
@@ -126,6 +128,10 @@ class SqlAlchemyTransactionReader(AbstractTransactionReader):
 # The persisted amount is ``NUMERIC(18, 2)``; SUM widens it, so cast the result
 # back to NUMERIC so the driver returns a Decimal (not a float) for money (ADR-025).
 _EXPENSE_AMOUNT = cast(func.sum(TransactionRecord.amount), Numeric(18, 2))
+# The USD-budget spend path sums the materialized ``usd_amount`` snapshot instead
+# (ADR-152); rows lacking a snapshot are excluded in the WHERE so they never form a
+# null-total bucket — their count is surfaced separately as the unconverted note.
+_EXPENSE_USD_AMOUNT = cast(func.sum(TransactionRecord.usd_amount), Numeric(18, 2))
 # Year and month derived from ``occurred_on`` — portable across PostgreSQL and the
 # in-memory SQLite the offline tier uses (avoids ``date_trunc``).
 _YEAR = func.extract("year", TransactionRecord.occurred_on)
@@ -144,37 +150,81 @@ def _as_decimal(value: object) -> Decimal:
     return Decimal(str(value))
 
 
-async def month_category_expense_totals(session: AsyncSession, month: date, owner: UUID) -> dict[str, Decimal]:
-    """Return the owner's expense totals for a month keyed by category (ADR-042, ADR-108).
+async def month_category_expense_totals(
+    session: AsyncSession,
+    month: date,
+    owner: UUID,
+    currency: Currency = Currency.ARS,
+) -> dict[str, Decimal]:
+    """Return the owner's expense totals for a month keyed by category (ADR-042, ADR-108, ADR-152).
 
     The canonical per-category month-expense aggregation reused by the summaries
     reader (ADR-042), the insights reader (ADR-060) and the budgets reader as the
-    "spent" figure (ADR-125): a ``SUM`` of ``kind = 'expense'`` ``amount`` over the
-    month, grouped by category (NULL categories bucket under ``Uncategorized``),
-    scoped to the owner. Sharing one function keeps the budgets "spent" identical to
-    the summaries "amount" rather than reinventing the aggregation (ADR-125).
+    "spent" figure (ADR-125): a ``SUM`` of ``kind = 'expense'`` over the month,
+    grouped by category (NULL categories bucket under ``Uncategorized``), scoped to
+    the owner. Sharing one function keeps the budgets "spent" identical to the
+    summaries "amount" rather than reinventing the aggregation (ADR-125).
+
+    The summed column depends on ``currency`` (ADR-152): for ``ARS`` (the default,
+    preserving every existing caller) it sums the authoritative ``amount``; for
+    ``USD`` it sums the materialized ``usd_amount`` snapshot and **excludes** rows
+    lacking one (a null ``usd_amount``) so an unsnapshotted row never forms a
+    null-total bucket — those rows are surfaced separately as the unconverted note
+    (:func:`month_expense_unconverted_count`).
 
     Args:
         session: The async session used for the read-only query.
         month: The first day of the requested calendar month.
         owner: The authenticated owner the expenses are scoped to (ADR-108).
+        currency: The budget currency; ``ARS`` sums ``amount`` (default), ``USD``
+            sums ``usd_amount`` excluding null-snapshot rows (ADR-152).
 
     Returns:
         Expense totals for the month keyed by category; absent categories are 0.
     """
-    upper = date(month.year + (month.month // 12), (month.month % 12) + 1, 1)
-    statement = (
-        select(_CATEGORY.label("category"), _EXPENSE_AMOUNT.label("total"))
-        .where(
-            TransactionRecord.user_id == owner,
-            TransactionRecord.kind == Kind.EXPENSE.value,
-            TransactionRecord.occurred_on >= month,
-            TransactionRecord.occurred_on < upper,
-        )
-        .group_by(_CATEGORY)
-    )
+    upper = _month_upper_bound(month)
+    is_usd = currency is Currency.USD
+    total_column = _EXPENSE_USD_AMOUNT if is_usd else _EXPENSE_AMOUNT
+    predicates = [
+        TransactionRecord.user_id == owner,
+        TransactionRecord.kind == Kind.EXPENSE.value,
+        TransactionRecord.occurred_on >= month,
+        TransactionRecord.occurred_on < upper,
+    ]
+    if is_usd:
+        # USD spend reads the stored snapshot; null-snapshot rows are excluded so
+        # they never produce a null-total bucket (ADR-152).
+        predicates.append(TransactionRecord.usd_amount.is_not(None))
+    statement = select(_CATEGORY.label("category"), total_column.label("total")).where(*predicates).group_by(_CATEGORY)
     result = await session.execute(statement)
     return {str(row.category): _as_decimal(row.total) for row in result.all()}
+
+
+async def month_expense_unconverted_count(session: AsyncSession, month: date, owner: UUID) -> int:
+    """Count the month's expense transactions lacking a USD snapshot (ADR-152, ADR-108).
+
+    The unconverted-note figure for the USD budget surface: how many ``kind='expense'``
+    rows in the month carry a null ``usd_amount`` (pre-backfill rows, statement imports
+    pending the client rate-fill step, ADR-149). Surfaced so a USD spend total is never
+    silently understated — the user can trigger a backfill (ADR-150). Scoped to the
+    owner (ADR-108).
+
+    Args:
+        session: The async session used for the read-only query.
+        month: The first day of the requested calendar month.
+        owner: The authenticated owner the count is scoped to (ADR-108).
+
+    Returns:
+        The count of the month's expense transactions without a USD snapshot.
+    """
+    statement = select(func.count()).where(
+        TransactionRecord.user_id == owner,
+        TransactionRecord.kind == Kind.EXPENSE.value,
+        TransactionRecord.occurred_on >= month,
+        TransactionRecord.occurred_on < _month_upper_bound(month),
+        TransactionRecord.usd_amount.is_(None),
+    )
+    return int((await session.execute(statement)).scalar_one())
 
 
 class SqlAlchemySummaryReader(AbstractSummaryReader):
@@ -586,6 +636,7 @@ class SqlAlchemySettingsReader(AbstractSettingsReader):
             return AppSettings(
                 preferred_display_currency=DEFAULT_DISPLAY_CURRENCY,
                 fx_default_rate_type=DEFAULT_FX_RATE_TYPE,
+                preferred_rate_source=DEFAULT_PREFERRED_RATE_SOURCE,
                 monotributo_current_category=DEFAULT_MONOTRIBUTO_CATEGORY,
                 monotributo_activity_type=DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE,
                 monotributo_enabled=DEFAULT_MONOTRIBUTO_ENABLED,
@@ -593,6 +644,7 @@ class SqlAlchemySettingsReader(AbstractSettingsReader):
         return AppSettings(
             preferred_display_currency=record.preferred_display_currency,
             fx_default_rate_type=record.fx_default_rate_type,
+            preferred_rate_source=record.preferred_rate_source,
             monotributo_current_category=record.monotributo_current_category,
             monotributo_activity_type=record.monotributo_activity_type,
             monotributo_enabled=record.monotributo_enabled,

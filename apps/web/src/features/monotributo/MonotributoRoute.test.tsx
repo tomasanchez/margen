@@ -38,6 +38,7 @@ function settings(monotributoEnabled: boolean): Settings {
   return {
     preferredDisplayCurrency: 'ARS',
     fxDefaultRateType: 'MEP',
+    preferredRateSource: 'bolsa',
     monotributoCurrentCategory: 'C',
     monotributoActivityType: 'services',
     monotributoEnabled,

@@ -26,7 +26,7 @@
  * the page renders standalone via renderWithProviders (no router needed).
  */
 
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../test/renderWithProviders'
@@ -41,9 +41,18 @@ import { clearParseCache } from './parseCache'
 // Mock the statements client so the flow never touches a real backend. Keep
 // StatementsApiError real (the flow does `instanceof` on it); only the network
 // calls (parseStatement / importStatement) are mocked.
-const { parseStatementMock, importStatementMock } = vi.hoisted(() => ({
+const {
+  parseStatementMock,
+  importStatementMock,
+  listMock,
+  setFxSnapshotMock,
+  historicalRateMock,
+} = vi.hoisted(() => ({
   parseStatementMock: vi.fn(),
   importStatementMock: vi.fn(),
+  listMock: vi.fn(),
+  setFxSnapshotMock: vi.fn(),
+  historicalRateMock: vi.fn(),
 }))
 
 vi.mock('../../api/statementsClient', async () => {
@@ -63,6 +72,29 @@ vi.mock('../../api/statementsClient', async () => {
   }
 })
 
+// The import now runs a client-side FX rate-fill over the just-created rows
+// (ADR-149): it re-reads the transactions and stamps each backdated row's
+// historical snapshot. Mock the transactions list + snapshot PUT and the
+// historical-rate lookup so no real network is hit and the fill is deterministic.
+vi.mock('../../api/transactionsClient', async () => {
+  const actual =
+    await vi.importActual<typeof import('../../api/transactionsClient')>(
+      '../../api/transactionsClient',
+    )
+  return {
+    ...actual,
+    transactionsClient: {
+      ...actual.transactionsClient,
+      list: listMock,
+      setFxSnapshot: setFxSnapshotMock,
+    },
+  }
+})
+
+vi.mock('../../api/fxClient', () => ({
+  fetchHistoricalRate: historicalRateMock,
+}))
+
 // The page navigates on "Done" / "Cancel"; stub useNavigate so it renders
 // without a router and expose the spy so tests can assert navigation.
 const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }))
@@ -73,6 +105,15 @@ vi.mock('@tanstack/react-router', async () => {
       '@tanstack/react-router',
     )
   return { ...actual, useNavigate: () => navigateMock }
+})
+
+beforeEach(() => {
+  // Default the rate-fill seams: no created rows to fill, and a usable historical
+  // rate when one is requested. Individual tests override `listMock` to exercise
+  // the fill path.
+  listMock.mockResolvedValue([])
+  setFxSnapshotMock.mockResolvedValue(undefined)
+  historicalRateMock.mockResolvedValue(1200)
 })
 
 afterEach(() => {
@@ -410,6 +451,88 @@ describe('Import statement — success shows a calm confirmation', () => {
     expect(
       screen.getByRole('button', { name: 'Import another' }),
     ).toBeInTheDocument()
+  })
+
+  test('rate-fills the just-created rows with their occurred_on historical snapshot (ADR-149)', async () => {
+    parseStatementMock.mockResolvedValueOnce(okParse)
+    importStatementMock.mockResolvedValueOnce(
+      importResult({ createdCount: 2, createdTransactionIds: ['t-1', 't-2'] }),
+    )
+    // The just-created rows lack a snapshot (no fxSource); a third, older row is
+    // already stamped and must be skipped.
+    listMock.mockResolvedValue([
+      {
+        id: 't-1',
+        occurredOn: '2026-06-19',
+        dispDate: 'Jun 19',
+        month: 'June',
+        name: 'Carrefour',
+        category: 'Food',
+        bank: 'Galicia',
+        currency: 'ARS',
+        type: 'expense',
+        kind: 'expense',
+        amountNum: 45000,
+      },
+      {
+        id: 't-2',
+        occurredOn: '2026-06-19',
+        dispDate: 'Jun 19',
+        month: 'June',
+        name: 'Netflix',
+        category: 'Subscriptions',
+        bank: 'Galicia',
+        currency: 'ARS',
+        type: 'expense',
+        kind: 'expense',
+        amountNum: 8000,
+      },
+      {
+        id: 't-old',
+        occurredOn: '2026-05-01',
+        dispDate: 'May 01',
+        month: 'May',
+        name: 'Already stamped',
+        category: 'Food',
+        bank: 'Galicia',
+        currency: 'ARS',
+        type: 'expense',
+        kind: 'expense',
+        amountNum: 1000,
+        fxSource: 'bolsa',
+      },
+    ])
+    historicalRateMock.mockResolvedValue(1200)
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile())
+    await screen.findByText('Galicia · VISA ·5771')
+    await user.click(screen.getByRole('button', { name: 'Import 2 expenses' }))
+
+    await screen.findByRole('heading', { name: 'Imported 2 expenses' })
+
+    // Only the two CREATED, unstamped rows were rate-filled (the older stamped
+    // row is excluded by id and by its existing snapshot).
+    await waitFor(() => expect(setFxSnapshotMock).toHaveBeenCalledTimes(2))
+    const stamped = setFxSnapshotMock.mock.calls.map((c) => c[0])
+    expect(stamped.sort()).toEqual(['t-1', 't-2'])
+    // Import-filled rows are tagged `'import'` (ADR-148/149) — distinct from the
+    // one-time bulk backfill's `'backfill'` (ADR-150) so the two provenances are
+    // distinguishable.
+    expect(setFxSnapshotMock).toHaveBeenCalledWith('t-1', {
+      fxRate: '1200',
+      fxSource: 'import',
+    })
+    expect(setFxSnapshotMock).toHaveBeenCalledWith('t-2', {
+      fxRate: '1200',
+      fxSource: 'import',
+    })
+    // The historical lookup used each row's backdated occurred_on (ADR-149/150).
+    expect(historicalRateMock).toHaveBeenCalledWith(
+      'bolsa',
+      '2026-06-19',
+      undefined,
+    )
   })
 })
 

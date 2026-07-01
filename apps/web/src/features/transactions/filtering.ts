@@ -232,10 +232,14 @@ function matchesFilters(t: Transaction, f: TransactionFilters): boolean {
   return true
 }
 
-/** Parse the day number out of a seeded "Mon DD" display date (0 if absent). */
-function dayOf(t: Transaction): number {
-  const parts = t.dispDate.split(' ')
-  return Number.parseInt(parts[1] ?? '0', 10) || 0
+/**
+ * Sort key for a row by its real calendar date, DESCENDING (newest first). Uses
+ * the ISO `occurredOn` (`YYYY-MM-DD`) so ordering is exact and year-aware — never
+ * the bare month name or the seeded "Mon DD" dispDate (which lost the year and
+ * broke once rows spanned into a new year / month outside the old fixed order).
+ */
+function occurredKey(t: Transaction): string {
+  return t.occurredOn
 }
 
 /** A month section: header totals + the rows it contains. */
@@ -251,9 +255,13 @@ export interface TransactionGroup {
 
 /** Overall + grouped result of applying a filter set to the transactions. */
 export interface FilteredTransactions {
-  /** Filtered rows, sorted newest-first within month order. */
+  /** Filtered rows, sorted newest-first by `occurredOn`. */
   rows: Transaction[]
-  /** Per-month groups, in MONTH_ORDER, omitting empty months. */
+  /**
+   * Per-month groups, newest-first, in the order the months first appear in the
+   * date-sorted rows. Every present month is emitted (not just a fixed Jan–June
+   * window), so a row in ANY month/year is grouped and shown (ADR-040).
+   */
   groups: TransactionGroup[]
   filteredCount: number
   inflow: number
@@ -264,8 +272,10 @@ export interface FilteredTransactions {
 
 /**
  * Apply `filters` to `transactions`, returning the sorted/grouped rows and the
- * overall totals. Months are emitted in {@link MONTH_ORDER}; rows inside a month
- * are newest-first by day. Empty months are skipped.
+ * overall totals. Rows are sorted newest-first by their ISO `occurredOn` date;
+ * groups are emitted per calendar month in the order they first appear in that
+ * sorted list — so EVERY present month is shown (not a fixed Jan–June window),
+ * and a today-dated row in a new month/year is never silently dropped (ADR-040).
  */
 export function filterTransactions(
   transactions: readonly Transaction[],
@@ -274,23 +284,28 @@ export function filterTransactions(
   const rows = transactions
     .filter((t) => matchesFilters(t, filters))
     .slice()
-    .sort(
-      (a, b) =>
-        MONTH_ORDER.indexOf(a.month) - MONTH_ORDER.indexOf(b.month) ||
-        dayOf(b) - dayOf(a),
-    )
+    // Newest-first by the real ISO date; ties broken by id for a stable order.
+    .sort((a, b) => {
+      const byDate = occurredKey(b).localeCompare(occurredKey(a))
+      return byDate !== 0 ? byDate : b.id.localeCompare(a.id)
+    })
 
+  // Group by the row's month NAME in first-seen order over the date-sorted rows.
+  // Because rows are already newest-first, the months emerge newest-first too;
+  // every month that actually has rows gets a group (no fixed month window).
   const groups: TransactionGroup[] = []
-  for (const month of MONTH_ORDER) {
-    const items = rows.filter((t) => t.month === month)
-    if (items.length === 0) continue
-    const inflow = items
-      .filter((t) => t.type === 'income')
-      .reduce((sum, t) => sum + t.amountNum, 0)
-    const outflow = items
-      .filter((t) => t.type === 'expense')
-      .reduce((sum, t) => sum + t.amountNum, 0)
-    groups.push({ month, count: items.length, inflow, outflow, items })
+  const groupByMonth = new Map<MonthName, TransactionGroup>()
+  for (const t of rows) {
+    let group = groupByMonth.get(t.month)
+    if (!group) {
+      group = { month: t.month, count: 0, inflow: 0, outflow: 0, items: [] }
+      groupByMonth.set(t.month, group)
+      groups.push(group)
+    }
+    group.items.push(t)
+    group.count += 1
+    if (t.type === 'income') group.inflow += t.amountNum
+    else if (t.type === 'expense') group.outflow += t.amountNum
   }
 
   const inflow = rows
@@ -348,7 +363,9 @@ export interface TransactionsSearch {
 const KNOWN_TYPES = new Set<string>(TYPE_OPTIONS.map((o) => o.id))
 const KNOWN_CURRENCIES = new Set<string>(CURRENCY_OPTIONS.map((o) => o.id))
 const KNOWN_AMOUNTS = new Set<string>(AMOUNT_RANGES.map((o) => o.id))
-const KNOWN_CATEGORIES = new Set<string>(CATEGORIES)
+// The picker offers `Housing`, but historical rows can still carry the tolerated
+// `Rent` alias (ADR-140), so URL filtering must accept it as a known category.
+const KNOWN_CATEGORIES = new Set<string>([...CATEGORIES, 'Rent'])
 
 /**
  * Parse a comma-separated multi-select param into its validated members, in
@@ -577,6 +594,10 @@ export function buildEditPrefill(
     // origin (MEP vs manual) on edit (ADR-044/045).
     ...(t.fxRateType !== undefined ? { fxRateType: t.fxRateType } : {}),
     ...(t.fxRateAsOf !== undefined ? { fxRateAsOf: t.fxRateAsOf } : {}),
+    // Carry the captured FX snapshot (ADR-148) so an ARS edit shows/re-seeds the
+    // stored rate + its provenance in the visible rate field.
+    ...(t.fxRate !== undefined ? { fxRate: t.fxRate } : {}),
+    ...(t.fxSource !== undefined ? { fxSource: t.fxSource } : {}),
     ...(t.recurring !== undefined ? { recurring: t.recurring } : {}),
     // Carry the existing free-text note so it survives a re-save on edit (ADR-088).
     ...(t.notes ? { notes: t.notes } : {}),

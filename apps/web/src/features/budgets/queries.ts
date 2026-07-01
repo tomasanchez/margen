@@ -17,24 +17,112 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   budgetsClient,
+  type ApplyProfileResult,
+  type BudgetHistoryLine,
+  type BudgetIncome,
+  type BudgetIncomeWriteBody,
   type BudgetPeriod,
   type BudgetWriteBody,
+  type RepriceBody,
+  type SavingProfile,
 } from '../../api/budgetsClient'
+import { fetchCurrentRate } from '../../api/fxClient'
+import type { PreferredRateSource } from '../../api/settingsClient'
+import { useSettings } from '../settings/queries'
 import { homeQueryKeys } from '../home/queries'
-import type { Category } from '../../mock/types'
+import { casaForSource } from '../transactions/captureFx'
+import type { Category, Currency } from '../../mock/types'
 
-/** Stable query-key factory for the budgets domain. */
+/**
+ * Stable query-key factory for the budgets domain. The budget CURRENCY (ADR-152)
+ * is part of the period + history keys because it changes the spend figures
+ * (USD sums `usd_amount`, ARS sums `amount`), so switching the preferred currency
+ * refetches the right denomination.
+ */
 export const budgetsKeys = {
   all: ['budgets'] as const,
-  /** Period read is per-month, so the `YYYY-MM` is part of the key. */
-  period: (month: string) => [...budgetsKeys.all, 'period', month] as const,
+  /** Period read is per-(month, currency) — the currency denominates spend (ADR-152). */
+  period: (month: string, currency: Currency = 'ARS') =>
+    [...budgetsKeys.all, 'period', month, currency] as const,
+  /** The net-income base + floor is per-month (ADR-139); its currency is read as stored. */
+  income: (month: string) => [...budgetsKeys.all, 'income', month] as const,
+  /** Trailing per-category spend history is per-(month, currency) (ADR-147/152). */
+  history: (month: string, currency: Currency = 'ARS') =>
+    [...budgetsKeys.all, 'history', month, currency] as const,
 }
 
-/** Read the budgets period (every category + target/spent/remaining) for a month. */
-export function useBudgets(month: string) {
+/** Read the budgets period (every category + target/spent/remaining) for a month + currency. */
+export function useBudgets(month: string, currency: Currency = 'ARS') {
   return useQuery<BudgetPeriod>({
-    queryKey: budgetsKeys.period(month),
-    queryFn: () => budgetsClient.fetchBudgets(month),
+    queryKey: budgetsKeys.period(month, currency),
+    queryFn: () => budgetsClient.fetchBudgets(month, currency),
+  })
+}
+
+/**
+ * Read the PRIOR month's budgets period (for the reprice-rollover prompt,
+ * ADR-137). Only enabled when a prior month is supplied; reuses the same
+ * per-(month, currency) cache key so it's shared with a direct view of that month.
+ */
+export function usePriorBudgets(
+  priorMonth: string | null,
+  currency: Currency = 'ARS',
+) {
+  return useQuery<BudgetPeriod>({
+    queryKey: budgetsKeys.period(priorMonth ?? '—', currency),
+    queryFn: () => budgetsClient.fetchBudgets(priorMonth as string, currency),
+    enabled: priorMonth != null,
+  })
+}
+
+/**
+ * Read the trailing per-category spend history for a month + currency (ADR-147/152):
+ * each category's 3-month average + last-month spend in the budget currency. Powers
+ * the quick-start templates + the per-row "use avg" suggestion chips. Keyed by
+ * (month, currency) so a month or currency switch refetches; history is read-only so
+ * it never invalidates on a write.
+ */
+export function useBudgetHistory(month: string, currency: Currency = 'ARS') {
+  return useQuery<BudgetHistoryLine[]>({
+    queryKey: budgetsKeys.history(month, currency),
+    queryFn: () => budgetsClient.fetchHistory(month, currency),
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+/** Read the per-month net-income base + household floor (ADR-139). */
+export function useBudgetIncome(month: string) {
+  return useQuery<BudgetIncome>({
+    queryKey: budgetsKeys.income(month),
+    queryFn: () => budgetsClient.fetchBudgetIncome(month),
+  })
+}
+
+/**
+ * The CURRENT preferred-rate-source rate (ARS per 1 USD) the Budgets surface uses
+ * to convert native-currency targets/income/savings into the preferred display
+ * currency (ADR-152/155). Unlike the display-currency provider — which only
+ * fetches when USD is preferred — the budgets surface needs the rate even for an
+ * ARS-preferred view (to convert a USD-native target → ARS), so this is a
+ * dedicated query keyed by the `preferredRateSource` setting (`'bolsa'`/`'oficial'`)
+ * so flipping the source refetches. `fxClient` never throws (null on failure);
+ * a null rate degrades gracefully (the surface shows native values + a calm
+ * pending state, never NaN — see `convertBudgetPeriod`). The result is the live
+ * rate as a number, or `null` when unavailable.
+ */
+export function usePreferredRate() {
+  const settingsQuery = useSettings()
+  const source: PreferredRateSource =
+    settingsQuery.data?.preferredRateSource ?? 'bolsa'
+  const casa = casaForSource(source)
+  return useQuery<number | null>({
+    queryKey: [...budgetsKeys.all, 'rate', source] as const,
+    queryFn: () => fetchCurrentRate(casa),
+    // Only fetch once settings have resolved so we key by the real source.
+    enabled: settingsQuery.isSuccess,
+    staleTime: 5 * 60 * 1000,
+    // A benign null (fetch failed) is the unavailable signal — don't retry it.
+    retry: false,
   })
 }
 
@@ -66,6 +154,90 @@ export function useClearBudgetTarget() {
   return useMutation<void, Error, { category: Category; month: string }>({
     mutationFn: ({ category, month }) =>
       budgetsClient.clearTarget(category, month),
+    onSuccess: invalidate,
+  })
+}
+
+/**
+ * Upsert the net-income base + optional manual floor for a month (ADR-139), then
+ * refresh budgets + Home (saving rows + pressure/strategy derive from income).
+ */
+export function useSetBudgetIncome() {
+  const invalidate = useInvalidateBudgets()
+  return useMutation<void, Error, BudgetIncomeWriteBody>({
+    mutationFn: (body) => budgetsClient.setBudgetIncome(body),
+    onSuccess: invalidate,
+  })
+}
+
+/**
+ * Apply a quick-start template for a month (ADR-147): a batch of per-category
+ * target writes (a Decimal string upserts via PUT; `null` clears via DELETE)
+ * optionally followed by applying a saving profile (the 50/30/20 Savings leg).
+ * The writes run via `Promise.all` over the EXISTING per-category endpoints, then
+ * budgets + Home invalidate ONCE so the surface refreshes in a single pass.
+ */
+export function useApplyTemplate() {
+  const invalidate = useInvalidateBudgets()
+  return useMutation<
+    void,
+    Error,
+    {
+      month: string
+      /** category → target (Decimal string upserts; `null` clears). */
+      targets: Partial<Record<Category, string | null>>
+      /** Optional saving profile to apply after the targets (50/30/20 leg). */
+      profile?: SavingProfile
+      /** The budget currency the targets are denominated in (ADR-152); default ARS. */
+      currency?: Currency
+    }
+  >({
+    mutationFn: async ({ month, targets, profile, currency }) => {
+      const writes = Object.entries(targets).map(([category, amount]) =>
+        amount == null
+          ? budgetsClient.clearTarget(category as Category, month)
+          : budgetsClient.setTarget({
+              category: category as Category,
+              month,
+              amount,
+              currency,
+            }),
+      )
+      await Promise.all(writes)
+      if (profile != null) {
+        await budgetsClient.applyProfile(month, profile)
+      }
+    },
+    onSuccess: invalidate,
+  })
+}
+
+/**
+ * Apply a saving profile for a month (ADR-138), then refresh budgets + Home. The
+ * mutation result carries the floor-guard outcome (`floorBreached` + `gap`) so
+ * the caller can surface the calm warning.
+ */
+export function useApplyProfile() {
+  const invalidate = useInvalidateBudgets()
+  return useMutation<
+    ApplyProfileResult,
+    Error,
+    { month: string; profile: SavingProfile }
+  >({
+    mutationFn: ({ month, profile }) =>
+      budgetsClient.applyProfile(month, profile),
+    onSuccess: invalidate,
+  })
+}
+
+/**
+ * Reprice spend caps from one month into the next (ADR-137), then refresh
+ * budgets + Home. Never auto-applies — the caller confirms in the preview modal.
+ */
+export function useReprice() {
+  const invalidate = useInvalidateBudgets()
+  return useMutation<BudgetPeriod, Error, RepriceBody>({
+    mutationFn: (body) => budgetsClient.reprice(body),
     onSuccess: invalidate,
   })
 }

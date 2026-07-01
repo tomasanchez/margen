@@ -31,12 +31,26 @@ export type DisplayCurrency = 'ARS' | 'USD'
 /** Default FX rate source used to pre-select Add/Edit USD entries (ADR-044/045). */
 export type FxDefaultRateType = 'MEP' | 'official'
 
+/**
+ * The persisted preferred FX rate source (ADR-151) — the SINGLE source of truth
+ * that drives transaction capture (ADR-149), historical backfill (ADR-150),
+ * budget conversion (ADR-152), and the net-worth card selector. Values are the
+ * dolarapi `casa` segments: `'bolsa'` (MEP, default) or `'oficial'`.
+ */
+export type PreferredRateSource = 'bolsa' | 'oficial'
+
 /** The app settings as the frontend consumes them (camelCase, flat). */
 export interface Settings {
   /** Drives the Home cards + summaries currency (ADR-056). */
   preferredDisplayCurrency: DisplayCurrency
   /** Pre-selected FX source on the Add/Edit USD flow (ADR-044/045). */
   fxDefaultRateType: FxDefaultRateType
+  /**
+   * The persisted preferred FX rate source (ADR-151), `'bolsa'` (MEP, default)
+   * or `'oficial'`. Drives transaction capture, backfill, budget conversion, and
+   * the net-worth card's rate selector — one source of truth across the app.
+   */
+  preferredRateSource: PreferredRateSource
   /** Configured Monotributo category letter, `A`..`K` (ADR-046/054). */
   monotributoCurrentCategory: string
   /** Activity type; `services` in the MVP (ADR-053/059). */

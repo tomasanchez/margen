@@ -36,6 +36,7 @@ class AbstractSettingsRepository(ABC):
         *,
         preferred_display_currency: str | None = None,
         fx_default_rate_type: str | None = None,
+        preferred_rate_source: str | None = None,
         monotributo_current_category: str | None = None,
         monotributo_activity_type: str | None = None,
         monotributo_enabled: bool | None = None,
@@ -54,6 +55,9 @@ class AbstractSettingsRepository(ABC):
                 ``None`` to leave it unchanged.
             fx_default_rate_type: The FX rate-type token to persist, or ``None`` to
                 leave it unchanged.
+            preferred_rate_source: The preferred FX rate source to persist
+                (``"bolsa"`` / ``"oficial"``, ADR-151), or ``None`` to leave it
+                unchanged.
             monotributo_current_category: The category letter A-K to persist, or
                 ``None`` to leave it unchanged.
             monotributo_activity_type: The activity type to persist, or ``None`` to

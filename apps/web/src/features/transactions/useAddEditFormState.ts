@@ -27,7 +27,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchSuggestedRates } from '../../api/fxClient'
 import { useSettings } from '../settings/queries'
-import type { FxDefaultRateType } from '../../api/settingsClient'
+import { usePreferredRate } from '../budgets/queries'
+import type {
+  FxDefaultRateType,
+  PreferredRateSource,
+} from '../../api/settingsClient'
+import { casaForSource } from './captureFx'
 import type {
   Category,
   Currency,
@@ -41,13 +46,18 @@ import type {
 } from '../../api/invoicesClient'
 import type { AddPrefill } from './addContext'
 
-/** Categories shown as expense chips (everything pickable except `Income`). */
+/**
+ * Categories shown as expense chips (everything pickable except `Income`). The
+ * picker prefers `Housing` over the legacy `Rent` alias (ADR-140); `Rent` stays
+ * valid for historical rows but is not offered here. `Education` is added.
+ */
 export const EXPENSE_CATEGORIES: readonly Category[] = [
   'Food',
-  'Rent',
+  'Housing',
   'Transport',
   'Subscriptions',
   'Health',
+  'Education',
   'Shopping',
   'Entertainment',
   'Services',
@@ -146,6 +156,15 @@ function round2(n: number): number {
 }
 
 /**
+ * A positive rate as a Decimal string with up to 6 dp (the fx_rate snapshot
+ * scale, NUMERIC(18,6)), trailing zeros dropped so the string stays tidy. Mirrors
+ * the same helper in {@link captureFx} so the form + capture agree on encoding.
+ */
+function toRateString(rate: number): string {
+  return Number.parseFloat(rate.toFixed(6)).toString()
+}
+
+/**
  * Loading status of the suggested-rate fetch (ADR-045 affordances). `suggested`
  * means at least one of the two rates (MEP / official) came back; `failed` means
  * both were null (require manual entry).
@@ -206,6 +225,31 @@ export interface AddEditFormState {
   readonly rateSuggestionStatus: RateSuggestionStatus
   /** Re-fetch both suggested rates and re-apply the current non-manual source. */
   refreshSuggestedRate: () => void
+
+  // --- ARS-row FX snapshot rate (ADR-148/151) ------------------------------
+  //
+  // For an ARS expense/income the app still captures a per-transaction FX
+  // snapshot so `usd_amount` materializes and budgets can sum it (ADR-152). The
+  // rate is the day's preferred-source rate (bolsa/oficial), which we SHOW and
+  // let the user OVERRIDE for this transaction — the visible counterpart to the
+  // USD-row rate field. Only meaningful when `currency === 'ARS'`.
+
+  /** Raw ARS-snapshot rate string as typed (prefilled from the cached rate). */
+  readonly arsRateText: string
+  setArsRateText: (next: string) => void
+  /** Parsed positive ARS-snapshot rate (NaN when blank/invalid/unavailable). */
+  readonly arsRate: number
+  /**
+   * Provenance tag for the ARS snapshot rate: the preferred source's casa
+   * ('bolsa' | 'oficial'), or 'manual' once the user overrides the value.
+   */
+  readonly arsRateSource: string
+  /** The preferred source label ('bolsa'/'oficial') for the ARS rate field hint. */
+  readonly arsRatePreferredSource: PreferredRateSource
+  /** True while the cached preferred rate is still loading (calm placeholder). */
+  readonly arsRateLoading: boolean
+  /** USD equivalent of the entered ARS amount at `arsRate` (NaN when unavailable). */
+  readonly arsUsdEquivalent: number
 
   readonly category: Category
   setCategory: (next: Category) => void
@@ -319,6 +363,15 @@ export function useAddEditFormState(
   const settingsQuery = useSettings()
   const fxDefaultRateType: FxDefaultRateType =
     settingsQuery.data?.fxDefaultRateType ?? 'MEP'
+  // The persisted preferred source (ADR-151) tags the ARS snapshot + labels its
+  // rate field; default 'bolsa' (MEP) until settings resolve.
+  const arsRatePreferredSource: PreferredRateSource =
+    settingsQuery.data?.preferredRateSource ?? 'bolsa'
+  // The app's already-cached preferred-source rate (budgets keep it warm). Used
+  // to PREFILL the visible ARS rate field so the user sees the value being
+  // applied and can override it. `null`/undefined = unavailable (calm no-op).
+  const preferredRateQuery = usePreferredRate()
+  const cachedPreferredRate = preferredRateQuery.data ?? null
 
   const [type, setType] = useState<TxType>(prefill?.type ?? 'expense')
   const [countsTowardMonotributo, setCountsTowardMonotributo] =
@@ -374,6 +427,30 @@ export function useAddEditFormState(
     // entered value is user-owned, no longer a suggested MEP/official figure.
     setRateEdited(true)
     setFxSourceRaw('manual')
+  }, [])
+
+  // --- ARS-row FX snapshot rate (ADR-148/151) ------------------------------
+  // Seed from the row's stored snapshot `fxRate` on an ARS edit; otherwise blank
+  // until the cached preferred rate lands (prefilled by the effect below). We
+  // track whether the user has overridden it so a late-arriving cached rate
+  // never clobbers a hand-entered value.
+  const [arsRateText, setArsRateTextRaw] = useState<string>(
+    prefill?.currency !== 'USD' && typeof prefill?.fxRate === 'string'
+      ? prefill.fxRate
+      : '',
+  )
+  const [arsRateEdited, setArsRateEdited] = useState<boolean>(
+    prefill?.currency !== 'USD' && typeof prefill?.fxRate === 'string',
+  )
+  // The provenance tag once the user overrides: 'manual'. Until then the rate is
+  // the preferred source's casa, resolved in `buildInput` from settings.
+  const [arsRateOverridden, setArsRateOverridden] = useState<boolean>(
+    prefill?.currency !== 'USD' && prefill?.fxSource === 'manual',
+  )
+  const setArsRateText = useCallback((next: string) => {
+    setArsRateTextRaw(next)
+    setArsRateEdited(true)
+    setArsRateOverridden(true)
   }, [])
 
   // Pick a source explicitly. MEP/official pre-fill that suggested value (when
@@ -438,6 +515,25 @@ export function useAddEditFormState(
     const parsed = parseAmountInput(rateText)
     return Number.isFinite(parsed) && parsed > 0 ? parsed : Number.NaN
   }, [rateText])
+
+  // Parsed ARS-snapshot rate (positive-or-NaN), and the USD equivalent it yields
+  // for the entered ARS amount. Both drive the visible ARS FX field + preview.
+  const arsRate = useMemo(() => {
+    const parsed = parseAmountInput(arsRateText)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : Number.NaN
+  }, [arsRateText])
+
+  // Prefill the visible ARS rate field from the app's cached preferred rate as
+  // soon as it lands, UNLESS the user has already typed one (or an edit seeded a
+  // stored snapshot). This is the reliable source of the rate — no dependence on
+  // a fresh submit-time fetch (the earlier cause of source-without-rate rows).
+  useEffect(() => {
+    if (currency !== 'ARS') return
+    if (arsRateEdited) return
+    if (cachedPreferredRate == null || cachedPreferredRate <= 0) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setArsRateTextRaw(String(cachedPreferredRate))
+  }, [currency, arsRateEdited, cachedPreferredRate])
 
   // Keep the configured FX default in a ref so the stable `fetchSuggestion`
   // callback (empty deps, fed to a one-shot effect) reads the latest value
@@ -629,6 +725,11 @@ export function useAddEditFormState(
     setFxSourceRaw(fxDefaultRef.current)
     setSuggestedRates({ MEP: null, official: null })
     setRateSuggestionStatus('idle')
+    // Clear the ARS-snapshot override so the field re-prefills from the cached
+    // preferred rate for the next blank entry.
+    setArsRateTextRaw('')
+    setArsRateEdited(false)
+    setArsRateOverridden(false)
     setCategory(DEFAULT_CATEGORY)
     setAccountId('')
     setName('')
@@ -652,6 +753,29 @@ export function useAddEditFormState(
     }
     return round2(amount)
   }, [amount, currency, rate])
+
+  // The USD equivalent of the entered ARS amount at the visible ARS rate — shown
+  // beside the rate field so it's obvious what the rate produces. NaN when the
+  // amount or rate is missing (the preview then reads as a calm dash).
+  const arsUsdEquivalent = useMemo(() => {
+    if (currency !== 'ARS') return Number.NaN
+    if (!Number.isFinite(amountArs) || amountArs <= 0) return Number.NaN
+    if (!Number.isFinite(arsRate)) return Number.NaN
+    return Math.round((amountArs / arsRate) * 100) / 100
+  }, [currency, amountArs, arsRate])
+
+  // Provenance tag for the ARS snapshot: 'manual' once overridden, else the
+  // preferred source's casa ('bolsa'|'oficial'). Sent alongside `fxRate`.
+  const arsRateSource: string = arsRateOverridden
+    ? 'manual'
+    : casaForSource(arsRatePreferredSource)
+  // Calm loading flag: the cached rate is still resolving AND we have nothing to
+  // show yet (so the field can render a "fetching" placeholder, not an error).
+  const arsRateLoading =
+    currency === 'ARS' &&
+    !arsRateEdited &&
+    arsRateText === '' &&
+    preferredRateQuery.isPending
 
   const canSave =
     Number.isFinite(amount) &&
@@ -718,6 +842,19 @@ export function useAddEditFormState(
       base.rate = undefined
       base.fxRateType = undefined
       base.fxRateAsOf = undefined
+      // ARS row FX snapshot (ADR-148/151): stamp the VISIBLE rate the user saw /
+      // overrode so `usd_amount` materializes. `fxRate` + `fxSource` travel
+      // TOGETHER — only when a valid positive rate is present; otherwise send
+      // NEITHER (the row is created without a snapshot and backfilled later,
+      // ADR-150). This is the authoritative path; `captureFxForCreate` is a
+      // fallback that leaves an already-stamped input untouched.
+      if (Number.isFinite(arsRate)) {
+        base.fxRate = toRateString(arsRate)
+        base.fxSource = arsRateSource
+      } else {
+        base.fxRate = undefined
+        base.fxSource = undefined
+      }
     }
 
     return base
@@ -744,6 +881,13 @@ export function useAddEditFormState(
     suggestedRates,
     rateSuggestionStatus,
     refreshSuggestedRate,
+    arsRateText,
+    setArsRateText,
+    arsRate,
+    arsRateSource,
+    arsRatePreferredSource,
+    arsRateLoading,
+    arsUsdEquivalent,
     category,
     setCategory,
     accountId,

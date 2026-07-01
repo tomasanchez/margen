@@ -48,7 +48,11 @@
   "fxSource": {
     "mep": "MEP",
     "official": "oficial",
-    "manual": "manual"
+    "manual": "manual",
+    "bolsa": "MEP",
+    "oficial": "oficial",
+    "backfill": "retroactivo",
+    "import": "importado"
   },
   "sign": {
     "plus": "más",
@@ -57,10 +61,12 @@
   "categories": {
     "Income": "Ingresos",
     "Food": "Comida",
+    "Housing": "Vivienda",
     "Rent": "Alquiler",
     "Transport": "Transporte",
     "Subscriptions": "Suscripciones",
     "Health": "Salud",
+    "Education": "Educación",
     "Shopping": "Compras",
     "Entertainment": "Entretenimiento",
     "Services": "Servicios",

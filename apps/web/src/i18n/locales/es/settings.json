@@ -25,6 +25,13 @@
       "selectLabel": "Fuente de cotización",
       "mep": "MEP",
       "official": "Oficial"
+    },
+    "rateSource": {
+      "label": "Fuente de cotización preferida",
+      "helper": "La única cotización del dólar que Margen usa en toda la app — al registrar transacciones, completar el historial, convertir presupuestos y en la tarjeta de patrimonio.",
+      "selectLabel": "Fuente preferida",
+      "bolsa": "MEP (Bolsa)",
+      "oficial": "Oficial"
     }
   },
   "monotributo": {
@@ -41,6 +48,21 @@
     },
     "activityServices": "Servicios",
     "activityServicesTitle": "El tipo de actividad es servicios en esta versión"
+  },
+  "backfill": {
+    "title": "Convertir transacciones anteriores a USD",
+    "subtitle": "Asigná a las transacciones más viejas la cotización del dólar del día en que ocurrieron, para que los presupuestos en USD muestren el gasto histórico correcto.",
+    "allConverted": "Todas tus transacciones ya están convertidas.",
+    "pending_one": "{{count}} transacción todavía no se convirtió a USD.",
+    "pending_other": "{{count}} transacciones todavía no se convirtieron a USD.",
+    "progress": "Convirtiendo {{done}} / {{total}}…",
+    "progressAria": "Conversión {{pct}}% completa",
+    "summary_one": "Se convirtió {{done}} transacción.",
+    "summary_other": "Se convirtieron {{done}} transacciones.",
+    "summaryWithFailures": "Se convirtieron {{done}} · {{failed}} no se pudieron cotizar (probá de nuevo más tarde).",
+    "run": "Convertir ahora",
+    "runAgain": "Convertir las restantes",
+    "running": "Convirtiendo…"
   },
   "manualThreshold": {
     "note": "Los umbrales se mantienen manualmente · escala AFIP {{year}}"

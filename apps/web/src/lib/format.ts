@@ -167,6 +167,20 @@ export function fxSourceLabel(
 }
 
 /**
+ * Human label for a per-transaction FX SNAPSHOT source (ADR-148): the provenance
+ * vocabulary `'bolsa' | 'oficial' | 'manual' | 'backfill' | 'import'` (distinct
+ * from the ADR-044 {@link FxRateType} family). Looks up `common:fxSource.<value>`
+ * and falls back to "manual" for an unknown/absent value, so the ARS snapshot
+ * field always declares which dollar it used. Localizes off the active language.
+ */
+export function fxSnapshotSourceLabel(source: string | null | undefined): string {
+  if (!source) return i18n.t('common:fxSource.manual')
+  return i18n.t(`common:fxSource.${source}`, {
+    defaultValue: i18n.t('common:fxSource.manual'),
+  })
+}
+
+/**
  * FX subline for USD transactions, e.g. "USD 500 · MEP 1.245" for a confirmed
  * MEP suggestion or "USD 500 · manual 1.300" for a user-entered rate. The source
  * defaults to MEP when not supplied (legacy rows). Returns an empty string when

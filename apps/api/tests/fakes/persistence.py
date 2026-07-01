@@ -16,14 +16,16 @@ from uuid import UUID, uuid4
 
 from margen_api.domain.models.account import Account
 from margen_api.domain.models.budget import Budget
+from margen_api.domain.models.budget_income import BudgetIncome
 from margen_api.domain.models.institution import Institution
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.transfer import Transfer
-from margen_api.domain.models.value_objects import Currency, Kind, TxType
+from margen_api.domain.models.value_objects import BudgetKind, Currency, Kind, TxType
 from margen_api.service_layer.account_read_models import AccountReadModel, NetWorth
 from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.account_repository import AbstractAccountRepository
-from margen_api.service_layer.budget_read_models import MonthlyBudget
+from margen_api.service_layer.budget_income_repository import AbstractBudgetIncomeRepository
+from margen_api.service_layer.budget_read_models import CategoryHistory, MonthlyBudget
 from margen_api.service_layer.budget_reader import AbstractBudgetReader
 from margen_api.service_layer.budget_repository import AbstractBudgetRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore, InvoiceDocument
@@ -57,6 +59,7 @@ from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
 # Documented default settings used when the fake's settings store is empty (ADR-054).
 _DEFAULT_DISPLAY_CURRENCY = "ARS"
 _DEFAULT_FX_RATE_TYPE = "MEP"
+_DEFAULT_PREFERRED_RATE_SOURCE = "bolsa"
 _DEFAULT_MONOTRIBUTO_CATEGORY = "C"
 _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE = "services"
 # Brand-new users default to the Monotributo module OFF (ADR-126).
@@ -239,27 +242,94 @@ class FakeBudgetRepository(AbstractBudgetRepository):
         """Stage a new aggregate until the unit of work commits (ADR-130)."""
         self._staged[budget.id] = budget
 
-    async def get_by_category_period(self, category: str, period: date, user_id: str) -> Budget | None:
-        """Return the owner's target for a category/month, or ``None`` (ADR-125, ADR-130)."""
+    async def get_by_category_period(
+        self,
+        category: str,
+        period: date,
+        user_id: str,
+        kind: BudgetKind = BudgetKind.SPEND,
+    ) -> Budget | None:
+        """Return the owner's row for a kind/category/month, or ``None`` (ADR-138, ADR-130)."""
         for store in (self._staged, self._committed):
             for budget in store.values():
-                if budget.user_id == user_id and budget.category == category and budget.period == period:
+                if (
+                    budget.user_id == user_id
+                    and budget.kind == kind
+                    and budget.category == category
+                    and budget.period == period
+                ):
                     return budget
         return None
+
+    async def list_by_period(
+        self,
+        period: date,
+        user_id: str,
+        kind: BudgetKind = BudgetKind.SPEND,
+    ) -> list[Budget]:
+        """List the owner's rows of a kind for a month across both stores (ADR-137, ADR-130)."""
+        seen: dict[UUID, Budget] = {}
+        for store in (self._committed, self._staged):
+            for budget in store.values():
+                if budget.user_id == user_id and budget.kind == kind and budget.period == period:
+                    seen[budget.id] = budget
+        return list(seen.values())
 
     async def persist(self, budget: Budget) -> None:
         """Stage a mutated aggregate for the next commit."""
         self._staged[budget.id] = budget
 
-    async def delete(self, category: str, period: date, user_id: str) -> bool:
-        """Hard-delete the owner's target for a category/month across both stores (ADR-130)."""
+    async def delete(
+        self,
+        category: str,
+        period: date,
+        user_id: str,
+        kind: BudgetKind = BudgetKind.SPEND,
+    ) -> bool:
+        """Hard-delete the owner's row for a kind/category/month across both stores (ADR-138, ADR-130)."""
         removed = False
         for store in (self._staged, self._committed):
             for budget_id, budget in list(store.items()):
-                if budget.user_id == user_id and budget.category == category and budget.period == period:
+                if (
+                    budget.user_id == user_id
+                    and budget.kind == kind
+                    and budget.category == category
+                    and budget.period == period
+                ):
                     store.pop(budget_id, None)
                     removed = True
         return removed
+
+
+class FakeBudgetIncomeRepository(AbstractBudgetIncomeRepository):
+    """In-memory income-base repository over a committed store and a staging buffer.
+
+    Mirrors :class:`FakeBudgetRepository`: ``add``/``persist`` write to the staging
+    buffer, ``commit`` promotes it, ``rollback`` clears it, and the natural-key lookup
+    resolves ``period`` scoped to the owner so the upsert handler can replace rather
+    than duplicate (ADR-139, ADR-130).
+    """
+
+    def __init__(self, committed: dict[UUID, BudgetIncome], staged: dict[UUID, BudgetIncome]) -> None:
+        """Initialize the repository over the unit of work's stores."""
+        self._committed = committed
+        self._staged = staged
+
+    def add(self, income: BudgetIncome) -> None:
+        """Stage a new aggregate until the unit of work commits (ADR-130)."""
+        self._staged[income.id] = income
+
+    async def get_by_period(self, period: date, user_id: str) -> BudgetIncome | None:
+        """Return the owner's income base for a month, or ``None`` (ADR-139, ADR-130)."""
+        for store in (self._staged, self._committed):
+            for income in store.values():
+                if income.user_id == user_id and income.period == period:
+                    return income
+        return None
+
+    async def persist(self, income: BudgetIncome) -> None:
+        """Stage a mutated aggregate for the next commit."""
+        self._staged[income.id] = income
 
 
 class FakeMonotributoSnapshotRepository(AbstractMonotributoSnapshotRepository):
@@ -334,15 +404,18 @@ class FakeSettingsRepository(AbstractSettingsRepository):
         *,
         preferred_display_currency: str | None = None,
         fx_default_rate_type: str | None = None,
+        preferred_rate_source: str | None = None,
         monotributo_current_category: str | None = None,
         monotributo_activity_type: str | None = None,
         monotributo_enabled: bool | None = None,
     ) -> AppSettings:
-        """Merge only the provided fields onto the owner's settings row (ADR-110, ADR-126)."""
+        """Merge only the provided fields onto the owner's settings row (ADR-110, ADR-126, ADR-151)."""
         if preferred_display_currency is not None:
             self._settings["preferred_display_currency"] = preferred_display_currency
         if fx_default_rate_type is not None:
             self._settings["fx_default_rate_type"] = fx_default_rate_type
+        if preferred_rate_source is not None:
+            self._settings["preferred_rate_source"] = preferred_rate_source
         if monotributo_current_category is not None:
             self._settings["current_category"] = monotributo_current_category
         if monotributo_activity_type is not None:
@@ -356,6 +429,7 @@ class FakeSettingsRepository(AbstractSettingsRepository):
         return AppSettings(
             preferred_display_currency=str(self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY)),
             fx_default_rate_type=str(self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE)),
+            preferred_rate_source=str(self._settings.get("preferred_rate_source", _DEFAULT_PREFERRED_RATE_SOURCE)),
             monotributo_current_category=str(self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY)),
             monotributo_activity_type=str(self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE)),
             monotributo_enabled=bool(self._settings.get("monotributo_enabled", _DEFAULT_MONOTRIBUTO_ENABLED)),
@@ -559,6 +633,8 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_transfers: dict[UUID, Transfer] = {}
         self.committed_budgets: dict[UUID, Budget] = {}
         self._staged_budgets: dict[UUID, Budget] = {}
+        self.committed_budget_income: dict[UUID, BudgetIncome] = {}
+        self._staged_budget_income: dict[UUID, BudgetIncome] = {}
         self.snapshots: dict[tuple[str, date], MonotributoStanding] = {}
         self.config: dict[str, str | bool] = {}
         self.used_by_window: dict[tuple[str, date, date], Decimal] = {}
@@ -575,6 +651,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.institutions = FakeInstitutionRepository(self.committed_institutions, self._staged_institutions)
         self.transfers = FakeTransferRepository(self.committed_transfers, self._staged_transfers)
         self.budgets = FakeBudgetRepository(self.committed_budgets, self._staged_budgets)
+        self.budget_income = FakeBudgetIncomeRepository(self.committed_budget_income, self._staged_budget_income)
         self.committed = False
 
     async def __aenter__(self) -> FakeUnitOfWork:
@@ -585,6 +662,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_institutions = {}
         self._staged_transfers = {}
         self._staged_budgets = {}
+        self._staged_budget_income = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
         self.settings = FakeSettingsRepository(self.config)
@@ -594,6 +672,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.institutions = FakeInstitutionRepository(self.committed_institutions, self._staged_institutions)
         self.transfers = FakeTransferRepository(self.committed_transfers, self._staged_transfers)
         self.budgets = FakeBudgetRepository(self.committed_budgets, self._staged_budgets)
+        self.budget_income = FakeBudgetIncomeRepository(self.committed_budget_income, self._staged_budget_income)
         return self
 
     async def __aexit__(
@@ -612,11 +691,13 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.committed_institutions.update(self._staged_institutions)
         self.committed_transfers.update(self._staged_transfers)
         self.committed_budgets.update(self._staged_budgets)
+        self.committed_budget_income.update(self._staged_budget_income)
         self._staged.clear()
         self._staged_accounts.clear()
         self._staged_institutions.clear()
         self._staged_transfers.clear()
         self._staged_budgets.clear()
+        self._staged_budget_income.clear()
         self.committed = True
 
     async def flush(self) -> None:
@@ -628,6 +709,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.committed_institutions.update(self._staged_institutions)
         self.committed_transfers.update(self._staged_transfers)
         self.committed_budgets.update(self._staged_budgets)
+        self.committed_budget_income.update(self._staged_budget_income)
 
     async def rollback(self) -> None:
         """Discard staged aggregates."""
@@ -636,6 +718,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_institutions.clear()
         self._staged_transfers.clear()
         self._staged_budgets.clear()
+        self._staged_budget_income.clear()
 
 
 class FakeTransactionReader(AbstractTransactionReader):
@@ -796,21 +879,43 @@ class FakeBudgetReader(AbstractBudgetReader):
     requested month and owner and returns the budget it was given (ADR-032, ADR-108).
     """
 
-    def __init__(self, budget: MonthlyBudget) -> None:
-        """Initialize the reader with the budget every call returns.
+    def __init__(self, budget: MonthlyBudget, history: CategoryHistory | None = None) -> None:
+        """Initialize the reader with the budget and history every call returns.
 
         Args:
-            budget: The monthly budget every call returns.
+            budget: The monthly budget every ``monthly_budget`` call returns.
+            history: The category history every ``category_history`` call returns;
+                an empty history when not provided.
         """
         self._budget = budget
+        self._history = history if history is not None else CategoryHistory(categories=[])
         self.requested_month: date | None = None
         self.requested_user_id: str | None = None
+        self.requested_currency: Currency | None = None
 
-    async def monthly_budget(self, month: date, user_id: str) -> MonthlyBudget:
-        """Record the requested month and owner and return the canned budget (ADR-108)."""
+    async def monthly_budget(
+        self,
+        month: date,
+        user_id: str,
+        currency: Currency = Currency.ARS,
+    ) -> MonthlyBudget:
+        """Record the requested month, owner and currency and return the canned budget (ADR-108, ADR-152)."""
         self.requested_month = month
         self.requested_user_id = user_id
+        self.requested_currency = currency
         return self._budget
+
+    async def category_history(
+        self,
+        month: date,
+        user_id: str,
+        currency: Currency = Currency.ARS,
+    ) -> CategoryHistory:
+        """Record the requested month, owner and currency and return the canned history (ADR-108, ADR-145, ADR-152)."""
+        self.requested_month = month
+        self.requested_user_id = user_id
+        self.requested_currency = currency
+        return self._history
 
 
 class FakeSummaryReader(AbstractSummaryReader):
@@ -913,6 +1018,7 @@ class FakeSettingsReader(AbstractSettingsReader):
         return AppSettings(
             preferred_display_currency=str(self._settings.get("preferred_display_currency", _DEFAULT_DISPLAY_CURRENCY)),
             fx_default_rate_type=str(self._settings.get("fx_default_rate_type", _DEFAULT_FX_RATE_TYPE)),
+            preferred_rate_source=str(self._settings.get("preferred_rate_source", _DEFAULT_PREFERRED_RATE_SOURCE)),
             monotributo_current_category=str(self._settings.get("current_category", _DEFAULT_MONOTRIBUTO_CATEGORY)),
             monotributo_activity_type=str(self._settings.get("activity_type", _DEFAULT_MONOTRIBUTO_ACTIVITY_TYPE)),
             monotributo_enabled=bool(self._settings.get("monotributo_enabled", _DEFAULT_MONOTRIBUTO_ENABLED)),
@@ -931,6 +1037,7 @@ def _project(transaction: Transaction) -> TransactionReadModel:
         currency=transaction.currency,
         usd_amount=transaction.usd_amount,
         fx_rate=transaction.fx_rate,
+        fx_source=transaction.fx_source,
         fx_rate_type=transaction.fx_rate_type,
         fx_rate_as_of=transaction.fx_rate_as_of,
         category=transaction.category,

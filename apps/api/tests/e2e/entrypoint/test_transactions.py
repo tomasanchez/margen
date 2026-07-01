@@ -23,7 +23,7 @@ from margen_api.asgi import get_application
 from margen_api.bootstrap import bootstrap
 from margen_api.domain.models.exceptions import InvalidAmountError, UnknownKindError
 from margen_api.domain.models.transaction import build_transaction
-from margen_api.domain.models.value_objects import Kind
+from margen_api.domain.models.value_objects import Currency, Kind
 from margen_api.entrypoint.dependencies import get_bus, get_transaction_reader
 from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.registry import COMMAND_HANDLERS, EVENT_HANDLERS
@@ -304,6 +304,23 @@ class TestDomainInvariantToHttp:
         # THEN
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
+    @pytest.mark.parametrize(
+        "raising_client",
+        [InvalidAmountError(Decimal("-1")), UnknownKindError("transfer")],
+        indirect=True,
+    )
+    async def test_set_fx_snapshot_maps_invariant_to_422(self, raising_client: httpx.AsyncClient):
+        """
+        GIVEN a bus whose snapshot handler raises a domain invariant violation
+        WHEN a syntactically valid FX snapshot PUT is sent
+        THEN the router maps it to 422 (ADR-031)
+        """
+        # WHEN
+        response = await raising_client.put(f"{TRANSACTIONS}/{uuid4()}/fx", json={"fxRate": "1000"})
+
+        # THEN
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
 
 class TestGetTransaction:
     """GET /transactions/{id} returns 200 or 404."""
@@ -494,3 +511,120 @@ class TestCrossTenantIsolation:
         # THEN
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert theirs.id in uow.committed_aggregates
+
+
+class TestSetFxSnapshot:
+    """PUT /transactions/{id}/fx sets the FX snapshot and re-materializes usd_amount (ADR-148, ADR-149)."""
+
+    async def test_sets_snapshot_and_recomputes_usd_amount(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN a committed USD transaction lacking a snapshot
+        WHEN the FX snapshot is set with a rate and source
+        THEN it returns 200, usd_amount = amount ÷ rate (half-up), and fxSource is stored
+        """
+        # GIVEN — a USD expense of 50000 ARS-equivalent with no snapshot yet.
+        transaction = _seed(uow, currency=Currency.USD, amount=Decimal("50000"), name="MacBook")
+
+        # WHEN — the client supplies the ARS-per-USD rate and its provenance.
+        response = await client.put(
+            f"{TRANSACTIONS}/{transaction.id}/fx",
+            json={"fxRate": "1000", "fxSource": "bolsa"},
+        )
+
+        # THEN — the server materialized 50000 / 1000 = 50.00 (no FX feed, ADR-149).
+        assert response.status_code == status.HTTP_200_OK, response.text
+        data = response.json()["data"]
+        assert data["usd"] == "50.00"
+        assert data["rate"] == "1000"
+        assert data["fxSource"] == "bolsa"
+
+    async def test_sets_snapshot_on_ars_row_materializes_usd_amount(
+        self, client: httpx.AsyncClient, uow: FakeUnitOfWork
+    ):
+        """
+        GIVEN a committed ARS expense lacking a snapshot
+        WHEN the FX snapshot is set with a rate and source
+        THEN usd_amount is materialized for the ARS row and the snapshot persists (ADR-152)
+        """
+        # GIVEN — an ARS expense of 50000 with no snapshot yet (the bulk-of-spend case).
+        transaction = _seed(uow, currency=Currency.ARS, amount=Decimal("50000"), name="Coto")
+
+        # WHEN — the client supplies the ARS-per-USD rate and its provenance.
+        response = await client.put(
+            f"{TRANSACTIONS}/{transaction.id}/fx",
+            json={"fxRate": "1000", "fxSource": "bolsa"},
+        )
+
+        # THEN — the ARS row carries a materialized USD figure: 50000 / 1000 = 50.00.
+        assert response.status_code == status.HTTP_200_OK, response.text
+        data = response.json()["data"]
+        assert data["usd"] == "50.00"
+        assert data["fxSource"] == "bolsa"
+        # The persisted aggregate keeps the snapshot — it survives the rebuild for ARS.
+        committed = uow.committed_aggregates[transaction.id]
+        assert committed.currency is Currency.ARS
+        assert committed.usd_amount == Decimal("50.00")
+        assert committed.fx_source == "bolsa"
+
+    async def test_sets_snapshot_on_ars_row_without_source_defaults_provenance(
+        self, client: httpx.AsyncClient, uow: FakeUnitOfWork
+    ):
+        """
+        GIVEN a committed ARS expense lacking a snapshot
+        WHEN the FX snapshot is set with a rate but NO source
+        THEN usd_amount survives the rebuild and provenance defaults to 'manual' (ADR-152)
+        """
+        # GIVEN
+        transaction = _seed(uow, currency=Currency.ARS, amount=Decimal("50000"), name="Coto")
+
+        # WHEN — no fxSource supplied.
+        response = await client.put(f"{TRANSACTIONS}/{transaction.id}/fx", json={"fxRate": "1000"})
+
+        # THEN — the snapshot still persists for the ARS row; provenance defaults to 'manual'.
+        assert response.status_code == status.HTTP_200_OK, response.text
+        committed = uow.committed_aggregates[transaction.id]
+        assert committed.usd_amount == Decimal("50.00")
+        assert committed.fx_source == "manual"
+
+    async def test_non_positive_rate_returns_422(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN a committed transaction
+        WHEN the FX snapshot is set with a non-positive rate
+        THEN boundary validation rejects it with 422
+        """
+        # GIVEN
+        transaction = _seed(uow, currency=Currency.USD, amount=Decimal("50000"))
+
+        # WHEN
+        response = await client.put(f"{TRANSACTIONS}/{transaction.id}/fx", json={"fxRate": "0"})
+
+        # THEN
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    async def test_absent_transaction_returns_404(self, client: httpx.AsyncClient):
+        """
+        GIVEN no transaction for an id
+        WHEN the FX snapshot is set
+        THEN it returns 404
+        """
+        # WHEN
+        response = await client.put(f"{TRANSACTIONS}/{uuid4()}/fx", json={"fxRate": "1000"})
+
+        # THEN
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_other_users_row_returns_404(self, client: httpx.AsyncClient, uow: FakeUnitOfWork):
+        """
+        GIVEN a USD row owned by another user
+        WHEN the stub user sets its FX snapshot
+        THEN it returns 404 and the row is unchanged — existence is never leaked (ADR-111)
+        """
+        # GIVEN
+        theirs = _seed(uow, currency=Currency.USD, amount=Decimal("50000"), user_id=OTHER_USER_ID)
+
+        # WHEN
+        response = await client.put(f"{TRANSACTIONS}/{theirs.id}/fx", json={"fxRate": "1000", "fxSource": "bolsa"})
+
+        # THEN
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert uow.committed_aggregates[theirs.id].usd_amount is None

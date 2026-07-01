@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID, uuid4
 
 from margen_api.domain.models.exceptions import EmptyNameError, InvalidAmountError
@@ -22,6 +22,24 @@ from margen_api.domain.models.value_objects import (
 )
 
 ZERO = Decimal("0")
+CENTS = Decimal("0.01")
+
+
+def materialize_usd_amount(amount: Decimal, fx_rate: Decimal) -> Decimal:
+    """Materialize the USD equivalent from an ARS amount and an FX rate (ADR-148, ADR-149).
+
+    Pure Decimal arithmetic — no I/O, no FX feed (ADR-149): ``round(amount ÷ fx_rate, 2)``
+    with banker-free :data:`~decimal.ROUND_HALF_UP` to ``NUMERIC(18,2)`` precision
+    (ADR-025). ``fx_rate`` is ARS per 1 USD; the caller guarantees it is positive.
+
+    Args:
+        amount: The authoritative ARS-equivalent magnitude (ADR-025).
+        fx_rate: The ARS-per-1-USD rate the client supplied (ADR-149); must be > 0.
+
+    Returns:
+        The materialized USD amount rounded half-up to two decimal places.
+    """
+    return (amount / fx_rate).quantize(CENTS, rounding=ROUND_HALF_UP)
 
 
 @dataclass(eq=False)
@@ -43,8 +61,17 @@ class Transaction:
         kind: Persisted money kind (expense / income / invoice).
         amount: Positive ARS-equivalent magnitude.
         currency: ARS (base) or USD.
-        usd_amount: Original USD amount for USD rows, else ``None``.
-        fx_rate: Rate used for the USD to ARS conversion, else ``None``.
+        usd_amount: Materialized USD equivalent for USD rows, else ``None``. When a
+            positive ``fx_rate`` is present it is recomputed as
+            ``round(amount ÷ fx_rate, 2)`` (ADR-148, ADR-149) so the stored figure
+            always round-trips from the authoritative ``amount``.
+        fx_rate: Rate used for the USD to ARS conversion (ARS per 1 USD), else
+            ``None``.
+        fx_source: Provenance of the FX snapshot rate the client supplied (e.g.
+            ``'bolsa'``, ``'mep'``, ``'oficial'``, ``'manual'``, ``'backfill'``),
+            else ``None`` (ADR-148). Distinct from ``fx_rate_type``: the snapshot
+            source is the per-row capture provenance (ADR-149), kept null until a
+            snapshot is set.
         fx_rate_type: Rate family (defaults to MEP for USD rows), else ``None``.
         fx_rate_as_of: Timestamp the rate was observed, else ``None``.
         category: Validated category string, optional (ADR-027).
@@ -80,6 +107,7 @@ class Transaction:
     currency: Currency = Currency.ARS
     usd_amount: Decimal | None = None
     fx_rate: Decimal | None = None
+    fx_source: str | None = None
     fx_rate_type: FxRateType | None = None
     fx_rate_as_of: datetime | None = None
     category: str | None = None
@@ -126,13 +154,35 @@ class Transaction:
         if self.kind is Kind.EXPENSE:
             self.counts_toward_monotributo = False
 
-        if self.currency is Currency.USD:
-            # USD rows default to the MEP rate family; usd_amount / fx_rate may be
-            # absent (accepted as incomplete — amount stands authoritative).
+        self._normalize_fx()
+
+    def _normalize_fx(self) -> None:
+        """Normalize the FX snapshot block on construction (ADR-148, ADR-149, ADR-152).
+
+        A client-supplied FX snapshot (a non-null ``fx_source``) applies to ANY row
+        regardless of currency: ARS expenses — the bulk of spend — are converted to
+        USD via the snapshot, and USD rows snapshot just the same. When the snapshot
+        carries a positive rate the server materializes the USD figure from the
+        authoritative amount (``round(amount ÷ fx_rate, 2)``) rather than trusting a
+        client-supplied ``usd_amount``, keeping the stored snapshot a faithful
+        round-trip. With NO snapshot, the legacy ADR-029 USD flow stands untouched and
+        an ARS row's FX metadata is dropped rather than rejected (ADR-031).
+        """
+        if self.fx_rate is not None and not isinstance(self.fx_rate, Decimal):
+            self.fx_rate = Decimal(str(self.fx_rate))
+
+        if self.fx_source is not None:
+            if self.fx_rate_type is None:
+                self.fx_rate_type = FxRateType.MEP
+            if self.fx_rate is not None and self.fx_rate > ZERO:
+                self.usd_amount = materialize_usd_amount(self.amount, self.fx_rate)
+        elif self.currency is Currency.USD:
+            # No snapshot: USD rows default to the MEP rate family; usd_amount / fx_rate
+            # may carry the legacy figure or be absent (amount stays authoritative).
             if self.fx_rate_type is None:
                 self.fx_rate_type = FxRateType.MEP
         else:
-            # ARS rows must not carry FX metadata; drop it rather than reject.
+            # An ARS row with NO snapshot must not carry FX metadata; drop it.
             self.usd_amount = None
             self.fx_rate = None
             self.fx_rate_type = None
@@ -157,6 +207,7 @@ def build_transaction(
     currency: Currency | str = Currency.ARS,
     usd_amount: Decimal | None = None,
     fx_rate: Decimal | None = None,
+    fx_source: str | None = None,
     fx_rate_type: FxRateType | str | None = None,
     fx_rate_as_of: datetime | None = None,
     category: str | None = None,
@@ -185,8 +236,10 @@ def build_transaction(
         kind: Money kind, as ``Kind`` or string.
         amount: Positive ARS-equivalent magnitude.
         currency: ARS or USD, as ``Currency`` or string.
-        usd_amount: Original USD amount for USD rows.
-        fx_rate: Conversion rate for USD rows.
+        usd_amount: Original USD amount for USD rows; re-materialized from
+            ``amount ÷ fx_rate`` when a positive rate is supplied (ADR-148/149).
+        fx_rate: Conversion rate for USD rows (ARS per 1 USD).
+        fx_source: Provenance of the FX snapshot rate the client supplied (ADR-148).
         fx_rate_type: Rate family; defaults to MEP for USD rows when omitted.
         fx_rate_as_of: Timestamp the rate was observed.
         category: Optional category string.
@@ -224,6 +277,7 @@ def build_transaction(
         currency=Currency.parse(currency),
         usd_amount=usd_amount,
         fx_rate=fx_rate,
+        fx_source=fx_source,
         fx_rate_type=resolved_fx_rate_type,
         fx_rate_as_of=fx_rate_as_of,
         category=category,

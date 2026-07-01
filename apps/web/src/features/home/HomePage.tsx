@@ -56,7 +56,17 @@ import { RecentActivity } from './RecentActivity'
 import { NetWorthCard } from './NetWorthCard'
 import { useNetWorth } from '../accounts/queries'
 import { BudgetProgressCard } from './BudgetProgressCard'
-import { useBudgets } from '../budgets/queries'
+import {
+  useBudgetIncome,
+  useBudgets,
+  usePreferredRate,
+  usePriorBudgets,
+} from '../budgets/queries'
+import {
+  convertBudgetIncome,
+  convertBudgetPeriod,
+  isRepriceRollover,
+} from '../budgets/derive'
 import { toYearMonth } from './queries'
 
 /** Percentage change from `previous` to `current`; 0 when previous is 0. */
@@ -74,7 +84,7 @@ export function HomePage() {
 
   // Calm note when USD is preferred but the live rate couldn't be fetched, so
   // the cards + summaries fall back to ARS (ADR-056/037). Null otherwise.
-  const { fallbackNote } = useDisplayCurrency()
+  const { fallbackNote, preferredCurrency } = useDisplayCurrency()
 
   // The Monotributo Home card is part of the optional module (ADR-126): hide it
   // when the module is disabled. Treated as hidden until settings resolve so it
@@ -90,11 +100,42 @@ export function HomePage() {
   // Real, month-reactive insights for the selected month (ADR-061/062).
   const insightsQuery = useInsights(viewingMonth)
   // Budget progress for the selected month (ADR-125/127): an incremental Home
-  // card; month-keyed so it tracks the navigator.
-  const budgetsQuery = useBudgets(toYearMonth(viewingMonth))
+  // card; month-keyed so it tracks the navigator. Budgets are DISPLAYED in the
+  // preferred currency (ADR-152/155): spend arrives in it from the backend, while
+  // native targets/income are converted client-side at the live preferred-rate-
+  // source rate (the dedicated budgets rate query, available even for ARS).
+  const budgetsQuery = useBudgets(toYearMonth(viewingMonth), preferredCurrency)
+  const rateQuery = usePreferredRate()
+  const rate = rateQuery.data ?? null
   const previousMonth = useMemo(
     () => addMonths(viewingMonth, -1),
     [viewingMonth],
+  )
+  // Net income (for the compact saved-this-month line) + the prior month's
+  // budgets (for the reprice-rollover nudge), both month-keyed (ADR-127/137).
+  const budgetIncomeQuery = useBudgetIncome(toYearMonth(viewingMonth))
+  const priorBudgetsQuery = usePriorBudgets(toYearMonth(previousMonth), preferredCurrency)
+  const showRepriceNudge = useMemo(
+    () => isRepriceRollover(budgetsQuery.data, priorBudgetsQuery.data),
+    [budgetsQuery.data, priorBudgetsQuery.data],
+  )
+  // Convert the period + income into the preferred currency at the live rate
+  // (ADR-155): non-preferred native targets/income are re-expressed; an
+  // unavailable rate falls back to native (never NaN). Replaces the prior
+  // "treat mismatched income as unset" guard — the income always shows now.
+  const budgetPeriod = useMemo(
+    () =>
+      budgetsQuery.data
+        ? convertBudgetPeriod(budgetsQuery.data, preferredCurrency, rate)
+        : undefined,
+    [budgetsQuery.data, preferredCurrency, rate],
+  )
+  const budgetIncome = useMemo(
+    () =>
+      budgetIncomeQuery.data
+        ? convertBudgetIncome(budgetIncomeQuery.data, preferredCurrency, rate)
+        : undefined,
+    [budgetIncomeQuery.data, preferredCurrency, rate],
   )
 
   const monthLabel = formatViewingMonth(viewingMonth)
@@ -209,7 +250,11 @@ export function HomePage() {
           onRetry={() => void netWorthQuery.refetch()}
         />
         <BudgetProgressCard
-          period={budgetsQuery.data}
+          period={budgetPeriod}
+          // Income is converted to the preferred currency (ADR-155), so it always
+          // shows re-expressed — no more "unset on mismatch" guard.
+          income={budgetIncome}
+          showRepriceNudge={showRepriceNudge}
           loading={budgetsQuery.isPending}
           isError={budgetsQuery.isError}
           onRetry={() => void budgetsQuery.refetch()}

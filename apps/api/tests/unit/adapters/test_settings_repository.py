@@ -45,6 +45,7 @@ def _record(
     *,
     currency: str = "ARS",
     fx: str = "MEP",
+    rate_source: str = "bolsa",
     category: str = "C",
     activity: str = "services",
     enabled: bool = True,
@@ -53,6 +54,7 @@ def _record(
     record = AppSettingsRecord()
     record.preferred_display_currency = currency
     record.fx_default_rate_type = fx
+    record.preferred_rate_source = rate_source
     record.monotributo_current_category = category
     record.monotributo_activity_type = activity
     record.monotributo_enabled = enabled
@@ -137,6 +139,7 @@ class TestUpsertSettings:
             OWNER,
             preferred_display_currency="USD",
             fx_default_rate_type="official",
+            preferred_rate_source="oficial",
             monotributo_current_category="H",
             monotributo_activity_type="bienes",
             monotributo_enabled=False,
@@ -145,9 +148,30 @@ class TestUpsertSettings:
         # THEN
         assert result.preferred_display_currency == "USD"
         assert result.fx_default_rate_type == "official"
+        assert result.preferred_rate_source == "oficial"
         assert result.monotributo_current_category == "H"
         assert result.monotributo_activity_type == "bienes"
         assert result.monotributo_enabled is False
+
+    async def test_overlays_preferred_rate_source_only(self):
+        """
+        GIVEN an existing row with the default rate source
+        WHEN upsert is called with only ``preferred_rate_source``
+        THEN that field changes and the others are untouched (ADR-151)
+        """
+        # GIVEN
+        existing = _record(rate_source="bolsa")
+        session = _session()
+        session.execute.return_value = _scalar_result(existing)
+        repo = SqlAlchemySettingsRepository(session)
+
+        # WHEN
+        result = await repo.upsert_settings(OWNER, preferred_rate_source="oficial")
+
+        # THEN — only the rate source changed; no new row inserted.
+        session.add.assert_not_called()
+        assert result.preferred_rate_source == "oficial"
+        assert result.preferred_display_currency == "ARS"
 
     async def test_toggles_monotributo_enabled_only(self):
         """

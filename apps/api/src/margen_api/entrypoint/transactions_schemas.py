@@ -34,6 +34,7 @@ from pydantic import Field
 
 from margen_api.domain.commands.transaction import (
     CreateTransaction,
+    SetTransactionFxSnapshot,
     TransactionDocumentPayload,
     UpdateTransaction,
 )
@@ -160,6 +161,10 @@ class TransactionResponse(CamelCaseModel):
         serialization_alias="rate",
         description="Conversion rate used for USD rows. Aliased to the mock's 'rate'.",
     )
+    fx_source: str | None = Field(
+        default=None,
+        description="Provenance of the FX snapshot rate (e.g. 'bolsa'); null when no snapshot (ADR-148).",
+    )
     fx_rate_type: FxRateType | None = Field(default=None, description="FX rate family (defaults to MEP for USD rows).")
     fx_rate_as_of: datetime | None = Field(default=None, description="Timestamp the FX rate was observed.")
     recurring: bool = Field(description="Whether the movement repeats.")
@@ -198,6 +203,7 @@ class TransactionResponse(CamelCaseModel):
             amount=model.amount,
             usd_amount=model.usd_amount,
             fx_rate=model.fx_rate,
+            fx_source=model.fx_source,
             fx_rate_type=model.fx_rate_type,
             fx_rate_as_of=model.fx_rate_as_of,
             recurring=model.recurring,
@@ -235,6 +241,10 @@ class TransactionCreateRequest(CamelCaseModel):
         validation_alias="rate",
         serialization_alias="rate",
         description="Conversion rate for USD rows. Aliased to 'rate'. Optional (ADR-031).",
+    )
+    fx_source: str | None = Field(
+        default=None,
+        description="Provenance of the FX snapshot rate (e.g. 'bolsa'); optional (ADR-148, ADR-149).",
     )
     fx_rate_type: FxRateType | None = Field(default=None, description="FX rate family; defaults to MEP for USD rows.")
     fx_rate_as_of: datetime | None = Field(default=None, description="Timestamp the FX rate was observed.")
@@ -299,6 +309,7 @@ class TransactionCreateRequest(CamelCaseModel):
             currency=self.currency,
             usd_amount=self.usd_amount,
             fx_rate=self.fx_rate,
+            fx_source=self.fx_source,
             fx_rate_type=self.fx_rate_type,
             fx_rate_as_of=self.fx_rate_as_of,
             category=self.category,
@@ -342,6 +353,7 @@ class TransactionPatchRequest(CamelCaseModel):
         serialization_alias="rate",
         description="New FX rate. Aliased to 'rate'.",
     )
+    fx_source: str | None = Field(default=None, description="New FX snapshot rate provenance (ADR-148).")
     fx_rate_type: FxRateType | None = Field(default=None, description="New FX rate family.")
     fx_rate_as_of: datetime | None = Field(default=None, description="New FX observation timestamp.")
     name: str | None = Field(
@@ -394,6 +406,7 @@ class TransactionPatchRequest(CamelCaseModel):
             currency=self.currency,
             usd_amount=self.usd_amount,
             fx_rate=self.fx_rate,
+            fx_source=self.fx_source,
             fx_rate_type=self.fx_rate_type,
             fx_rate_as_of=self.fx_rate_as_of,
             category=self.category,
@@ -402,4 +415,42 @@ class TransactionPatchRequest(CamelCaseModel):
             recurring=self.recurring,
             counts_toward_monotributo=self.counts_toward_monotributo,
             account_id=self.account_id,
+        )
+
+
+class TransactionFxSnapshotRequest(CamelCaseModel):
+    """Request body for ``PUT /transactions/{id}/fx`` (maps to :class:`SetTransactionFxSnapshot`).
+
+    Sets or replaces the FX snapshot on an existing transaction (ADR-148, ADR-149).
+    The client supplies the ARS-per-1-USD ``fxRate`` and its ``fxSource`` provenance;
+    the handler re-materializes ``usd_amount`` as pure arithmetic (no FX feed, ADR-149).
+    Powers the client import rate-fill step and the one-time historical backfill
+    (ADR-149/150).
+    """
+
+    fx_rate: Decimal = Field(
+        gt=Decimal(0),
+        description="The ARS-per-1-USD rate the client captured; must be positive (ADR-149).",
+    )
+    fx_source: str | None = Field(
+        default=None,
+        description="Provenance of the rate, e.g. 'bolsa' / 'mep' / 'oficial' / 'manual' / 'backfill' (ADR-148).",
+    )
+
+    def to_command(self, transaction_id: UUID, user_id: str) -> SetTransactionFxSnapshot:
+        """Translate the request into a :class:`SetTransactionFxSnapshot` command.
+
+        Args:
+            transaction_id: The identity from the URL path.
+            user_id: The authenticated owner (``AuthUser.id``) the handler scopes the
+                load/persist by, so a cross-tenant snapshot is a 404 (ADR-108, ADR-111).
+
+        Returns:
+            The command addressing one aggregate by identity.
+        """
+        return SetTransactionFxSnapshot(
+            id=transaction_id,
+            user_id=user_id,
+            fx_rate=self.fx_rate,
+            fx_source=self.fx_source,
         )

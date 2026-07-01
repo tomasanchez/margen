@@ -46,11 +46,13 @@ import type { Settings } from '../../api/settingsClient'
 // Mock the settings client (drives the preferred display currency) and the FX
 // adapter (drives the single live conversion rate). The DisplayCurrencyProvider
 // reads both through its real queries over these mocks.
-const { fetchSettingsMock, mepMock, officialMock } = vi.hoisted(() => ({
-  fetchSettingsMock: vi.fn(),
-  mepMock: vi.fn(),
-  officialMock: vi.fn(),
-}))
+const { fetchSettingsMock, mepMock, officialMock, currentRateMock } =
+  vi.hoisted(() => ({
+    fetchSettingsMock: vi.fn(),
+    mepMock: vi.fn(),
+    officialMock: vi.fn(),
+    currentRateMock: vi.fn(),
+  }))
 
 vi.mock('../../api/settingsClient', async () => {
   const actual = await vi.importActual<
@@ -62,6 +64,9 @@ vi.mock('../../api/settingsClient', async () => {
 vi.mock('../../api/fxClient', () => ({
   fetchSuggestedMepRate: mepMock,
   fetchSuggestedOfficialRate: officialMock,
+  // The budgets preferred-rate query (ADR-155) fetches the current rate; expose
+  // it so the Home budget card can convert native targets/income when needed.
+  fetchCurrentRate: currentRateMock,
 }))
 
 const MONOTRIBUTO_SNAPSHOT: MonotributoSnapshot = {
@@ -157,6 +162,8 @@ function metricCard(label: string) {
 beforeEach(() => {
   mepMock.mockResolvedValue(100)
   officialMock.mockResolvedValue(90)
+  // The budgets preferred-rate query resolves to the same MEP rate by default.
+  currentRateMock.mockResolvedValue(100)
 })
 
 afterEach(() => {
@@ -168,6 +175,7 @@ describe('USD preferred with a live rate', () => {
     fetchSettingsMock.mockResolvedValue({
       preferredDisplayCurrency: 'USD',
       fxDefaultRateType: 'MEP',
+      preferredRateSource: 'bolsa',
       monotributoCurrentCategory: 'C',
       monotributoActivityType: 'services',
       monotributoEnabled: true,
@@ -194,6 +202,7 @@ describe('USD preferred but the rate is unavailable', () => {
     fetchSettingsMock.mockResolvedValue({
       preferredDisplayCurrency: 'USD',
       fxDefaultRateType: 'MEP',
+      preferredRateSource: 'bolsa',
       monotributoCurrentCategory: 'C',
       monotributoActivityType: 'services',
       monotributoEnabled: true,

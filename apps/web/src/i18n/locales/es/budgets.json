@@ -1,13 +1,128 @@
 {
   "title": "Presupuestos",
-  "subtitle": "Fijá un objetivo mensual por categoría y seguilo contra lo que gastás.",
-  "summary": {
+  "subtitle": "Asigná un trabajo a cada peso y seguilo contra lo que gastás de verdad.",
+  "alloc": {
+    "cardTitle": "Cómo está asignado",
+    "cardSubtitle": "Repartí tu ingreso disponible entre Esenciales, Gustos y Ahorro.",
+    "title": "Cómo está asignado",
+    "leftToAssign": "Falta asignar",
+    "overAssigned": "Sobreasignado",
+    "allAssigned": "Todo asignado",
+    "group": {
+      "needs": "Esenciales",
+      "wants": "Gustos",
+      "savings": "Ahorro"
+    }
+  },
+  "templates": {
+    "title": "Inicio rápido",
+    "applying": "Aplicando…",
+    "fiftyThirtyTwenty": "50 / 30 / 20",
+    "matchAvg": "Igualar prom. 3 meses",
+    "matchLastMonth": "Igualar mes pasado",
+    "clearAll": "Borrar todo"
+  },
+  "plan": {
+    "title": "Este mes vs plan",
+    "subtitle": "Cómo va tu gasto contra los objetivos que fijaste.",
     "budgeted": "Presupuestado",
-    "spent": "Gastado",
+    "spent": "Gastado hasta ahora",
     "remaining": "Disponible",
-    "overLabel": "Excedido",
-    "overCount_one": "{{count}} categoría excedida",
-    "overCount_other": "{{count}} categorías excedidas"
+    "over": "Excedido",
+    "meterAria": "{{pct}}% de tu plan gastado",
+    "insight": {
+      "over": "Estás {{overBy}} por encima del plan este mes — {{category}} sola está {{categoryOverBy}} por encima de su objetivo.",
+      "someOver_one": "{{count}} categoría está excedida, pero seguís dentro de tu plan general.",
+      "someOver_other": "{{count}} categorías están excedidas, pero seguís dentro de tu plan general.",
+      "onTrack": "Todas las categorías están en o por debajo del objetivo — estás {{ahead}} adelantado al plan."
+    }
+  },
+  "groups": {
+    "colCategory": "Categoría",
+    "colTarget": "Objetivo mensual",
+    "colSpent": "Gastado vs objetivo",
+    "needs": {
+      "name": "Esenciales",
+      "sub": "alquiler, comida, salud — lo innegociable"
+    },
+    "wants": {
+      "name": "Gustos",
+      "sub": "estilo de vida y discrecional"
+    }
+  },
+  "income": {
+    "title": "Ingreso neto disponible",
+    "subtitle": "La base honesta sobre la que se aplican los porcentajes — después de impuestos y costos.",
+    "label": "Ingreso neto de {{month}}",
+    "placeholder": "Ingresá tu ingreso neto",
+    "floorLabel": "Piso de gastos esenciales",
+    "floorPlaceholder": "{{amount}}",
+    "floorHint": "Lo que cuestan los esenciales por mes. Dejalo vacío para usar el valor calculado de tus objetivos esenciales.",
+    "floorComputed": "Calculado desde tus objetivos esenciales: {{amount}}",
+    "saving": "Guardando",
+    "saveError": "No se pudo guardar — probá de nuevo.",
+    "empty": "Fijá tu ingreso neto para planificar con porcentajes y habilitar los perfiles de ahorro.",
+    "useSuggested": "Usar base sugerida ({{amount}})",
+    "useSuggestedAria": "Usar la base de ingreso neto sugerida de {{amount}}",
+    "avgChip": "prom. últ. 3 meses · {{amount}}",
+    "floorEdit": "Fijá un piso de gastos esenciales",
+    "floorEditComputed": "Piso (calculado) · {{amount}}",
+    "floorEditSet": "Piso · {{amount}}",
+    "noSuggestion": "Una base sugerida necesita al menos un mes de ingresos registrados.",
+    "estimateFrom_one": "Estimado a partir de {{count}} mes de historial",
+    "estimateFrom_other": "Estimado a partir de {{count}} meses de historial",
+    "pressure": {
+      "Constrained": "Ajustado — el ingreso es {{ratio}}× tu piso de esenciales",
+      "Stable": "Estable — el ingreso es {{ratio}}× tu piso de esenciales",
+      "Comfortable": "Holgado — el ingreso es {{ratio}}× tu piso de esenciales"
+    },
+    "suggestedStrategy": "Según tu ingreso y tu piso, un perfil {{profile}} parece buena opción. Siempre elegís vos."
+  },
+  "savings": {
+    "title": "Ahorro",
+    "subtitle": "Pagate a vos primero — un porcentaje del ingreso neto en cada objetivo.",
+    "needIncome": "Fijá tu ingreso neto arriba para aplicar un perfil de ahorro.",
+    "profileLegend": "Elegí un perfil de ahorro",
+    "profile": {
+      "conservative": "Conservador",
+      "balanced": "Equilibrado",
+      "aggressive": "Agresivo"
+    },
+    "profilePct": "{{pct}}% al ahorro",
+    "applying": "Aplicando…",
+    "applyError": "No se pudo aplicar el perfil — probá de nuevo.",
+    "empty": "Elegí un perfil para asignar el ahorro entre tus objetivos.",
+    "bucketPct": "{{pct}}% del ingreso neto",
+    "floorBreach": "Este perfil deja los esenciales por debajo de tu piso por {{gap}} — considerá Conservador.",
+    "buckets": {
+      "EmergencyFund": "Fondo de emergencia",
+      "DebtAcceleration": "Cancelación de deudas",
+      "ShortTermGoals": "Metas de corto plazo",
+      "MediumTermGoals": "Metas de mediano plazo",
+      "LongTermInvestment": "Inversión de largo plazo",
+      "FxHedge": "Cobertura USD / FX",
+      "MaintenanceReserve": "Reserva de mantenimiento"
+    }
+  },
+  "reprice": {
+    "prompt": "Un mes nuevo sin objetivos todavía. ¿Reajustar {{prior}} para {{month}}?",
+    "promptAction": "Reajustar para {{month}}",
+    "dismiss": "Ahora no",
+    "title": "Reajustar para {{month}}",
+    "intro": "Llevá los topes del mes pasado, ajustados por inflación. Revisalos antes de aplicar — nada cambia hasta que confirmes.",
+    "inflationLabel": "Inflación mensual %",
+    "inflationHint": "Sembrado con la última estimación del REM. Editalo según tu propio supuesto.",
+    "stepUpLabel": "Ajuste de {{category}}",
+    "stepUpsTitle": "Ajustes conocidos (opcional)",
+    "stepUpsHint": "Sumá un salto puntual para una categoría — índice de alquiler, aumento de tarifa.",
+    "colCategory": "Categoría",
+    "colOld": "Ahora",
+    "colNew": "Reajustado",
+    "confirm": "Aplicar reajuste",
+    "cancel": "Cancelar",
+    "applying": "Aplicando…",
+    "error": "No se pudo reajustar — probá de nuevo.",
+    "empty": "No hay objetivos para llevar desde {{prior}}."
   },
   "list": {
     "title": "Categorías",
@@ -23,6 +138,9 @@
     "remaining": "Quedan {{amount}}",
     "overBy": "{{amount}} de más",
     "over": "Excedido",
+    "useAvg": "↳ usar {{amount}}",
+    "useAvgAria": "Fijar el objetivo de {{category}} en su promedio de 3 meses de {{amount}}",
+    "viewTransactions": "Ver transacciones de {{category}} de este mes",
     "noTargetHint": "Sin objetivo — ingresá un monto para empezar a seguir esta categoría.",
     "meterAria": "{{category}}: {{pct}}% del objetivo gastado",
     "meterNoTargetAria": "{{category}}: sin objetivo"
@@ -30,5 +148,13 @@
   "error": {
     "title": "No se pueden cargar tus presupuestos",
     "description": "No pudimos conectar con el servidor. Revisá tu conexión y probá de nuevo."
+  },
+  "unconverted": {
+    "note_one": "{{count}} transacción todavía no está convertida a USD, así que el gasto puede estar subestimado.",
+    "note_other": "{{count}} transacciones todavía no están convertidas a USD, así que el gasto puede estar subestimado.",
+    "action": "Convertirlas"
+  },
+  "rate": {
+    "pending": "Mostramos los montos en su moneda original mientras buscamos la cotización de hoy."
   }
 }

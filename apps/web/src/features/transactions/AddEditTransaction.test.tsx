@@ -26,6 +26,7 @@ const {
   createMock,
   updateMock,
   fxMock,
+  currentRateMock,
   fetchSettingsMock,
   monotributoMock,
   navigateMock,
@@ -33,6 +34,7 @@ const {
   createMock: vi.fn(),
   updateMock: vi.fn(),
   fxMock: vi.fn(),
+  currentRateMock: vi.fn(),
   fetchSettingsMock: vi.fn(),
   monotributoMock: vi.fn(),
   navigateMock: vi.fn(),
@@ -47,8 +49,12 @@ vi.mock('../../api/transactionsClient', () => ({
   },
 }))
 
+// The add mutation now captures the day's preferred-source rate before create
+// (ADR-148/149); mock both the suggest-confirm rates and the current-rate fetch
+// the capture uses so no real network is hit.
 vi.mock('../../api/fxClient', () => ({
   fetchSuggestedRates: fxMock,
+  fetchCurrentRate: currentRateMock,
 }))
 
 // The Expense path reads the Monotributo snapshot to autofill the monthly cuota
@@ -85,10 +91,13 @@ vi.mock('@tanstack/react-router', async () => {
 beforeEach(() => {
   // Default: dolarapi suggests MEP 1245 + official 1045 (seeded prototype values).
   fxMock.mockResolvedValue({ mep: 1245, official: 1045 })
+  // Default: the day's current preferred-source rate the add capture stamps.
+  currentRateMock.mockResolvedValue(1245)
   // Default: the configured FX default is MEP (existing behavior).
   fetchSettingsMock.mockResolvedValue({
     preferredDisplayCurrency: 'ARS',
     fxDefaultRateType: 'MEP',
+    preferredRateSource: 'bolsa',
     monotributoCurrentCategory: 'C',
     monotributoActivityType: 'services',
     monotributoEnabled: true,
@@ -283,13 +292,68 @@ describe('Add flow — Monotributo cuota shortcut (expense path)', () => {
   })
 })
 
+describe('Add flow — ARS row shows + captures the FX snapshot rate (ADR-148/151)', () => {
+  test('prefills the visible USD rate from the cached preferred rate and materializes usd on save', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    // The ARS row exposes an editable "USD rate" field, prefilled from the
+    // cached preferred-source rate (currentRateMock = 1245) so the user SEES the
+    // value being applied.
+    const rateField = await form.findByLabelText(
+      'USD rate for this transaction (ARS per USD)',
+    )
+    await waitFor(() => expect(rateField).toHaveValue('1245'))
+
+    // Enter an ARS amount → the USD-equivalent preview appears (≈ 1245000/1245 = 1000).
+    await user.type(form.getByLabelText(/^Amount in /), '1245000')
+    expect(await form.findByText(/≈ USD 1\.000 at MEP/)).toBeInTheDocument()
+
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+
+    // The submitted input pairs a positive rate with its source, so the backend
+    // materializes usd_amount (never a source-without-rate).
+    const [input] = createMock.mock.calls[0]
+    expect(input.currency).toBe('ARS')
+    expect(input.fxRate).toBe('1245')
+    expect(input.fxSource).toBe('bolsa')
+  })
+
+  test('a user override becomes the stored rate + source (manual)', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    const rateField = await form.findByLabelText(
+      'USD rate for this transaction (ARS per USD)',
+    )
+    await waitFor(() => expect(rateField).toHaveValue('1245'))
+
+    // Override the rate for this transaction (it cleared at a different rate).
+    await user.clear(rateField)
+    await user.type(rateField, '1300')
+    await user.type(form.getByLabelText(/^Amount in /), '13000')
+
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+
+    const [input] = createMock.mock.calls[0]
+    expect(input.fxRate).toBe('1300')
+    expect(input.fxSource).toBe('manual')
+  })
+})
+
 describe('Add flow — USD picks an explicit FX source (ADR-044/045)', () => {
   test('choosing USD fetches both rates + pre-fills the default (MEP), then converts', async () => {
     const { user, dialog } = await openAddDialog()
     const form = within(dialog)
 
-    // No FX line while the (default) currency is ARS.
-    expect(form.queryByText(/at MEP/)).not.toBeInTheDocument()
+    // No USD-conversion line while the (default) currency is ARS. (The ARS row
+    // now shows its own snapshot-rate field; the USD "≈ ARS … at MEP <rate>"
+    // converted line is what stays hidden until USD is picked.)
+    expect(form.queryByText(/≈ ARS .* at MEP/)).not.toBeInTheDocument()
 
     // Enter an amount, then switch the currency toggle to USD.
     const amount = form.getByLabelText(/^Amount in /)
@@ -323,6 +387,7 @@ describe('Add flow — USD picks an explicit FX source (ADR-044/045)', () => {
     fetchSettingsMock.mockResolvedValue({
       preferredDisplayCurrency: 'ARS',
       fxDefaultRateType: 'official',
+      preferredRateSource: 'bolsa',
       monotributoCurrentCategory: 'C',
       monotributoActivityType: 'services',
       monotributoEnabled: true,
