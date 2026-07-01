@@ -140,6 +140,7 @@
     "saved": "Saved ✓",
     "saveError": "Couldn't save that target — try again.",
     "spent": "Spent {{amount}}",
+    "reimbursed": "− {{amount}} reimbursed",
     "remaining": "{{amount}} left",
     "overBy": "{{amount}} over",
     "over": "Over budget",

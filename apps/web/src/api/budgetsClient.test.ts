@@ -217,6 +217,20 @@ describe('adaptBudgetPeriod (extended fields)', () => {
     expect(period.suggestedStrategy).toBeNull()
     expect(period.pressure).toBeNull()
   })
+
+  test('carries the reimbursed reduction, defaulting to "0" when absent (ADR-158/160)', () => {
+    const period = adaptBudgetPeriod({
+      ...periodDto,
+      categories: [
+        // Positive reduction carried through as-is (already in the requested currency).
+        { category: 'Social', target: '50000.00', spent: '30000.00', reimbursed: '12000.00', remaining: '20000.00' },
+        // A legacy payload with no `reimbursed` field defaults to "0".
+        { category: 'Food', target: '120000.00', spent: '90000.00', remaining: '30000.00' },
+      ],
+    })
+    expect(period.categories[0].reimbursed).toBe('12000.00')
+    expect(period.categories[1].reimbursed).toBe('0')
+  })
 })
 
 describe('adaptBudgetPeriod (isEssential grouping)', () => {

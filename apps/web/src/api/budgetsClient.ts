@@ -77,6 +77,14 @@ export interface BudgetCategoryDto {
   targetCurrency?: string | null
   /** Actual expense total for the category this month, as a Decimal string. */
   spent: string
+  /**
+   * Gross linked-payback reduction attributed to this category-month, BEFORE the
+   * floor-at-zero (ADR-160/162), in the requested currency — i.e. how much
+   * `spent` was reduced by reimbursements (ADR-158). `"0"` when none. Already in
+   * the requested currency, so it is displayed directly (never re-converted).
+   * Absent on legacy payloads → the adapter defaults it to `"0"`.
+   */
+  reimbursed?: string | null
   /** `target − spent` as a Decimal string when a target exists, else `null`. */
   remaining: string | null
   /**
@@ -192,6 +200,14 @@ export interface BudgetCategory {
    */
   targetCurrency: Currency | null
   spent: string
+  /**
+   * The gross linked-payback reduction to this category-month (ADR-158/160),
+   * before the floor-at-zero, in the requested currency; `"0"` when no payback
+   * offsets this category. `spent` is already NET of this; the row surfaces a
+   * subtle "− reimbursed" caption when it is positive. Displayed directly (never
+   * re-converted — it already matches the display currency).
+   */
+  reimbursed: string
   remaining: string | null
   /** Whether the category belongs to the Needs group (essential, ADR-146). */
   isEssential: boolean
@@ -392,6 +408,9 @@ export function adaptBudgetCategory(
           ? asCurrency(dto.targetCurrency)
           : fallbackCurrency,
     spent: dto.spent,
+    // Gross linked-payback reduction (ADR-158/160); default "0" on a legacy
+    // payload so the row simply shows no reimbursed caption.
+    reimbursed: dto.reimbursed ?? '0',
     remaining: dto.remaining,
     isEssential: dto.isEssential === true,
   }
