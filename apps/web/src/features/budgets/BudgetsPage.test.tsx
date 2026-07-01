@@ -149,6 +149,10 @@ function renderPageWithRouter() {
 
 describe('BudgetsPage', () => {
   beforeEach(() => {
+    // Pin "today" to June 2026 so the page's current-month resolution matches the
+    // '2026-06' fixtures + assertions regardless of the real run date.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.setSystemTime(new Date(2026, 5, 15, 12))
     mockFetch.mockResolvedValue(period('2026-06'))
     mockFetchHistory.mockResolvedValue([])
     mockSet.mockResolvedValue(undefined)
@@ -172,7 +176,10 @@ describe('BudgetsPage', () => {
     })
     mockRate.mockResolvedValue(1000)
   })
-  afterEach(() => vi.clearAllMocks())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.clearAllMocks()
+  })
 
   test('renders each category with its target, spent and progress', async () => {
     renderPage()

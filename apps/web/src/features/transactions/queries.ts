@@ -24,6 +24,7 @@ import type { NewTransactionInput, Transaction } from '../../mock/types'
 import { homeQueryKeys } from '../home/queries'
 import { accountsKeys } from '../accounts/queries'
 import { useSettings } from '../settings/queries'
+import { usePreferredRate } from '../budgets/queries'
 import { captureFxForCreate } from './captureFx'
 
 /** Stable query-key factory for the transactions domain. */
@@ -67,18 +68,28 @@ function useInvalidateTransactionDerived() {
  * Before the create, the input is augmented with a per-transaction FX snapshot
  * (ADR-148/149): the client captures the day's CURRENT preferred-source rate
  * (ADR-151) so the backend materializes `usd_amount` and budgets can sum it
- * directly (ADR-152). USD-account rows reuse their confirmed rate; the capture
- * never blocks the create — an unavailable rate just omits the snapshot (the row
- * is backfilled later, ADR-150). The preferred source is read non-blockingly
- * from settings (default `'bolsa'`/MEP).
+ * directly (ADR-152). USD-account rows reuse their confirmed rate; ARS rows reuse
+ * the already-CACHED preferred rate (`usePreferredRate`, the same query the
+ * budgets surface keeps warm) so the snapshot doesn't hinge on a fresh, possibly
+ * not-yet-landed submit-time fetch — the earlier cause of ARS rows getting a
+ * `fxSource` but no `fxRate`. The capture never blocks the create — an
+ * unavailable rate just omits the WHOLE snapshot (source + rate travel together;
+ * the row is backfilled later, ADR-150). The preferred source is read
+ * non-blockingly from settings (default `'bolsa'`/MEP).
  */
 export function useAddTransaction() {
   const invalidate = useInvalidateTransactionDerived()
   const settingsQuery = useSettings()
   const preferredRateSource = settingsQuery.data?.preferredRateSource
+  // The app already keeps the preferred-source rate warm (budgets + display
+  // currency). Reuse it for the ARS snapshot so we don't depend on a fresh fetch.
+  const preferredRateQuery = usePreferredRate()
+  const cachedRate = preferredRateQuery.data
   return useMutation<Transaction, Error, NewTransactionInput>({
     mutationFn: async (input) => {
-      const withSnapshot = await captureFxForCreate(input, preferredRateSource)
+      const withSnapshot = await captureFxForCreate(input, preferredRateSource, {
+        cachedRate,
+      })
       return transactionsClient.create(withSnapshot)
     },
     onSuccess: invalidate,

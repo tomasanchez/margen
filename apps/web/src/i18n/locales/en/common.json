@@ -48,7 +48,11 @@
   "fxSource": {
     "mep": "MEP",
     "official": "official",
-    "manual": "manual"
+    "manual": "manual",
+    "bolsa": "MEP",
+    "oficial": "official",
+    "backfill": "backfilled",
+    "import": "imported"
   },
   "sign": {
     "plus": "plus",

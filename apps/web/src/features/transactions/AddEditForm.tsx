@@ -46,7 +46,12 @@ import type {
   NewTransactionInput,
   TxType,
 } from '../../mock/types'
-import { formatARS, fxSourceLabel } from '../../lib/format'
+import {
+  formatARS,
+  formatUSD,
+  fxSnapshotSourceLabel,
+  fxSourceLabel,
+} from '../../lib/format'
 import { monoFontFamily } from '../../theme'
 import {
   InvoicesApiError,
@@ -234,6 +239,7 @@ export function AddEditForm({
   const nameInputId = useId()
   const amountInputId = useId()
   const rateInputId = useId()
+  const arsRateInputId = useId()
   const dateInputId = useId()
   const notesInputId = useId()
   const accountSelectId = useId()
@@ -775,6 +781,68 @@ export function AddEditForm({
               htmlInput: {
                 inputMode: 'decimal',
                 'aria-label': t('form.fx.rateAriaLabel'),
+              },
+            }}
+            sx={{
+              mt: 1.25,
+              '& .MuiInputBase-input': { fontFamily: monoFontFamily },
+            }}
+          />
+        </Box>
+      ) : null}
+
+      {/* FX snapshot block (ARS rows): SHOW the preferred-source rate the app is
+          applying (prefilled from the cached rate) and let the user OVERRIDE it
+          for this transaction. The USD equivalent it produces is shown alongside
+          so it's obvious what the rate yields. The stored `fxRate` drives
+          `usd_amount` (ADR-148/151/152). Optional — a blank rate simply omits the
+          snapshot (backfilled later, ADR-150). */}
+      {!isUsd ? (
+        <Box
+          sx={{
+            mt: 1.5,
+            px: 1.5,
+            py: 1.25,
+            bgcolor: 'color-mix(in srgb, var(--mg-gold) 8%, transparent)',
+            border: '1px solid var(--mg-border-2)',
+            borderRadius: 2,
+          }}
+        >
+          <Typography
+            sx={{
+              fontFamily: monoFontFamily,
+              fontSize: 12.5,
+              color: 'var(--mg-gold)',
+            }}
+          >
+            {Number.isFinite(form.arsUsdEquivalent)
+              ? t('form.fx.arsUsdEquivalent', {
+                  usd: formatUSD(form.arsUsdEquivalent),
+                  source: fxSnapshotSourceLabel(form.arsRateSource),
+                })
+              : t('form.fx.arsRateContext', {
+                  source: fxSnapshotSourceLabel(form.arsRateSource),
+                })}
+          </Typography>
+          <TextField
+            id={arsRateInputId}
+            label={t('form.fx.arsRateLabel', {
+              source: fxSnapshotSourceLabel(form.arsRatePreferredSource),
+            })}
+            value={form.arsRateText}
+            onChange={(e) => form.setArsRateText(e.target.value)}
+            size="small"
+            fullWidth
+            helperText={t('form.fx.arsRateHelper')}
+            placeholder={
+              form.arsRateLoading
+                ? t('form.fx.ratePlaceholderFetching')
+                : t('form.fx.ratePlaceholder')
+            }
+            slotProps={{
+              htmlInput: {
+                inputMode: 'decimal',
+                'aria-label': t('form.fx.arsRateAriaLabel'),
               },
             }}
             sx={{

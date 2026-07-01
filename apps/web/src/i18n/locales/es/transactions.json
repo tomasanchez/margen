@@ -142,7 +142,12 @@
       "helperRequired": "Se necesita una cotización para convertir este importe en USD.",
       "helperManual": "Cotización manual — editá cuando quieras.",
       "helperOfficial": "Cotización oficial sugerida — confirmá o editá.",
-      "helperMep": "Cotización MEP sugerida — confirmá o editá."
+      "helperMep": "Cotización MEP sugerida — confirmá o editá.",
+      "arsRateLabel": "Cotización USD ({{source}}, ARS por USD)",
+      "arsRateAriaLabel": "Cotización USD para esta transacción (ARS por USD)",
+      "arsRateHelper": "Cotización usada para registrar el equivalente en USD — editá si esta fue distinta.",
+      "arsUsdEquivalent": "≈ USD {{usd}} a {{source}}",
+      "arsRateContext": "Equivalente en USD a {{source}}"
     },
     "category": {
       "section": "Categoría",

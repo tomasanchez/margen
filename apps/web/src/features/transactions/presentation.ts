@@ -40,8 +40,14 @@ export function categoryLabel(category: Category): string {
  * {@link categoryLabel}: looks up `common:banks.<value>` and falls back to the
  * raw enum value when unmapped. Brand names (e.g. "Galicia", "Santander") stay
  * as-is across locales; only generic values like "Transfer" localize.
+ *
+ * The `bank` column was DECOMMISSIONED (ADR-136): the adapter now maps an absent
+ * bank to the EMPTY sentinel (`''`), which is NOT a real tag — an empty bank
+ * yields an empty label (never a fabricated "Transfer") so a linked/normal row
+ * shows nothing here rather than a bogus attribution.
  */
 export function bankLabel(bank: Bank): string {
+  if (!bank) return ''
   return i18n.t(`common:banks.${bank}`, { defaultValue: bank })
 }
 
@@ -52,6 +58,11 @@ export function bankLabel(bank: Bank): string {
  * present (e.g. "Santander · VISA ·5771"); when there is no card it is just the
  * bank label. The card string is a display detail provided verbatim by the
  * import (not translated). Pure (no React) so the row + tests can share it.
+ *
+ * With `bank` decommissioned (ADR-136) the base can be empty (the "no bank"
+ * sentinel): an empty base yields the card alone, and an empty base with no card
+ * yields the EMPTY string — so a row with no real tag renders nothing here
+ * instead of a fabricated "Transfer".
  */
 export function bankCardLabel(
   bank: Bank,
@@ -59,6 +70,7 @@ export function bankCardLabel(
 ): string {
   const detail = card?.trim()
   const base = bankLabel(bank)
+  if (!base) return detail ?? ''
   return detail ? `${base} · ${detail}` : base
 }
 
@@ -72,6 +84,9 @@ export function bankCardLabel(
  * e.g. "Galicia · VISA ·5771"). A row with no `accountId` — or one whose account
  * is no longer in the list — FALLS BACK to the legacy `bank · card` tag
  * ({@link bankCardLabel}), covering statement-imported / not-yet-linked rows.
+ * When there is NEITHER a resolvable account NOR a real `bank` (the common case
+ * now that the bank column is retired, ADR-136), the label is the EMPTY string —
+ * callers render just the category, never a fabricated "Transfer".
  *
  * `accountNames` is a precomputed `accountId → institutionName` lookup (built
  * once on the page from the loaded accounts), so resolving a row is O(1) and

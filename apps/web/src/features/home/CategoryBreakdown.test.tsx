@@ -48,12 +48,18 @@ vi.mock('../../api/transactionsClient', () => ({
 }))
 
 beforeEach(() => {
+  // Pin "today" inside the fixture window (June 2026). The Transactions page
+  // defaults its month to the current month (ADR-040), so an unpinned clock on a
+  // month outside the fixture would leave the default (no-param) view empty.
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  vi.setSystemTime(new Date(2026, 5, 15, 12))
   listMock.mockImplementation(() =>
     Promise.resolve(TRANSACTIONS_FIXTURE.map((t: Transaction) => ({ ...t }))),
   )
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.clearAllMocks()
 })
 

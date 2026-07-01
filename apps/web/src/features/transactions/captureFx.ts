@@ -55,13 +55,31 @@ function toRateString(rate: number): string {
 }
 
 /**
+ * Options for {@link captureFxForCreate}.
+ */
+export interface CaptureFxOptions {
+  /**
+   * A preferred-source rate already CACHED by the app (ADR-151), e.g. the
+   * `usePreferredRate` query the budgets surface + display-currency provider keep
+   * warm. When present and positive it is used for an ARS row's snapshot INSTEAD
+   * of a fresh submit-time fetch — which can be empty / not-yet-landed and was
+   * why some ARS rows ended up tagged with a source but no rate. A fresh fetch is
+   * still the fallback when no cached rate is supplied.
+   */
+  readonly cachedRate?: number | null
+  readonly signal?: AbortSignal
+}
+
+/**
  * Augment a create input with an FX snapshot (`fxRate` + `fxSource`, ADR-148).
  *
  * - USD rows reuse their confirmed `rate` as the snapshot rate (tagged from the
  *   chosen source) — no fetch.
- * - ARS rows fetch the day's CURRENT preferred-source rate (ADR-151) and stamp
- *   it. A failed/absent fetch returns the input UNCHANGED (no snapshot; the row
- *   is backfilled later, ADR-150).
+ * - ARS rows use the app's already-CACHED preferred-source rate when available
+ *   (`options.cachedRate`, ADR-151), else fetch the day's CURRENT rate. Either
+ *   way `fxRate` + `fxSource` are stamped TOGETHER, so a row is NEVER tagged with
+ *   a source and no rate. A failed/absent rate returns the input UNCHANGED (no
+ *   snapshot; the row is backfilled later, ADR-150).
  *
  * Idempotent on inputs that already carry an `fxRate`: such an input is returned
  * unchanged so callers can pre-stamp without a double fetch.
@@ -69,7 +87,7 @@ function toRateString(rate: number): string {
 export async function captureFxForCreate(
   input: NewTransactionInput,
   source: PreferredRateSource | undefined,
-  signal?: AbortSignal,
+  options: CaptureFxOptions = {},
 ): Promise<NewTransactionInput> {
   // Already stamped (e.g. a future pre-fill path) — leave it be.
   if (input.fxRate != null) return input
@@ -83,10 +101,17 @@ export async function captureFxForCreate(
     }
   }
 
-  // ARS row: fetch the day's current preferred-source rate. Never throws — a
-  // null degrades to "no snapshot" (created without one; backfilled later).
+  // ARS row: prefer the app's already-cached preferred-source rate (never a
+  // fresh network round-trip that might not have landed); fall back to a fetch
+  // only when no cached rate is on hand. Never throws — a null degrades to "no
+  // snapshot" (created without one; backfilled later). fxRate + fxSource are
+  // always set together so the row can't be a source-without-rate.
   const casa = casaForSource(source)
-  const rate = await fetchCurrentRate(casa, signal)
+  const cached = options.cachedRate
+  const rate =
+    typeof cached === 'number' && Number.isFinite(cached) && cached > 0
+      ? cached
+      : await fetchCurrentRate(casa, options.signal)
   if (rate == null || !Number.isFinite(rate) || rate <= 0) return input
   return {
     ...input,

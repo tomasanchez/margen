@@ -143,6 +143,30 @@ describe('captureFxForCreate — ARS rows', () => {
   })
 })
 
+describe('captureFxForCreate — cached preferred rate (reliability fix)', () => {
+  test('reuses a positive cached rate for the ARS snapshot WITHOUT a fresh fetch', async () => {
+    // The app already keeps the preferred-source rate warm (usePreferredRate);
+    // reusing it avoids depending on a fresh, possibly-not-landed submit-time
+    // fetch — the earlier cause of ARS rows tagged with a source but no rate.
+    const result = await captureFxForCreate(arsExpense(), 'bolsa', {
+      cachedRate: 1233,
+    })
+    expect(result.fxRate).toBe('1233')
+    expect(result.fxSource).toBe('bolsa')
+    expect(mockCurrent).not.toHaveBeenCalled()
+  })
+
+  test('falls back to a fetch when the cached rate is null/non-positive', async () => {
+    mockCurrent.mockResolvedValue(1240)
+    const result = await captureFxForCreate(arsExpense(), 'bolsa', {
+      cachedRate: null,
+    })
+    expect(mockCurrent).toHaveBeenCalledWith('bolsa', undefined)
+    expect(result.fxRate).toBe('1240')
+    expect(result.fxSource).toBe('bolsa')
+  })
+})
+
 describe('captureFxForCreate — idempotency', () => {
   test('returns an already-stamped input unchanged (no second fetch)', async () => {
     const input = arsExpense({ fxRate: '1240', fxSource: 'backfill' })

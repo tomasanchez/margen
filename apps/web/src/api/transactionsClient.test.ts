@@ -108,12 +108,16 @@ describe('adaptTransaction', () => {
     )
   })
 
-  test('tolerates an unknown legacy bank string, defaulting absent to Transfer', () => {
+  test('tolerates a legacy bank string, defaulting absent to the empty sentinel (ADR-136)', () => {
     // Backend normalizes, but legacy/unknown strings are still cast through.
     expect(adaptTransaction({ ...usdDto, bank: 'LegacyBank' }).bank).toBe(
       'LegacyBank',
     )
-    expect(adaptTransaction({ ...usdDto, bank: null }).bank).toBe('Transfer')
+    // The bank column is decommissioned (ADR-136): an absent bank maps to the
+    // EMPTY sentinel (''), NOT a fabricated 'Transfer', so a linked/normal row
+    // never shows a bogus attribution tag.
+    expect(adaptTransaction({ ...usdDto, bank: null }).bank).toBe('')
+    expect(adaptTransaction({ ...usdDto, bank: undefined }).bank).toBe('')
   })
 
   test('carries the free-text notes when the DTO has them (ADR-088)', () => {
@@ -190,6 +194,51 @@ describe('toCreateBody', () => {
       amountNum: 5000,
     }
     expect(toCreateBody(input).occurredOn).toBe('2025-11-03')
+  })
+
+  test('sends fxRate + fxSource TOGETHER when a positive rate accompanies the source (ADR-148)', () => {
+    const input: NewTransactionInput = {
+      occurredOn: '2026-07-01',
+      dispDate: 'Jul 01',
+      name: 'Groceries',
+      category: 'Food',
+      currency: 'ARS',
+      type: 'expense',
+      kind: 'expense',
+      amountNum: 56502,
+      fxRate: '1245',
+      fxSource: 'bolsa',
+    }
+    const body = toCreateBody(input)
+    expect(body.fxRate).toBe('1245')
+    expect(body.fxSource).toBe('bolsa')
+  })
+
+  test('OMITS both fxSource and fxRate when no valid positive rate accompanies the source (ADR-148)', () => {
+    // The bug: a source-without-rate tags the row but leaves usd_amount null.
+    // The client boundary must send NEITHER when the rate is absent/non-positive.
+    const base: NewTransactionInput = {
+      occurredOn: '2026-07-01',
+      dispDate: 'Jul 01',
+      name: 'Groceries',
+      category: 'Food',
+      currency: 'ARS',
+      type: 'expense',
+      kind: 'expense',
+      amountNum: 56502,
+    }
+    // Source present, rate absent → drop both.
+    const noRate = toCreateBody({ ...base, fxSource: 'bolsa' })
+    expect('fxSource' in noRate).toBe(false)
+    expect('fxRate' in noRate).toBe(false)
+    // Source present, rate non-positive → drop both.
+    const zeroRate = toCreateBody({ ...base, fxSource: 'bolsa', fxRate: '0' })
+    expect('fxSource' in zeroRate).toBe(false)
+    expect('fxRate' in zeroRate).toBe(false)
+    // Source present, rate not numeric → drop both.
+    const badRate = toCreateBody({ ...base, fxSource: 'bolsa', fxRate: '' })
+    expect('fxSource' in badRate).toBe(false)
+    expect('fxRate' in badRate).toBe(false)
   })
 })
 

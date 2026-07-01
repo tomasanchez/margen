@@ -11,6 +11,7 @@
  * so the list is a clean, non-interactive summary.
  */
 
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import Box from '@mui/material/Box'
@@ -22,7 +23,8 @@ import { FxBadge } from '../../components/FxBadge'
 import { monoFontFamily } from '../../theme'
 import { formatDispDate } from '../../lib/format'
 import { localizeDispDate } from '../../i18n/locale'
-import { bankLabel, categoryLabel } from '../transactions/presentation'
+import { attributionLabel, categoryLabel } from '../transactions/presentation'
+import { useAccounts } from '../accounts/queries'
 import type { Transaction } from '../../mock/types'
 import { SectionCard } from '../../components/SectionCard'
 
@@ -62,11 +64,19 @@ function RowBadge({
 function ActivityRow({
   transaction: tx,
   t,
+  accountNames,
 }: {
   transaction: Transaction
   t: TFunction<'home'>
+  /** `accountId → institutionName` lookup so a linked row shows its institution. */
+  accountNames: ReadonlyMap<string, string>
 }) {
   const isUsd = tx.currency === 'USD'
+  // Attribution comes from the linked account (ADR-136 extension): a resolvable
+  // account shows its institution ("Mercado Pago"); a row with neither a
+  // resolvable account nor a real bank yields an empty string, so the subline
+  // shows the category alone (never a fabricated "Transfer").
+  const attribution = attributionLabel(tx, accountNames)
   return (
     <Box
       sx={{
@@ -118,10 +128,12 @@ function ActivityRow({
             color: 'text.disabled',
           }}
         >
-          {t('recent.subline', {
-            category: categoryLabel(tx.category),
-            bank: bankLabel(tx.bank),
-          })}
+          {attribution
+            ? t('recent.subline', {
+                category: categoryLabel(tx.category),
+                bank: attribution,
+              })
+            : categoryLabel(tx.category)}
         </Typography>
       </Box>
       <Box sx={{ flex: 'none', textAlign: 'right' }}>
@@ -172,6 +184,18 @@ export function RecentActivity({
   loading = false,
 }: RecentActivityProps) {
   const { t } = useTranslation('home')
+  // The accounts list doubles as the row attribution source (ADR-136 extension):
+  // build a single `accountId → institutionName` lookup so each row resolves its
+  // institution in O(1) with no per-row fetch. A row with no resolvable account
+  // (or an unknown id) falls back to an empty attribution inside `attributionLabel`.
+  const accountsQuery = useAccounts()
+  const accountNames = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const account of accountsQuery.data ?? []) {
+      map.set(account.id, account.institutionName)
+    }
+    return map
+  }, [accountsQuery.data])
   if (loading || !transactions) {
     return (
       <SectionCard title={t('recent.title')} action={<ViewAllLink t={t} />}>
@@ -203,7 +227,12 @@ export function RecentActivity({
       ) : (
         <Box>
           {transactions.map((tx) => (
-            <ActivityRow key={tx.id} transaction={tx} t={t} />
+            <ActivityRow
+              key={tx.id}
+              transaction={tx}
+              t={t}
+              accountNames={accountNames}
+            />
           ))}
         </Box>
       )}

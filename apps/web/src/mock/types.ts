@@ -137,6 +137,12 @@ export type MonthName =
   | 'April'
   | 'May'
   | 'June'
+  | 'July'
+  | 'August'
+  | 'September'
+  | 'October'
+  | 'November'
+  | 'December'
 
 /**
  * A single transaction.
@@ -203,6 +209,13 @@ export interface Transaction {
    * (ADR-152). Distinct from {@link Transaction.fxRateType} (the ADR-044 family).
    */
   fxSource?: string
+  /**
+   * The captured per-transaction FX snapshot rate (ARS per 1 USD) as a Decimal
+   * STRING (ADR-148). Present once a snapshot exists; carried through so the
+   * Add/Edit form can SHOW and re-seed the stored rate on edit. Distinct from the
+   * USD-row {@link Transaction.rate} (a number for the USD→ARS conversion).
+   */
+  fxRate?: string
   /**
    * Optional free-text note carried from the backend contract (ADR-088, mirrors
    * `name`). Seeded back into the Add/Edit form on edit so it survives a re-save.

@@ -620,6 +620,10 @@ export function TransactionRowMobile(props: TransactionRowProps) {
   const { t: translate } = useTranslation(['transactions', 'common'])
   const { transaction: t, onEdit, accountNames = EMPTY_ACCOUNT_NAMES } = props
   const isUsd = t.currency === 'USD'
+  // Attribution can be empty now that the bank column is retired (ADR-136); when
+  // it is, show the category alone (no dangling " · " separator).
+  const attribution = attributionLabel(t, accountNames)
+  const categoryText = categoryLabel(t.category)
 
   return (
     <Box
@@ -697,7 +701,7 @@ export function TransactionRowMobile(props: TransactionRowProps) {
               whiteSpace: 'nowrap',
             }}
           >
-            {categoryLabel(t.category)} · {attributionLabel(t, accountNames)}
+            {attribution ? `${categoryText} · ${attribution}` : categoryText}
           </Box>
         </Box>
       </Box>

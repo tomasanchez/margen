@@ -142,7 +142,12 @@
       "helperRequired": "A rate is required to convert this USD amount.",
       "helperManual": "Manual rate — edit anytime.",
       "helperOfficial": "Suggested official rate — confirm or edit.",
-      "helperMep": "Suggested MEP rate — confirm or edit."
+      "helperMep": "Suggested MEP rate — confirm or edit.",
+      "arsRateLabel": "USD rate ({{source}}, ARS per USD)",
+      "arsRateAriaLabel": "USD rate for this transaction (ARS per USD)",
+      "arsRateHelper": "Rate used to record the USD equivalent — edit if this one differs.",
+      "arsUsdEquivalent": "≈ USD {{usd}} at {{source}}",
+      "arsRateContext": "USD equivalent at {{source}}"
     },
     "category": {
       "section": "Category",
