@@ -168,9 +168,9 @@ class TestGetTransaction:
         assert model is None
 
 
-def _trend_row(year: int, month: int, total: object) -> SimpleNamespace:
-    """Build a fake trend aggregation row (year, month, total)."""
-    return SimpleNamespace(year=year, month=month, total=total)
+def _trend_row(year: int, month: int, total: object, category: str = "Food") -> SimpleNamespace:
+    """Build a fake trend gross aggregation row (year, month, category, total)."""
+    return SimpleNamespace(year=year, month=month, category=category, total=total)
 
 
 def _category_row(category: str, total: object) -> SimpleNamespace:
@@ -190,9 +190,9 @@ def _reduction_row(category: str, reduction: object) -> SimpleNamespace:
     return SimpleNamespace(category=category, reduction=reduction)
 
 
-def _trend_reduction_row(year: int, month: int, reduction: object) -> SimpleNamespace:
-    """Build a fake trend reimbursement-reduction row (year, month, reduction)."""
-    return SimpleNamespace(year=year, month=month, reduction=reduction)
+def _trend_reduction_row(year: int, month: int, reduction: object, category: str = "Food") -> SimpleNamespace:
+    """Build a fake trend reimbursement-reduction row (year, month, category, reduction)."""
+    return SimpleNamespace(year=year, month=month, category=category, reduction=reduction)
 
 
 class TestNetCategoryExpenseTotals:
@@ -286,6 +286,30 @@ class TestNetCategoryExpenseTotals:
 
         # THEN — Food untouched; Social floored at zero.
         assert totals == {"Food": Decimal("5000.00"), "Social": Decimal("0")}
+
+    async def test_usd_reduction_uses_proportional_form_matching_gross_exclusion(self):
+        """
+        GIVEN a USD reimbursement-reduction query
+        WHEN month_category_reimbursement_totals runs in USD
+        THEN it derives the reduction via the proportional form usd_amount * (amount / amount)
+             and excludes ONLY on usd_amount (matching the gross USD side) — never adding an
+             fx_rate predicate that would drop legacy null-fx_rate snapshots (ADR-161)
+        """
+        from margen_api.adapters.queries import month_category_reimbursement_totals
+
+        # GIVEN
+        session = AsyncMock()
+        session.execute.return_value = _result([_reduction_row("Social", Decimal("3.00"))])
+
+        # WHEN
+        await month_category_reimbursement_totals(session, date(2026, 6, 1), UUID(A_USER), Currency.USD)
+
+        # THEN — the reduction rides usd_amount proportionally, not amount / fx_rate.
+        compiled = str(session.execute.await_args_list[0].args[0]).lower()
+        assert "usd_amount" in compiled
+        assert "usd_amount is not null" in compiled
+        # THEN — the exclusion set matches the gross side: no fx_rate divergence.
+        assert "fx_rate is not null" not in compiled
 
     async def test_reimbursement_query_joins_offset_link_and_scopes_owner(self):
         """
@@ -432,6 +456,44 @@ class TestSummaryReader:
         assert summary.trend[-1].expenses == Decimal("300000.00")
         march = next(point for point in summary.trend if point.month == "2026-03")
         assert march.expenses == Decimal("0")
+
+    async def test_trend_month_equals_summed_category_breakdown_on_over_refund(self):
+        """
+        GIVEN one month with a normal category and an over-refunded sibling category
+        WHEN monthly_summary runs
+        THEN the trend point for that month EQUALS the summed category breakdown for the
+             same month — the trend floors per CATEGORY, not per month, so an over-refund
+             in one category never swallows a sibling's real spend (ADR-160/162)
+        """
+        # GIVEN — June: category A gross 100 (no payback); category B gross 50 with a
+        # 200 over-refund. Per-category floor => A=100, B=max(50-200,0)=0, month total 100.
+        # A per-MONTH floor would instead read max((100+50)-200, 0) = 0 and swallow A's
+        # real 100 of spend — the bug this test pins.
+        trend = _result([_trend_row(2026, 6, Decimal("100.00"), "A"), _trend_row(2026, 6, Decimal("50.00"), "B")])
+        trend_reductions = _result([_trend_reduction_row(2026, 6, Decimal("200.00"), "B")])
+        month_categories = _result([_category_row("A", Decimal("100.00")), _category_row("B", Decimal("50.00"))])
+        month_reductions = _result([_reduction_row("B", Decimal("200.00"))])
+        session = AsyncMock()
+        session.execute.side_effect = [
+            trend,
+            trend_reductions,
+            month_categories,
+            month_reductions,
+            _result([]),  # prior categories
+            _result([]),  # prior reductions
+        ]
+        reader = SqlAlchemySummaryReader(session)
+
+        # WHEN
+        summary = await reader.monthly_summary(date(2026, 6, 15), A_USER)
+
+        # THEN — the invariant: trend month value == sum of the category breakdown.
+        june_trend = next(point for point in summary.trend if point.month == "2026-06")
+        category_breakdown_total = sum((c.amount for c in summary.categories), Decimal("0"))
+        assert june_trend.expenses == category_breakdown_total
+        # THEN — both read 100: A's real spend survives, B floors at zero (ADR-162).
+        assert june_trend.expenses == Decimal("100.00")
+        assert category_breakdown_total == Decimal("100.00")
 
 
 def _recurring_row(count: int, total: object) -> MagicMock:

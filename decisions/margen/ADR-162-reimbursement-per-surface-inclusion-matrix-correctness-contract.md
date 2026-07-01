@@ -38,7 +38,7 @@ Each reimbursement peso is counted ONCE per meaning and NEVER as income:
 If linked reimbursements for a given expense exceed the expense's `amount` (friends over-transfer or round up):
 
 - Net ARS category spend for that expense FLOORS AT ZERO — the category never goes negative.
-- The excess ARS amount (sum of reimbursements minus expense amount) surfaces as ordinary income for the reimbursement's own calendar month. It is credited to the income total for the month in which the last over-refunding payback was recorded.
+- The excess ARS amount (sum of reimbursements minus expense amount) is credited as ordinary income at the **linked expense's category-month**, not the payback's own calendar month. *(Amendment 2026-07-01: earlier draft wording said "the payback's own calendar month"; the implementation uses the expense's month, which is the correct, money-conserving choice. Within the only surface that consumes both legs — insights savings — the excess is floored out of category spend at the expense's month and added back to income at that same expense-month, so one economic event is conserved in a single period. Splitting across two periods would misstate both months' savings.)*
 - The owner is responsible for noticing and handling the excess; no automatic splitting or redistribution is performed.
 
 ### 3. Going-forward rollout — no backfill
@@ -65,11 +65,13 @@ A full Splitwise-lite module (shared expense creation, automatic split computati
 ## Consequences
 
 - Every query that computes income, savings rate, or Monotributo turnover must be verified to filter `kind='income'` only — no new surface-specific changes expected, but this matrix serves as the audit checklist.
-- The over-refund floor requires the net-spend query (ADR-160) to use `GREATEST(net_ars, 0)` and a separate pass to identify and route excess to income.
+- The over-refund floor requires the net-spend query (ADR-160) to use `GREATEST(net_ars, 0)` and a separate pass to identify and route excess to income at the linked expense's category-month.
 - No migration script is needed for rollout; the schema changes (ADR-158 enum, ADR-159 FK) are additive.
 - The `offsets_transaction_id` FK is available as an extension point for a future split-expense feature without further schema changes.
+- **Over-refund excess income scope (conservation boundary):** The over-refund excess is currently added to income only in the insights-savings numerator (`_inflow_total`). There is no other transaction-aggregated income surface today — budget income reads a persisted user-set base, and the monthly summary carries no income figure — so conservation holds. IF a future surface aggregates income from transactions, it MUST also include the over-refund excess; omitting it would double-remove (floored out of spend but not credited as income).
 - Relates to ADR-027 (kind dispatch), ADR-046 (Monotributo turnover), ADR-122/ADR-135 (net worth / transfers), ADR-125 (spend aggregation), ADR-156 (budget currency), ADR-158 (reimbursement kind), ADR-159 (offset link), ADR-160 (ARS net spend), ADR-161 (USD derivation).
 
 ## Status History
 
 - 2026-07-01: accepted
+- 2026-07-01: amended — §2 over-refund month attribution corrected to linked expense's category-month; conservation-scope consequence note added

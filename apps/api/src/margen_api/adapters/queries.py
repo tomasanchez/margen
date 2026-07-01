@@ -134,10 +134,6 @@ _EXPENSE_AMOUNT = cast(func.sum(TransactionRecord.amount), Numeric(18, 2))
 # (ADR-152); rows lacking a snapshot are excluded in the WHERE so they never form a
 # null-total bucket — their count is surfaced separately as the unconverted note.
 _EXPENSE_USD_AMOUNT = cast(func.sum(TransactionRecord.usd_amount), Numeric(18, 2))
-# Year and month derived from ``occurred_on`` — portable across PostgreSQL and the
-# in-memory SQLite the offline tier uses (avoids ``date_trunc``).
-_YEAR = func.extract("year", TransactionRecord.occurred_on)
-_MONTH = func.extract("month", TransactionRecord.occurred_on)
 # Null categories bucket under a single "Uncategorized" label (ADR-042).
 _CATEGORY = func.coalesce(TransactionRecord.category, UNCATEGORIZED)
 
@@ -207,11 +203,15 @@ async def month_category_reimbursement_totals(
 
     * ``ARS`` — exact ``SUM(reimbursement.amount)`` on the authoritative ARS column
       (no FX, ADR-160).
-    * ``USD`` — ``SUM(reimbursement.amount / linked_expense.fx_rate)``: the payback's
-      USD reduction rides the EXPENSE'S captured rate (ADR-161), NOT the payback date's
-      rate. Expenses without a captured ``fx_rate`` / ``usd_amount`` are excluded (they
-      are already excluded from the gross USD side, ADR-152), so their paybacks reduce
-      nothing.
+    * ``USD`` — ``SUM(expense.usd_amount * (reimbursement.amount / expense.amount))``:
+      the payback's USD reduction rides the EXPENSE'S captured rate (ADR-161), NOT the
+      payback date's rate. This proportional form is mathematically identical to
+      ``reimbursement.amount / expense.fx_rate`` (since ``usd_amount = amount / fx_rate``)
+      but depends only on ``usd_amount`` (and a non-zero ``amount``), so its exclusion set
+      MATCHES the gross USD side EXACTLY (``usd_amount IS NOT NULL``, ADR-152). A legacy
+      expense with a ``usd_amount`` snapshot but a NULL ``fx_rate`` (ADR-029/ADR-031) is
+      therefore reduced by its paybacks here just as it is counted on the gross side —
+      the two exclusion sets no longer diverge and no unreduced spend leaks (ADR-161).
 
     This is the raw (unfloored, unsubtracted) reduction map. The net spend and the
     over-refund floor are applied by :func:`month_category_expense_totals` (ADR-160/162);
@@ -235,9 +235,16 @@ async def month_category_reimbursement_totals(
     reimbursement = aliased(TransactionRecord, name="reimbursement")
     category = func.coalesce(expense.category, UNCATEGORIZED)
     if is_usd:
-        # The payback's USD reduction rides the EXPENSE'S captured rate (ADR-161):
-        # amount / fx_rate, summed and cast back to money precision (ADR-025).
-        reduction = cast(func.sum(reimbursement.amount / expense.fx_rate), Numeric(18, 2))
+        # The payback's USD reduction rides the EXPENSE'S captured rate (ADR-161) via the
+        # PROPORTIONAL form usd_amount * (reimbursement.amount / expense.amount). It is
+        # identical to reimbursement.amount / expense.fx_rate (usd_amount = amount / fx_rate)
+        # but needs only usd_amount and a non-zero amount, so its exclusion set matches the
+        # gross USD side EXACTLY (usd_amount IS NOT NULL) and legacy null-fx_rate snapshots
+        # no longer leak unreduced spend. Summed and cast back to money precision (ADR-025).
+        reduction = cast(
+            func.sum(expense.usd_amount * (reimbursement.amount / expense.amount)),
+            Numeric(18, 2),
+        )
     else:
         reduction = cast(func.sum(reimbursement.amount), Numeric(18, 2))
     predicates = [
@@ -250,8 +257,11 @@ async def month_category_reimbursement_totals(
     if is_usd:
         # Consistency with the gross USD side (ADR-152): an expense with no snapshot is
         # excluded from gross USD spend, so its paybacks must not reduce anything either.
+        # The proportional form (above) needs only usd_amount, so this single predicate
+        # makes the exclusion set MATCH the gross side exactly (no fx_rate divergence).
+        # expense.amount is the authoritative money column and is always > 0 for an
+        # expense (write-time invariant), so the division has no divide-by-zero risk.
         predicates.append(expense.usd_amount.is_not(None))
-        predicates.append(expense.fx_rate.is_not(None))
     statement = (
         select(category.label("category"), reduction.label("reduction"))
         .select_from(reimbursement)
@@ -289,8 +299,10 @@ async def month_category_expense_totals(
     The net per category is floored at ZERO (ADR-162): when linked paybacks for a
     category-month exceed the gross spend (friends over-transfer), the category never
     goes negative — it reads ``0``. The over-refund EXCESS surfaces as ordinary income
-    for the payback's own calendar month, handled by the income readers (ADR-162), not
-    here — this query only ever returns non-negative category spend.
+    attributed to the LINKED EXPENSE'S category-month (the same period the floor removed
+    it from, so money is conserved across the spend and income books), handled by the
+    income readers (ADR-162), not here — this query only ever returns non-negative
+    category spend.
 
     Args:
         session: The async session used for the read-only query.
@@ -345,28 +357,77 @@ async def month_expense_unconverted_count(session: AsyncSession, month: date, ow
     return int((await session.execute(statement)).scalar_one())
 
 
-async def _range_month_reimbursement_totals(
+async def _range_month_category_gross_expense_totals(
     session: AsyncSession,
     oldest: date,
     upper: date,
     owner: UUID,
-) -> dict[str, Decimal]:
-    """Return ARS reimbursement reductions keyed by the LINKED EXPENSE's ``YYYY-MM`` (ADR-159, ADR-160).
+) -> dict[str, dict[str, Decimal]]:
+    """Return ARS gross expense totals keyed by ``YYYY-MM`` then category (ADR-042, ADR-160).
+
+    The trend-window gross counterpart of :func:`_month_category_gross_expense_totals`:
+    ``SUM`` of ``kind='expense'`` over the half-open ``[oldest, upper)`` range, grouped
+    by ``(year, month, category)`` (NULL categories bucket under ``Uncategorized``,
+    ADR-042) and scoped to ``owner`` (ADR-108). Grouping by category (not just month) is
+    what lets the trend net PER CATEGORY and floor each one before rolling up to the
+    month — so the trend month value equals the summed category breakdown for that same
+    month in every over-refund case (ADR-160/162). ARS only: the trend is
+    ARS-equivalent (ADR-025).
+    """
+    year = func.extract("year", TransactionRecord.occurred_on)
+    month = func.extract("month", TransactionRecord.occurred_on)
+    statement = (
+        select(
+            year.label("year"),
+            month.label("month"),
+            _CATEGORY.label("category"),
+            _EXPENSE_AMOUNT.label("total"),
+        )
+        .where(
+            TransactionRecord.user_id == owner,
+            TransactionRecord.kind == Kind.EXPENSE.value,
+            TransactionRecord.occurred_on >= oldest,
+            TransactionRecord.occurred_on < upper,
+        )
+        .group_by(year, month, _CATEGORY)
+    )
+    result = await session.execute(statement)
+    totals: dict[str, dict[str, Decimal]] = {}
+    for row in result.all():
+        key = f"{int(row.year):04d}-{int(row.month):02d}"
+        totals.setdefault(key, {})[str(row.category)] = _as_decimal(row.total)
+    return totals
+
+
+async def _range_month_category_reimbursement_totals(
+    session: AsyncSession,
+    oldest: date,
+    upper: date,
+    owner: UUID,
+) -> dict[str, dict[str, Decimal]]:
+    """Return ARS reimbursement reductions keyed by ``YYYY-MM`` then LINKED EXPENSE category (ADR-159, ADR-160).
 
     The trend-window counterpart of :func:`month_category_reimbursement_totals`: for
     every ``kind='reimbursement'`` payback whose LINKED EXPENSE falls in the half-open
     ``[oldest, upper)`` range, sums the payback ``amount`` grouped by the EXPENSE'S
-    ``(year, month)`` — never the payback's own date (ADR-159). Used to net the
-    historical spending trend so it matches the budgets/summaries net spend (ADR-160,
-    one aggregation, four surfaces). ARS only: the trend is ARS-equivalent (ADR-025).
+    ``(year, month, category)`` — never the payback's own date (ADR-159). Grouping by
+    category (mirroring the gross side) is what lets the trend floor the over-refund PER
+    CATEGORY, so the trend month value matches the summed category breakdown for that
+    month (ADR-160/162). ARS only: the trend is ARS-equivalent (ADR-025).
     """
     linked_expense = aliased(TransactionRecord, name="trend_linked_expense")
     reimbursement = aliased(TransactionRecord, name="trend_reimbursement")
     year = func.extract("year", linked_expense.occurred_on)
     month = func.extract("month", linked_expense.occurred_on)
+    category = func.coalesce(linked_expense.category, UNCATEGORIZED)
     reduction = cast(func.sum(reimbursement.amount), Numeric(18, 2))
     statement = (
-        select(year.label("year"), month.label("month"), reduction.label("reduction"))
+        select(
+            year.label("year"),
+            month.label("month"),
+            category.label("category"),
+            reduction.label("reduction"),
+        )
         .select_from(reimbursement)
         .join(linked_expense, reimbursement.offsets_transaction_id == linked_expense.id)
         .where(
@@ -376,10 +437,14 @@ async def _range_month_reimbursement_totals(
             linked_expense.occurred_on < upper,
             reimbursement.kind == Kind.REIMBURSEMENT.value,
         )
-        .group_by(year, month)
+        .group_by(year, month, category)
     )
     result = await session.execute(statement)
-    return {f"{int(row.year):04d}-{int(row.month):02d}": _as_decimal(row.reduction) for row in result.all()}
+    totals: dict[str, dict[str, Decimal]] = {}
+    for row in result.all():
+        key = f"{int(row.year):04d}-{int(row.month):02d}"
+        totals.setdefault(key, {})[str(row.category)] = _as_decimal(row.reduction)
+    return totals
 
 
 class SqlAlchemySummaryReader(AbstractSummaryReader):
@@ -420,34 +485,32 @@ class SqlAlchemySummaryReader(AbstractSummaryReader):
     async def _trend_totals(self, oldest: date, newest: date, owner: UUID) -> dict[str, Decimal]:
         """Return the owner's NET expense totals keyed by ``YYYY-MM`` across the trend window (ADR-160).
 
-        Groups expenses by ``(year, month)`` over the inclusive range from the first
-        day of ``oldest`` to the last day of ``newest``, scoped to ``owner`` (ADR-108),
-        then SUBTRACTS the linked reimbursements attributed to each expense's month
-        (ADR-159/160) so the historical spending trend matches the budgets/summaries
-        net spend — one aggregation, four surfaces, all net (ADR-125). Each month's net
-        is floored at zero (ADR-162): an over-refunded month never dips the trend below
-        zero.
+        Groups expenses by ``(year, month, category)`` over the inclusive range from the
+        first day of ``oldest`` to the last day of ``newest``, scoped to ``owner``
+        (ADR-108), then SUBTRACTS the linked reimbursements attributed to each expense's
+        ``(month, category)`` (ADR-159/160). The netting and the ADR-162 over-refund floor
+        are applied PER CATEGORY before rolling each month up to a single total — mirroring
+        :func:`month_category_expense_totals` — so the trend month value equals the summed
+        category breakdown for that same month in every over-refund case (one aggregation,
+        four surfaces, all net; ADR-125/160/162). Flooring per month instead of per
+        category would silently swallow real spend in a sibling category when one category
+        is over-refunded, contradicting the category breakdown for the same month.
         """
         upper = date(newest.year + (newest.month // 12), (newest.month % 12) + 1, 1)
-        statement = (
-            select(_YEAR.label("year"), _MONTH.label("month"), _EXPENSE_AMOUNT.label("total"))
-            .where(
-                TransactionRecord.user_id == owner,
-                TransactionRecord.kind == Kind.EXPENSE.value,
-                TransactionRecord.occurred_on >= oldest,
-                TransactionRecord.occurred_on < upper,
-            )
-            .group_by(_YEAR, _MONTH)
-        )
-        result = await self.session.execute(statement)
-        gross = {f"{int(row.year):04d}-{int(row.month):02d}": _as_decimal(row.total) for row in result.all()}
-        reductions = await _range_month_reimbursement_totals(self.session, oldest, upper, owner)
-        if not reductions:
-            return gross
-        net: dict[str, Decimal] = dict(gross)
-        for key, reduction in reductions.items():
-            remaining = net.get(key, _ZERO) - reduction
-            net[key] = remaining if remaining > _ZERO else _ZERO
+        gross = await _range_month_category_gross_expense_totals(self.session, oldest, upper, owner)
+        reductions = await _range_month_category_reimbursement_totals(self.session, oldest, upper, owner)
+        months = set(gross) | set(reductions)
+        net: dict[str, Decimal] = {}
+        for month_key in months:
+            month_gross = gross.get(month_key, {})
+            month_reductions = reductions.get(month_key, {})
+            month_total = _ZERO
+            categories = set(month_gross) | set(month_reductions)
+            for category in categories:
+                remaining = month_gross.get(category, _ZERO) - month_reductions.get(category, _ZERO)
+                if remaining > _ZERO:
+                    month_total += remaining
+            net[month_key] = month_total
         return net
 
     async def _category_totals(self, month: date, owner: UUID) -> dict[str, Decimal]:

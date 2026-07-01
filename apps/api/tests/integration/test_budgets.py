@@ -76,6 +76,29 @@ def _usd_expense(occurred_on: date, amount: str, category: str, rate: str, *, us
     )
 
 
+def _legacy_usd_expense(occurred_on: date, amount: str, usd: str, category: str, *, user_id: str = OWNER):
+    """Build a legacy USD expense carrying a ``usd_amount`` snapshot but NO ``fx_rate`` (ADR-029/ADR-031).
+
+    Mirrors the pre-backfill shape: a USD-denominated expense whose ``usd_amount`` was
+    captured but whose ``fx_rate`` is NULL. It is counted on the gross USD side (which
+    filters only ``usd_amount IS NOT NULL``), so its paybacks must reduce it too — the
+    proportional USD reduction (ADR-161) depends only on ``usd_amount`` and ``amount``.
+    """
+    return build_transaction(
+        transaction_id=uuid4(),
+        occurred_on=occurred_on,
+        name=f"{category} spend",
+        kind=Kind.EXPENSE,
+        amount=Decimal(amount),
+        currency=Currency.USD,
+        usd_amount=Decimal(usd),
+        category=category,
+        user_id=user_id,
+        created_at=_MOMENT,
+        updated_at=_MOMENT,
+    )
+
+
 def _reimbursement(occurred_on: date, amount: str, offsets, *, user_id: str = OWNER):
     """Build a reimbursement linked to an expense id (ADR-158/159)."""
     return build_transaction(
@@ -185,6 +208,44 @@ class TestReimbursementNetSpend:
         social = _line(model.categories, "Social")
         assert social.spent == Decimal("7.00")
         assert social.reimbursed == Decimal("3.00")
+
+    async def test_legacy_usd_expense_without_fx_rate_is_still_reduced(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a legacy USD Social expense with a usd_amount snapshot but NULL fx_rate
+              (ADR-029) and a linked ARS payback
+        WHEN the owner's USD June budget is read
+        THEN the payback reduces the USD spend via the proportional form (ADR-161) — the
+             legacy expense does NOT leak unreduced spend, because the USD reduction now
+             excludes on usd_amount ALONE, matching the gross USD side (not fx_rate)
+        """
+        # GIVEN — legacy USD expense: ARS-equivalent 10000, usd_amount 10.00, fx_rate NULL;
+        # an ARS 3000 payback links it. Proportional reduction = 10.00 * (3000/10000) = 3.00.
+        async with session_factory() as session:
+            repository = SqlAlchemyTransactionRepository(session)
+            expense = _legacy_usd_expense(date(2026, 6, 5), "10000.00", "10.00", "Social")
+            repository.add(expense)
+            repository.add(_reimbursement(date(2026, 6, 20), "3000.00", expense.id))
+            await session.commit()
+
+        # WHEN
+        session = session_factory()
+        try:
+            usd = await SqlAlchemyBudgetReader(session).monthly_budget(JUNE, OWNER, Currency.USD)
+            ars = await SqlAlchemyBudgetReader(session).monthly_budget(JUNE, OWNER)
+            await session.rollback()
+        finally:
+            await session.close()
+
+        # THEN — USD net = 10.00 - 3.00 = 7.00 (reduced, not the leaked gross 10.00).
+        usd_social = _line(usd.categories, "Social")
+        assert usd_social.spent == Decimal("7.00")
+        assert usd_social.reimbursed == Decimal("3.00")
+        # THEN — ARS parity: authoritative amount nets exactly (10000 - 3000 = 7000).
+        ars_social = _line(ars.categories, "Social")
+        assert ars_social.spent == Decimal("7000.00")
+        assert ars_social.reimbursed == Decimal("3000.00")
 
 
 class TestBudgetUpsert:
