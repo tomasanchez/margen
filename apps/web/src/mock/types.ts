@@ -32,8 +32,10 @@ export type TxKind = 'expense' | 'income' | 'invoice'
  *
  * `Housing` + `Education` are the MVP budget-category delta (ADR-140). `Rent` is
  * RETAINED as a tolerant alias for historical rows (do NOT remove); the picker
- * prefers `Housing`. The Phase-2 additions (Utilities/Social/DebtService/
- * FamilySupport) are intentionally NOT here yet.
+ * prefers `Housing`. `Social` is a discretionary "Wants" category (group
+ * meals/outings); it groups under Wants via the backend `isEssential=false`
+ * flag. The remaining Phase-2 additions (Utilities/DebtService/FamilySupport)
+ * are intentionally NOT here yet.
  */
 export type Category =
   | 'Income'
@@ -47,6 +49,7 @@ export type Category =
   | 'Shopping'
   | 'Entertainment'
   | 'Services'
+  | 'Social'
   | 'Taxes'
   | 'Fees'
   | 'Other'

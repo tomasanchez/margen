@@ -126,6 +126,20 @@ class TestBuildBudgetLines:
         assert food.is_essential is True
         assert entertainment.is_essential is False
 
+    def test_social_expense_surfaces_as_a_wants_line(self):
+        """
+        GIVEN spend in the "Social" category (ADR-140 Phase 2 delta)
+        WHEN the lines are built
+        THEN a Social line surfaces with its spend and is flagged non-essential (Wants)
+        """
+        # WHEN
+        lines = build_budget_lines({}, {"Social": Decimal("15000")})
+        social = next(line for line in lines if line.category == "Social")
+
+        # THEN
+        assert social.spent == Decimal("15000")
+        assert social.is_essential is False
+
     def test_target_currency_reflects_stored_native_currency(self):
         """
         GIVEN a USD-stored Food target and an ARS-stored Transport target

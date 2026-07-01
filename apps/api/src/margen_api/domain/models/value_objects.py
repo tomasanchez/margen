@@ -179,14 +179,21 @@ class FxRateType(StrEnum):
 #
 # MVP budgets delta (ADR-140): ``Housing`` (the INDEC-aligned superset of rent) and
 # ``Education`` are added; legacy ``Rent`` is RETAINED as a tolerated alias so
-# stored rows never break (no destructive rename). ``Social`` / ``Utilities`` /
-# ``DebtService`` / ``FamilySupport`` are Phase 2 and intentionally NOT added now.
+# stored rows never break (no destructive rename).
+#
+# Phase 2 partial delta (ADR-140): ``Social`` (discretionary dining/outings, split
+# from essential ``Food`` and from ``Entertainment``) is now added as a budgetable
+# expense category. It is discretionary, so it is intentionally NOT in
+# ``ESSENTIAL_CATEGORIES`` (``is_essential("Social")`` is False → it groups under
+# "Wants"). The remaining Phase 2 categories (``Utilities`` / ``DebtService`` /
+# ``FamilySupport``) are still deferred and intentionally NOT added now.
 KNOWN_CATEGORIES: frozenset[str] = frozenset(
     {
         "Income",
         "Food",
         "Housing",
         "Rent",
+        "Social",
         "Transport",
         "Subscriptions",
         "Health",
