@@ -285,6 +285,7 @@ export function HomePage() {
           loading={budgetsQuery.isPending}
           isError={budgetsQuery.isError}
           onRetry={() => void budgetsQuery.refetch()}
+          hidden={amountsHidden}
         />
       </Box>
 

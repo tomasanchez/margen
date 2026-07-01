@@ -44,6 +44,33 @@ Object.defineProperty(navigator, 'language', {
   value: 'en-US',
 })
 
+/**
+ * Deterministic default `fetch` for the whole suite (flake fix).
+ *
+ * The app resolves API URLs relative to an empty base in tests, so an unseeded
+ * TanStack Query fires `fetch('/api/v1/...')`. jsdom's real network attempt
+ * against that relative URL rejects — but WHEN it rejects (and how the late
+ * rejection is scheduled) varies by platform and load, which raced the async
+ * `findByRole` assertions in shell/Home tests and surfaced as CI-only,
+ * order-dependent failures (e.g. App.test's "Your command center" heading not
+ * resolving, or an unrelated test being blamed for a stray rejection).
+ *
+ * Replacing it with a fetch that rejects SYNCHRONOUSLY on the microtask queue
+ * removes that variance: unseeded queries fail fast and predictably, TanStack
+ * Query catches the rejection into `query.error` (so it is never "unhandled"),
+ * and no real socket work leaks across tests. Tests that need specific network
+ * behavior still override this per-file via `vi.stubGlobal('fetch', ...)`;
+ * because this is a plain assignment (not `vi.stubGlobal`), their
+ * `vi.unstubAllGlobals()` restores THIS deterministic default rather than
+ * jsdom's real fetch.
+ */
+const rejectingFetch: typeof fetch = () =>
+  Promise.reject(new Error('network disabled in tests'))
+globalThis.fetch = rejectingFetch
+if (typeof window !== 'undefined') {
+  window.fetch = rejectingFetch
+}
+
 void i18n.use(initReactI18next).init({
   lng: 'en',
   fallbackLng: 'en',

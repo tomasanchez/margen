@@ -13,9 +13,11 @@ import { describe, expect, test } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { ColorModeProvider } from '../../theme/colorMode'
 import { DisplayCurrencyProvider } from '../settings/displayCurrency'
+import { settingsQueryKeys } from '../settings/queries'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MetricCards, type MetricCardsProps } from './MetricCards'
 import { maskAmount } from '../../lib/format'
+import type { Settings } from '../../api/settingsClient'
 import type { MonthMetrics } from './homeMetrics'
 import type { MonotributoState } from '../../mock/types'
 
@@ -38,8 +40,21 @@ const MONOTRIBUTO: MonotributoState = {
 
 function renderCards(props: Partial<MetricCardsProps> = {}) {
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    // `staleTime: Infinity` + seeded settings below keep the DisplayCurrency
+    // provider's `useSettings` query from firing a real (jsdom-rejecting) fetch
+    // whose late rejection would otherwise leak into a later test's run.
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   })
+  // Seed settings (ARS default) so the provider resolves synchronously with no
+  // network — no un-awaited fetch escapes this test.
+  queryClient.setQueryData(settingsQueryKeys.detail(), {
+    preferredDisplayCurrency: 'ARS',
+    fxDefaultRateType: 'MEP',
+    preferredRateSource: 'bolsa',
+    monotributoCurrentCategory: 'C',
+    monotributoActivityType: 'services',
+    monotributoEnabled: true,
+  } satisfies Settings)
   return render(
     <QueryClientProvider client={queryClient}>
       <ColorModeProvider>
