@@ -1,20 +1,26 @@
 /**
- * Unit tests for the Budgets page (ADR-125, ADR-037, ADR-019, ADR-105).
+ * Unit tests for the Budgets page (ADR-125, ADR-156, ADR-037, ADR-019, ADR-105).
  *
  * Drives the page against a MOCKED {@link budgetsClient} (the network boundary),
  * so the real TanStack Query hooks + the row edit flows run end to end:
  *
  *  - every expense category renders with its target / spent / progress;
- *  - typing a target and blurring PUTs the upsert for that category + month;
+ *  - typing a target and blurring PUTs the upsert with `currency = budgetCurrency`
+ *    (the INCOME's currency, ADR-156), then the row + plan band reflect the save;
  *  - clearing the input and blurring DELETEs the target;
  *  - an over-budget category shows the non-color "Over budget" cue;
- *  - stepping the month navigator refetches for the new YYYY-MM;
+ *  - stepping the month navigator refetches AND shows the new month's saved
+ *    targets without carrying a stale draft (the reported month-switch bug);
+ *  - the income currency selector sets the budget currency (no cross-conversion);
+ *  - a committed target flashes "Saving…" → "Saved ✓";
  *  - a GET failure surfaces the calm error state.
  *
- * Most tests use a plain QueryClient + ColorMode wrapper; the unconverted-note
- * test (ADR-152) renders behind a memory router so its <Link to="/settings">
- * resolves. English-pinned (ADR-105); money asserted via the shared es-AR
- * formatter.
+ * The page is rendered behind a memory router so its <Link>s resolve (rows drill
+ * into <Link to="/transactions">; the unconverted note links to <Link
+ * to="/settings">). The budget currency follows the INCOME's currency (ADR-156),
+ * never the preferred display currency — so the USD-budget tests set the income's
+ * currency to USD rather than a display-currency preference. English-pinned
+ * (ADR-105); money asserted via the shared es-AR formatter.
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -36,8 +42,6 @@ import {
 } from '../settings/displayCurrencyContext'
 import { BudgetsPage } from './BudgetsPage'
 import { budgetsClient, type BudgetPeriod } from '../../api/budgetsClient'
-import { fetchCurrentRate } from '../../api/fxClient'
-import { fetchSettings } from '../../api/settingsClient'
 
 vi.mock('../../api/budgetsClient', async (importOriginal) => {
   const actual =
@@ -58,26 +62,12 @@ vi.mock('../../api/budgetsClient', async (importOriginal) => {
   }
 })
 
-// The preferred-rate query (ADR-155) reads `preferredRateSource` from settings
-// and fetches the live rate via fxClient. Mock both so the conversion tests can
-// drive a deterministic rate; ARS-preferred tests never need it (no conversion).
-vi.mock('../../api/fxClient', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../api/fxClient')>()
-  return { ...actual, fetchCurrentRate: vi.fn() }
-})
-vi.mock('../../api/settingsClient', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../api/settingsClient')>()
-  return { ...actual, fetchSettings: vi.fn() }
-})
-
-const mockRate = vi.mocked(fetchCurrentRate)
-const mockSettings = vi.mocked(fetchSettings)
-
 const mockFetch = vi.mocked(budgetsClient.fetchBudgets)
 const mockFetchHistory = vi.mocked(budgetsClient.fetchHistory)
 const mockSet = vi.mocked(budgetsClient.setTarget)
 const mockClear = vi.mocked(budgetsClient.clearTarget)
 const mockFetchIncome = vi.mocked(budgetsClient.fetchBudgetIncome)
+const mockSetIncome = vi.mocked(budgetsClient.setBudgetIncome)
 const mockApplyProfile = vi.mocked(budgetsClient.applyProfile)
 
 /** A period: Food under budget, Rent over budget, Transport with no target set. */
@@ -102,7 +92,9 @@ function period(month: string): BudgetPeriod {
  * Render the page behind a memory router so its <Link>s resolve — the category
  * rows drill into <Link to="/transactions"> (the spend inspector) and the
  * unconverted note links to <Link to="/settings"> (ADR-152). Both target routes
- * are registered as stubs so Link can build the href without navigating.
+ * are registered as stubs so Link can build the href without navigating. The
+ * page uses its local-state month fallback here (the URL month sync is tested via
+ * `budgetsSearch`).
  */
 function renderPage(displayCurrency?: Partial<DisplayCurrencyValue>) {
   const queryClient = new QueryClient({
@@ -157,6 +149,7 @@ describe('BudgetsPage', () => {
     mockFetchHistory.mockResolvedValue([])
     mockSet.mockResolvedValue(undefined)
     mockClear.mockResolvedValue(undefined)
+    mockSetIncome.mockResolvedValue(undefined)
     mockFetchIncome.mockResolvedValue({
       month: '2026-06',
       amount: null,
@@ -164,17 +157,6 @@ describe('BudgetsPage', () => {
       source: 'manual',
       floor: null,
     })
-    // Settings resolve so the preferred-rate query is enabled; default source
-    // is bolsa (MEP). The live rate is 1000 ARS per USD for the conversion tests.
-    mockSettings.mockResolvedValue({
-      preferredDisplayCurrency: 'ARS',
-      fxDefaultRateType: 'MEP',
-      preferredRateSource: 'bolsa',
-      monotributoCurrentCategory: 'A',
-      monotributoActivityType: 'services',
-      monotributoEnabled: false,
-    })
-    mockRate.mockResolvedValue(1000)
   })
   afterEach(() => {
     vi.useRealTimers()
@@ -239,7 +221,7 @@ describe('BudgetsPage', () => {
     expect(screen.queryByText(/aren't converted to USD/)).not.toBeInTheDocument()
   })
 
-  test('typing a target and blurring PUTs the upsert for that category', async () => {
+  test('typing a target and blurring PUTs the upsert in the budget currency', async () => {
     const user = userEvent.setup()
     renderPage()
 
@@ -251,6 +233,7 @@ describe('BudgetsPage', () => {
     await user.tab() // blur commits
 
     await waitFor(() => {
+      // currency = budgetCurrency (ARS, the income's currency, ADR-156).
       expect(mockSet).toHaveBeenCalledWith({
         category: 'Transport',
         month: '2026-06',
@@ -258,6 +241,34 @@ describe('BudgetsPage', () => {
         currency: 'ARS',
       })
     })
+  })
+
+  test('a committed target flashes Saving… then Saved ✓', async () => {
+    const user = userEvent.setup()
+    // Hold the PUT open so the "Saving…" state is observable, then resolve.
+    let resolveSet: () => void = () => {}
+    mockSet.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSet = resolve
+        }),
+    )
+    renderPage()
+
+    const transportInput = await screen.findByRole('textbox', {
+      name: 'Transport target',
+    })
+    await user.click(transportInput)
+    await user.type(transportInput, '50000')
+    await user.tab()
+
+    // While the write is in flight the row shows "Saving…".
+    expect(await screen.findByText('Saving…')).toBeInTheDocument()
+
+    resolveSet()
+
+    // On success the transient "Saved ✓" confirmation appears.
+    expect(await screen.findByText('Saved ✓')).toBeInTheDocument()
   })
 
   test('clearing an existing target and blurring DELETEs it', async () => {
@@ -286,25 +297,41 @@ describe('BudgetsPage', () => {
     expect(mockClear).not.toHaveBeenCalled()
   })
 
-  test('stepping the month navigator refetches for the new month', async () => {
+  test('stepping the month navigator shows the new month targets without a stale draft', async () => {
     const user = userEvent.setup()
+    // The prior month (May) has a DIFFERENT Food target so we can prove the row
+    // shows May's saved value — not June's leftover draft (the reported bug).
+    const may = period('2026-05')
+    may.categories[0].target = '77000.00'
+    may.categories[0].remaining = '-13000.00'
     renderPage()
     await screen.findByText('Food')
 
-    // The initial load is for the current month; capture how it was first called.
-    expect(mockFetch).toHaveBeenCalled()
-    mockFetch.mockClear()
-    mockFetch.mockResolvedValue(period('2026-05'))
+    // June's Food target seeds the input.
+    expect(screen.getByRole('textbox', { name: 'Food target' })).toHaveValue(
+      '120000.00',
+    )
 
+    mockFetch.mockResolvedValue(may)
     // Step to the previous month via the stepper's Previous-month button.
     await user.click(screen.getByRole('button', { name: 'Previous month' }))
 
+    // The period for May is fetched (the prior-month query also fetches April for
+    // the reprice check, so match on presence, not the last call).
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalled()
+      const months = mockFetch.mock.calls.map((c) => c[0])
+      expect(months).toContain('2026-05')
     })
-    // The refetch month differs from the current month (one step back).
-    const requested = mockFetch.mock.calls.at(-1)?.[0]
-    expect(requested).toMatch(/^\d{4}-\d{2}$/)
+
+    // The Food row now reflects MAY's saved target (77000), not June's draft.
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Food target' })).toHaveValue(
+        '77000.00',
+      )
+    })
+    // No stale-draft write was committed by the month switch.
+    expect(mockSet).not.toHaveBeenCalled()
+    expect(mockClear).not.toHaveBeenCalled()
   })
 
   test('a GET failure surfaces the calm error state with retry', async () => {
@@ -354,41 +381,10 @@ describe('BudgetsPage', () => {
     expect(screen.getByText('ARS 280.000')).toBeInTheDocument()
   })
 
-  test('converts a currency-mismatched income to the preferred currency at the live rate (ADR-155)', async () => {
-    // The budget is viewed in USD (preferred); the stored income + ARS-native
-    // targets are CONVERTED at the live rate (1000 ARS/USD) rather than treated
-    // as unset (the retired ADR-154 guard). Income ARS 3.000.000 → USD 3.000;
-    // ARS targets 120.000 + 200.000 → USD 120 + 200 = USD 320 assigned;
-    // left to assign = USD 3.000 − USD 320 = USD 2.680.
-    mockFetchIncome.mockResolvedValue({
-      month: '2026-06',
-      amount: '3000000.00',
-      currency: 'ARS',
-      source: 'manual',
-      floor: null,
-    })
-    renderPage({ preferredCurrency: 'USD', effectiveCurrency: 'USD' })
-    await screen.findByText('Food')
-
-    // The income always shows now — re-expressed in USD, no empty-state prompt.
-    expect(
-      screen.queryByText(
-        'Set your net income to plan with percentages and unlock saving profiles.',
-      ),
-    ).not.toBeInTheDocument()
-    // The left-to-assign readout is computed in the preferred currency.
-    expect(await screen.findByText('Left to assign')).toBeInTheDocument()
-    expect(screen.getByText('USD 2.680')).toBeInTheDocument()
-    // The income field shows the converted USD amount (3.000.000 / 1000 = 3000).
-    const incomeField = screen.getByRole('textbox', {
-      name: 'Net income for June 2026',
-    })
-    expect(incomeField).toHaveValue('3000.00')
-  })
-
-  test('passes income through unchanged when it already matches the budget currency (ADR-155)', async () => {
-    // Income + targets already USD, budget viewed in USD → no conversion: USD
-    // 600.000 income minus USD-denominated targets (320.000) yields the readout.
+  test('the budget currency follows the income currency, uncoverted (ADR-156)', async () => {
+    // A USD income → USD budget: income + targets arrive in USD from the backend
+    // (keyed by budgetCurrency), consumed as-is with NO conversion. USD 600.000
+    // income minus USD-denominated targets (320.000) yields the readout.
     mockFetch.mockResolvedValue({
       ...period('2026-06'),
       currency: 'USD',
@@ -404,11 +400,44 @@ describe('BudgetsPage', () => {
       source: 'manual',
       floor: null,
     })
-    renderPage({ preferredCurrency: 'USD', effectiveCurrency: 'USD' })
+    // Preferred display currency is ARS, but the budget follows the USD income.
+    renderPage({ preferredCurrency: 'ARS', effectiveCurrency: 'ARS' })
     await screen.findByText('Food')
+    // The budget is fetched in the income's currency (USD), not the preferred.
+    expect(mockFetch).toHaveBeenCalledWith('2026-06', 'USD')
     // Income 600000 USD minus 320000 USD assigned = 280000 USD left.
     expect(await screen.findByText('Left to assign')).toBeInTheDocument()
     expect(screen.getByText('USD 280.000')).toBeInTheDocument()
+    // The income field shows the USD amount unchanged (never cross-converted).
+    const incomeField = screen.getByRole('textbox', {
+      name: 'Net income for June 2026',
+    })
+    expect(incomeField).toHaveValue('600000.00')
+  })
+
+  test('the income currency selector sets the budget currency (ADR-156)', async () => {
+    const user = userEvent.setup()
+    mockFetchIncome.mockResolvedValue({
+      month: '2026-06',
+      amount: '600000.00',
+      currency: 'ARS',
+      source: 'manual',
+      floor: null,
+    })
+    renderPage()
+    await screen.findByText('Food')
+
+    // Switch the income currency to USD — the page re-commits the income under
+    // USD, which becomes the whole budget's currency (sent on PUT /budget-income).
+    await user.click(screen.getByRole('button', { name: 'US dollars (USD)' }))
+
+    await waitFor(() => {
+      expect(mockSetIncome).toHaveBeenCalledWith({
+        month: '2026-06',
+        amount: '600000.00',
+        currency: 'USD',
+      })
+    })
   })
 
   test('applying "Clear all" batches a DELETE per targeted category', async () => {

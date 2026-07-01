@@ -24,6 +24,8 @@ import CircularProgress from '@mui/material/CircularProgress'
 import InputAdornment from '@mui/material/InputAdornment'
 import InputBase from '@mui/material/InputBase'
 import TextField from '@mui/material/TextField'
+import ToggleButton from '@mui/material/ToggleButton'
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
 import Typography from '@mui/material/Typography'
 import AutorenewIcon from '@mui/icons-material/Autorenew'
 import { formatCurrency } from '../../lib/format'
@@ -40,7 +42,11 @@ export interface SpendableIncomeProps {
   income: BudgetIncome | undefined
   /** Localized month label for the income field's accessible name, e.g. "June 2026". */
   monthLabel: string
-  /** Period currency (ARS for the MVP). */
+  /**
+   * The budget currency (= the income currency, ADR-156). It IS the income
+   * currency: the ARS/USD selector on the income input sets it, and it becomes
+   * the whole budget's currency. Income is never cross-converted.
+   */
   currency: Currency
   /** Income-pressure segment from the budgets read (ADR-143), or null. */
   pressure: IncomePressure | null
@@ -48,6 +54,8 @@ export interface SpendableIncomeProps {
   suggestedStrategy: SavingProfile | null
   /** Whether an income/floor write is in flight. */
   saving?: boolean
+  /** Whether the income JUST saved (transient "Saved ✓" flash), auto-cleared upstream. */
+  justSaved?: boolean
   /** Whether the last income/floor write failed. */
   saveError?: boolean
   /** The pulled suggested base (Decimal string), or null when none / not yet fetched. */
@@ -60,6 +68,11 @@ export interface SpendableIncomeProps {
   suggestedMonths?: number
   /** Commit the net income (raw Decimal string) — upserts via PUT. */
   onCommitIncome: (amount: string) => void
+  /**
+   * Change the income (= budget) currency (ADR-156). The chosen currency is sent
+   * on the next `PUT /budget-income` and becomes the whole budget's currency.
+   */
+  onCurrencyChange: (currency: Currency) => void
   /** Commit a manual floor amount (raw Decimal string) — upserts via PUT. */
   onCommitFloor: (amount: string) => void
   /** Seed the income field with the suggested base (pulls it lazily). */
@@ -90,12 +103,14 @@ export function SpendableIncome({
   pressure,
   suggestedStrategy,
   saving = false,
+  justSaved = false,
   saveError = false,
   suggestedBase = null,
   suggestedBaseEmpty = false,
   suggestedSparse = false,
   suggestedMonths = 0,
   onCommitIncome,
+  onCurrencyChange,
   onCommitFloor,
   onUseSuggested,
 }: SpendableIncomeProps) {
@@ -202,20 +217,51 @@ export function SpendableIncome({
         {t('income.title')}
       </Typography>
 
-      {/* Large borderless mono income input, "ARS" prefix (the comp's hero input). */}
+      {/* Large borderless mono income input. The currency PREFIX is now an
+          ARS/USD selector (ADR-156): the chosen currency IS the budget currency,
+          sent on the next PUT. Income is never cross-converted — the field always
+          shows the amount in the selected currency. */}
       <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.875, mt: 1.5 }}>
-        <Typography
-          component="span"
-          aria-hidden
-          sx={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: { xs: 15, md: 19 },
-            flex: 'none',
+        <ToggleButtonGroup
+          value={currency}
+          exclusive
+          size="small"
+          onChange={(_event, next: Currency | null) => {
+            if (next != null && next !== currency) onCurrencyChange(next)
           }}
-          color="text.secondary"
+          aria-label={t('income.currencyLabel')}
+          sx={{
+            flex: 'none',
+            alignSelf: 'center',
+            gap: 0.25,
+            '& .MuiToggleButton-root': {
+              fontFamily: 'var(--font-mono)',
+              fontSize: 12,
+              lineHeight: 1,
+              px: 0.875,
+              py: 0.375,
+              borderRadius: '7px !important',
+              border: '1px solid var(--mg-border-2)',
+              color: 'text.secondary',
+              textTransform: 'none',
+            },
+            '& .MuiToggleButton-root.Mui-selected': {
+              color: 'text.primary',
+              borderColor: 'primary.main',
+              bgcolor: 'color-mix(in srgb, var(--mg-gold) 14%, transparent)',
+              '&:hover': {
+                bgcolor: 'color-mix(in srgb, var(--mg-gold) 20%, transparent)',
+              },
+            },
+          }}
         >
-          {currency}
-        </Typography>
+          <ToggleButton value="ARS" aria-label={t('income.currencyArs')}>
+            ARS
+          </ToggleButton>
+          <ToggleButton value="USD" aria-label={t('income.currencyUsd')}>
+            USD
+          </ToggleButton>
+        </ToggleButtonGroup>
         <InputBase
           value={incomeDraft}
           onChange={(e) => setIncomeDraft(e.target.value)}
@@ -246,6 +292,21 @@ export function SpendableIncome({
             '& input': { padding: 0 },
           }}
         />
+      </Box>
+
+      {/* Save-status for the auto-saving income field (blur/Enter commits): a
+          "Saving…" line while in flight, then a transient "Saved ✓" (safe/green),
+          announced via aria-live="polite". Idle shows nothing. */}
+      <Box aria-live="polite" sx={{ minHeight: 0, mt: 0.25 }}>
+        {saving ? (
+          <Typography sx={{ fontSize: 11.5 }} color="text.secondary">
+            {t('income.saving')}
+          </Typography>
+        ) : justSaved ? (
+          <Typography sx={{ fontSize: 11.5 }} color="var(--mg-safe)">
+            {t('income.saved')}
+          </Typography>
+        ) : null}
       </Box>
 
       <Box sx={{ borderBottom: '1px solid var(--mg-border)', my: '4px', mb: 1.5 }} />

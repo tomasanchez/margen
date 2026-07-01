@@ -26,7 +26,7 @@
  * via the shared es-AR helpers (ADR-102).
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from '@tanstack/react-router'
 import Box from '@mui/material/Box'
@@ -52,8 +52,6 @@ import { SavingsSection } from './SavingsSection'
 import { RepricePrompt } from './RepricePrompt'
 import {
   categoryGroup,
-  convertBudgetIncome,
-  convertBudgetPeriod,
   deriveAllocationSegments,
   deriveBudgetTotals,
   deriveClearAllTargets,
@@ -73,7 +71,6 @@ import {
   useBudgetIncome,
   useBudgets,
   useClearBudgetTarget,
-  usePreferredRate,
   usePriorBudgets,
   useReprice,
   useSetBudgetIncome,
@@ -85,34 +82,54 @@ import {
   type SuggestedBase,
 } from '../../api/budgetsClient'
 import { useDisplayCurrency } from '../settings/displayCurrencyContext'
-import type { Category } from '../../mock/types'
+import type { Category, Currency } from '../../mock/types'
 
-export function BudgetsPage() {
+/** How long the transient per-item "Saved ✓" confirmation stays before fading. */
+const SAVED_FLASH_MS = 2000
+
+export interface BudgetsPageProps {
+  /**
+   * The viewing month, owned by the route via the URL `?month=YYYY-MM` param
+   * (ADR-040/125). Optional so the page stays renderable standalone in tests; a
+   * local-state fallback (current month) is used when omitted.
+   */
+  month?: ViewingMonth
+  /** Change the viewing month — the route writes it to the URL. */
+  onMonthChange?: (month: ViewingMonth) => void
+}
+
+export function BudgetsPage({ month: monthProp, onMonthChange }: BudgetsPageProps = {}) {
   const { t } = useTranslation('budgets')
-  // The Budgets page owns its OWN month selection (the global navigator drives
-  // Home only, ADR-040), defaulting to the current real calendar month.
-  const [month, setMonth] = useState<ViewingMonth>(() => currentViewingMonth())
+  // The Budgets page owns its OWN month (the global navigator drives Home only,
+  // ADR-040); it now lives in the URL (`?month=YYYY-MM`), supplied by the route.
+  // A local-state fallback keeps the page renderable standalone (e.g. in tests).
+  const [localMonth, setLocalMonth] = useState<ViewingMonth>(() =>
+    currentViewingMonth(),
+  )
+  const month = monthProp ?? localMonth
+  const setMonth = onMonthChange ?? setLocalMonth
   const yearMonth = toYearMonth(month)
   const monthLabel = formatViewingMonth(month)
   const priorMonthValue = addMonths(month, -1)
   const priorYearMonth = toYearMonth(priorMonthValue)
   const priorLabel = formatViewingMonth(priorMonthValue)
 
-  // The budget is DISPLAYED in the user's preferred display currency (ADR-152/155).
-  // Spend always arrives in the preferred currency from the backend (the `currency`
-  // query param drives usd_amount vs amount). Targets + income are stored in their
-  // NATIVE created-in currency and CONVERTED here at the live preferred-rate-source
-  // rate — non-preferred amounts are re-expressed, preferred ones pass through.
-  const budgetCurrency = useDisplayCurrency().preferredCurrency
+  // The budget is denominated in the INCOME's currency (ADR-156): read it from
+  // the income and use it everywhere on the page. There is NO live-rate display
+  // conversion — the fetched period + income already arrive in the budget
+  // currency (spend from the per-transaction FX snapshot per ADR-148/152), and
+  // income is NEVER cross-converted. The Settings display currency only seeds
+  // the income-currency selector's starting value as a convenience (ADR-156/056).
+  const { preferredCurrency } = useDisplayCurrency()
+  // Read the income first (no currency param — it returns the base as stored) so
+  // we can derive the budget currency from it. Default to the preferred display
+  // currency (a convenience) until an income is set, then follow the income.
+  const incomeQuery = useBudgetIncome(yearMonth)
+  const budgetCurrency: Currency = incomeQuery.data?.currency ?? preferredCurrency
 
   const budgetsQuery = useBudgets(yearMonth, budgetCurrency)
-  const incomeQuery = useBudgetIncome(yearMonth)
   const historyQuery = useBudgetHistory(yearMonth, budgetCurrency)
   const priorQuery = usePriorBudgets(priorYearMonth, budgetCurrency)
-  // The live ARS-per-USD rate for converting native targets/income → preferred
-  // (ADR-155). Available even when ARS is preferred (USD-native targets → ARS).
-  const rateQuery = usePreferredRate()
-  const rate = rateQuery.data ?? null
   const setTarget = useSetBudgetTarget()
   const clearTarget = useClearBudgetTarget()
   const setIncome = useSetBudgetIncome()
@@ -124,6 +141,31 @@ export function BudgetsPage() {
   // hint show only on the affected row (ADR-037). Cleared on the next attempt.
   const [savingCategory, setSavingCategory] = useState<Category | null>(null)
   const [errorCategory, setErrorCategory] = useState<Category | null>(null)
+  // The category (or income) whose write JUST succeeded — drives the transient
+  // "Saved ✓" flash; auto-cleared after SAVED_FLASH_MS. Since targets + income
+  // auto-save on blur/Enter (no explicit Save button), this confirms the write.
+  const [justSavedCategory, setJustSavedCategory] = useState<Category | null>(null)
+  const [incomeJustSaved, setIncomeJustSaved] = useState(false)
+  const savedTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  useEffect(() => {
+    const timers = savedTimers.current
+    return () => {
+      for (const id of timers.values()) clearTimeout(id)
+      timers.clear()
+    }
+  }, [])
+  const flashSaved = (key: string, apply: () => void, clear: () => void) => {
+    apply()
+    const existing = savedTimers.current.get(key)
+    if (existing) clearTimeout(existing)
+    savedTimers.current.set(
+      key,
+      setTimeout(() => {
+        clear()
+        savedTimers.current.delete(key)
+      }, SAVED_FLASH_MS),
+    )
+  }
 
   // The applied profile + the floor-guard result from the last apply (ADR-138).
   const [appliedProfile, setAppliedProfile] = useState<SavingProfile | null>(null)
@@ -140,54 +182,22 @@ export function BudgetsPage() {
   // Which quick-start template is applying, for the calm pending state (ADR-147).
   const [applyingTemplate, setApplyingTemplate] = useState<TemplateId | null>(null)
 
-  // Convert the period's targets + saving rows from their native currency into
-  // the preferred display currency at the live rate (ADR-155). Spend is left as
-  // the backend supplied it (already preferred); an unavailable rate falls back
-  // to native values (never NaN) and is flagged via `ratePending` below.
-  const period = useMemo(
-    () =>
-      budgetsQuery.data
-        ? convertBudgetPeriod(budgetsQuery.data, budgetCurrency, rate)
-        : undefined,
-    [budgetsQuery.data, budgetCurrency, rate],
-  )
-  // The income GET returns the base AS STORED, with its own `currency` (ADR-152):
-  // the PUT is what denominates it. Rather than treat a currency-mismatched income
-  // as unset (the old ADR-154 guard), we CONVERT it to the preferred currency at the
-  // live rate so it always shows, re-expressed (ADR-155). An unavailable rate keeps
-  // the native amount (flagged via `ratePending`); we never relabel without converting.
-  const income = useMemo(
-    () =>
-      incomeQuery.data
-        ? convertBudgetIncome(incomeQuery.data, budgetCurrency, rate)
-        : undefined,
-    [incomeQuery.data, budgetCurrency, rate],
-  )
+  // The period + income arrive ALREADY in the budget currency (ADR-156): the
+  // fetch is keyed by `budgetCurrency`, spend comes from the per-transaction FX
+  // snapshot (ADR-148/152), and income is stored/read in its own currency. There
+  // is NO live-rate display conversion — the figures are consumed as-is, so all
+  // downstream derivations operate on a single, native denomination.
+  const period = useMemo(() => budgetsQuery.data, [budgetsQuery.data])
+  // Income is NEVER cross-converted: an ARS income shows ARS, a USD income shows
+  // USD (ADR-156). No "treat as unset on mismatch" guard — the income always
+  // shows in its own currency, and that currency IS the budget currency.
+  const income = incomeQuery.data
   const history = useMemo(() => historyQuery.data ?? [], [historyQuery.data])
-  // The budget currency is the PREFERRED currency (ADR-152); the period echoes it.
+  // The budget currency is the income's currency (ADR-156); the period echoes it.
   const currency = budgetCurrency
   // Count of the month's expense rows lacking a USD snapshot (ADR-152): surfaced
   // as a calm note with a link to the historical backfill (#80) when > 0.
   const unconverted = period?.unconverted ?? 0
-
-  // A conversion is NEEDED when any target or the income is in a non-preferred
-  // native currency. When one is needed but the live rate hasn't arrived (or is
-  // unavailable), the surface shows the honest NATIVE figures and a calm pending
-  // note — never NaN (ADR-155 graceful degradation).
-  const needsConversion = useMemo(() => {
-    const raw = budgetsQuery.data
-    const targetMismatch =
-      raw?.categories.some(
-        (c) => c.targetCurrency != null && c.targetCurrency !== budgetCurrency,
-      ) ?? false
-    const incomeMismatch =
-      incomeQuery.data != null &&
-      incomeQuery.data.amount != null &&
-      incomeQuery.data.currency !== budgetCurrency
-    return targetMismatch || incomeMismatch
-  }, [budgetsQuery.data, incomeQuery.data, budgetCurrency])
-  const ratePending =
-    needsConversion && (rate == null || rateQuery.isPending)
 
   const totals = useMemo(
     () => (period ? deriveBudgetTotals(period) : undefined),
@@ -240,7 +250,37 @@ export function BudgetsPage() {
   )
 
   const handleCommitIncome = (amount: string) =>
-    setIncome.mutate({ month: yearMonth, amount, currency: budgetCurrency })
+    setIncome.mutate(
+      { month: yearMonth, amount, currency: budgetCurrency },
+      {
+        onSuccess: () =>
+          flashSaved(
+            'income',
+            () => setIncomeJustSaved(true),
+            () => setIncomeJustSaved(false),
+          ),
+      },
+    )
+
+  // Change the income (= budget) currency (ADR-156). We re-denominate the income
+  // by re-committing the current amount under the new currency; if no amount is
+  // set yet, we just re-send with a 0 base so the currency choice persists as the
+  // budget currency (the user then types the real income). The whole page then
+  // refetches under the new `budgetCurrency` (income drives it).
+  const handleCurrencyChange = (nextCurrency: Currency) => {
+    const amount = income?.amount ?? '0'
+    setIncome.mutate(
+      { month: yearMonth, amount, currency: nextCurrency },
+      {
+        onSuccess: () =>
+          flashSaved(
+            'income',
+            () => setIncomeJustSaved(true),
+            () => setIncomeJustSaved(false),
+          ),
+      },
+    )
+  }
 
   const handleCommitFloor = (amount: string) => {
     if (income?.amount == null) return
@@ -350,6 +390,14 @@ export function BudgetsPage() {
     setTarget.mutate(
       { category, month: yearMonth, amount, currency: budgetCurrency },
       {
+        onSuccess: () =>
+          // Confirm the auto-save persisted with a transient "Saved ✓" flash.
+          flashSaved(
+            category,
+            () => setJustSavedCategory(category),
+            () =>
+              setJustSavedCategory((c) => (c === category ? null : c)),
+          ),
         onSettled: () => setSavingCategory(null),
         onError: () => setErrorCategory(category),
       },
@@ -415,20 +463,6 @@ export function BudgetsPage() {
   return (
     <Box>
       {heading}
-
-      {/* Calm rate-pending note (ADR-155): some targets/income are in a currency
-          other than the preferred one and the live conversion rate hasn't arrived
-          (or is unavailable), so those figures show their honest NATIVE value for
-          now. Never an error — a quiet, non-color cue; clears once the rate loads. */}
-      {ratePending ? (
-        <Typography
-          sx={{ fontSize: 12.5, mb: 1.75 }}
-          color="text.secondary"
-          role="status"
-        >
-          {t('rate.pending')}
-        </Typography>
-      ) : null}
 
       {/* Calm unconverted note (ADR-152): some of this month's expense rows lack
           a USD snapshot, so the USD spend may be understated. Never an error — a
@@ -504,12 +538,14 @@ export function BudgetsPage() {
               pressure={period?.pressure ?? null}
               suggestedStrategy={period?.suggestedStrategy ?? null}
               saving={setIncome.isPending}
+              justSaved={incomeJustSaved}
               saveError={setIncome.isError}
               suggestedBase={suggestedBase}
               suggestedBaseEmpty={suggestedBaseEmpty}
               suggestedSparse={suggestedMeta?.isSparse ?? false}
               suggestedMonths={suggestedMeta?.monthsAvailable ?? 0}
               onCommitIncome={handleCommitIncome}
+              onCurrencyChange={handleCurrencyChange}
               onCommitFloor={handleCommitFloor}
               onUseSuggested={handleUseSuggested}
             />
@@ -579,6 +615,7 @@ export function BudgetsPage() {
               currency={currency}
               month={yearMonth}
               savingCategory={savingCategory}
+              justSavedCategory={justSavedCategory}
               errorCategory={errorCategory}
               onCommit={handleCommit}
               onClear={handleClear}
@@ -592,6 +629,7 @@ export function BudgetsPage() {
               currency={currency}
               month={yearMonth}
               savingCategory={savingCategory}
+              justSavedCategory={justSavedCategory}
               errorCategory={errorCategory}
               onCommit={handleCommit}
               onClear={handleClear}

@@ -59,14 +59,9 @@ import { BudgetProgressCard } from './BudgetProgressCard'
 import {
   useBudgetIncome,
   useBudgets,
-  usePreferredRate,
   usePriorBudgets,
 } from '../budgets/queries'
-import {
-  convertBudgetIncome,
-  convertBudgetPeriod,
-  isRepriceRollover,
-} from '../budgets/derive'
+import { isRepriceRollover } from '../budgets/derive'
 import { toYearMonth } from './queries'
 
 /** Percentage change from `previous` to `current`; 0 when previous is 0. */
@@ -100,43 +95,33 @@ export function HomePage() {
   // Real, month-reactive insights for the selected month (ADR-061/062).
   const insightsQuery = useInsights(viewingMonth)
   // Budget progress for the selected month (ADR-125/127): an incremental Home
-  // card; month-keyed so it tracks the navigator. Budgets are DISPLAYED in the
-  // preferred currency (ADR-152/155): spend arrives in it from the backend, while
-  // native targets/income are converted client-side at the live preferred-rate-
-  // source rate (the dedicated budgets rate query, available even for ARS).
-  const budgetsQuery = useBudgets(toYearMonth(viewingMonth), preferredCurrency)
-  const rateQuery = usePreferredRate()
-  const rate = rateQuery.data ?? null
+  // card; month-keyed so it tracks the navigator. The budget is denominated in
+  // the INCOME's currency (ADR-156): read the income first, take its currency as
+  // the budget currency (defaulting to the preferred display currency until an
+  // income is set), and fetch + show everything in it — NO live-rate conversion.
+  // Spend arrives in the budget currency from the backend (the per-transaction FX
+  // snapshot, ADR-148/152); income is never cross-converted.
+  const budgetIncomeQuery = useBudgetIncome(toYearMonth(viewingMonth))
+  const budgetCurrency = budgetIncomeQuery.data?.currency ?? preferredCurrency
+  const budgetsQuery = useBudgets(toYearMonth(viewingMonth), budgetCurrency)
   const previousMonth = useMemo(
     () => addMonths(viewingMonth, -1),
     [viewingMonth],
   )
-  // Net income (for the compact saved-this-month line) + the prior month's
-  // budgets (for the reprice-rollover nudge), both month-keyed (ADR-127/137).
-  const budgetIncomeQuery = useBudgetIncome(toYearMonth(viewingMonth))
-  const priorBudgetsQuery = usePriorBudgets(toYearMonth(previousMonth), preferredCurrency)
+  // The prior month's budgets (for the reprice-rollover nudge), month-keyed
+  // (ADR-127/137), in the same budget currency.
+  const priorBudgetsQuery = usePriorBudgets(
+    toYearMonth(previousMonth),
+    budgetCurrency,
+  )
   const showRepriceNudge = useMemo(
     () => isRepriceRollover(budgetsQuery.data, priorBudgetsQuery.data),
     [budgetsQuery.data, priorBudgetsQuery.data],
   )
-  // Convert the period + income into the preferred currency at the live rate
-  // (ADR-155): non-preferred native targets/income are re-expressed; an
-  // unavailable rate falls back to native (never NaN). Replaces the prior
-  // "treat mismatched income as unset" guard — the income always shows now.
-  const budgetPeriod = useMemo(
-    () =>
-      budgetsQuery.data
-        ? convertBudgetPeriod(budgetsQuery.data, preferredCurrency, rate)
-        : undefined,
-    [budgetsQuery.data, preferredCurrency, rate],
-  )
-  const budgetIncome = useMemo(
-    () =>
-      budgetIncomeQuery.data
-        ? convertBudgetIncome(budgetIncomeQuery.data, preferredCurrency, rate)
-        : undefined,
-    [budgetIncomeQuery.data, preferredCurrency, rate],
-  )
+  // Consumed as-is (ADR-156): the period + income already arrive in the budget
+  // currency, so no conversion. Income shows in its own currency, never converted.
+  const budgetPeriod = budgetsQuery.data
+  const budgetIncome = budgetIncomeQuery.data
 
   const monthLabel = formatViewingMonth(viewingMonth)
   // Short previous-month name for the delta captions, e.g. "May".
@@ -251,8 +236,8 @@ export function HomePage() {
         />
         <BudgetProgressCard
           period={budgetPeriod}
-          // Income is converted to the preferred currency (ADR-155), so it always
-          // shows re-expressed — no more "unset on mismatch" guard.
+          // Income shows in its own (budget) currency, never cross-converted
+          // (ADR-156).
           income={budgetIncome}
           showRepriceNudge={showRepriceNudge}
           loading={budgetsQuery.isPending}

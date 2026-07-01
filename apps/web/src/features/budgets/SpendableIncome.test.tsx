@@ -26,6 +26,7 @@ const INCOME: BudgetIncome = {
 
 function renderColumn(props: Partial<SpendableIncomeProps> = {}) {
   const onCommitIncome = props.onCommitIncome ?? vi.fn()
+  const onCurrencyChange = props.onCurrencyChange ?? vi.fn()
   const onCommitFloor = props.onCommitFloor ?? vi.fn()
   const onUseSuggested = props.onUseSuggested ?? vi.fn()
   render(
@@ -36,17 +37,20 @@ function renderColumn(props: Partial<SpendableIncomeProps> = {}) {
         currency={props.currency ?? 'ARS'}
         pressure={props.pressure ?? null}
         suggestedStrategy={props.suggestedStrategy ?? null}
+        saving={props.saving}
+        justSaved={props.justSaved}
         suggestedBase={props.suggestedBase}
         suggestedBaseEmpty={props.suggestedBaseEmpty}
         suggestedSparse={props.suggestedSparse}
         suggestedMonths={props.suggestedMonths}
         onCommitIncome={onCommitIncome}
+        onCurrencyChange={onCurrencyChange}
         onCommitFloor={onCommitFloor}
         onUseSuggested={onUseSuggested}
       />
     </ColorModeProvider>,
   )
-  return { onCommitIncome, onCommitFloor, onUseSuggested }
+  return { onCommitIncome, onCurrencyChange, onCommitFloor, onUseSuggested }
 }
 
 describe('SpendableIncome', () => {
@@ -116,4 +120,59 @@ describe('SpendableIncome', () => {
       screen.getByText('Estimate from 3 months of history'),
     ).toBeInTheDocument()
   })
+
+  test('the currency selector drives the budget currency (ADR-156)', async () => {
+    const user = userEvent.setup()
+    // ARS is the current currency (selected); switching to USD fires the change
+    // handler with the new currency — which the page sends on PUT /budget-income
+    // and becomes the whole budget's currency.
+    const { onCurrencyChange } = renderColumn({ currency: 'ARS' })
+    const usd = screen.getByRole('button', { name: 'US dollars (USD)' })
+    await user.click(usd)
+    expect(onCurrencyChange).toHaveBeenCalledWith('USD')
+  })
+
+  test('re-selecting the current currency does not fire a change', async () => {
+    const user = userEvent.setup()
+    const { onCurrencyChange } = renderColumn({ currency: 'ARS' })
+    await user.click(screen.getByRole('button', { name: 'Pesos (ARS)' }))
+    expect(onCurrencyChange).not.toHaveBeenCalled()
+  })
+
+  test('shows the auto-save status: Saving… while in flight, Saved ✓ on success', () => {
+    const { rerender } = renderColumnControlled({ saving: true })
+    expect(screen.getByText('Saving…')).toBeInTheDocument()
+    rerender({ saving: false, justSaved: true })
+    expect(screen.getByText('Saved ✓')).toBeInTheDocument()
+    expect(screen.queryByText('Saving…')).not.toBeInTheDocument()
+  })
 })
+
+/** Render the income column with re-render support for the save-status assertion. */
+function renderColumnControlled(initial: Partial<SpendableIncomeProps>) {
+  const props: SpendableIncomeProps = {
+    income: INCOME,
+    monthLabel: 'June 2026',
+    currency: 'ARS',
+    pressure: null,
+    suggestedStrategy: null,
+    onCommitIncome: vi.fn(),
+    onCurrencyChange: vi.fn(),
+    onCommitFloor: vi.fn(),
+    onUseSuggested: vi.fn(),
+    ...initial,
+  }
+  const { rerender } = render(
+    <ColorModeProvider>
+      <SpendableIncome {...props} />
+    </ColorModeProvider>,
+  )
+  return {
+    rerender: (next: Partial<SpendableIncomeProps>) =>
+      rerender(
+        <ColorModeProvider>
+          <SpendableIncome {...props} {...next} />
+        </ColorModeProvider>,
+      ),
+  }
+}

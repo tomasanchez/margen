@@ -9,7 +9,8 @@ import { AppShell } from './components/AppShell'
 import { AddTransactionProvider } from './features/transactions/AddTransactionProvider'
 import { HomePage } from './features/home/HomePage'
 import { AccountsPage } from './features/accounts/AccountsPage'
-import { BudgetsPage } from './features/budgets/BudgetsPage'
+import { BudgetsRoute } from './features/budgets/BudgetsRoute'
+import { validateBudgetsSearch } from './features/budgets/budgetsSearch'
 import { TransfersPage } from './features/transfers/TransfersPage'
 import { ImportStatement } from './features/statements/ImportStatement'
 import { MonotributoRoute } from './features/monotributo/MonotributoRoute'
@@ -114,7 +115,13 @@ const accountsRoute = createRoute({
 const budgetsRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/budgets',
-  component: BudgetsPage,
+  // The month lives in the URL as `?month=YYYY-MM` (ADR-040/125): the route
+  // validates it and `BudgetsRoute` binds it to the page via `useBudgetMonth`
+  // (mirroring how `/transactions` owns its filters, ADR-116), so reload /
+  // back-forward / deep-links keep the selected month. Absent means the current
+  // month.
+  validateSearch: validateBudgetsSearch,
+  component: BudgetsRoute,
 })
 
 const transfersRoute = createRoute({
