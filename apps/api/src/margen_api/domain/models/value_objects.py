@@ -24,11 +24,18 @@ class Kind(StrEnum):
 
     ``invoice`` is income that may count toward the Monotributo annual limit;
     ``income`` is other inflow (e.g. a refund modeled as positive income).
+    ``reimbursement`` is a real cash inflow that pays the owner back for a share
+    of a specific past expense (ADR-158): it increases the account balance and
+    net worth like any inflow, but it is NEVER ordinary income and NEVER taxable
+    Monotributo turnover — instead it SUBTRACTS from the linked expense's
+    category-month net spend (ADR-159/160). It is linked to its source expense
+    through ``Transaction.offsets_transaction_id``.
     """
 
     EXPENSE = "expense"
     INCOME = "income"
     INVOICE = "invoice"
+    REIMBURSEMENT = "reimbursement"
 
     @classmethod
     def parse(cls, value: object) -> Kind:

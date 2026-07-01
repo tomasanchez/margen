@@ -11,7 +11,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import Select
 
@@ -185,6 +185,131 @@ def _result(rows: list[SimpleNamespace]) -> MagicMock:
     return result
 
 
+def _reduction_row(category: str, reduction: object) -> SimpleNamespace:
+    """Build a fake reimbursement-reduction row (category, reduction)."""
+    return SimpleNamespace(category=category, reduction=reduction)
+
+
+def _trend_reduction_row(year: int, month: int, reduction: object) -> SimpleNamespace:
+    """Build a fake trend reimbursement-reduction row (year, month, reduction)."""
+    return SimpleNamespace(year=year, month=month, reduction=reduction)
+
+
+class TestNetCategoryExpenseTotals:
+    """``month_category_expense_totals`` subtracts linked reimbursements, floored at zero (ADR-160/162)."""
+
+    async def test_ars_net_subtracts_reimbursements(self):
+        """
+        GIVEN a category with gross expense and a partial linked reimbursement
+        WHEN month_category_expense_totals runs in ARS
+        THEN the net is gross minus the reimbursement on the authoritative amount (ADR-160)
+        """
+        from margen_api.adapters.queries import month_category_expense_totals
+
+        # GIVEN — Social gross 10000, a 3000 payback linked to it.
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([_category_row("Social", Decimal("10000.00"))]),
+            _result([_reduction_row("Social", Decimal("3000.00"))]),
+        ]
+
+        # WHEN
+        totals = await month_category_expense_totals(session, date(2026, 6, 1), UUID(A_USER))
+
+        # THEN — 10000 - 3000 = 7000, exact ARS subtraction.
+        assert totals == {"Social": Decimal("7000.00")}
+
+    async def test_over_refund_floors_category_at_zero(self):
+        """
+        GIVEN linked reimbursements that exceed the category's gross expense
+        WHEN month_category_expense_totals runs
+        THEN the category spend floors at zero, never negative (ADR-162)
+        """
+        from margen_api.adapters.queries import month_category_expense_totals
+
+        # GIVEN — Social gross 10000, paybacks total 12000 (over-refund).
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([_category_row("Social", Decimal("10000.00"))]),
+            _result([_reduction_row("Social", Decimal("12000.00"))]),
+        ]
+
+        # WHEN
+        totals = await month_category_expense_totals(session, date(2026, 6, 1), UUID(A_USER))
+
+        # THEN — floored at zero, not -2000.
+        assert totals == {"Social": Decimal("0")}
+
+    async def test_usd_reduction_rides_expense_rate(self):
+        """
+        GIVEN a USD budget with a linked payback whose reduction was derived at the
+              expense's captured rate (ADR-161)
+        WHEN month_category_expense_totals runs in USD
+        THEN the net USD equals the expense usd_amount minus the derived reduction, and
+             each query excludes null-snapshot rows (ADR-152)
+        """
+        from margen_api.adapters.queries import month_category_expense_totals
+
+        # GIVEN — Social USD gross 8.00, payback USD reduction 2.50 (amount / expense rate).
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([_category_row("Social", Decimal("8.00"))]),
+            _result([_reduction_row("Social", Decimal("2.50"))]),
+        ]
+
+        # WHEN
+        totals = await month_category_expense_totals(session, date(2026, 6, 1), UUID(A_USER), Currency.USD)
+
+        # THEN — 8.00 - 2.50 = 5.50 net USD.
+        assert totals == {"Social": Decimal("5.50")}
+        # THEN — both the gross and the reduction query exclude expenses lacking a snapshot.
+        for call in session.execute.await_args_list:
+            assert "usd_amount is not null" in str(call.args[0]).lower()
+
+    async def test_reduction_for_category_with_no_other_spend_floors_at_zero(self):
+        """
+        GIVEN a linked payback whose expense category has no gross bucket in the map
+        WHEN month_category_expense_totals runs
+        THEN that category floors at zero rather than going negative (ADR-162)
+        """
+        from margen_api.adapters.queries import month_category_expense_totals
+
+        # GIVEN — gross has only Food; the reduction targets Social (its expense's category).
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([_category_row("Food", Decimal("5000.00"))]),
+            _result([_reduction_row("Social", Decimal("1000.00"))]),
+        ]
+
+        # WHEN
+        totals = await month_category_expense_totals(session, date(2026, 6, 1), UUID(A_USER))
+
+        # THEN — Food untouched; Social floored at zero.
+        assert totals == {"Food": Decimal("5000.00"), "Social": Decimal("0")}
+
+    async def test_reimbursement_query_joins_offset_link_and_scopes_owner(self):
+        """
+        GIVEN a reimbursement reduction query
+        WHEN month_category_reimbursement_totals runs
+        THEN it joins on the offset link, filters kind='reimbursement' and scopes the owner
+        """
+        from margen_api.adapters.queries import month_category_reimbursement_totals
+
+        # GIVEN
+        session = AsyncMock()
+        session.execute.return_value = _result([_reduction_row("Social", Decimal("3000.00"))])
+
+        # WHEN
+        reductions = await month_category_reimbursement_totals(session, date(2026, 6, 1), UUID(A_USER))
+
+        # THEN
+        assert reductions == {"Social": Decimal("3000.00")}
+        compiled = str(session.execute.await_args_list[0].args[0]).lower()
+        assert "offsets_transaction_id" in compiled
+        assert "reimbursement" in compiled
+        assert "user_id" in compiled
+
+
 class TestSummaryReader:
     """``monthly_summary`` runs three aggregations and assembles the summary."""
 
@@ -194,19 +319,28 @@ class TestSummaryReader:
         WHEN monthly_summary runs for June 2026
         THEN it builds the 6-point trend, category shares and the prior-month delta
         """
-        # GIVEN — execute is called 3x: trend, month categories, prior categories.
+        # GIVEN — execute now runs 6x: each of the trend, month and prior aggregations
+        # is followed by its linked-reimbursement reduction query (ADR-160). With no
+        # paybacks the reduction results are empty, so the net equals the gross.
         trend = _result([_trend_row(2026, 3, Decimal("100.00")), _trend_row(2026, 6, Decimal("400.00"))])
         month_categories = _result([_category_row("Food", Decimal("300.00")), _category_row("Rent", Decimal("100.00"))])
         prior_categories = _result([_category_row("Food", Decimal("150.00"))])
         session = AsyncMock()
-        session.execute.side_effect = [trend, month_categories, prior_categories]
+        session.execute.side_effect = [
+            trend,
+            _result([]),  # trend reimbursement reductions (none)
+            month_categories,
+            _result([]),  # month reimbursement reductions (none)
+            prior_categories,
+            _result([]),  # prior reimbursement reductions (none)
+        ]
         reader = SqlAlchemySummaryReader(session)
 
         # WHEN
         summary = await reader.monthly_summary(date(2026, 6, 15), A_USER)
 
-        # THEN — three aggregation queries ran as Selects filtered to expenses.
-        assert session.execute.await_count == 3
+        # THEN — six aggregation queries ran as Selects filtered to expenses.
+        assert session.execute.await_count == 6
         for call in session.execute.await_args_list:
             (statement,) = call.args
             assert isinstance(statement, Select)
@@ -251,7 +385,14 @@ class TestSummaryReader:
         month_categories = _result([_category_row("Food", 250.5)])
         prior_categories = _result([])
         session = AsyncMock()
-        session.execute.side_effect = [trend, month_categories, prior_categories]
+        session.execute.side_effect = [
+            trend,
+            _result([]),  # trend reimbursement reductions (none)
+            month_categories,
+            _result([]),  # month reimbursement reductions (none)
+            prior_categories,
+            _result([]),  # prior reimbursement reductions (none)
+        ]
         reader = SqlAlchemySummaryReader(session)
 
         # WHEN
@@ -260,6 +401,37 @@ class TestSummaryReader:
         # THEN
         assert summary.trend[-1].expenses == Decimal("250.5")
         assert summary.categories[0].amount == Decimal("250.5")
+
+    async def test_trend_nets_reimbursements_by_linked_expense_month(self):
+        """
+        GIVEN a trend window with linked reimbursements attributed to an expense month
+        WHEN monthly_summary runs
+        THEN the trend point for that month is net of the paybacks, floored at zero (ADR-160/162)
+        """
+        # GIVEN — June gross 400000; a 100000 payback linked to a June expense and a
+        # 999999 over-refund linked to a March expense (floors March at zero).
+        trend = _result([_trend_row(2026, 3, Decimal("100000.00")), _trend_row(2026, 6, Decimal("400000.00"))])
+        trend_reductions = _result(
+            [_trend_reduction_row(2026, 6, Decimal("100000.00")), _trend_reduction_row(2026, 3, Decimal("999999.00"))]
+        )
+        session = AsyncMock()
+        session.execute.side_effect = [
+            trend,
+            trend_reductions,
+            _result([]),  # month categories
+            _result([]),  # month reductions
+            _result([]),  # prior categories
+            _result([]),  # prior reductions
+        ]
+        reader = SqlAlchemySummaryReader(session)
+
+        # WHEN
+        summary = await reader.monthly_summary(date(2026, 6, 15), A_USER)
+
+        # THEN — June net 300000; March floored at zero (over-refund).
+        assert summary.trend[-1].expenses == Decimal("300000.00")
+        march = next(point for point in summary.trend if point.month == "2026-03")
+        assert march.expenses == Decimal("0")
 
 
 def _recurring_row(count: int, total: object) -> MagicMock:
@@ -301,14 +473,24 @@ class TestInsightsReader:
         THEN it picks the mover, sums recurring, computes actual savings and projects
              the latest USD invoice
         """
-        # GIVEN — execute sequence: month cats, prior cats, recurring, inflow, expense, latest USD.
+        # GIVEN — execute sequence now nets each expense aggregation against linked
+        # reimbursements (ADR-160) and adds the over-refund-excess probe to the inflow
+        # (ADR-162). With no paybacks the reductions are empty, so the facts are
+        # unchanged. Order: month cats(gross,reduction), prior cats(gross,reduction),
+        # recurring, inflow scalar, over-refund(gross,reduction), expense net(gross,
+        # reduction), latest USD.
         session = AsyncMock()
         session.execute.side_effect = [
             _result([_category_row("Food", Decimal("300.00")), _category_row("Rent", Decimal("100.00"))]),
+            _result([]),  # month reimbursement reductions (none)
             _result([_category_row("Food", Decimal("150.00"))]),
+            _result([]),  # prior reimbursement reductions (none)
             _recurring_row(2, Decimal("900.00")),
-            _scalar_result(Decimal("3000.00")),
-            _scalar_result(Decimal("400.00")),
+            _scalar_result(Decimal("3000.00")),  # inflow (income + invoice)
+            _result([]),  # over-refund excess: gross expense (empty)
+            _result([]),  # over-refund excess: reimbursement reductions (none)
+            _result([_category_row("Food", Decimal("300.00")), _category_row("Rent", Decimal("100.00"))]),
+            _result([]),  # expense-total net: reimbursement reductions (none)
             _scalar_result(_usd_record(date(2026, 6, 20), "100.00", "1200.00")),
         ]
         reader = SqlAlchemyInsightsReader(session)
@@ -316,8 +498,8 @@ class TestInsightsReader:
         # WHEN — reference in July makes June a past month: actual savings.
         insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1), A_USER)
 
-        # THEN — six aggregation queries ran as Selects, each scoped to the owner (ADR-108).
-        assert session.execute.await_count == 6
+        # THEN — eleven aggregation queries ran as Selects, each scoped to the owner (ADR-108).
+        assert session.execute.await_count == 11
         for call in session.execute.await_args_list:
             (statement,) = call.args
             assert isinstance(statement, Select)
@@ -340,20 +522,89 @@ class TestInsightsReader:
         assert insights.latest_usd_invoice.rate_type == "MEP"
         assert insights.latest_usd_invoice.occurred_on == date(2026, 6, 20)
 
+    async def test_over_refund_excess_credits_income(self):
+        """
+        GIVEN a category whose linked paybacks exceed its gross expense (over-refund)
+        WHEN monthly_insights runs
+        THEN the excess is added to the month's income and the net expense floors at zero,
+             so savings reflect the excess-to-income routing (ADR-162)
+        """
+        # GIVEN — inflow (income) 100000; Social gross 5000 with 8000 of paybacks =>
+        # excess 3000 credited to income; net expense floors at zero.
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([_category_row("Social", Decimal("5000.00"))]),  # month cats gross
+            _result([_reduction_row("Social", Decimal("8000.00"))]),  # month reductions (over-refund)
+            _result([]),  # prior cats gross
+            _result([]),  # prior reductions
+            _recurring_row(0, Decimal("0")),
+            _scalar_result(Decimal("100000.00")),  # ordinary income inflow
+            _result([_category_row("Social", Decimal("5000.00"))]),  # over-refund excess: gross
+            _result([_reduction_row("Social", Decimal("8000.00"))]),  # over-refund excess: reductions
+            _result([_category_row("Social", Decimal("5000.00"))]),  # expense-total net: gross
+            _result([_reduction_row("Social", Decimal("8000.00"))]),  # expense-total net: reductions
+            _scalar_result(None),  # latest USD
+        ]
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN — past month => actual savings.
+        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1), A_USER)
+
+        # THEN — income = 100000 + 3000 excess; net expense = 0; savings = 103000.
+        assert insights.savings.is_projected is False
+        assert insights.savings.amount == Decimal("103000.00")
+
+    async def test_partial_payback_adds_no_income_excess(self):
+        """
+        GIVEN a category whose linked paybacks are LESS than its gross expense
+        WHEN monthly_insights runs
+        THEN no over-refund excess is credited to income (the excess is zero, ADR-162)
+             and savings reflect only the net expense reduction
+        """
+        # GIVEN — inflow 100000; Social gross 10000 with only 3000 of paybacks (no
+        # over-refund) => excess 0; net expense 7000.
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _result([_category_row("Social", Decimal("10000.00"))]),  # month cats gross
+            _result([_reduction_row("Social", Decimal("3000.00"))]),  # month reductions (partial)
+            _result([]),  # prior cats gross
+            _result([]),  # prior reductions
+            _recurring_row(0, Decimal("0")),
+            _scalar_result(Decimal("100000.00")),  # ordinary income inflow
+            _result([_category_row("Social", Decimal("10000.00"))]),  # over-refund excess: gross
+            _result([_reduction_row("Social", Decimal("3000.00"))]),  # over-refund excess: reductions
+            _result([_category_row("Social", Decimal("10000.00"))]),  # expense-total net: gross
+            _result([_reduction_row("Social", Decimal("3000.00"))]),  # expense-total net: reductions
+            _scalar_result(None),  # latest USD
+        ]
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN — past month => actual savings.
+        insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1), A_USER)
+
+        # THEN — income stays 100000 (no excess); net expense 7000; savings = 93000.
+        assert insights.savings.amount == Decimal("93000.00")
+
     async def test_empty_month_has_none_facts_and_zero_savings(self):
         """
         GIVEN a session whose executes all return empty / None aggregates
         WHEN monthly_insights runs
         THEN the optional facts are None and savings are 0
         """
-        # GIVEN — execute sequence with no data anywhere.
+        # GIVEN — execute sequence with no data anywhere (each expense aggregation is
+        # followed by an empty reimbursement-reduction result; ADR-160/162).
         session = AsyncMock()
         session.execute.side_effect = [
-            _result([]),  # month categories
-            _result([]),  # prior categories
+            _result([]),  # month categories (gross)
+            _result([]),  # month reimbursement reductions
+            _result([]),  # prior categories (gross)
+            _result([]),  # prior reimbursement reductions
             _recurring_row(0, Decimal("0")),  # no recurring
             _scalar_result(None),  # no inflow -> 0
-            _scalar_result(None),  # no expense -> 0
+            _result([]),  # over-refund excess: gross expense
+            _result([]),  # over-refund excess: reimbursement reductions
+            _result([]),  # expense-total net: gross expense
+            _result([]),  # expense-total net: reimbursement reductions
             _scalar_result(None),  # no latest USD invoice
         ]
         reader = SqlAlchemyInsightsReader(session)
@@ -376,11 +627,16 @@ class TestInsightsReader:
         # GIVEN
         session = AsyncMock()
         session.execute.side_effect = [
-            _result([]),
-            _result([]),
+            _result([]),  # month categories (gross)
+            _result([]),  # month reimbursement reductions
+            _result([]),  # prior categories (gross)
+            _result([]),  # prior reimbursement reductions
             _recurring_row(0, Decimal("0")),
-            _scalar_result(None),
-            _scalar_result(None),
+            _scalar_result(None),  # inflow
+            _result([]),  # over-refund excess: gross
+            _result([]),  # over-refund excess: reductions
+            _result([]),  # expense-total net: gross
+            _result([]),  # expense-total net: reductions
             _scalar_result(_usd_record(date(2026, 6, 9), "50.00", "1100.00", fx_rate_type=None)),
         ]
         reader = SqlAlchemyInsightsReader(session)
@@ -398,15 +654,20 @@ class TestInsightsReader:
         WHEN monthly_insights runs
         THEN the prior-category query targets the previous December (year - 1)
         """
-        # GIVEN — six no-data executes; we only assert the prior bound rolled back.
+        # GIVEN — eleven no-data executes; we only assert the prior bound rolled back.
         session = AsyncMock()
         session.execute.side_effect = [
-            _result([]),
-            _result([]),
+            _result([]),  # month categories (gross)
+            _result([]),  # month reimbursement reductions
+            _result([]),  # prior categories (gross)
+            _result([]),  # prior reimbursement reductions
             _recurring_row(0, Decimal("0")),
-            _scalar_result(None),
-            _scalar_result(None),
-            _scalar_result(None),
+            _scalar_result(None),  # inflow
+            _result([]),  # over-refund excess: gross
+            _result([]),  # over-refund excess: reductions
+            _result([]),  # expense-total net: gross
+            _result([]),  # expense-total net: reductions
+            _scalar_result(None),  # latest USD
         ]
         reader = SqlAlchemyInsightsReader(session)
 
@@ -415,7 +676,7 @@ class TestInsightsReader:
 
         # THEN — no crash on the year rollover and the requested month is January.
         assert insights.month == "2026-01"
-        assert session.execute.await_count == 6
+        assert session.execute.await_count == 11
 
     async def test_coerces_float_sums_to_decimal(self):
         """
@@ -426,11 +687,16 @@ class TestInsightsReader:
         # GIVEN
         session = AsyncMock()
         session.execute.side_effect = [
-            _result([]),
-            _result([]),
+            _result([]),  # month categories (gross)
+            _result([]),  # month reimbursement reductions
+            _result([]),  # prior categories (gross)
+            _result([]),  # prior reimbursement reductions
             _recurring_row(1, 250.5),  # float total
             _scalar_result(1000.5),  # float inflow
-            _scalar_result(250.25),  # float expense
+            _result([]),  # over-refund excess: gross
+            _result([]),  # over-refund excess: reductions
+            _result([_category_row("Food", 250.25)]),  # expense-total net gross (float)
+            _result([]),  # expense-total net: reductions
             _scalar_result(None),
         ]
         reader = SqlAlchemyInsightsReader(session)
@@ -690,20 +956,24 @@ class TestBudgetCategoryHistory:
         THEN avg3mo is the mean across the three months, lastMonth is May's spend, and
              every aggregation query is scoped to the owner (ADR-108)
         """
-        # GIVEN — execute called 3x, oldest-first: March, April, May.
+        # GIVEN — execute called 6x, oldest-first: each month's gross expense aggregation
+        # is followed by its (empty) reimbursement-reduction query (ADR-160).
         session = AsyncMock()
         session.execute.side_effect = [
             _result([_category_row("Food", Decimal("30000.00"))]),
+            _result([]),  # March reductions (none)
             _result([_category_row("Food", Decimal("60000.00"))]),
+            _result([]),  # April reductions (none)
             _result([_category_row("Food", Decimal("90000.00")), _category_row("Transport", Decimal("9000.00"))]),
+            _result([]),  # May reductions (none)
         ]
         reader = SqlAlchemyBudgetReader(session)
 
         # WHEN
         history = await reader.category_history(date(2026, 6, 15), A_USER)
 
-        # THEN — three owner-scoped expense aggregations ran as Selects (ADR-108).
-        assert session.execute.await_count == 3
+        # THEN — six owner-scoped expense aggregations ran as Selects (ADR-108).
+        assert session.execute.await_count == 6
         for call in session.execute.await_args_list:
             (statement,) = call.args
             assert isinstance(statement, Select)
@@ -724,9 +994,16 @@ class TestBudgetCategoryHistory:
         WHEN category_history runs
         THEN no category lines are produced
         """
-        # GIVEN
+        # GIVEN — three months, each a gross + a reduction query (all empty).
         session = AsyncMock()
-        session.execute.side_effect = [_result([]), _result([]), _result([])]
+        session.execute.side_effect = [
+            _result([]),
+            _result([]),
+            _result([]),
+            _result([]),
+            _result([]),
+            _result([]),
+        ]
         reader = SqlAlchemyBudgetReader(session)
 
         # WHEN
@@ -742,12 +1019,16 @@ class TestBudgetCategoryHistory:
         THEN it aggregates the snapshot totals AND each query excludes null-snapshot rows
              (the USD spend path's exclusion threads through, ADR-152)
         """
-        # GIVEN — three months of USD-denominated Food spend (oldest-first).
+        # GIVEN — three months of USD-denominated Food spend (oldest-first), each with
+        # an (empty) reimbursement-reduction query interleaved (ADR-160).
         session = AsyncMock()
         session.execute.side_effect = [
             _result([_category_row("Food", Decimal("30.00"))]),
+            _result([]),  # March reductions (none)
             _result([_category_row("Food", Decimal("60.00"))]),
+            _result([]),  # April reductions (none)
             _result([_category_row("Food", Decimal("90.00"))]),
+            _result([]),  # May reductions (none)
         ]
         reader = SqlAlchemyBudgetReader(session)
 
@@ -755,7 +1036,7 @@ class TestBudgetCategoryHistory:
         history = await reader.category_history(date(2026, 6, 15), A_USER, Currency.USD)
 
         # THEN — each query filters out rows lacking a usd_amount snapshot (ADR-152).
-        assert session.execute.await_count == 3
+        assert session.execute.await_count == 6
         for call in session.execute.await_args_list:
             (statement,) = call.args
             assert "usd_amount is not null" in str(statement).lower()

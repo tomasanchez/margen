@@ -47,6 +47,9 @@ class TransactionReadModel:
             pool — ADR-084) from already-imported statement rows.
         account_id: Link to the owning account, else ``None`` when the transaction
             is not attributed to an account (ADR-122).
+        offsets_transaction_id: For a ``reimbursement`` (ADR-158), the linked expense
+            id this payback offsets (ADR-159); ``None`` for every other kind. Lets the
+            client render the "reimbursed" relationship without a second lookup.
         created_at: Server-managed creation timestamp.
         updated_at: Server-managed last-update timestamp.
     """
@@ -71,5 +74,6 @@ class TransactionReadModel:
     counts_toward_monotributo: bool
     statement_document_id: UUID | None
     account_id: UUID | None
+    offsets_transaction_id: UUID | None
     created_at: datetime
     updated_at: datetime

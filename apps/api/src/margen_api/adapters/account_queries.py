@@ -46,8 +46,11 @@ _NATIVE_MAGNITUDE = case(
     else_=TransactionRecord.amount,
 )
 # A transaction's signed contribution: ``-magnitude`` for an expense, ``+magnitude``
-# for income / invoice (the magnitude is always positive, ADR-025). SUM widens
-# NUMERIC, so it is cast back so the driver returns a Decimal for money (ADR-025).
+# for every inflow — income, invoice AND reimbursement (the magnitude is always
+# positive, ADR-025). A reimbursement is real cash received, so it credits the account
+# balance and net worth exactly like any deposit (ADR-158/162 balance row): the
+# ``else_`` branch covers it with no kind-specific change. SUM widens NUMERIC, so it is
+# cast back so the driver returns a Decimal for money (ADR-025).
 _SIGNED_DELTA = case(
     (TransactionRecord.kind == Kind.EXPENSE.value, -_NATIVE_MAGNITUDE),
     else_=_NATIVE_MAGNITUDE,

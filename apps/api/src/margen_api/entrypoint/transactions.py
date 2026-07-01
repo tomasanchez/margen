@@ -6,9 +6,9 @@ mock (ADR-024). Writes go through the message bus as commands; reads use the
 query-side :class:`AbstractTransactionReader` (ADR-028). Domain invariant
 violations (ADR-031) are translated to HTTP at this boundary:
 
-- :class:`TransactionNotFoundError` -> ``404 Not Found``
+- :class:`TransactionNotFoundError` / :class:`OffsetTargetNotFoundError` -> ``404 Not Found``
 - :class:`InvalidAmountError` / :class:`UnknownKindError` /
-  :class:`UnknownCurrencyError` -> ``422 Unprocessable Entity``
+  :class:`UnknownCurrencyError` / :class:`OffsetTargetNotExpenseError` -> ``422 Unprocessable Entity``
 
 Filtering, sorting and pagination query params (``type``, ``currency``,
 ``category``, ``bank``, ``date``, ``search``) are a **planned extension for #14**
@@ -26,6 +26,8 @@ from margen_api.domain.commands.transaction import DeleteTransaction
 from margen_api.domain.models.exceptions import (
     AccountNotFoundError,
     InvalidAmountError,
+    OffsetTargetNotExpenseError,
+    OffsetTargetNotFoundError,
     TransactionNotFoundError,
     UnknownCurrencyError,
     UnknownKindError,
@@ -44,8 +46,15 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
 
-# Invariant violations the domain raises that map to HTTP 422 (ADR-031).
-_INVARIANT_VIOLATIONS = (InvalidAmountError, UnknownKindError, UnknownCurrencyError)
+# Invariant violations the domain raises that map to HTTP 422 (ADR-031). Linking a
+# reimbursement to a non-expense target is a genuine invariant breach (ADR-159), so it
+# joins the 422 set; a missing/cross-tenant offset target is a 404 (handled separately).
+_INVARIANT_VIOLATIONS = (
+    InvalidAmountError,
+    UnknownKindError,
+    UnknownCurrencyError,
+    OffsetTargetNotExpenseError,
+)
 
 
 def _not_found(transaction_id: UUID) -> HTTPException:
@@ -111,6 +120,13 @@ async def create_transaction(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Account {error.account_id} not found.",
+        ) from error
+    except OffsetTargetNotFoundError as error:
+        # Linking a reimbursement to a missing/cross-tenant expense is a not-found,
+        # never a leak of another tenant's rows (ADR-159, ADR-130, ADR-111).
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Offset target transaction {error.transaction_id} not found.",
         ) from error
     except _INVARIANT_VIOLATIONS as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error

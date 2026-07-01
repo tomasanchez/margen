@@ -471,3 +471,92 @@ class TestBuildTransactionDefaults:
 
         # THEN
         assert transaction.fx_rate_type is FxRateType.MANUAL
+
+
+class TestReimbursementKind:
+    """A reimbursement is an inflow with an offset link and no FX snapshot (ADR-158/159/161)."""
+
+    async def test_reimbursement_direction_is_income(self):
+        """
+        GIVEN a reimbursement transaction
+        WHEN its derived type is read
+        THEN it is INCOME direction (a real inflow), never EXPENSE (ADR-158)
+        """
+        # WHEN
+        transaction = _build(kind=Kind.REIMBURSEMENT, name="Ana pays back", amount=Decimal("3000"))
+
+        # THEN
+        assert transaction.type is TxType.INCOME
+
+    async def test_offset_link_is_kept_for_a_reimbursement(self):
+        """
+        GIVEN a reimbursement built with an offset link
+        WHEN the transaction is built
+        THEN the link is preserved (it is meaningful only for a reimbursement, ADR-159)
+        """
+        # GIVEN
+        expense_id = uuid4()
+
+        # WHEN
+        transaction = _build(
+            kind=Kind.REIMBURSEMENT,
+            name="Ana pays back",
+            amount=Decimal("3000"),
+            offsets_transaction_id=expense_id,
+        )
+
+        # THEN
+        assert transaction.offsets_transaction_id == expense_id
+
+    @pytest.mark.parametrize("kind", [Kind.EXPENSE, Kind.INCOME, Kind.INVOICE])
+    async def test_offset_link_is_dropped_for_other_kinds(self, kind: Kind):
+        """
+        GIVEN a non-reimbursement built with an offset link
+        WHEN the transaction is built
+        THEN the domain drops the link — it is only valid for a reimbursement (ADR-159)
+        """
+        # WHEN
+        transaction = _build(kind=kind, offsets_transaction_id=uuid4())
+
+        # THEN
+        assert transaction.offsets_transaction_id is None
+
+    async def test_reimbursement_drops_any_supplied_fx_snapshot(self):
+        """
+        GIVEN a reimbursement built with FX snapshot fields supplied
+        WHEN the transaction is built
+        THEN the snapshot is dropped — a payback carries no FX of its own (ADR-161)
+        """
+        # WHEN
+        transaction = _build(
+            kind=Kind.REIMBURSEMENT,
+            name="Ana pays back",
+            amount=Decimal("3000"),
+            fx_rate=Decimal("1200"),
+            fx_source="bolsa",
+            fx_rate_type=FxRateType.MEP,
+        )
+
+        # THEN
+        assert transaction.usd_amount is None
+        assert transaction.fx_rate is None
+        assert transaction.fx_source is None
+        assert transaction.fx_rate_type is None
+        assert transaction.fx_rate_as_of is None
+
+    async def test_reimbursement_forces_counts_toward_monotributo_false(self):
+        """
+        GIVEN a reimbursement flagged to count toward Monotributo
+        WHEN the transaction is built
+        THEN the flag is forced False — a payback is never taxable turnover (ADR-158)
+        """
+        # WHEN
+        transaction = _build(
+            kind=Kind.REIMBURSEMENT,
+            name="Ana pays back",
+            amount=Decimal("3000"),
+            counts_toward_monotributo=True,
+        )
+
+        # THEN
+        assert transaction.counts_toward_monotributo is False

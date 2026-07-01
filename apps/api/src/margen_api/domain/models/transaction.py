@@ -91,6 +91,14 @@ class Transaction:
             transactions not yet attributed to an account. The owning-account
             check (a user may only link to their own account) is an application-layer
             concern (ADR-130), not a domain invariant.
+        offsets_transaction_id: For a ``reimbursement`` (ADR-158), the id of the
+            EXPENSE this payback offsets (ADR-159). The reduction is attributed to
+            the LINKED EXPENSE's ``(category, occurred_on)`` — never the payback's
+            own date — so credit-card timing skew nets against the right budget
+            month (ADR-159/160). ``None`` for every other kind. The domain forces it
+            ``None`` for non-reimbursement rows; the target-exists / same-owner /
+            is-an-expense checks are an application-layer concern (ADR-130), not a
+            domain invariant (the aggregate cannot see other rows).
         user_id: The owning user's id (the Supabase ``sub``), threaded from the
             authenticated request so every write is attributable and every read
             can be scoped to its owner (ADR-094, ADR-108). A plain carried field,
@@ -118,6 +126,7 @@ class Transaction:
     counts_toward_monotributo: bool = False
     statement_document_id: UUID | None = None
     account_id: UUID | None = None
+    offsets_transaction_id: UUID | None = None
     user_id: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -150,9 +159,17 @@ class Transaction:
         if self.amount <= ZERO:
             raise InvalidAmountError(self.amount)
 
-        # Monotributo counting only applies to income / invoice; force False for expense.
-        if self.kind is Kind.EXPENSE:
+        # Monotributo counting only applies to income / invoice; force False for
+        # expense AND reimbursement — a payback is never taxable turnover (ADR-158).
+        if self.kind is not Kind.INCOME and self.kind is not Kind.INVOICE:
             self.counts_toward_monotributo = False
+
+        # The offset link is meaningful ONLY for a reimbursement (ADR-159); drop it
+        # for every other kind so an ``income``/``expense`` row never carries a stray
+        # link. The target-exists / same-owner / is-expense checks live in the app
+        # layer (ADR-130) — the aggregate cannot see other rows.
+        if self.kind is not Kind.REIMBURSEMENT:
+            self.offsets_transaction_id = None
 
         self._normalize_fx()
 
@@ -170,6 +187,17 @@ class Transaction:
         """
         if self.fx_rate is not None and not isinstance(self.fx_rate, Decimal):
             self.fx_rate = Decimal(str(self.fx_rate))
+
+        # A reimbursement carries NO FX snapshot of its own (ADR-161): its USD
+        # reduction is derived at query time from the LINKED EXPENSE's rate, so any
+        # snapshot fields supplied on the payback are dropped rather than persisted.
+        if self.kind is Kind.REIMBURSEMENT:
+            self.usd_amount = None
+            self.fx_rate = None
+            self.fx_source = None
+            self.fx_rate_type = None
+            self.fx_rate_as_of = None
+            return
 
         if self.fx_source is not None:
             if self.fx_rate_type is None:
@@ -218,6 +246,7 @@ def build_transaction(
     counts_toward_monotributo: bool = False,
     statement_document_id: UUID | None = None,
     account_id: UUID | None = None,
+    offsets_transaction_id: UUID | None = None,
     user_id: str | None = None,
     transaction_id: UUID | None = None,
     created_at: datetime | None = None,
@@ -251,6 +280,8 @@ def build_transaction(
         statement_document_id: Optional link to the source statement document for
             an imported credit-card expense (ADR-077); ``None`` otherwise.
         account_id: Optional link to the owning account (ADR-122); ``None`` otherwise.
+        offsets_transaction_id: For a reimbursement, the linked expense id (ADR-159);
+            forced ``None`` for every other kind. ``None`` otherwise.
         user_id: The owning user's id (the Supabase ``sub``); ``None`` otherwise
             (ADR-094, ADR-108).
         transaction_id: Optional identity; generated when omitted.
@@ -288,6 +319,7 @@ def build_transaction(
         counts_toward_monotributo=counts_toward_monotributo,
         statement_document_id=statement_document_id,
         account_id=account_id,
+        offsets_transaction_id=offsets_transaction_id,
         user_id=user_id,
         created_at=created_at if created_at is not None else now,
         updated_at=updated_at if updated_at is not None else now,

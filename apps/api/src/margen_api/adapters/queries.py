@@ -14,6 +14,7 @@ from uuid import UUID
 
 from sqlalchemy import Numeric, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from margen_api.adapters.models.app_settings import AppSettingsRecord
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
@@ -79,6 +80,7 @@ def _to_read_model(record: TransactionRecord) -> TransactionReadModel:
         counts_toward_monotributo=record.counts_toward_monotributo,
         statement_document_id=record.statement_document_id,
         account_id=record.account_id,
+        offsets_transaction_id=record.offsets_transaction_id,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
@@ -150,40 +152,24 @@ def _as_decimal(value: object) -> Decimal:
     return Decimal(str(value))
 
 
-async def month_category_expense_totals(
+async def _month_category_gross_expense_totals(
     session: AsyncSession,
     month: date,
     owner: UUID,
-    currency: Currency = Currency.ARS,
+    *,
+    is_usd: bool,
 ) -> dict[str, Decimal]:
-    """Return the owner's expense totals for a month keyed by category (ADR-042, ADR-108, ADR-152).
+    """Return the owner's GROSS expense totals for a month keyed by category (ADR-042, ADR-152).
 
-    The canonical per-category month-expense aggregation reused by the summaries
-    reader (ADR-042), the insights reader (ADR-060) and the budgets reader as the
-    "spent" figure (ADR-125): a ``SUM`` of ``kind = 'expense'`` over the month,
-    grouped by category (NULL categories bucket under ``Uncategorized``), scoped to
-    the owner. Sharing one function keeps the budgets "spent" identical to the
-    summaries "amount" rather than reinventing the aggregation (ADR-125).
-
-    The summed column depends on ``currency`` (ADR-152): for ``ARS`` (the default,
-    preserving every existing caller) it sums the authoritative ``amount``; for
-    ``USD`` it sums the materialized ``usd_amount`` snapshot and **excludes** rows
-    lacking one (a null ``usd_amount``) so an unsnapshotted row never forms a
-    null-total bucket — those rows are surfaced separately as the unconverted note
-    (:func:`month_expense_unconverted_count`).
-
-    Args:
-        session: The async session used for the read-only query.
-        month: The first day of the requested calendar month.
-        owner: The authenticated owner the expenses are scoped to (ADR-108).
-        currency: The budget currency; ``ARS`` sums ``amount`` (default), ``USD``
-            sums ``usd_amount`` excluding null-snapshot rows (ADR-152).
-
-    Returns:
-        Expense totals for the month keyed by category; absent categories are 0.
+    The pre-netting expense sum: ``SUM`` of ``kind='expense'`` over the month grouped
+    by category (NULL categories bucket under ``Uncategorized``, ADR-042), scoped to
+    the owner (ADR-108). ``is_usd`` selects the summed column (ADR-152): ``False`` sums
+    the authoritative ``amount``; ``True`` sums the materialized ``usd_amount`` snapshot
+    and excludes rows lacking one so an unsnapshotted row never forms a null-total
+    bucket. The linked-reimbursement subtraction that turns this into NET spend is
+    applied by :func:`month_category_expense_totals` (ADR-160).
     """
     upper = _month_upper_bound(month)
-    is_usd = currency is Currency.USD
     total_column = _EXPENSE_USD_AMOUNT if is_usd else _EXPENSE_AMOUNT
     predicates = [
         TransactionRecord.user_id == owner,
@@ -198,6 +184,138 @@ async def month_category_expense_totals(
     statement = select(_CATEGORY.label("category"), total_column.label("total")).where(*predicates).group_by(_CATEGORY)
     result = await session.execute(statement)
     return {str(row.category): _as_decimal(row.total) for row in result.all()}
+
+
+async def month_category_reimbursement_totals(
+    session: AsyncSession,
+    month: date,
+    owner: UUID,
+    currency: Currency = Currency.ARS,
+) -> dict[str, Decimal]:
+    """Return the reimbursement reductions for a month keyed by the LINKED EXPENSE's category (ADR-159, ADR-161).
+
+    Sums each ``kind='reimbursement'`` payback attributed to its LINKED EXPENSE'S
+    ``(category, occurred_on month)`` — never the payback's own date (ADR-159) — so
+    credit-card timing skew nets against the right budget month. The reimbursement's
+    linked expense is reached through the ``offsets_transaction_id`` self-FK; the
+    expense is scoped to ``owner`` and to the requested month, and only ``kind='expense'``
+    targets contribute (a stray non-expense link would have been rejected at write time,
+    ADR-159). Both the payback and its expense need not share an owner row here — the
+    write-time same-owner guard (ADR-130) already ensures they match.
+
+    ``currency`` selects the reduction basis (ADR-161):
+
+    * ``ARS`` — exact ``SUM(reimbursement.amount)`` on the authoritative ARS column
+      (no FX, ADR-160).
+    * ``USD`` — ``SUM(reimbursement.amount / linked_expense.fx_rate)``: the payback's
+      USD reduction rides the EXPENSE'S captured rate (ADR-161), NOT the payback date's
+      rate. Expenses without a captured ``fx_rate`` / ``usd_amount`` are excluded (they
+      are already excluded from the gross USD side, ADR-152), so their paybacks reduce
+      nothing.
+
+    This is the raw (unfloored, unsubtracted) reduction map. The net spend and the
+    over-refund floor are applied by :func:`month_category_expense_totals` (ADR-160/162);
+    this map is also surfaced directly as each budget line's "reimbursed" figure so the
+    client can render a reimbursed chip alongside the net spent.
+
+    Args:
+        session: The async session used for the read-only query.
+        month: The first day of the requested calendar month.
+        owner: The authenticated owner the expenses are scoped to (ADR-108).
+        currency: ``ARS`` sums the payback ``amount`` (default); ``USD`` derives each
+            payback's USD reduction from the linked expense's rate (ADR-161).
+
+    Returns:
+        Reimbursement reductions keyed by the LINKED EXPENSE'S category; empty when the
+        month has no linked paybacks.
+    """
+    upper = _month_upper_bound(month)
+    is_usd = currency is Currency.USD
+    expense = aliased(TransactionRecord, name="linked_expense")
+    reimbursement = aliased(TransactionRecord, name="reimbursement")
+    category = func.coalesce(expense.category, UNCATEGORIZED)
+    if is_usd:
+        # The payback's USD reduction rides the EXPENSE'S captured rate (ADR-161):
+        # amount / fx_rate, summed and cast back to money precision (ADR-025).
+        reduction = cast(func.sum(reimbursement.amount / expense.fx_rate), Numeric(18, 2))
+    else:
+        reduction = cast(func.sum(reimbursement.amount), Numeric(18, 2))
+    predicates = [
+        expense.user_id == owner,
+        expense.kind == Kind.EXPENSE.value,
+        expense.occurred_on >= month,
+        expense.occurred_on < upper,
+        reimbursement.kind == Kind.REIMBURSEMENT.value,
+    ]
+    if is_usd:
+        # Consistency with the gross USD side (ADR-152): an expense with no snapshot is
+        # excluded from gross USD spend, so its paybacks must not reduce anything either.
+        predicates.append(expense.usd_amount.is_not(None))
+        predicates.append(expense.fx_rate.is_not(None))
+    statement = (
+        select(category.label("category"), reduction.label("reduction"))
+        .select_from(reimbursement)
+        .join(expense, reimbursement.offsets_transaction_id == expense.id)
+        .where(*predicates)
+        .group_by(category)
+    )
+    result = await session.execute(statement)
+    return {str(row.category): _as_decimal(row.reduction) for row in result.all()}
+
+
+async def month_category_expense_totals(
+    session: AsyncSession,
+    month: date,
+    owner: UUID,
+    currency: Currency = Currency.ARS,
+) -> dict[str, Decimal]:
+    """Return the owner's NET expense totals for a month keyed by category (ADR-042, ADR-108, ADR-152, ADR-160).
+
+    The canonical per-category month-expense aggregation reused by the summaries
+    reader (ADR-042), the insights reader (ADR-060) and the budgets reader as the
+    "spent" figure (ADR-125). It is **net spend** (ADR-160): the gross ``SUM`` of
+    ``kind='expense'`` over the month, grouped by category (NULL categories bucket
+    under ``Uncategorized``), MINUS the linked reimbursements attributed to each
+    expense's ``(category, month)`` (ADR-159). Sharing one function keeps the budgets
+    "spent" identical to the summaries "amount", the insights breakdown and the history
+    trend — one aggregation, four surfaces (ADR-125), all net (ADR-160).
+
+    The summed column depends on ``currency`` (ADR-152): for ``ARS`` (the default,
+    preserving every existing caller) gross and reduction are both the authoritative
+    ``amount``; for ``USD`` gross sums the materialized ``usd_amount`` snapshot (excluding
+    null-snapshot rows, surfaced separately via :func:`month_expense_unconverted_count`)
+    and each payback's USD reduction rides its linked expense's captured rate (ADR-161).
+
+    The net per category is floored at ZERO (ADR-162): when linked paybacks for a
+    category-month exceed the gross spend (friends over-transfer), the category never
+    goes negative — it reads ``0``. The over-refund EXCESS surfaces as ordinary income
+    for the payback's own calendar month, handled by the income readers (ADR-162), not
+    here — this query only ever returns non-negative category spend.
+
+    Args:
+        session: The async session used for the read-only query.
+        month: The first day of the requested calendar month.
+        owner: The authenticated owner the expenses are scoped to (ADR-108).
+        currency: The budget currency; ``ARS`` nets on ``amount`` (default), ``USD``
+            nets on the ``usd_amount`` snapshot / expense-rate derivation (ADR-152/161).
+
+    Returns:
+        NET expense totals for the month keyed by category, each floored at ``0``;
+        absent categories are 0.
+    """
+    is_usd = currency is Currency.USD
+    gross = await _month_category_gross_expense_totals(session, month, owner, is_usd=is_usd)
+    reductions = await month_category_reimbursement_totals(session, month, owner, currency)
+    if not reductions:
+        return gross
+    # Net = gross - reduction, floored at zero per category-month (ADR-160/162). A
+    # category present only in the reduction map (a payback whose expense category has
+    # no other spend) still floors at zero, never negative.
+    net: dict[str, Decimal] = dict(gross)
+    for category, reduction in reductions.items():
+        remaining = net.get(category, _ZERO) - reduction
+        net[category] = remaining if remaining > _ZERO else _ZERO
+    return net
 
 
 async def month_expense_unconverted_count(session: AsyncSession, month: date, owner: UUID) -> int:
@@ -225,6 +343,43 @@ async def month_expense_unconverted_count(session: AsyncSession, month: date, ow
         TransactionRecord.usd_amount.is_(None),
     )
     return int((await session.execute(statement)).scalar_one())
+
+
+async def _range_month_reimbursement_totals(
+    session: AsyncSession,
+    oldest: date,
+    upper: date,
+    owner: UUID,
+) -> dict[str, Decimal]:
+    """Return ARS reimbursement reductions keyed by the LINKED EXPENSE's ``YYYY-MM`` (ADR-159, ADR-160).
+
+    The trend-window counterpart of :func:`month_category_reimbursement_totals`: for
+    every ``kind='reimbursement'`` payback whose LINKED EXPENSE falls in the half-open
+    ``[oldest, upper)`` range, sums the payback ``amount`` grouped by the EXPENSE'S
+    ``(year, month)`` — never the payback's own date (ADR-159). Used to net the
+    historical spending trend so it matches the budgets/summaries net spend (ADR-160,
+    one aggregation, four surfaces). ARS only: the trend is ARS-equivalent (ADR-025).
+    """
+    linked_expense = aliased(TransactionRecord, name="trend_linked_expense")
+    reimbursement = aliased(TransactionRecord, name="trend_reimbursement")
+    year = func.extract("year", linked_expense.occurred_on)
+    month = func.extract("month", linked_expense.occurred_on)
+    reduction = cast(func.sum(reimbursement.amount), Numeric(18, 2))
+    statement = (
+        select(year.label("year"), month.label("month"), reduction.label("reduction"))
+        .select_from(reimbursement)
+        .join(linked_expense, reimbursement.offsets_transaction_id == linked_expense.id)
+        .where(
+            linked_expense.user_id == owner,
+            linked_expense.kind == Kind.EXPENSE.value,
+            linked_expense.occurred_on >= oldest,
+            linked_expense.occurred_on < upper,
+            reimbursement.kind == Kind.REIMBURSEMENT.value,
+        )
+        .group_by(year, month)
+    )
+    result = await session.execute(statement)
+    return {f"{int(row.year):04d}-{int(row.month):02d}": _as_decimal(row.reduction) for row in result.all()}
 
 
 class SqlAlchemySummaryReader(AbstractSummaryReader):
@@ -263,11 +418,15 @@ class SqlAlchemySummaryReader(AbstractSummaryReader):
         )
 
     async def _trend_totals(self, oldest: date, newest: date, owner: UUID) -> dict[str, Decimal]:
-        """Return the owner's expense totals keyed by ``YYYY-MM`` across the trend window.
+        """Return the owner's NET expense totals keyed by ``YYYY-MM`` across the trend window (ADR-160).
 
-        Groups expenses by ``(year, month)`` over the inclusive range from the
-        first day of ``oldest`` to the last day of ``newest``, scoped to ``owner``
-        (ADR-108).
+        Groups expenses by ``(year, month)`` over the inclusive range from the first
+        day of ``oldest`` to the last day of ``newest``, scoped to ``owner`` (ADR-108),
+        then SUBTRACTS the linked reimbursements attributed to each expense's month
+        (ADR-159/160) so the historical spending trend matches the budgets/summaries
+        net spend — one aggregation, four surfaces, all net (ADR-125). Each month's net
+        is floored at zero (ADR-162): an over-refunded month never dips the trend below
+        zero.
         """
         upper = date(newest.year + (newest.month // 12), (newest.month % 12) + 1, 1)
         statement = (
@@ -281,7 +440,15 @@ class SqlAlchemySummaryReader(AbstractSummaryReader):
             .group_by(_YEAR, _MONTH)
         )
         result = await self.session.execute(statement)
-        return {f"{int(row.year):04d}-{int(row.month):02d}": _as_decimal(row.total) for row in result.all()}
+        gross = {f"{int(row.year):04d}-{int(row.month):02d}": _as_decimal(row.total) for row in result.all()}
+        reductions = await _range_month_reimbursement_totals(self.session, oldest, upper, owner)
+        if not reductions:
+            return gross
+        net: dict[str, Decimal] = dict(gross)
+        for key, reduction in reductions.items():
+            remaining = net.get(key, _ZERO) - reduction
+            net[key] = remaining if remaining > _ZERO else _ZERO
+        return net
 
     async def _category_totals(self, month: date, owner: UUID) -> dict[str, Decimal]:
         """Return the owner's expense totals for the month keyed by category (ADR-108).
@@ -351,19 +518,14 @@ class SqlAlchemyInsightsReader(AbstractInsightsReader):
         )
 
     async def _expense_category_totals(self, month: date, owner: UUID) -> dict[str, Decimal]:
-        """Return the owner's expense totals for the month keyed by category (mover input, ADR-108)."""
-        statement = (
-            select(_CATEGORY.label("category"), _EXPENSE_AMOUNT.label("total"))
-            .where(
-                TransactionRecord.user_id == owner,
-                TransactionRecord.kind == Kind.EXPENSE.value,
-                TransactionRecord.occurred_on >= month,
-                TransactionRecord.occurred_on < _month_upper_bound(month),
-            )
-            .group_by(_CATEGORY)
-        )
-        result = await self.session.execute(statement)
-        return {str(row.category): _as_decimal(row.total) for row in result.all()}
+        """Return the owner's NET expense totals for the month keyed by category (mover input, ADR-108, ADR-160).
+
+        Delegates to the shared :func:`month_category_expense_totals` so the insights
+        category mover reads the SAME net-of-reimbursements aggregation as the budgets
+        "spent", the summaries breakdown and the history trend — one aggregation, four
+        surfaces, all net (ADR-125, ADR-160).
+        """
+        return await month_category_expense_totals(self.session, month, owner)
 
     async def _recurring_expenses(self, month: date, owner: UUID) -> tuple[int, Decimal]:
         """Return the count and ARS-equivalent total of the owner's recurring expenses (ADR-108)."""
@@ -380,7 +542,16 @@ class SqlAlchemyInsightsReader(AbstractInsightsReader):
         return int(row.recurring_count), _as_decimal(row.recurring_total)
 
     async def _inflow_total(self, month: date, owner: UUID) -> Decimal:
-        """SUM the owner's ARS-equivalent income + invoice amounts for the month (savings input, ADR-108)."""
+        """SUM the owner's ARS-equivalent income for the month, plus any over-refund excess (ADR-108, ADR-162).
+
+        Ordinary income is the inflow kinds (``income`` + ``invoice``) only — a
+        ``reimbursement`` is NEVER ordinary income (ADR-158), so it is excluded here by
+        the ``_INFLOW_KINDS`` filter. But when linked paybacks for a category-month
+        EXCEED the gross expense (an over-refund), the category spend floors at zero and
+        the EXCESS surfaces as ordinary income (ADR-162). The excess is attributed to the
+        LINKED EXPENSE's category-month — the same period the floor removed it from — so
+        money is conserved across the spend and income books for that month.
+        """
         statement = select(cast(func.sum(TransactionRecord.amount), Numeric(18, 2))).where(
             TransactionRecord.user_id == owner,
             TransactionRecord.kind.in_(_INFLOW_KINDS),
@@ -388,18 +559,38 @@ class SqlAlchemyInsightsReader(AbstractInsightsReader):
             TransactionRecord.occurred_on < _month_upper_bound(month),
         )
         total = (await self.session.execute(statement)).scalar_one_or_none()
-        return _ZERO if total is None else _as_decimal(total)
+        base = _ZERO if total is None else _as_decimal(total)
+        return base + await self._over_refund_excess(month, owner)
+
+    async def _over_refund_excess(self, month: date, owner: UUID) -> Decimal:
+        """Return the month's over-refund excess to credit as income (ADR-162).
+
+        For each category whose linked reimbursements exceed its gross ARS expense in
+        the month, the excess is ``reduction - gross`` (never negative). Summed across
+        categories, this is the amount the category-spend floor dropped to zero and which
+        ADR-162 routes to ordinary income. Computed on the authoritative ARS ``amount``
+        (income is ARS-equivalent, ADR-025), keyed by the LINKED EXPENSE's category-month
+        so it lines up with the floor that produced it.
+        """
+        gross = await _month_category_gross_expense_totals(self.session, month, owner, is_usd=False)
+        reductions = await month_category_reimbursement_totals(self.session, month, owner)
+        excess = _ZERO
+        for category, reduction in reductions.items():
+            over = reduction - gross.get(category, _ZERO)
+            if over > _ZERO:
+                excess += over
+        return excess
 
     async def _expense_total(self, month: date, owner: UUID) -> Decimal:
-        """SUM the owner's ARS-equivalent expense amounts for the month (savings input, ADR-108)."""
-        statement = select(_EXPENSE_AMOUNT).where(
-            TransactionRecord.user_id == owner,
-            TransactionRecord.kind == Kind.EXPENSE.value,
-            TransactionRecord.occurred_on >= month,
-            TransactionRecord.occurred_on < _month_upper_bound(month),
-        )
-        total = (await self.session.execute(statement)).scalar_one_or_none()
-        return _ZERO if total is None else _as_decimal(total)
+        """SUM the owner's NET ARS-equivalent expense for the month (savings input, ADR-108, ADR-160).
+
+        Net of linked reimbursements (ADR-160): reuses the shared
+        :func:`month_category_expense_totals` (each category floored at zero, ADR-162)
+        and sums its values so the savings projection's expense leg matches the budgets/
+        summaries/insights net spend — one aggregation, four surfaces (ADR-125).
+        """
+        net = await month_category_expense_totals(self.session, month, owner)
+        return sum(net.values(), _ZERO)
 
     async def _latest_usd_invoice(self, month: date, owner: UUID) -> LatestUsdInvoice | None:
         """Return the month's most recent USD INVOICE with an applied rate.

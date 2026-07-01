@@ -26,7 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from margen_api.adapters.models.budget import BudgetRecord
 from margen_api.adapters.models.budget_income import BudgetIncomeRecord
-from margen_api.adapters.queries import month_category_expense_totals, month_expense_unconverted_count
+from margen_api.adapters.queries import (
+    month_category_expense_totals,
+    month_category_reimbursement_totals,
+    month_expense_unconverted_count,
+)
 from margen_api.domain.models.budget import month_start
 from margen_api.domain.models.strategy import income_pressure, suggest_strategy
 from margen_api.domain.models.value_objects import BudgetKind, Currency
@@ -70,6 +74,7 @@ class SqlAlchemyBudgetReader(AbstractBudgetReader):
         period = month_start(month)
         targets, target_currencies = await self._targets(period, owner)
         spent = await month_category_expense_totals(self.session, period, owner, currency)
+        reimbursed = await month_category_reimbursement_totals(self.session, period, owner, currency)
         savings = await self._savings(period, owner)
         income, floor_amount, floor_source = await self._income_and_floor(period, owner)
         unconverted = (
@@ -78,7 +83,7 @@ class SqlAlchemyBudgetReader(AbstractBudgetReader):
         return MonthlyBudget(
             month=month_key(period),
             currency=currency,
-            categories=build_budget_lines(targets, spent, target_currencies),
+            categories=build_budget_lines(targets, spent, target_currencies, reimbursed),
             savings=build_saving_lines(savings, income),
             floor=Floor(amount=floor_amount, source=floor_source if floor_amount is not None else None),
             suggested_strategy=self._suggested_strategy(income, floor_amount),

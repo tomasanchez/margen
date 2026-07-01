@@ -173,6 +173,13 @@ class TransactionResponse(CamelCaseModel):
         default=None,
         description="The owning account's id, or null when unattributed (ADR-122).",
     )
+    offsets_transaction_id: UUID | None = Field(
+        default=None,
+        description=(
+            "For a reimbursement, the linked expense id this payback offsets; null "
+            "for every other kind. Serialized as 'offsetsTransactionId' (ADR-158/159)."
+        ),
+    )
     created_at: datetime = Field(description="Server-managed creation timestamp.")
     updated_at: datetime = Field(description="Server-managed last-update timestamp.")
 
@@ -209,6 +216,7 @@ class TransactionResponse(CamelCaseModel):
             recurring=model.recurring,
             counts_toward_monotributo=model.counts_toward_monotributo,
             account_id=model.account_id,
+            offsets_transaction_id=model.offsets_transaction_id,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -280,6 +288,14 @@ class TransactionCreateRequest(CamelCaseModel):
         default=None,
         description="The owning account's id; must be one of the caller's accounts (ADR-122, ADR-130).",
     )
+    offsets_transaction_id: UUID | None = Field(
+        default=None,
+        description=(
+            "For a reimbursement, the id of the EXPENSE this payback offsets (ADR-159). "
+            "Must be one of the caller's own expenses; ignored for every other kind. "
+            "Accepted as 'offsetsTransactionId'."
+        ),
+    )
     document: TransactionDocumentRequest | None = Field(
         default=None,
         description="Optional imported invoice PDF to store and link (ADR-070, ADR-071).",
@@ -319,6 +335,7 @@ class TransactionCreateRequest(CamelCaseModel):
             recurring=self.recurring,
             counts_toward_monotributo=self.counts_toward_monotributo,
             account_id=self.account_id,
+            offsets_transaction_id=self.offsets_transaction_id,
             document=self.document.to_payload() if self.document is not None else None,
         )
 
