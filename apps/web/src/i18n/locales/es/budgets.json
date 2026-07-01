@@ -153,5 +153,8 @@
     "note_one": "{{count}} transacción todavía no está convertida a USD, así que el gasto puede estar subestimado.",
     "note_other": "{{count}} transacciones todavía no están convertidas a USD, así que el gasto puede estar subestimado.",
     "action": "Convertirlas"
+  },
+  "rate": {
+    "pending": "Mostramos los montos en su moneda original mientras buscamos la cotización de hoy."
   }
 }

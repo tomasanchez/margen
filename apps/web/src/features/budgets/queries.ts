@@ -26,7 +26,11 @@ import {
   type RepriceBody,
   type SavingProfile,
 } from '../../api/budgetsClient'
+import { fetchCurrentRate } from '../../api/fxClient'
+import type { PreferredRateSource } from '../../api/settingsClient'
+import { useSettings } from '../settings/queries'
 import { homeQueryKeys } from '../home/queries'
+import { casaForSource } from '../transactions/captureFx'
 import type { Category, Currency } from '../../mock/types'
 
 /**
@@ -91,6 +95,34 @@ export function useBudgetIncome(month: string) {
   return useQuery<BudgetIncome>({
     queryKey: budgetsKeys.income(month),
     queryFn: () => budgetsClient.fetchBudgetIncome(month),
+  })
+}
+
+/**
+ * The CURRENT preferred-rate-source rate (ARS per 1 USD) the Budgets surface uses
+ * to convert native-currency targets/income/savings into the preferred display
+ * currency (ADR-152/155). Unlike the display-currency provider — which only
+ * fetches when USD is preferred — the budgets surface needs the rate even for an
+ * ARS-preferred view (to convert a USD-native target → ARS), so this is a
+ * dedicated query keyed by the `preferredRateSource` setting (`'bolsa'`/`'oficial'`)
+ * so flipping the source refetches. `fxClient` never throws (null on failure);
+ * a null rate degrades gracefully (the surface shows native values + a calm
+ * pending state, never NaN — see `convertBudgetPeriod`). The result is the live
+ * rate as a number, or `null` when unavailable.
+ */
+export function usePreferredRate() {
+  const settingsQuery = useSettings()
+  const source: PreferredRateSource =
+    settingsQuery.data?.preferredRateSource ?? 'bolsa'
+  const casa = casaForSource(source)
+  return useQuery<number | null>({
+    queryKey: [...budgetsKeys.all, 'rate', source] as const,
+    queryFn: () => fetchCurrentRate(casa),
+    // Only fetch once settings have resolved so we key by the real source.
+    enabled: settingsQuery.isSuccess,
+    staleTime: 5 * 60 * 1000,
+    // A benign null (fetch failed) is the unavailable signal — don't retry it.
+    retry: false,
   })
 }
 

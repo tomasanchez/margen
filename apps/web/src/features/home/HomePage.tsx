@@ -56,8 +56,17 @@ import { RecentActivity } from './RecentActivity'
 import { NetWorthCard } from './NetWorthCard'
 import { useNetWorth } from '../accounts/queries'
 import { BudgetProgressCard } from './BudgetProgressCard'
-import { useBudgetIncome, useBudgets, usePriorBudgets } from '../budgets/queries'
-import { isRepriceRollover } from '../budgets/derive'
+import {
+  useBudgetIncome,
+  useBudgets,
+  usePreferredRate,
+  usePriorBudgets,
+} from '../budgets/queries'
+import {
+  convertBudgetIncome,
+  convertBudgetPeriod,
+  isRepriceRollover,
+} from '../budgets/derive'
 import { toYearMonth } from './queries'
 
 /** Percentage change from `previous` to `current`; 0 when previous is 0. */
@@ -91,11 +100,13 @@ export function HomePage() {
   // Real, month-reactive insights for the selected month (ADR-061/062).
   const insightsQuery = useInsights(viewingMonth)
   // Budget progress for the selected month (ADR-125/127): an incremental Home
-  // card; month-keyed so it tracks the navigator.
-  // Budgets follow the PREFERRED currency (not the rate-fallback effective one):
-  // USD spend is summed from each row's stored usd_amount, so it never needs the
-  // live rate (ADR-152). The card then formats in the period's (preferred) currency.
+  // card; month-keyed so it tracks the navigator. Budgets are DISPLAYED in the
+  // preferred currency (ADR-152/155): spend arrives in it from the backend, while
+  // native targets/income are converted client-side at the live preferred-rate-
+  // source rate (the dedicated budgets rate query, available even for ARS).
   const budgetsQuery = useBudgets(toYearMonth(viewingMonth), preferredCurrency)
+  const rateQuery = usePreferredRate()
+  const rate = rateQuery.data ?? null
   const previousMonth = useMemo(
     () => addMonths(viewingMonth, -1),
     [viewingMonth],
@@ -107,6 +118,24 @@ export function HomePage() {
   const showRepriceNudge = useMemo(
     () => isRepriceRollover(budgetsQuery.data, priorBudgetsQuery.data),
     [budgetsQuery.data, priorBudgetsQuery.data],
+  )
+  // Convert the period + income into the preferred currency at the live rate
+  // (ADR-155): non-preferred native targets/income are re-expressed; an
+  // unavailable rate falls back to native (never NaN). Replaces the prior
+  // "treat mismatched income as unset" guard — the income always shows now.
+  const budgetPeriod = useMemo(
+    () =>
+      budgetsQuery.data
+        ? convertBudgetPeriod(budgetsQuery.data, preferredCurrency, rate)
+        : undefined,
+    [budgetsQuery.data, preferredCurrency, rate],
+  )
+  const budgetIncome = useMemo(
+    () =>
+      budgetIncomeQuery.data
+        ? convertBudgetIncome(budgetIncomeQuery.data, preferredCurrency, rate)
+        : undefined,
+    [budgetIncomeQuery.data, preferredCurrency, rate],
   )
 
   const monthLabel = formatViewingMonth(viewingMonth)
@@ -221,15 +250,10 @@ export function HomePage() {
           onRetry={() => void netWorthQuery.refetch()}
         />
         <BudgetProgressCard
-          period={budgetsQuery.data}
-          income={
-            // Only feed income to the card when it's denominated in the budget
-            // currency, else the saved-this-month line would mislabel an ARS
-            // amount as USD (ADR-154 income-currency guard).
-            budgetIncomeQuery.data?.currency === preferredCurrency
-              ? budgetIncomeQuery.data
-              : undefined
-          }
+          period={budgetPeriod}
+          // Income is converted to the preferred currency (ADR-155), so it always
+          // shows re-expressed — no more "unset on mismatch" guard.
+          income={budgetIncome}
           showRepriceNudge={showRepriceNudge}
           loading={budgetsQuery.isPending}
           isError={budgetsQuery.isError}

@@ -153,5 +153,8 @@
     "note_one": "{{count}} transaction isn't converted to USD yet, so spend may be understated.",
     "note_other": "{{count}} transactions aren't converted to USD yet, so spend may be understated.",
     "action": "Convert them"
+  },
+  "rate": {
+    "pending": "Showing amounts in their original currency while we fetch today's rate."
   }
 }

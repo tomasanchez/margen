@@ -36,6 +36,8 @@ import {
 } from '../settings/displayCurrencyContext'
 import { BudgetsPage } from './BudgetsPage'
 import { budgetsClient, type BudgetPeriod } from '../../api/budgetsClient'
+import { fetchCurrentRate } from '../../api/fxClient'
+import { fetchSettings } from '../../api/settingsClient'
 
 vi.mock('../../api/budgetsClient', async (importOriginal) => {
   const actual =
@@ -56,6 +58,21 @@ vi.mock('../../api/budgetsClient', async (importOriginal) => {
   }
 })
 
+// The preferred-rate query (ADR-155) reads `preferredRateSource` from settings
+// and fetches the live rate via fxClient. Mock both so the conversion tests can
+// drive a deterministic rate; ARS-preferred tests never need it (no conversion).
+vi.mock('../../api/fxClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api/fxClient')>()
+  return { ...actual, fetchCurrentRate: vi.fn() }
+})
+vi.mock('../../api/settingsClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api/settingsClient')>()
+  return { ...actual, fetchSettings: vi.fn() }
+})
+
+const mockRate = vi.mocked(fetchCurrentRate)
+const mockSettings = vi.mocked(fetchSettings)
+
 const mockFetch = vi.mocked(budgetsClient.fetchBudgets)
 const mockFetchHistory = vi.mocked(budgetsClient.fetchHistory)
 const mockSet = vi.mocked(budgetsClient.setTarget)
@@ -74,9 +91,9 @@ function period(month: string): BudgetPeriod {
     pressure: null,
     unconverted: 0,
     categories: [
-      { category: 'Food', target: '120000.00', spent: '90000.00', remaining: '30000.00', isEssential: true },
-      { category: 'Rent', target: '200000.00', spent: '230000.00', remaining: '-30000.00', isEssential: true },
-      { category: 'Transport', target: null, spent: '15000.00', remaining: null, isEssential: false },
+      { category: 'Food', target: '120000.00', targetCurrency: 'ARS', spent: '90000.00', remaining: '30000.00', isEssential: true },
+      { category: 'Rent', target: '200000.00', targetCurrency: 'ARS', spent: '230000.00', remaining: '-30000.00', isEssential: true },
+      { category: 'Transport', target: null, targetCurrency: null, spent: '15000.00', remaining: null, isEssential: false },
     ],
   }
 }
@@ -143,6 +160,17 @@ describe('BudgetsPage', () => {
       source: 'manual',
       floor: null,
     })
+    // Settings resolve so the preferred-rate query is enabled; default source
+    // is bolsa (MEP). The live rate is 1000 ARS per USD for the conversion tests.
+    mockSettings.mockResolvedValue({
+      preferredDisplayCurrency: 'ARS',
+      fxDefaultRateType: 'MEP',
+      preferredRateSource: 'bolsa',
+      monotributoCurrentCategory: 'A',
+      monotributoActivityType: 'services',
+      monotributoEnabled: false,
+    })
+    mockRate.mockResolvedValue(1000)
   })
   afterEach(() => vi.clearAllMocks())
 
@@ -319,11 +347,12 @@ describe('BudgetsPage', () => {
     expect(screen.getByText('ARS 280.000')).toBeInTheDocument()
   })
 
-  test('treats a currency-mismatched income as unset and shows the empty state (ADR-154)', async () => {
-    // The budget is viewed in USD (preferred), but the stored income is ARS — a
-    // mix we must NOT silently relabel. The page treats income as UNSET: it shows
-    // the "set your income" empty state and renders no left-to-assign readout, so
-    // the user re-enters income in the budget currency.
+  test('converts a currency-mismatched income to the preferred currency at the live rate (ADR-155)', async () => {
+    // The budget is viewed in USD (preferred); the stored income + ARS-native
+    // targets are CONVERTED at the live rate (1000 ARS/USD) rather than treated
+    // as unset (the retired ADR-154 guard). Income ARS 3.000.000 → USD 3.000;
+    // ARS targets 120.000 + 200.000 → USD 120 + 200 = USD 320 assigned;
+    // left to assign = USD 3.000 − USD 320 = USD 2.680.
     mockFetchIncome.mockResolvedValue({
       month: '2026-06',
       amount: '3000000.00',
@@ -334,25 +363,33 @@ describe('BudgetsPage', () => {
     renderPage({ preferredCurrency: 'USD', effectiveCurrency: 'USD' })
     await screen.findByText('Food')
 
-    // The empty-state prompt is shown (income is treated as unset).
+    // The income always shows now — re-expressed in USD, no empty-state prompt.
     expect(
-      await screen.findByText(
+      screen.queryByText(
         'Set your net income to plan with percentages and unlock saving profiles.',
       ),
-    ).toBeInTheDocument()
-    // No left-to-assign readout (income is unset on this surface)…
-    expect(screen.queryByText('Left to assign')).not.toBeInTheDocument()
-    // …and the stored ARS amount is NEVER relabeled as USD in the income field.
+    ).not.toBeInTheDocument()
+    // The left-to-assign readout is computed in the preferred currency.
+    expect(await screen.findByText('Left to assign')).toBeInTheDocument()
+    expect(screen.getByText('USD 2.680')).toBeInTheDocument()
+    // The income field shows the converted USD amount (3.000.000 / 1000 = 3000).
     const incomeField = screen.getByRole('textbox', {
       name: 'Net income for June 2026',
     })
-    expect(incomeField).toHaveValue('')
+    expect(incomeField).toHaveValue('3000.00')
   })
 
-  test('uses the matching-currency income when it equals the budget currency (ADR-154)', async () => {
-    // Income stored in USD, budget viewed in USD → it is honored: USD 1.200
-    // income minus USD-denominated targets yields a left-to-assign readout.
-    mockFetch.mockResolvedValue({ ...period('2026-06'), currency: 'USD' })
+  test('passes income through unchanged when it already matches the budget currency (ADR-155)', async () => {
+    // Income + targets already USD, budget viewed in USD → no conversion: USD
+    // 600.000 income minus USD-denominated targets (320.000) yields the readout.
+    mockFetch.mockResolvedValue({
+      ...period('2026-06'),
+      currency: 'USD',
+      categories: period('2026-06').categories.map((c) => ({
+        ...c,
+        targetCurrency: c.target != null ? 'USD' : null,
+      })),
+    })
     mockFetchIncome.mockResolvedValue({
       month: '2026-06',
       amount: '600000.00',

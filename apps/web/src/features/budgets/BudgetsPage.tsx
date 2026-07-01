@@ -52,6 +52,8 @@ import { SavingsSection } from './SavingsSection'
 import { RepricePrompt } from './RepricePrompt'
 import {
   categoryGroup,
+  convertBudgetIncome,
+  convertBudgetPeriod,
   deriveAllocationSegments,
   deriveBudgetTotals,
   deriveClearAllTargets,
@@ -71,6 +73,7 @@ import {
   useBudgetIncome,
   useBudgets,
   useClearBudgetTarget,
+  usePreferredRate,
   usePriorBudgets,
   useReprice,
   useSetBudgetIncome,
@@ -95,16 +98,21 @@ export function BudgetsPage() {
   const priorYearMonth = toYearMonth(priorMonthValue)
   const priorLabel = formatViewingMonth(priorMonthValue)
 
-  // The budget is denominated in the user's PREFERRED display currency (ADR-152):
-  // USD sums each row's `usd_amount`, ARS sums `amount`. We use the PREFERRED
-  // currency (not the rate-dependent effective one) — targets/income/spend are
-  // all native to it, so no client-side conversion ever happens here.
+  // The budget is DISPLAYED in the user's preferred display currency (ADR-152/155).
+  // Spend always arrives in the preferred currency from the backend (the `currency`
+  // query param drives usd_amount vs amount). Targets + income are stored in their
+  // NATIVE created-in currency and CONVERTED here at the live preferred-rate-source
+  // rate — non-preferred amounts are re-expressed, preferred ones pass through.
   const budgetCurrency = useDisplayCurrency().preferredCurrency
 
   const budgetsQuery = useBudgets(yearMonth, budgetCurrency)
   const incomeQuery = useBudgetIncome(yearMonth)
   const historyQuery = useBudgetHistory(yearMonth, budgetCurrency)
   const priorQuery = usePriorBudgets(priorYearMonth, budgetCurrency)
+  // The live ARS-per-USD rate for converting native targets/income → preferred
+  // (ADR-155). Available even when ARS is preferred (USD-native targets → ARS).
+  const rateQuery = usePreferredRate()
+  const rate = rateQuery.data ?? null
   const setTarget = useSetBudgetTarget()
   const clearTarget = useClearBudgetTarget()
   const setIncome = useSetBudgetIncome()
@@ -132,26 +140,54 @@ export function BudgetsPage() {
   // Which quick-start template is applying, for the calm pending state (ADR-147).
   const [applyingTemplate, setApplyingTemplate] = useState<TemplateId | null>(null)
 
-  const period = budgetsQuery.data
+  // Convert the period's targets + saving rows from their native currency into
+  // the preferred display currency at the live rate (ADR-155). Spend is left as
+  // the backend supplied it (already preferred); an unavailable rate falls back
+  // to native values (never NaN) and is flagged via `ratePending` below.
+  const period = useMemo(
+    () =>
+      budgetsQuery.data
+        ? convertBudgetPeriod(budgetsQuery.data, budgetCurrency, rate)
+        : undefined,
+    [budgetsQuery.data, budgetCurrency, rate],
+  )
   // The income GET returns the base AS STORED, with its own `currency` (ADR-152):
-  // the PUT is what denominates it. If the stored income currency differs from the
-  // budget currency being viewed (e.g. income set in ARS, now viewing USD targets),
-  // mixing them would compare USD targets against an ARS figure and mislabel it —
-  // money-incorrect (ADR-154). So we treat a currency-mismatched income as UNSET on
-  // this surface: every derived figure and child receives `undefined`, which renders
-  // the "set your income" empty state, prompting a re-entry in the budget currency.
-  // We NEVER silently relabel the stored amount.
-  const rawIncome = incomeQuery.data
-  const income =
-    rawIncome != null && rawIncome.currency === budgetCurrency
-      ? rawIncome
-      : undefined
+  // the PUT is what denominates it. Rather than treat a currency-mismatched income
+  // as unset (the old ADR-154 guard), we CONVERT it to the preferred currency at the
+  // live rate so it always shows, re-expressed (ADR-155). An unavailable rate keeps
+  // the native amount (flagged via `ratePending`); we never relabel without converting.
+  const income = useMemo(
+    () =>
+      incomeQuery.data
+        ? convertBudgetIncome(incomeQuery.data, budgetCurrency, rate)
+        : undefined,
+    [incomeQuery.data, budgetCurrency, rate],
+  )
   const history = useMemo(() => historyQuery.data ?? [], [historyQuery.data])
   // The budget currency is the PREFERRED currency (ADR-152); the period echoes it.
   const currency = budgetCurrency
   // Count of the month's expense rows lacking a USD snapshot (ADR-152): surfaced
   // as a calm note with a link to the historical backfill (#80) when > 0.
   const unconverted = period?.unconverted ?? 0
+
+  // A conversion is NEEDED when any target or the income is in a non-preferred
+  // native currency. When one is needed but the live rate hasn't arrived (or is
+  // unavailable), the surface shows the honest NATIVE figures and a calm pending
+  // note — never NaN (ADR-155 graceful degradation).
+  const needsConversion = useMemo(() => {
+    const raw = budgetsQuery.data
+    const targetMismatch =
+      raw?.categories.some(
+        (c) => c.targetCurrency != null && c.targetCurrency !== budgetCurrency,
+      ) ?? false
+    const incomeMismatch =
+      incomeQuery.data != null &&
+      incomeQuery.data.amount != null &&
+      incomeQuery.data.currency !== budgetCurrency
+    return targetMismatch || incomeMismatch
+  }, [budgetsQuery.data, incomeQuery.data, budgetCurrency])
+  const ratePending =
+    needsConversion && (rate == null || rateQuery.isPending)
 
   const totals = useMemo(
     () => (period ? deriveBudgetTotals(period) : undefined),
@@ -379,6 +415,20 @@ export function BudgetsPage() {
   return (
     <Box>
       {heading}
+
+      {/* Calm rate-pending note (ADR-155): some targets/income are in a currency
+          other than the preferred one and the live conversion rate hasn't arrived
+          (or is unavailable), so those figures show their honest NATIVE value for
+          now. Never an error — a quiet, non-color cue; clears once the rate loads. */}
+      {ratePending ? (
+        <Typography
+          sx={{ fontSize: 12.5, mb: 1.75 }}
+          color="text.secondary"
+          role="status"
+        >
+          {t('rate.pending')}
+        </Typography>
+      ) : null}
 
       {/* Calm unconverted note (ADR-152): some of this month's expense rows lack
           a USD snapshot, so the USD spend may be understated. Never an error — a

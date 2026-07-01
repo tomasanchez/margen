@@ -94,6 +94,21 @@ describe('captureFxForCreate — USD rows', () => {
     expect(result.fxRate).toBe('1300')
     expect(result.fxSource).toBe('manual')
   })
+
+  test('honors an OVERRIDDEN rate as the snapshot, not the live source (#88)', async () => {
+    // The user prefilled the current preferred-source rate then OVERRODE it for
+    // this transaction (it cleared at a different rate). The chosen rate — carried
+    // on `input.rate` with `fxRateType: 'manual'` — is authoritative: it becomes
+    // the snapshot `fxRate`, and the live current-rate fetch is NEVER consulted
+    // (ADR-149, capture stays client-side; #88 editable-rate override).
+    const result = await captureFxForCreate(
+      usdExpense({ rate: 1180.5, fxRateType: 'manual' }),
+      'bolsa',
+    )
+    expect(result.fxRate).toBe('1180.5')
+    expect(result.fxSource).toBe('manual')
+    expect(mockCurrent).not.toHaveBeenCalled()
+  })
 })
 
 describe('captureFxForCreate — ARS rows', () => {

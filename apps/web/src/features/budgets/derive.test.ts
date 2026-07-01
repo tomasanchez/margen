@@ -10,6 +10,10 @@ import { describe, expect, test } from 'vitest'
 import {
   budgetMeterColor,
   categoryGroup,
+  convertAmount,
+  convertBudgetIncome,
+  convertBudgetPeriod,
+  convertMoneyString,
   deriveAllocationSegments,
   deriveBudgetTotals,
   deriveCategoryProgress,
@@ -33,11 +37,13 @@ import {
 } from './derive'
 import type {
   BudgetCategory,
+  BudgetIncome,
   BudgetHistoryLine,
   BudgetPeriod,
   SavingLine,
   SavingProfile,
 } from '../../api/budgetsClient'
+import type { Currency } from '../../mock/types'
 
 function line(
   category: BudgetCategory['category'],
@@ -46,7 +52,15 @@ function line(
   remaining: string | null,
   isEssential = false,
 ): BudgetCategory {
-  return { category, target, spent, remaining, isEssential }
+  return {
+    category,
+    target,
+    // The native target currency only exists when a target is set (ADR-152/155).
+    targetCurrency: target != null ? 'ARS' : null,
+    spent,
+    remaining,
+    isEssential,
+  }
 }
 
 /** Build a minimal period with just the categories provided (extended fields empty). */
@@ -465,5 +479,146 @@ describe('budgetMeterColor', () => {
   test('over budget is always red regardless of ratio', () => {
     expect(budgetMeterColor(0.1, true)).toBe('var(--mg-risk)')
     expect(budgetMeterColor(0, true)).toBe('var(--mg-risk)')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Preferred-currency conversion (ADR-152/155). The rate is ARS per 1 USD.
+// ---------------------------------------------------------------------------
+
+/** A native-currency budget line for the conversion tests. */
+function nativeLine(
+  category: BudgetCategory['category'],
+  target: string | null,
+  targetCurrency: Currency | null,
+  spent: string,
+  remaining: string | null,
+  isEssential = false,
+): BudgetCategory {
+  return { category, target, targetCurrency, spent, remaining, isEssential }
+}
+
+describe('convertAmount', () => {
+  test('same currency passes through unchanged (no rate needed)', () => {
+    expect(convertAmount(100, 'ARS', 'ARS', null)).toBe(100)
+    expect(convertAmount(100, 'USD', 'USD', 1000)).toBe(100)
+  })
+
+  test('USD → ARS multiplies by the rate', () => {
+    expect(convertAmount(5, 'USD', 'ARS', 1000)).toBe(5000)
+  })
+
+  test('ARS → USD divides by the rate', () => {
+    expect(convertAmount(5000, 'ARS', 'USD', 1000)).toBe(5)
+  })
+
+  test('a needed conversion with a missing/invalid rate returns null (never NaN)', () => {
+    expect(convertAmount(5000, 'ARS', 'USD', null)).toBeNull()
+    expect(convertAmount(5000, 'ARS', 'USD', 0)).toBeNull()
+    expect(convertAmount(5000, 'ARS', 'USD', -1)).toBeNull()
+    expect(convertAmount(5000, 'ARS', 'USD', Number.NaN)).toBeNull()
+  })
+})
+
+describe('convertMoneyString', () => {
+  test('returns a Decimal string in the target currency', () => {
+    expect(convertMoneyString('5', 'USD', 'ARS', 1000)).toBe('5000.00')
+    expect(convertMoneyString('5000', 'ARS', 'USD', 1000)).toBe('5.00')
+  })
+
+  test('null amount → null; unavailable rate for a needed conversion → null', () => {
+    expect(convertMoneyString(null, 'USD', 'ARS', 1000)).toBeNull()
+    expect(convertMoneyString('5000', 'ARS', 'USD', null)).toBeNull()
+  })
+
+  test('same currency passes through as a Decimal string without a rate', () => {
+    expect(convertMoneyString('120000', 'ARS', 'ARS', null)).toBe('120000.00')
+  })
+})
+
+describe('convertBudgetPeriod', () => {
+  test('converts ARS-native targets to USD and recomputes remaining; spend untouched', () => {
+    // Spend already arrives in the preferred (USD) currency from the backend.
+    const period = periodOf([
+      nativeLine('Food', '120000', 'ARS', '90', '—', true),
+      nativeLine('Transport', null, null, '15', null, false),
+    ])
+    const converted = convertBudgetPeriod(period, 'USD', 1000)
+    expect(converted.currency).toBe('USD')
+    // 120000 ARS / 1000 = 120 USD; targetCurrency is now the preferred currency.
+    expect(converted.categories[0].target).toBe('120.00')
+    expect(converted.categories[0].targetCurrency).toBe('USD')
+    // remaining = convertedTarget(120) − spent(90) = 30; spend is NOT converted.
+    expect(converted.categories[0].spent).toBe('90')
+    expect(converted.categories[0].remaining).toBe('30.00')
+    // An untargeted category just adopts the preferred currency.
+    expect(converted.categories[1].target).toBeNull()
+    expect(converted.categories[1].targetCurrency).toBe('USD')
+  })
+
+  test('a target already in the preferred currency passes through (no rate needed)', () => {
+    const period = periodOf([nativeLine('Food', '120', 'USD', '90', '30', true)])
+    const converted = convertBudgetPeriod(period, 'USD', null)
+    // Same currency needs no rate; the value is normalized to a Decimal string.
+    expect(converted.categories[0].target).toBe('120.00')
+    expect(converted.categories[0].targetCurrency).toBe('USD')
+    expect(converted.categories[0].remaining).toBe('30.00')
+  })
+
+  test('an unavailable rate keeps the NATIVE line untouched (never NaN)', () => {
+    const period = periodOf([nativeLine('Food', '120000', 'ARS', '90', '119910', true)])
+    const converted = convertBudgetPeriod(period, 'USD', null)
+    // No rate → the native line passes through unchanged (no mixed-currency
+    // recompute); the surface shows a calm pending note instead (ADR-155).
+    expect(converted.categories[0].target).toBe('120000')
+    expect(converted.categories[0].targetCurrency).toBe('ARS')
+    expect(converted.categories[0].remaining).toBe('119910')
+    expect(converted.categories[0].remaining).not.toContain('NaN')
+  })
+
+  test('converts saving rows from the period currency to the preferred', () => {
+    const period: BudgetPeriod = {
+      ...periodOf([]),
+      currency: 'ARS',
+      savings: [{ bucket: 'EmergencyFund', percent: 5, amount: '50000' }],
+    }
+    const converted = convertBudgetPeriod(period, 'USD', 1000)
+    expect(converted.savings[0].amount).toBe('50.00')
+  })
+})
+
+describe('convertBudgetIncome', () => {
+  const income: BudgetIncome = {
+    month: '2026-06',
+    amount: '3000000',
+    currency: 'ARS',
+    source: 'manual',
+    floor: { amount: '1000000', source: 'manual' },
+  }
+
+  test('converts the income + floor to the preferred currency at the rate', () => {
+    const converted = convertBudgetIncome(income, 'USD', 1000)
+    expect(converted.currency).toBe('USD')
+    expect(converted.amount).toBe('3000.00')
+    expect(converted.floor?.amount).toBe('1000.00')
+  })
+
+  test('income already in the preferred currency is returned unchanged', () => {
+    const usdIncome: BudgetIncome = { ...income, amount: '3000', currency: 'USD' }
+    expect(convertBudgetIncome(usdIncome, 'USD', 1000)).toBe(usdIncome)
+  })
+
+  test('an unavailable rate keeps the native income (never NaN)', () => {
+    const converted = convertBudgetIncome(income, 'USD', null)
+    expect(converted.amount).toBe('3000000')
+    expect(converted.currency).toBe('ARS')
+  })
+
+  test('a null income amount converts only the floor', () => {
+    const noAmount: BudgetIncome = { ...income, amount: null }
+    const converted = convertBudgetIncome(noAmount, 'USD', 1000)
+    expect(converted.amount).toBeNull()
+    expect(converted.currency).toBe('USD')
+    expect(converted.floor?.amount).toBe('1000.00')
   })
 })

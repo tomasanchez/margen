@@ -67,6 +67,14 @@ export interface BudgetCategoryDto {
   category: string
   /** Target for the month as a Decimal string, or `null` when unset. */
   target: string | null
+  /**
+   * The NATIVE currency the target was STORED in (`'USD'`/`'ARS'`), or `null`
+   * when no target is set (ADR-152/155). Independent of the requested spend
+   * currency: the client converts the target from this native currency to the
+   * preferred display currency at the live rate. Absent on legacy payloads — the
+   * adapter then defaults it to the period currency.
+   */
+  targetCurrency?: string | null
   /** Actual expense total for the category this month, as a Decimal string. */
   spent: string
   /** `target − spent` as a Decimal string when a target exists, else `null`. */
@@ -176,6 +184,13 @@ export interface BudgetWriteBody {
 export interface BudgetCategory {
   category: Category
   target: string | null
+  /**
+   * The NATIVE currency the target was authored/stored in (ADR-152/155), or
+   * `null` when no target is set. The Budgets surface converts the target from
+   * this currency to the user's preferred display currency at the live rate;
+   * `spent` already arrives in the preferred currency from the backend.
+   */
+  targetCurrency: Currency | null
   spent: string
   remaining: string | null
   /** Whether the category belongs to the Needs group (essential, ADR-146). */
@@ -357,11 +372,25 @@ export function adaptSavingLine(dto: SavingLineDto): SavingLine {
   }
 }
 
-/** Adapt one backend {@link BudgetCategoryDto} to a {@link BudgetCategory}. */
-export function adaptBudgetCategory(dto: BudgetCategoryDto): BudgetCategory {
+/**
+ * Adapt one backend {@link BudgetCategoryDto} to a {@link BudgetCategory}. The
+ * native target currency defaults to `fallbackCurrency` (the period currency)
+ * when the backend omits it — keeps the line robust against a legacy payload
+ * while a real `targetCurrency` drives conversion (ADR-152/155).
+ */
+export function adaptBudgetCategory(
+  dto: BudgetCategoryDto,
+  fallbackCurrency: Currency = 'ARS',
+): BudgetCategory {
   return {
     category: asCategory(dto.category),
     target: dto.target,
+    targetCurrency:
+      dto.target == null
+        ? null
+        : dto.targetCurrency != null
+          ? asCurrency(dto.targetCurrency)
+          : fallbackCurrency,
     spent: dto.spent,
     remaining: dto.remaining,
     isEssential: dto.isEssential === true,
@@ -370,10 +399,13 @@ export function adaptBudgetCategory(dto: BudgetCategoryDto): BudgetCategory {
 
 /** Adapt the full backend budgets period to the {@link BudgetPeriod}. */
 export function adaptBudgetPeriod(dto: BudgetPeriodDto): BudgetPeriod {
+  const periodCurrency = asCurrency(dto.currency)
   return {
     month: dto.month,
-    currency: asCurrency(dto.currency),
-    categories: dto.categories.map(adaptBudgetCategory),
+    currency: periodCurrency,
+    categories: dto.categories.map((c) =>
+      adaptBudgetCategory(c, periodCurrency),
+    ),
     savings: (dto.savings ?? []).map(adaptSavingLine),
     floor: adaptFloor(dto.floor),
     suggestedStrategy: asSavingProfile(dto.suggestedStrategy),

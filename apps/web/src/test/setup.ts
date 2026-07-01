@@ -57,4 +57,17 @@ void i18n.use(initReactI18next).init({
 
 afterEach(() => {
   cleanup()
+  // MUI Tooltip/Popper render into a portal on `document.body`. When a test ends
+  // mid-open-transition, RTL's `cleanup()` (which only removes the containers it
+  // created) can leave the portal node behind; under parallel workers that stray
+  // node then leaks into the NEXT test's DOM, so a `getByText` for shared copy
+  // (e.g. "Your session expired.") trips "found multiple elements". Drop any
+  // leftover body children RTL didn't own so every test starts from a clean body.
+  if (typeof document !== 'undefined') {
+    document.body
+      .querySelectorAll(
+        '[role="tooltip"], .MuiTooltip-popper, .MuiPopper-root, .MuiModal-root',
+      )
+      .forEach((node) => node.remove())
+  }
 })
