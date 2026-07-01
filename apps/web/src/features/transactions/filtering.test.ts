@@ -293,6 +293,28 @@ describe('buildEditPrefill', () => {
     expect(buildEditPrefill(withNotes).notes).toBe('Reimbursed by client')
   })
 
+  test('an ARS row WITH a snapshot surfaces its SAVED rate as fxRate (ADR-148/149)', () => {
+    // The backend serializes the snapshot rate (fx_rate) under the `rate` alias,
+    // so an ARS edit must re-seed fxRate from `rate` — not fall back to the live
+    // rate. A snapshot is signalled by fxSource being present.
+    const base = SEED_TRANSACTIONS.find(
+      (t): t is Transaction => t.currency === 'ARS',
+    )!
+    const stamped: Transaction = { ...base, rate: 1502.5, fxSource: 'bolsa' }
+    const prefill = buildEditPrefill(stamped)
+    expect(prefill.fxRate).toBe('1502.5')
+    expect(prefill.fxSource).toBe('bolsa')
+  })
+
+  test('an ARS row WITHOUT a snapshot carries no fxRate (edit shows the live rate)', () => {
+    const base = SEED_TRANSACTIONS.find(
+      (t): t is Transaction => t.currency === 'ARS',
+    )!
+    const noSnap: Transaction = { ...base, rate: undefined, fxSource: undefined }
+    const prefill = buildEditPrefill(noSnap)
+    expect(prefill.fxRate).toBeUndefined()
+  })
+
   test('carries the linked accountId so editing seeds the Account selector (ADR-136)', () => {
     const base = SEED_TRANSACTIONS[0]
     expect(buildEditPrefill({ ...base, accountId: 'acc-7' }).accountId).toBe('acc-7')

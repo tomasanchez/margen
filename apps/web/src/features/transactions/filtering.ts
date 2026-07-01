@@ -595,8 +595,15 @@ export function buildEditPrefill(
     ...(t.fxRateType !== undefined ? { fxRateType: t.fxRateType } : {}),
     ...(t.fxRateAsOf !== undefined ? { fxRateAsOf: t.fxRateAsOf } : {}),
     // Carry the captured FX snapshot (ADR-148) so an ARS edit shows/re-seeds the
-    // stored rate + its provenance in the visible rate field.
-    ...(t.fxRate !== undefined ? { fxRate: t.fxRate } : {}),
+    // stored rate + its provenance in the visible rate field. The backend
+    // serializes the snapshot rate (fx_rate) under the `rate` alias, so for a
+    // non-USD row that HAS a snapshot (fxSource present) we surface `rate` as
+    // `fxRate` — otherwise the field would fall back to the current live rate.
+    ...(t.currency !== 'USD' && typeof t.rate === 'number' && t.fxSource !== undefined
+      ? { fxRate: String(t.rate) }
+      : t.fxRate !== undefined
+        ? { fxRate: t.fxRate }
+        : {}),
     ...(t.fxSource !== undefined ? { fxSource: t.fxSource } : {}),
     ...(t.recurring !== undefined ? { recurring: t.recurring } : {}),
     // Carry the existing free-text note so it survives a re-save on edit (ADR-088).
