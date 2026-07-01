@@ -70,4 +70,11 @@ afterEach(() => {
       )
       .forEach((node) => node.remove())
   }
+  // Clear persisted client state (e.g. the Home privacy toggle,
+  // `margen.home.privacy`) so a test that flips a localStorage-backed
+  // preference can't leak it into the next test under parallel workers.
+  if (typeof window !== 'undefined') {
+    window.localStorage.clear()
+    window.sessionStorage.clear()
+  }
 })
