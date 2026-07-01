@@ -30,6 +30,7 @@ import InputBase from '@mui/material/InputBase'
 import Typography from '@mui/material/Typography'
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded'
 import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined'
+import UndoOutlinedIcon from '@mui/icons-material/UndoOutlined'
 import { formatCurrency } from '../../lib/format'
 import { categoryDotColor, categoryLabel } from '../transactions/presentation'
 import { BudgetMeter } from './BudgetMeter'
@@ -109,6 +110,11 @@ export function BudgetRow({
   const { t } = useTranslation('budgets')
   const progress = deriveCategoryProgress(line)
   const label = categoryLabel(line.category)
+  // Gross linked-payback reduction (ADR-158/160). `spent` already arrives NET of
+  // this and both are in the display currency, so we render `reimbursed` directly
+  // (never re-converted). A subtle caption surfaces only when it is positive.
+  const reimbursed = parseMoney(line.reimbursed)
+  const hasReimbursed = reimbursed > 0
 
   // The saved target as a plain editable string (no grouping, so typing is
   // predictable); empty when unset.
@@ -304,6 +310,27 @@ export function BudgetRow({
     </Box>
   )
 
+  // Subtle "− $X reimbursed" caption (ADR-158/160): shows the gross payback
+  // reduction so the user knows `spent` is NET, not gross. An icon + text (not
+  // color alone, ADR-019); rendered only when a payback offsets this category.
+  const reimbursedCaption = hasReimbursed ? (
+    <Box
+      component="span"
+      sx={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 0.375,
+        mt: 0.5,
+        fontSize: 11.5,
+        fontVariantNumeric: 'tabular-nums',
+        color: 'var(--mg-safe)',
+      }}
+    >
+      <UndoOutlinedIcon sx={{ fontSize: 13 }} aria-hidden />
+      {t('row.reimbursed', { amount: formatCurrency(reimbursed, currency) })}
+    </Box>
+  ) : null
+
   // Spent-vs-target (column 3): a meter + remaining when a target exists, else the
   // "Spent X" line with the dashed "↳ use {avg}" chip (ADR-147). Unchanged content.
   const spentCell = (
@@ -391,6 +418,9 @@ export function BudgetRow({
           {t('row.spent', { amount: formatCurrency(progress.spent, currency) })}
         </Typography>
       )}
+      {reimbursedCaption ? (
+        <Box sx={{ display: 'block' }}>{reimbursedCaption}</Box>
+      ) : null}
     </Box>
   )
 

@@ -140,6 +140,7 @@
     "saved": "Guardado ✓",
     "saveError": "No se pudo guardar el objetivo — probá de nuevo.",
     "spent": "Gastado {{amount}}",
+    "reimbursed": "− {{amount}} reintegrado",
     "remaining": "Quedan {{amount}}",
     "overBy": "{{amount}} de más",
     "over": "Excedido",

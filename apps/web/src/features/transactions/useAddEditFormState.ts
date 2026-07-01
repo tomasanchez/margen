@@ -61,6 +61,7 @@ export const EXPENSE_CATEGORIES: readonly Category[] = [
   'Shopping',
   'Entertainment',
   'Services',
+  'Social',
   'Taxes',
   'Fees',
   'Other',
@@ -187,6 +188,25 @@ export interface AddEditFormState {
   /** Edit mode if an id was prefilled; otherwise add mode. */
   readonly mode: 'add' | 'edit'
   readonly editId: string | undefined
+
+  /**
+   * True when this flow records a REIMBURSEMENT (a payback linked to an expense,
+   * ADR-158/159). Set from a prefill's `kind='reimbursement'` + a bound
+   * `offsetsTransactionId`. In this mode the form is a stripped-down ARS inflow:
+   * no type toggle, no category picker, no FX (ADR-161), no account/Monotributo —
+   * just amount + date + optional note, linked to the source expense.
+   */
+  readonly isReimbursement: boolean
+  /** The source expense id a reimbursement offsets (ADR-159); undefined otherwise. */
+  readonly offsetsTransactionId: string | undefined
+  /**
+   * Display-only summary of the offset expense (name + ARS amount) for the
+   * reimbursement context line; undefined when not a reimbursement. Not sent to
+   * the backend — the link travels via {@link offsetsTransactionId}.
+   */
+  readonly offsetsExpense:
+    | { readonly name: string; readonly amountNum: number }
+    | undefined
 
   readonly type: TxType
   setType: (next: TxType) => void
@@ -356,6 +376,19 @@ export function useAddEditFormState(
 ): AddEditFormState {
   const mode = isEditPrefill(prefill) ? 'edit' : 'add'
   const editId = typeof prefill?.id === 'string' ? prefill.id : undefined
+
+  // Reimbursement mode (ADR-158/159): the flow was opened from an expense's "add
+  // reimbursement" action, so the prefill carries `kind='reimbursement'` and the
+  // `offsetsTransactionId` of the expense it pays back. The form then renders a
+  // stripped-down ARS inflow (no type/category/FX/account) and `buildInput`
+  // assembles the reimbursement create (ADR-160/161). The link is fixed for the
+  // life of the flow (this hook is remounted per open), so it is a plain const.
+  const isReimbursement = prefill?.kind === 'reimbursement'
+  const offsetsTransactionId =
+    typeof prefill?.offsetsTransactionId === 'string'
+      ? prefill.offsetsTransactionId
+      : undefined
+  const offsetsExpense = prefill?.offsetsExpense
 
   // The configured FX default source (ADR-044/045/057) pre-selects the USD
   // source on a fresh add. Read non-blockingly: if settings are still loading
@@ -800,6 +833,33 @@ export function useAddEditFormState(
     Number.isFinite(amountArs)
 
   const buildInput = (): NewTransactionInput => {
+    // A reimbursement (ADR-158): a stripped-down ARS inflow linked to its source
+    // expense. It carries NO FX snapshot of its own — the backend derives USD from
+    // the linked expense's rate and drops any FX we might send (ADR-161) — so we
+    // assemble it directly here and short-circuit the FX branches below. `type`
+    // is income (a real inflow) but `kind='reimbursement'` keeps it out of income
+    // totals + Monotributo turnover (ADR-158/162).
+    if (isReimbursement) {
+      return {
+        name: name.trim() || deriveName('income', 'reimbursement', 'Income'),
+        type: 'income',
+        kind: 'reimbursement',
+        currency: 'ARS',
+        // Category is inherited from the linked expense server-side for netting
+        // (ADR-159/160); the row's own category is nominal — mark it Income.
+        category: 'Income',
+        occurredOn,
+        dispDate,
+        amountNum: round2(amountArs),
+        countsTowardMonotributo: false,
+        offsetsTransactionId,
+        // No account, no FX (ADR-161): the payback nets the expense, not a
+        // balance-attributed USD row.
+        accountId: null,
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
+      }
+    }
+
     const kind =
       type === 'expense'
         ? 'expense'
@@ -885,6 +945,9 @@ export function useAddEditFormState(
   return {
     mode,
     editId,
+    isReimbursement,
+    offsetsTransactionId,
+    offsetsExpense,
     type,
     setType,
     countsTowardMonotributo,
@@ -945,6 +1008,7 @@ function deriveName(
   kind: NewTransactionInput['kind'],
   category: Category,
 ): string {
+  if (kind === 'reimbursement') return 'Reimbursement'
   if (type === 'income') {
     return kind === 'invoice' ? 'Invoice · income' : 'Income'
   }

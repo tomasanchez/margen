@@ -92,6 +92,12 @@ export async function captureFxForCreate(
   // Already stamped (e.g. a future pre-fill path) — leave it be.
   if (input.fxRate != null) return input
 
+  // A REIMBURSEMENT never carries an FX snapshot of its own (ADR-161): its USD
+  // value is derived server-side from the LINKED EXPENSE's rate. Stamping one
+  // here would be dropped by the backend anyway and could confuse the boundary —
+  // return the input UNCHANGED so no rate/source travels with the payback.
+  if (input.kind === 'reimbursement') return input
+
   // ARS INCOME is never snapshotted (ADR-156): the user doesn't convert those
   // pesos to USD at receipt, so a frozen per-date `usd_amount` would be
   // misleading. Its USD-equivalent, if ever shown, is computed DYNAMICALLY at the

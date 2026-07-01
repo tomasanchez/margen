@@ -52,6 +52,8 @@ function line(
     // The native target currency only exists when a target is set (ADR-152/155).
     targetCurrency: target != null ? 'ARS' : null,
     spent,
+    // Default no reimbursement offset (ADR-158/160) for the derive tests.
+    reimbursed: '0',
     remaining,
     isEssential,
   }

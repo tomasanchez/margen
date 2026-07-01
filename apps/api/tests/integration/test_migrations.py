@@ -58,6 +58,11 @@ _BUDGET_KIND = "a2b3c4d5e6f7"
 # and the NOT NULL ``app_settings.preferred_rate_source`` (server default 'bolsa').
 _FX_SNAPSHOT = "b3c4d5e6f7a8"
 
+# The reimbursement offset-link migration (ADR-158, ADR-159): chains after the
+# FX-snapshot migration. It adds the nullable self-FK ``transactions.offsets_transaction_id``
+# (ON DELETE SET NULL) plus a partial index WHERE kind='reimbursement'. No data migration.
+_OFFSET_LINK = "c4d5e6f7a8b9"
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
 # A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
@@ -433,6 +438,105 @@ class TestMigrations:
             assert "preferred_rate_source" not in asyncio.run(_columns(integration_database_url, "app_settings"))
         finally:
             asyncio.run(_drop_everything(integration_database_url))
+
+    def test_offset_link_migration_adds_nullable_self_fk_and_partial_index(self, integration_database_url: str):
+        """
+        GIVEN a database at the FX-snapshot revision with a seeded expense
+        WHEN Alembic upgrades through the reimbursement offset-link migration (ADR-158/159)
+        THEN transactions gains a NULLABLE offsets_transaction_id self-FK, a
+             reimbursement row can link the seeded expense, deleting the expense sets the
+             link NULL (ON DELETE SET NULL), the partial index exists, and the downgrade
+             drops the column and index
+
+        Proves the additive self-referential FK add on the production PostgreSQL dialect:
+        the column is nullable (no backfill — going-forward rollout, ADR-162), the
+        ON DELETE SET NULL orphans a payback rather than cascading (ADR-159), and the
+        partial index backs the net-spend join (ADR-160).
+        """
+        # GIVEN — upgrade to the FX-snapshot revision (the head before ADR-158/159) and
+        # seed an expense the reimbursement will offset.
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _FX_SNAPSHOT)
+        expense_id = uuid.uuid4()
+        reimbursement_id = uuid.uuid4()
+        try:
+            asyncio.run(_seed_one_transaction(integration_database_url, expense_id))
+
+            # WHEN
+            command.upgrade(config, _OFFSET_LINK)
+
+            # THEN — the nullable self-FK column exists.
+            tx_columns = asyncio.run(_column_map(integration_database_url, "transactions"))
+            assert "offsets_transaction_id" in tx_columns
+            assert tx_columns["offsets_transaction_id"] is True  # nullable
+
+            # THEN — the partial index exists (ADR-160).
+            indexes = asyncio.run(_index_names(integration_database_url, "transactions"))
+            assert "ix_transactions_offsets_transaction_id" in indexes
+
+            # THEN — a reimbursement can link the expense, and deleting the expense sets
+            # the link NULL rather than cascading (ON DELETE SET NULL, ADR-159).
+            link = asyncio.run(
+                _offset_link_survives_expense_delete(integration_database_url, expense_id, reimbursement_id)
+            )
+            assert link is None
+
+            # THEN — the downgrade cleanly drops the column and its index.
+            command.downgrade(config, _FX_SNAPSHOT)
+            assert "offsets_transaction_id" not in asyncio.run(_columns(integration_database_url, "transactions"))
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
+
+async def _index_names(url: str, table: str) -> list[str | None]:
+    """Return the index names on ``table``."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        names = await connection.run_sync(
+            lambda sync_conn: [ix["name"] for ix in inspect(sync_conn).get_indexes(table)]
+        )
+    await engine.dispose()
+    return names
+
+
+async def _offset_link_survives_expense_delete(
+    url: str,
+    expense_id: uuid.UUID,
+    reimbursement_id: uuid.UUID,
+) -> uuid.UUID | None:
+    """Link a reimbursement to the expense, delete the expense, and return the link value.
+
+    Proves ON DELETE SET NULL (ADR-159): after deleting the source expense the payback
+    row survives with a NULL ``offsets_transaction_id`` rather than being cascaded away.
+    """
+    engine = create_async_engine(url)
+    insert = text(
+        "INSERT INTO transactions (id, user_id, occurred_on, name, kind, amount, currency, offsets_transaction_id) "
+        "VALUES (:id, :user_id, :occurred_on, :name, :kind, :amount, :currency, :offsets)"
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            insert,
+            {
+                "id": reimbursement_id,
+                "user_id": uuid.UUID(_OWNER),
+                "occurred_on": datetime.date(2026, 6, 20),
+                "name": "Friend pays back",
+                "kind": "reimbursement",
+                "amount": Decimal("3000.00"),
+                "currency": "ARS",
+                "offsets": expense_id,
+            },
+        )
+        await connection.execute(text("DELETE FROM transactions WHERE id = :id"), {"id": expense_id})
+        result = await connection.execute(
+            text("SELECT offsets_transaction_id FROM transactions WHERE id = :id"),
+            {"id": reimbursement_id},
+        )
+        value = result.scalar_one()
+    await engine.dispose()
+    return value
 
 
 async def _duplicate_income_is_rejected(url: str) -> bool:

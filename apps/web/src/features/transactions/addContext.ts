@@ -17,6 +17,19 @@ export type AddPrefill = Partial<NewTransactionInput> & {
    * `NewTransactionInput` shape, so the seam stays input-compatible.
    */
   id?: string
+  /**
+   * Display-only summary of the EXPENSE a reimbursement offsets (ADR-159), set by
+   * `buildReimbursementPrefill` when the flow is opened from an expense's "add
+   * reimbursement" action. The form shows it so the user sees which expense the
+   * payback pays back; it is NOT sent to the backend (the link travels via
+   * `offsetsTransactionId`). Absent for every non-reimbursement flow.
+   */
+  offsetsExpense?: {
+    /** The linked expense's display name. */
+    name: string
+    /** The linked expense's ARS-equivalent magnitude (a positive number). */
+    amountNum: number
+  }
 }
 
 export interface AddTransactionContextValue {

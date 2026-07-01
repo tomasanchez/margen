@@ -26,10 +26,15 @@ class BudgetLine:
         category: The expense category label.
         target: The budget target for the category this month, or ``None`` when the
             user has not set one (ADR-125).
-        spent: The category's actual ARS-equivalent expense total for the month,
-            derived from the category summaries aggregation (ADR-042); ``0`` when the
-            category has no spend.
-        remaining: ``target - spent`` when a target is set, else ``None`` (there is
+        spent: The category's NET expense total for the month — gross expense minus
+            linked reimbursements, floored at zero (ADR-160/162), from the shared
+            category aggregation (ADR-042/125); ``0`` when the category has no spend.
+        reimbursed: The gross reimbursement reduction attributed to this category-month
+            (ADR-159/161) — the sum of linked paybacks BEFORE the floor. Lets the client
+            render a "reimbursed" chip alongside the net ``spent``. ``0`` when no linked
+            payback fell in the category-month. In the budget ``currency`` (ADR-152): the
+            USD reduction rides each linked expense's captured rate (ADR-161).
+        remaining: ``target - spent`` (net) when a target is set, else ``None`` (there is
             nothing to remain against an unset target, ADR-125).
         is_essential: Whether the category is an essential ("Needs") spend category
             that defines the household floor (ADR-143). Lets the client group Needs
@@ -45,6 +50,7 @@ class BudgetLine:
     category: str
     target: Decimal | None
     spent: Decimal
+    reimbursed: Decimal
     remaining: Decimal | None
     is_essential: bool
     target_currency: str | None

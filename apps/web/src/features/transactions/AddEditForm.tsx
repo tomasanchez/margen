@@ -244,6 +244,7 @@ export function AddEditForm({
   const notesInputId = useId()
   const accountSelectId = useId()
 
+  const isReimbursement = form.isReimbursement
   const isExpense = form.type === 'expense'
   const isUsd = form.currency === 'USD'
   // ARS INCOME (non-invoice) is never FX-snapshotted (ADR-156) — the user doesn't
@@ -254,8 +255,9 @@ export function AddEditForm({
     !isUsd && form.type === 'income' && !form.countsTowardMonotributo
   const currencySymbol = isUsd ? 'USD' : 'ARS'
 
-  const title =
-    form.mode === 'edit'
+  const title = isReimbursement
+    ? t('form.title.reimbursement')
+    : form.mode === 'edit'
       ? t('form.title.edit')
       : isExpense
         ? t('form.title.newExpense')
@@ -405,7 +407,46 @@ export function AddEditForm({
         </Alert>
       ) : null}
 
-      {/* Expense / Invoice·income segmented tabs. */}
+      {/* Reimbursement context (ADR-158/159): a calm read-only line naming the
+          expense this payback offsets + its amount, so the user always knows what
+          they're paying back. The link itself travels via offsetsTransactionId. */}
+      {isReimbursement && form.offsetsExpense ? (
+        <Box
+          sx={{
+            mb: 2.5,
+            px: 1.75,
+            py: 1.5,
+            bgcolor: 'var(--mg-paper)',
+            border: '1px solid var(--mg-border-2)',
+            borderRadius: 2.5,
+          }}
+        >
+          <Typography variant="overline" component="p" sx={{ mb: 0.25 }}>
+            {t('form.reimbursement.offsetsLabel')}
+          </Typography>
+          <Typography sx={{ fontSize: 14, color: 'text.primary' }}>
+            {form.offsetsExpense.name}
+          </Typography>
+          <Typography
+            sx={{
+              fontFamily: monoFontFamily,
+              fontSize: 12.5,
+              color: 'text.secondary',
+            }}
+          >
+            {t('form.reimbursement.offsetsAmount', {
+              amount: formatARS(form.offsetsExpense.amountNum),
+            })}
+          </Typography>
+          <Typography sx={{ mt: 0.75, fontSize: 11.5, color: 'text.disabled' }}>
+            {t('form.reimbursement.hint')}
+          </Typography>
+        </Box>
+      ) : null}
+
+      {/* Expense / Invoice·income segmented tabs. Hidden for a reimbursement,
+          whose kind is fixed. */}
+      {!isReimbursement ? (
       <ToggleButtonGroup
         value={form.type}
         exclusive
@@ -437,6 +478,7 @@ export function AddEditForm({
         <ToggleButton value="expense">{t('form.type.expense')}</ToggleButton>
         <ToggleButton value="income">{t('form.type.income')}</ToggleButton>
       </ToggleButtonGroup>
+      ) : null}
 
       {/* Mobile-reachable entry to the routed statement-import flow, Expense-only
           (ADR-017). The desktop sidebar's "Import statement" button is hidden on
@@ -469,8 +511,9 @@ export function AddEditForm({
           an ARCA PDF parses it and autofills the fields below; the user reviews
           and decides whether to save (the parse is non-committal). A failed parse
           shows a calm inline message and the form stays usable. Expenses aren't
-          invoices, so the control is hidden there. */}
-      {!isExpense ? (
+          invoices, so the control is hidden there. Also hidden for a
+          reimbursement — a payback carries no invoice PDF. */}
+      {!isExpense && !isReimbursement ? (
         <Box sx={{ mb: 2.5 }}>
           {/* When a PDF is attached, show a compact attached-file row (document
               icon + truncated name + remove) instead of the upload button, so the
@@ -635,7 +678,8 @@ export function AddEditForm({
         />
       </Box>
 
-      {/* Currency toggle. */}
+      {/* Currency toggle. Hidden for a reimbursement — a payback is ARS (ADR-160). */}
+      {!isReimbursement ? (
       <ToggleButtonGroup
         value={form.currency}
         exclusive
@@ -666,6 +710,7 @@ export function AddEditForm({
         <ToggleButton value="ARS">ARS</ToggleButton>
         <ToggleButton value="USD">USD</ToggleButton>
       </ToggleButtonGroup>
+      ) : null}
 
       {/* FX block (USD only): explicit MEP / Official / Manual source selector
           with suggested values, the required rate field, a refresh affordance,
@@ -804,7 +849,7 @@ export function AddEditForm({
           `usd_amount` (ADR-148/151/152). Optional — a blank rate simply omits the
           snapshot (backfilled later, ADR-150). Hidden for ARS income (ADR-156):
           it isn't snapshotted, so a per-date USD rate is irrelevant there. */}
-      {!isUsd && !isArsIncomeNoSnapshot ? (
+      {!isUsd && !isArsIncomeNoSnapshot && !isReimbursement ? (
         <Box
           sx={{
             mt: 1.5,
@@ -924,7 +969,9 @@ export function AddEditForm({
           attribution (ADR-136 extension: the legacy bank picker is retired — a
           manual entry no longer carries a bank tag, its source is the account).
           A "no account" option leaves the row unlinked. The selector is always
-          shown so a row can be attributed even before any FX/USD step. */}
+          shown so a row can be attributed even before any FX/USD step. Hidden for
+          a reimbursement — a payback nets the linked expense, not an account. */}
+      {!isReimbursement ? (
       <Box sx={{ mt: 2.5 }}>
         <FormControl fullWidth size="small">
           <InputLabel id={`${accountSelectId}-label`}>
@@ -949,6 +996,7 @@ export function AddEditForm({
           </Select>
         </FormControl>
       </Box>
+      ) : null}
 
       {/* Date — a native date picker. Defaults to today for a new transaction
           and prefills from the row's occurredOn on edit; `max` is today so no
@@ -994,8 +1042,9 @@ export function AddEditForm({
         />
       </Box>
 
-      {/* Monotributo toggle (income only). */}
-      {!isExpense ? (
+      {/* Monotributo toggle (income only). Hidden for a reimbursement — a payback
+          is excluded from Monotributo turnover (ADR-158/162). */}
+      {!isExpense && !isReimbursement ? (
         <Box
           sx={{
             mt: 2,
@@ -1089,22 +1138,25 @@ export function AddEditForm({
           {t('form.actions.cancel')}
         </Button>
         {/* Reset all fields to blank new-entry defaults (issue #26). Clears the
-            inputs + any attachment; it does NOT submit or close the form. */}
-        <Button
-          type="button"
-          variant="text"
-          color="secondary"
-          onClick={handleResetAll}
-          aria-label={t('form.actions.resetAriaLabel')}
-          sx={{
-            flex: 'none',
-            px: 2,
-            py: 1.25,
-            color: 'text.secondary',
-          }}
-        >
-          {t('form.actions.reset')}
-        </Button>
+            inputs + any attachment; it does NOT submit or close the form. Hidden
+            for a reimbursement — resetting would strip the fixed payback intent. */}
+        {!isReimbursement ? (
+          <Button
+            type="button"
+            variant="text"
+            color="secondary"
+            onClick={handleResetAll}
+            aria-label={t('form.actions.resetAriaLabel')}
+            sx={{
+              flex: 'none',
+              px: 2,
+              py: 1.25,
+              color: 'text.secondary',
+            }}
+          >
+            {t('form.actions.reset')}
+          </Button>
+        ) : null}
         <Button
           type="submit"
           variant="contained"

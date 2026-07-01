@@ -141,6 +141,15 @@ class TestKnownCategory:
         # WHEN / THEN
         assert is_known_category("Fees") is True
 
+    async def test_social_is_a_known_category(self):
+        """
+        GIVEN the "Social" category added in the Phase 2 delta (ADR-140)
+        WHEN membership is checked
+        THEN it reports True so GET /budgets surfaces it as an expense line
+        """
+        # WHEN / THEN
+        assert is_known_category("Social") is True
+
     async def test_unknown_value(self):
         """
         GIVEN a category outside the known set
@@ -212,12 +221,12 @@ class TestIsEssential:
         # WHEN / THEN
         assert is_essential(category) is True
 
-    @pytest.mark.parametrize("category", ["Entertainment", "Shopping", "Subscriptions", "Other"])
+    @pytest.mark.parametrize("category", ["Entertainment", "Shopping", "Subscriptions", "Social", "Other"])
     def test_non_essential_categories(self, category: str):
         """
-        GIVEN a discretionary category
+        GIVEN a discretionary category (Social is discretionary dining/outings, ADR-140)
         WHEN classified
-        THEN it reports non-essential
+        THEN it reports non-essential (so it groups under "Wants")
         """
         # WHEN / THEN
         assert is_essential(category) is False
@@ -235,3 +244,13 @@ class TestKnownCategoryDelta:
         """
         # WHEN / THEN
         assert is_known_category(category) is True
+
+    def test_social_is_known_but_not_essential(self):
+        """
+        GIVEN the Phase 2 "Social" delta (ADR-140): a discretionary "Wants" category
+        WHEN its membership and essentiality are checked
+        THEN it is a known/budgetable category yet is NOT essential
+        """
+        # WHEN / THEN
+        assert is_known_category("Social") is True
+        assert is_essential("Social") is False

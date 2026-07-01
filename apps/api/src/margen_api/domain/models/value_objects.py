@@ -24,11 +24,18 @@ class Kind(StrEnum):
 
     ``invoice`` is income that may count toward the Monotributo annual limit;
     ``income`` is other inflow (e.g. a refund modeled as positive income).
+    ``reimbursement`` is a real cash inflow that pays the owner back for a share
+    of a specific past expense (ADR-158): it increases the account balance and
+    net worth like any inflow, but it is NEVER ordinary income and NEVER taxable
+    Monotributo turnover — instead it SUBTRACTS from the linked expense's
+    category-month net spend (ADR-159/160). It is linked to its source expense
+    through ``Transaction.offsets_transaction_id``.
     """
 
     EXPENSE = "expense"
     INCOME = "income"
     INVOICE = "invoice"
+    REIMBURSEMENT = "reimbursement"
 
     @classmethod
     def parse(cls, value: object) -> Kind:
@@ -179,14 +186,21 @@ class FxRateType(StrEnum):
 #
 # MVP budgets delta (ADR-140): ``Housing`` (the INDEC-aligned superset of rent) and
 # ``Education`` are added; legacy ``Rent`` is RETAINED as a tolerated alias so
-# stored rows never break (no destructive rename). ``Social`` / ``Utilities`` /
-# ``DebtService`` / ``FamilySupport`` are Phase 2 and intentionally NOT added now.
+# stored rows never break (no destructive rename).
+#
+# Phase 2 partial delta (ADR-140): ``Social`` (discretionary dining/outings, split
+# from essential ``Food`` and from ``Entertainment``) is now added as a budgetable
+# expense category. It is discretionary, so it is intentionally NOT in
+# ``ESSENTIAL_CATEGORIES`` (``is_essential("Social")`` is False → it groups under
+# "Wants"). The remaining Phase 2 categories (``Utilities`` / ``DebtService`` /
+# ``FamilySupport``) are still deferred and intentionally NOT added now.
 KNOWN_CATEGORIES: frozenset[str] = frozenset(
     {
         "Income",
         "Food",
         "Housing",
         "Rent",
+        "Social",
         "Transport",
         "Subscriptions",
         "Health",

@@ -129,6 +129,29 @@ describe('adaptTransaction', () => {
     expect(adaptTransaction(usdDto).notes).toBeUndefined()
     expect('notes' in adaptTransaction({ ...usdDto, notes: '' })).toBe(false)
   })
+
+  test('carries offsetsTransactionId through for a reimbursement (ADR-159)', () => {
+    const t = adaptTransaction({
+      ...usdDto,
+      currency: 'ARS',
+      type: 'income',
+      kind: 'reimbursement',
+      usd: null,
+      rate: null,
+      offsetsTransactionId: 'exp-dinner-1',
+    })
+    expect(t.kind).toBe('reimbursement')
+    expect(t.offsetsTransactionId).toBe('exp-dinner-1')
+  })
+
+  test('carries a null offsetsTransactionId when present but unset', () => {
+    const t = adaptTransaction({ ...usdDto, offsetsTransactionId: null })
+    expect(t.offsetsTransactionId).toBeNull()
+  })
+
+  test('omits offsetsTransactionId when the DTO does not carry it (legacy)', () => {
+    expect('offsetsTransactionId' in adaptTransaction(usdDto)).toBe(false)
+  })
 })
 
 describe('toCreateBody', () => {
@@ -239,6 +262,44 @@ describe('toCreateBody', () => {
     const badRate = toCreateBody({ ...base, fxSource: 'bolsa', fxRate: '' })
     expect('fxSource' in badRate).toBe(false)
     expect('fxRate' in badRate).toBe(false)
+  })
+
+  test('sends offsetsTransactionId for a reimbursement, with no FX fields (ADR-159/161)', () => {
+    const input: NewTransactionInput = {
+      occurredOn: '2026-06-20',
+      dispDate: 'Jun 20',
+      name: 'Reimbursement',
+      category: 'Income',
+      currency: 'ARS',
+      type: 'income',
+      kind: 'reimbursement',
+      amountNum: 15000,
+      offsetsTransactionId: 'exp-dinner-1',
+    }
+    const body = toCreateBody(input)
+    expect(body.kind).toBe('reimbursement')
+    expect(body.offsetsTransactionId).toBe('exp-dinner-1')
+    expect(body.amountNum).toBe(15000)
+    // A reimbursement never carries FX — its USD value inherits the linked
+    // expense's rate server-side (ADR-161).
+    expect('fxRate' in body).toBe(false)
+    expect('fxSource' in body).toBe(false)
+    expect(body.usd).toBeUndefined()
+    expect(body.rate).toBeUndefined()
+  })
+
+  test('omits offsetsTransactionId for a non-reimbursement create', () => {
+    const input: NewTransactionInput = {
+      occurredOn: '2026-07-01',
+      dispDate: 'Jul 01',
+      name: 'Groceries',
+      category: 'Food',
+      currency: 'ARS',
+      type: 'expense',
+      kind: 'expense',
+      amountNum: 5000,
+    }
+    expect('offsetsTransactionId' in toCreateBody(input)).toBe(false)
   })
 })
 

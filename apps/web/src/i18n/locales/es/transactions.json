@@ -31,6 +31,9 @@
   },
   "row": {
     "recurring": "recurrente",
+    "reimbursement": "reintegro",
+    "reimburse": "Agregar reintegro",
+    "reimburseFor": "Agregar un reintegro para {{name}}",
     "edit": "Editar {{name}}",
     "delete": "Eliminar {{name}}",
     "openInvoicePdf": "Abrir PDF de la factura",
@@ -91,7 +94,15 @@
     "title": {
       "edit": "Editar movimiento",
       "newExpense": "Nuevo gasto",
-      "newInvoice": "Nueva factura · ingreso"
+      "newInvoice": "Nueva factura · ingreso",
+      "reimbursement": "Registrar un reintegro"
+    },
+    "reimbursement": {
+      "offsetsLabel": "Reintegro de",
+      "offsetsAmount": "Gasto original · {{amount}}",
+      "hint": "Este reintegro reduce lo que gastaste en ese gasto — no cuenta como ingreso.",
+      "errorNotFound": "No encontramos el gasto que reintegra. Puede que se haya eliminado.",
+      "errorNotExpense": "Un reintegro solo puede vincularse a un gasto."
     },
     "close": "Cerrar",
     "duplicate": "Parece que ya importaste esta factura. Igual podés guardarla si es intencional.",

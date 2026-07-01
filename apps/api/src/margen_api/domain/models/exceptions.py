@@ -163,6 +163,38 @@ class TransferNotFoundError(TransactionError):
         super().__init__(f"transfer not found: {transfer_id!r}")
 
 
+class OffsetTargetNotFoundError(TransactionError):
+    """Raised when a reimbursement's offset target is missing or not owned (ADR-159, ADR-130).
+
+    The create handler raises this when a ``kind='reimbursement'`` command links an
+    ``offsets_transaction_id`` that does not exist for the caller — either no such
+    row or one owned by another user (a cross-owner link, ADR-159). Mirrors the
+    account-ownership guard (ADR-130); the boundary maps it to a ``404`` (ADR-111).
+    The carried ``transaction_id`` lets the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, transaction_id: object) -> None:
+        self.transaction_id = transaction_id
+        super().__init__(f"offset target transaction not found: {transaction_id!r}")
+
+
+class OffsetTargetNotExpenseError(TransactionError):
+    """Raised when a reimbursement links an offset target that is not an EXPENSE (ADR-159).
+
+    A payback may only offset an EXPENSE (ADR-159); linking it to an income, invoice
+    or another reimbursement is a true invariant violation the boundary maps to
+    ``422`` (ADR-031). The carried ``transaction_id`` and ``kind`` let the entrypoint
+    build a meaningful message.
+    """
+
+    def __init__(self, transaction_id: object, kind: object) -> None:
+        self.transaction_id = transaction_id
+        self.kind = kind
+        super().__init__(
+            f"offset target {transaction_id!r} is a {kind!r}, but a reimbursement may only offset an expense"
+        )
+
+
 class MergeTargetNotFoundError(TransactionError):
     """Raised when a ``MERGE`` import line points at a missing transaction (ADR-085).
 

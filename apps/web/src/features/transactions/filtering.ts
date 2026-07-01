@@ -610,3 +610,25 @@ export function buildEditPrefill(
     ...(t.notes ? { notes: t.notes } : {}),
   }
 }
+
+/**
+ * Build the prefill that opens the Add flow to RECORD A REIMBURSEMENT against the
+ * given expense (ADR-158/159). The flow is a fresh ADD (no `id`) whose kind is
+ * `reimbursement`, whose type is the resulting inflow (`income`), and whose
+ * `offsetsTransactionId` is bound to the source expense so the backend links the
+ * payback + nets the category-month spend (ADR-160). A reimbursement is ARS and
+ * carries NO FX (ADR-161), so no rate fields are seeded. The expense's name +
+ * amount ride along as `offsetsExpense` for the form's context line (display
+ * only). Only meaningful for an EXPENSE row; callers gate the action on that.
+ */
+export function buildReimbursementPrefill(
+  expense: Transaction,
+): import('./addContext').AddPrefill {
+  return {
+    type: 'income',
+    kind: 'reimbursement',
+    currency: 'ARS',
+    offsetsTransactionId: expense.id,
+    offsetsExpense: { name: expense.name, amountNum: expense.amountNum },
+  }
+}
