@@ -263,4 +263,24 @@ describe('fetchHistoricalRate', () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response('x', { status: 500 }))
     await expect(fetchHistoricalRate('bolsa', '2025-02-09')).resolves.toBeNull()
   })
+
+  test('for TODAY, falls back to the current dolarapi rate when the dated quote is not published yet', async () => {
+    // ArgentinaDatos publishes through the previous business day, so a same-day
+    // row 404s on the dated endpoint. For TODAY (or later) we use the CURRENT
+    // dolarapi rate (its latest) instead of skipping (ADR-154 refinement).
+    const now = new Date()
+    const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response('not found', { status: 404 })) // dated: not yet
+      .mockResolvedValueOnce(quoteResponse({ venta: 1519 })) // current dolarapi
+    await expect(fetchHistoricalRate('bolsa', todayIso)).resolves.toBe(1519)
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2)
+    // The dated endpoint first, then the CURRENT dolarapi endpoint.
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain(
+      'api.argentinadatos.com/v1/cotizaciones/dolares/bolsa/',
+    )
+    expect(String(vi.mocked(fetch).mock.calls[1][0])).toContain(
+      'dolarapi.com/v1/dolares/bolsa',
+    )
+  })
 })

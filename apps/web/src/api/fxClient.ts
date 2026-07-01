@@ -194,6 +194,14 @@ export function clearHistoricalRateCache(): void {
   historicalCache.clear()
 }
 
+/** Local calendar date as `YYYY-MM-DD` (local parts — avoids a UTC off-by-one). */
+function localTodayIso(now: Date = new Date()): string {
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 /**
  * Fetch the historical preferred-source rate (ARS per USD) for a `casa` on a
  * specific `isoDate` (ADR-150/154). Resolution order:
@@ -201,19 +209,21 @@ export function clearHistoricalRateCache(): void {
  *  1. an in-memory cache hit for `(casa, date)` — returned without a fetch;
  *  2. the ArgentinaDatos per-date quote (`venta` leg, matching the current
  *     rate) — cached on success;
- *  3. `null` when the date has no quote — there is NO fallback to today's rate.
+ *  3. for TODAY or a later date with no published quote yet, the CURRENT
+ *     dolarapi rate (its latest) — the right rate for a same-day row;
+ *  4. `null` for a genuinely OLDER missing date — no wrong-date guess.
  *
- * Why no current-rate fallback (ADR-154, Risk 1): ArgentinaDatos already carries
- * the last published quote forward over weekends/holidays, so a genuinely missing
- * quote means "no data" — not a non-business day. Stamping today's rate on a
- * BACKDATED row would, under high-inflation ARS, materialize a wildly wrong
- * date-accurate `usd_amount` that is indistinguishable from a real historical
- * fill. We instead return `null` so the caller SKIPS the row (leaves it
- * unconverted, surfaced via the unconverted note, ADR-152) for a later retry.
+ * The today+ fallback (ADR-154 refinement): ArgentinaDatos publishes through the
+ * PREVIOUS business day, so a same-day transaction has no dated quote yet — its
+ * correct rate is the live one, so we use `fetchCurrentRate` (dolarapi's latest).
+ * For an OLDER missing date we still return `null` (the caller SKIPS the row,
+ * ADR-152/154): ArgentinaDatos carries the last quote forward over weekends, so a
+ * genuinely missing OLD date means "no data", and stamping today's rate on a
+ * backdated row would materialize a wildly wrong `usd_amount` under high inflation.
  *
- * Never throws — every failure path resolves to `null`, so the caller can skip a
- * row rather than guess. A `null` is NOT cached against the date so a later pass
- * can still pick up the date-accurate quote once it's published.
+ * Never throws — every failure path resolves to `null`. A resolved rate (dated or
+ * the today+ current fallback) is cached against the date; a `null` is not, so a
+ * later pass can still recover the dated quote once it's published.
  */
 export async function fetchHistoricalRate(
   casa: FxCasa,
@@ -230,8 +240,16 @@ export async function fetchHistoricalRate(
     return dated
   }
 
-  // The date has no historical quote — return null so the caller skips the row
-  // (no today's-rate fallback, ADR-154). Not cached, so a retry can recover the
-  // dated quote once it's published.
+  // No dated quote. For TODAY or later the historical series simply hasn't
+  // published it yet — use the current preferred-source rate (dolarapi's latest)
+  // rather than skipping the row. For an OLDER missing date, return null so the
+  // caller skips it (no wrong-date guess, ADR-154).
+  if (isoDate.slice(0, 10) >= localTodayIso()) {
+    const current = await fetchCurrentRate(casa, signal)
+    if (current != null) {
+      historicalCache.set(key, current)
+      return current
+    }
+  }
   return null
 }
