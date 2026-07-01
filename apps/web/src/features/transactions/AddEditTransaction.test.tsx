@@ -588,6 +588,144 @@ describe('Add flow — USD picks an explicit FX source (ADR-044/045)', () => {
   })
 })
 
+describe('Edit prefills the SAVED FX rate, not the current live rate (ADR-148/149)', () => {
+  // The current live/cached rate in these tests is 9999 (both the suggest-confirm
+  // fetch and the ARS snapshot's `usePreferredRate`), deliberately far from every
+  // row's stored rate so a regression that re-rates to "today" is unmistakable.
+  const LIVE = 9999
+
+  test('CREATE (ARS) still prefills the CURRENT live rate', async () => {
+    // Contrast case: a fresh add must SEED today's preferred-source rate so the
+    // user records against the live figure (they can still override).
+    currentRateMock.mockResolvedValue(LIVE)
+    const { dialog } = await openAddDialog()
+    const form = within(dialog)
+    const rateField = await form.findByLabelText(
+      'USD rate for this transaction (ARS per USD)',
+    )
+    await waitFor(() => expect(rateField).toHaveValue(String(LIVE)))
+  })
+
+  test('EDIT (ARS expense) prefills the row’s SAVED snapshot rate', async () => {
+    currentRateMock.mockResolvedValue(LIVE)
+    const { dialog } = await openAddDialog({
+      id: 'ars-edit-saved',
+      name: 'Groceries',
+      type: 'expense',
+      kind: 'expense',
+      currency: 'ARS',
+      category: 'Food',
+      amountNum: 118000,
+      fxRate: '1180.5',
+      fxSource: 'bolsa',
+      occurredOn: '2026-03-10',
+      dispDate: 'Mar 10',
+    })
+    const form = within(dialog)
+    const rateField = await form.findByLabelText(
+      'USD rate for this transaction (ARS per USD)',
+    )
+    // The saved rate is shown, never overwritten by the live rate as it lands.
+    await waitFor(() => expect(rateField).toHaveValue('1180.5'))
+    expect(rateField).not.toHaveValue(String(LIVE))
+  })
+
+  test('EDIT (USD) prefills the row’s SAVED conversion rate (no re-suggest)', async () => {
+    fxMock.mockResolvedValue({ mep: LIVE, official: LIVE - 100 })
+    currentRateMock.mockResolvedValue(LIVE)
+    const { dialog } = await openAddDialog({
+      id: 'usd-edit-saved',
+      name: 'Invoice',
+      type: 'income',
+      kind: 'invoice',
+      currency: 'USD',
+      category: 'Income',
+      amountNum: 650000,
+      usd: 500,
+      rate: 1300,
+      fxRateType: 'manual',
+      fxRateAsOf: '2026-06-12T12:00:00.000Z',
+      occurredOn: '2026-06-12',
+      dispDate: 'Jun 12',
+    })
+    const form = within(dialog)
+    // The suggestion fetch never fires for a stored-rate edit, so the field keeps
+    // the saved 1300 and nothing re-rates it to the live figure.
+    await waitFor(() => expect(form.getByLabelText('FX rate')).toHaveValue('1300'))
+    expect(fxMock).not.toHaveBeenCalled()
+  })
+
+  test('EDIT (ARS) re-saves the SAVED rate + source, never re-tagged to today’s preferred source', async () => {
+    updateMock.mockResolvedValueOnce({})
+    currentRateMock.mockResolvedValue(LIVE)
+    // The user's CURRENT preferred source is oficial, differing from the row's
+    // saved bolsa snapshot — the save must keep bolsa, not silently re-tag it.
+    fetchSettingsMock.mockResolvedValue({
+      preferredDisplayCurrency: 'ARS',
+      fxDefaultRateType: 'MEP',
+      preferredRateSource: 'oficial',
+      monotributoCurrentCategory: 'C',
+      monotributoActivityType: 'services',
+      monotributoEnabled: true,
+    })
+    const { user, dialog } = await openAddDialog({
+      id: 'ars-edit-resave',
+      name: 'Groceries',
+      type: 'expense',
+      kind: 'expense',
+      currency: 'ARS',
+      category: 'Food',
+      amountNum: 118000,
+      fxRate: '1180',
+      fxSource: 'bolsa',
+      occurredOn: '2026-03-10',
+      dispDate: 'Mar 10',
+    })
+    const form = within(dialog)
+    await waitFor(() =>
+      expect(
+        form.getByLabelText('USD rate for this transaction (ARS per USD)'),
+      ).toHaveValue('1180'),
+    )
+    await user.click(form.getByRole('button', { name: /^Save changes$/ }))
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
+    const [, patch] = updateMock.mock.calls[0]
+    expect(patch.fxRate).toBe('1180')
+    expect(patch.fxSource).toBe('bolsa')
+  })
+
+  test('EDIT (ARS) overriding the rate re-tags the snapshot as manual', async () => {
+    updateMock.mockResolvedValueOnce({})
+    currentRateMock.mockResolvedValue(LIVE)
+    const { user, dialog } = await openAddDialog({
+      id: 'ars-edit-override',
+      name: 'Groceries',
+      type: 'expense',
+      kind: 'expense',
+      currency: 'ARS',
+      category: 'Food',
+      amountNum: 118000,
+      fxRate: '1180',
+      fxSource: 'bolsa',
+      occurredOn: '2026-03-10',
+      dispDate: 'Mar 10',
+    })
+    const form = within(dialog)
+    const rateField = await form.findByLabelText(
+      'USD rate for this transaction (ARS per USD)',
+    )
+    await waitFor(() => expect(rateField).toHaveValue('1180'))
+    // A deliberate user change owns the rate → provenance flips to manual.
+    await user.clear(rateField)
+    await user.type(rateField, '1200')
+    await user.click(form.getByRole('button', { name: /^Save changes$/ }))
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
+    const [, patch] = updateMock.mock.calls[0]
+    expect(patch.fxRate).toBe('1200')
+    expect(patch.fxSource).toBe('manual')
+  })
+})
+
 describe('Add flow — a save failure keeps the form open', () => {
   test('a rejected create surfaces an error notice without closing the form', async () => {
     createMock.mockRejectedValueOnce(new Error('save failed'))
