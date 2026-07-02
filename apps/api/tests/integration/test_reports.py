@@ -177,3 +177,122 @@ class TestNetWorthHistorySql:
         # THEN — no cross-tenant leakage.
         assert all(point.ars_total == Decimal("0") and point.usd_total == Decimal("0") for point in history.months)
         assert history.months[-1].month == month_key(this_month)
+
+
+class TestOverviewSql:
+    """The reader's range aggregations run against real PostgreSQL (ADR-167, ADR-168).
+
+    Proves the ``extract(year/month)`` grouping, the currency-aware SUMs, the
+    ``avg(fx_rate)`` and the ``usd_amount`` null-exclusion / unconverted count behave
+    on the real dialect (SQLite cannot exercise Postgres numeric semantics). Movements
+    are anchored to the current month so the newest window point reflects them.
+    """
+
+    async def test_ars_and_usd_denomination_with_unconverted(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN a USD invoice with a snapshot, a USD expense with a snapshot in a
+              category, and an ARS expense WITHOUT a snapshot, all this month
+        WHEN the ARS and USD overviews are read from PostgreSQL
+        THEN the ARS path sums amount with unconverted 0, the USD path sums the
+             snapshot column, excludes and counts the snapshotless row, and the FX
+             summary carries the averaged captured rate (ADR-152, ADR-168)
+        """
+        # GIVEN — anchor to the current month so the window includes these rows.
+        this_month = _first_of_current_month()
+        day = this_month.replace(day=10)
+
+        def _tx(kind, amount, *, currency=Currency.ARS, usd_amount=None, fx_rate=None, category=None):
+            return build_transaction(
+                transaction_id=uuid4(),
+                occurred_on=day,
+                name="Movement",
+                kind=kind,
+                amount=Decimal(amount),
+                currency=currency,
+                usd_amount=usd_amount,
+                fx_rate=fx_rate,
+                category=category,
+                user_id=OWNER,
+                created_at=_MOMENT,
+                updated_at=_MOMENT,
+            )
+
+        rows = [
+            _tx(Kind.INVOICE, "1000000", currency=Currency.USD, usd_amount=Decimal("1000"), fx_rate=Decimal("1000")),
+            _tx(
+                Kind.EXPENSE,
+                "200000",
+                currency=Currency.USD,
+                usd_amount=Decimal("200"),
+                fx_rate=Decimal("1000"),
+                category="Food",
+            ),
+            _tx(Kind.EXPENSE, "400", category="Transport"),
+        ]
+        async with session_factory() as session:
+            repo = SqlAlchemyTransactionRepository(session)
+            for row in rows:
+                repo.add(row)
+            await session.commit()
+
+        # WHEN — ARS denomination.
+        async with session_factory() as session:
+            ars = await SqlAlchemyReportsReader(session).overview(OWNER, range_key="3M", currency=Currency.ARS)
+        # ARS: income 1_000_000, expenses 200_000 + 400, unconverted 0.
+        assert ars.currency == "ARS"
+        assert ars.unconverted == 0
+        assert ars.kpis.current.income == Decimal("1000000.00")
+        assert ars.kpis.current.expenses == Decimal("200400.00")
+
+        # WHEN — USD denomination.
+        async with session_factory() as session:
+            usd = await SqlAlchemyReportsReader(session).overview(OWNER, range_key="3M", currency=Currency.USD)
+        # USD: income sums the 1000 snapshot; the ARS Transport expense has no snapshot
+        # -> excluded from USD expenses and counted as unconverted.
+        assert usd.currency == "USD"
+        assert usd.kpis.current.income == Decimal("1000.00")
+        assert usd.kpis.current.expenses == Decimal("200.00")
+        assert usd.unconverted == 1
+        food = next(trend for trend in usd.category_trends if trend.category == "Food")
+        assert food.total == Decimal("200.00")
+        # FX summary: the captured rate averaged across the month, and USD invoiced.
+        assert usd.fx_summary.usd_invoiced == Decimal("1000.00")
+        assert usd.fx_summary.avg_mep == Decimal("1000.000000")
+        current_key = month_key(this_month)
+        current_rate = next(point for point in usd.fx_summary.rate_series if point.month == current_key)
+        assert current_rate.rate == Decimal("1000.000000")
+
+    async def test_ytd_previous_window_and_scoping(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN one owner's income this month
+        WHEN a different owner reads the YTD overview from PostgreSQL
+        THEN the caller's KPIs are all zero — the first owner's rows never leak (ADR-131)
+        """
+        # GIVEN — only OWNER has an income this month.
+        this_month = _first_of_current_month()
+        income = build_transaction(
+            transaction_id=uuid4(),
+            occurred_on=this_month.replace(day=5),
+            name="Salary",
+            kind=Kind.INCOME,
+            amount=Decimal("5000"),
+            currency=Currency.ARS,
+            user_id=OWNER,
+            created_at=_MOMENT,
+            updated_at=_MOMENT,
+        )
+        async with session_factory() as session:
+            SqlAlchemyTransactionRepository(session).add(income)
+            await session.commit()
+
+        # WHEN — a different owner reads their own (empty) YTD overview.
+        async with session_factory() as session:
+            overview = await SqlAlchemyReportsReader(session).overview(
+                OTHER_OWNER, range_key="YTD", currency=Currency.ARS
+            )
+
+        # THEN — no cross-tenant leakage.
+        assert overview.range == "YTD"
+        assert overview.kpis.current.income == Decimal("0.00")
+        assert overview.kpis.current.expenses == Decimal("0.00")
+        assert overview.category_trends == []

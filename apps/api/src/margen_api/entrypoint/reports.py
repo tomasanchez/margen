@@ -23,11 +23,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
+from margen_api.domain.models.value_objects import Currency
 from margen_api.entrypoint.dependencies import AuthUser, ReportsReader, SummaryReader, TransactionReader
-from margen_api.entrypoint.reports_schemas import NetWorthHistoryResponse
+from margen_api.entrypoint.reports_schemas import NetWorthHistoryResponse, ReportsOverviewResponse
 from margen_api.entrypoint.schemas import ResponseModel
 from margen_api.service_layer.csv_export import category_summary_csv, transactions_csv
 from margen_api.service_layer.net_worth_history import DEFAULT_MONTHS, MAX_MONTHS, MIN_MONTHS
+from margen_api.service_layer.reports_overview import ReportsRange
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -59,6 +61,49 @@ def _attachment(content: str, filename: str) -> Response:
         media_type=_CSV_MEDIA_TYPE,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get(
+    "/overview",
+    name="Reports overview",
+    status_code=status.HTTP_200_OK,
+    response_model=ResponseModel[ReportsOverviewResponse],
+)
+async def overview(
+    reader: ReportsReader,
+    user: AuthUser,
+    range_: Annotated[
+        ReportsRange,
+        Query(
+            alias="range",
+            description="The analytics window: '3M', '6M', '12M' or 'YTD' (ADR-167).",
+            examples=["6M"],
+        ),
+    ] = ReportsRange.SIX_MONTHS,
+    currency: Annotated[
+        Currency,
+        Query(description="The denomination currency: 'ARS' (default) or 'USD' (ADR-168)."),
+    ] = Currency.ARS,
+) -> ResponseModel[ReportsOverviewResponse]:
+    """Return the caller's range-based Reports overview (ADR-167, ADR-169, ADR-131).
+
+    Resolves ``range`` into the current month-window ending at the current month and
+    the immediately-preceding equal-length window (``YTD``'s previous is the same
+    span in the prior year), then assembles the KPI strip (income, expenses, net
+    saved, savings rate — current and previous for deltas), the oldest-first
+    per-month cash-flow series, the per-category trends (total, share, a
+    trailing-6-month sparkline and the vs-previous delta) and the FX summary (average
+    captured MEP rate, USD invoiced, per-month rate series).
+
+    Every figure is denominated in ``currency`` (ADR-168): ``ARS`` sums the
+    authoritative ``amount``; ``USD`` sums the ``usd_amount`` snapshot, excludes rows
+    that lack one and surfaces their count as ``unconverted`` so a USD total is never
+    silently understated (ADR-152). The overview is scoped to ``user.id`` so a caller
+    only sees their own data (ADR-108, ADR-131). An out-of-set ``range`` or
+    ``currency`` is rejected with ``422`` at boundary validation.
+    """
+    model = await reader.overview(user.id, range_key=range_.value, currency=currency)
+    return ResponseModel(data=ReportsOverviewResponse.from_read_model(model))
 
 
 @router.get(

@@ -44,6 +44,7 @@ from margen_api.service_layer.monotributo_repository import (
 )
 from margen_api.service_layer.read_models import TransactionReadModel
 from margen_api.service_layer.reader import AbstractTransactionReader
+from margen_api.service_layer.reports_overview_read_models import ReportsOverview
 from margen_api.service_layer.reports_read_models import NetWorthHistory
 from margen_api.service_layer.reports_reader import AbstractReportsReader
 from margen_api.service_layer.repository import AbstractTransactionRepository
@@ -953,15 +954,34 @@ class FakeReportsReader(AbstractReportsReader):
     requested owner and months and returns the history it was given (ADR-032, ADR-108).
     """
 
-    def __init__(self, history: NetWorthHistory) -> None:
-        """Initialize the reader with the history every call returns.
+    def __init__(self, history: NetWorthHistory, overview: ReportsOverview | None = None) -> None:
+        """Initialize the reader with the history (and optional overview) every call returns.
 
         Args:
             history: The net-worth history every ``net_worth_history`` call returns.
+            overview: The overview every ``overview`` call returns; required for the
+                overview route tests (ADR-167) and unused by the history tests.
         """
         self._history = history
+        self._overview = overview
         self.requested_user_id: str | None = None
         self.requested_months: int | None = None
+        self.requested_range: str | None = None
+        self.requested_currency: Currency | None = None
+
+    async def overview(
+        self,
+        user_id: str,
+        *,
+        range_key: str,
+        currency: Currency = Currency.ARS,
+    ) -> ReportsOverview:
+        """Record the owner, range and currency and return the canned overview (ADR-108, ADR-167)."""
+        self.requested_user_id = user_id
+        self.requested_range = range_key
+        self.requested_currency = currency
+        assert self._overview is not None  # the overview tests always seed one.
+        return self._overview
 
     async def net_worth_history(self, user_id: str, *, months: int = 12) -> NetWorthHistory:
         """Record the requested owner and months and return the canned history (ADR-108)."""
