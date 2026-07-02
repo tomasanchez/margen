@@ -28,6 +28,7 @@ from margen_api.adapters.queries import (
     SqlAlchemySummaryReader,
     SqlAlchemyTransactionReader,
 )
+from margen_api.adapters.reports_queries import SqlAlchemyReportsReader
 from margen_api.adapters.statement_store import SqlAlchemyStatementStore
 from margen_api.adapters.transfer_queries import SqlAlchemyTransferReader
 from margen_api.bootstrap import ApplicationContainer
@@ -40,6 +41,7 @@ from margen_api.service_layer.institution_reader import AbstractInstitutionReade
 from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.monotributo_reader import AbstractMonotributoReader
 from margen_api.service_layer.reader import AbstractTransactionReader
+from margen_api.service_layer.reports_reader import AbstractReportsReader
 from margen_api.service_layer.settings_reader import AbstractSettingsReader
 from margen_api.service_layer.statement_store import AbstractStatementStore
 from margen_api.service_layer.summary_reader import AbstractSummaryReader
@@ -451,3 +453,20 @@ async def get_budget_income_reader(container: Container) -> AsyncIterator[Abstra
 
 
 BudgetIncomeReader = Annotated[AbstractBudgetIncomeReader, Depends(get_budget_income_reader)]
+
+
+async def get_reports_reader(container: Container) -> AsyncIterator[AbstractReportsReader]:
+    """Yield a reports reader over a request-scoped read-only session (ADR-164).
+
+    Query paths bypass the unit of work by design (ADR-028); the session opened here
+    is closed when the request finishes. The reports reader is read-only — it serves
+    the net-worth history series and never mutates state.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemyReportsReader(session)
+    finally:
+        await session.close()
+
+
+ReportsReader = Annotated[AbstractReportsReader, Depends(get_reports_reader)]
