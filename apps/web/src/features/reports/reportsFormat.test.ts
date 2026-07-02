@@ -8,6 +8,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   deltaIsGood,
+  hasTrendHistory,
   pctChange,
   rangeMonths,
   sparklinePoints,
@@ -84,5 +85,27 @@ describe('sparklinePoints', () => {
   test('returns empty for a series too short to draw a line', () => {
     expect(sparklinePoints([])).toBe('')
     expect(sparklinePoints([42])).toBe('')
+  })
+})
+
+describe('hasTrendHistory', () => {
+  test('a single non-zero month is not enough history', () => {
+    // The one-month case the backend emits: spend only in the 5th slot.
+    expect(hasTrendHistory([0, 0, 0, 0, 624, 0])).toBe(false)
+  })
+
+  test('two or more non-zero months count as real history', () => {
+    expect(hasTrendHistory([0, 0, 0, 0, 600, 624])).toBe(true)
+    expect(hasTrendHistory([512, 540, 560, 580, 600, 624])).toBe(true)
+  })
+
+  test('an all-zero (or empty) series has no history', () => {
+    expect(hasTrendHistory([0, 0, 0, 0, 0, 0])).toBe(false)
+    expect(hasTrendHistory([])).toBe(false)
+  })
+
+  test('ignores non-finite and non-positive values', () => {
+    expect(hasTrendHistory([Number.NaN, -5, 0, 624])).toBe(false)
+    expect(hasTrendHistory([Number.POSITIVE_INFINITY, 600, 624])).toBe(true)
   })
 })

@@ -21,7 +21,12 @@ import { formatCurrency, formatDelta } from '../../lib/format'
 import { categoryLabel } from '../transactions/presentation'
 import type { Category, Currency } from '../../mock/types'
 import type { CategoryTrend } from '../../api/reportsClient'
-import { categorySparkline, trendDirection, type TrendDirection } from './reportsFormat'
+import {
+  categorySparkline,
+  hasTrendHistory,
+  trendDirection,
+  type TrendDirection,
+} from './reportsFormat'
 
 /** Grid template shared by the header + rows (category / total / spark / delta). */
 const GRID_COLUMNS = '1.4fr 1fr 78px 80px'
@@ -84,14 +89,22 @@ function TrendRow({
   const { t } = useTranslation('reports')
   const direction = trendDirection(trend.deltaPct)
   const color = directionColor(direction)
-  const points = categorySparkline(trend)
+  // Draw the sparkline ONLY when there's enough real history; otherwise a single
+  // month makes every category share the same misleading tent shape.
+  const points = hasTrendHistory(trend.series) ? categorySparkline(trend) : ''
 
-  const deltaLabel =
-    direction === 'flat' || trend.deltaPct == null
+  // "No previous window to compare against" is NOT the same as "unchanged":
+  //   deltaPct == null → muted "—" (no prior data), never a trend colour.
+  //   deltaPct === 0   → "flat".
+  //   otherwise        → the signed percent (deltaPct is already a PERCENTAGE,
+  //                      −6 = −6%, no scaling).
+  const hasPrior = trend.deltaPct != null
+  const deltaColor = hasPrior ? color : 'var(--mg-text-3)'
+  const deltaLabel = !hasPrior
+    ? t('categoryTrends.noPrior')
+    : direction === 'flat'
       ? t('categoryTrends.flat')
-      : // deltaPct arrives already as a PERCENTAGE (−6 = −6%); render as a
-        // signed whole percent with no scaling.
-        formatDelta(trend.deltaPct, 0)
+      : formatDelta(trend.deltaPct as number, 0)
 
   return (
     <Box
@@ -156,10 +169,21 @@ function TrendRow({
           fontFamily: monoFontFamily,
           fontSize: 13,
           textAlign: 'right',
-          color,
+          color: deltaColor,
         }}
       >
-        {deltaLabel}
+        {hasPrior ? (
+          deltaLabel
+        ) : (
+          <>
+            <Box aria-hidden component="span">
+              {deltaLabel}
+            </Box>
+            <Box component="span" sx={visuallyHidden}>
+              {t('categoryTrends.noPriorAria')}
+            </Box>
+          </>
+        )}
       </Box>
     </Box>
   )

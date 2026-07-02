@@ -38,6 +38,8 @@
     "colDelta": "vs prev",
     "share": "{{share}}% of spend",
     "flat": "flat",
+    "noPrior": "—",
+    "noPriorAria": "no prior data",
     "empty": "No spending recorded for this range yet.",
     "accessibleItem": "{{category}}: {{total}}",
     "accessibleSummary": "Category totals: {{summary}}."

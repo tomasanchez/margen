@@ -38,6 +38,8 @@
     "colDelta": "vs ant.",
     "share": "{{share}}% del gasto",
     "flat": "estable",
+    "noPrior": "—",
+    "noPriorAria": "sin datos previos",
     "empty": "Todavía no hay gastos registrados en este rango.",
     "accessibleItem": "{{category}}: {{total}}",
     "accessibleSummary": "Totales por categoría: {{summary}}."

@@ -91,3 +91,18 @@ export function sparklinePoints(
 export function categorySparkline(trend: CategoryTrend): string {
   return sparklinePoints(trend.series)
 }
+
+/**
+ * Whether a trailing series carries enough real history to draw an HONEST
+ * sparkline. With spend in only one month the backend series looks like
+ * `[0,0,0,0,X,0]`, which normalises to the same tent shape for EVERY category —
+ * a misleading placeholder. We require at least TWO finite, positive months so
+ * the drawn line reflects an actual movement, not a single spike. Callers omit
+ * the polyline (rendering a muted "—") when this is false.
+ */
+export function hasTrendHistory(series: number[]): boolean {
+  const meaningful = series.filter(
+    (value) => Number.isFinite(value) && value > 0,
+  )
+  return meaningful.length >= 2
+}

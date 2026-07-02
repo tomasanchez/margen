@@ -4,9 +4,10 @@
  * Each row shows the category (+ its share), the total in the requested currency,
  * a 6-month SVG sparkline, and a vs-previous delta. Asserts: a falling category
  * renders its negative delta (the good/green direction), a rising one its
- * positive delta, a null-base category reads "flat", and a category with a
- * multi-point series draws a `<polyline>`. The empty state shows a calm note.
- * English-pinned (ADR-105).
+ * positive delta, a null-base category reads a muted "—" (no prior data — NOT
+ * "flat"), a genuine 0% change reads "flat", a one-month series omits the
+ * polyline, and a real multi-month series draws one. The empty state shows a calm
+ * note. English-pinned (ADR-105).
  */
 
 import { describe, expect, test } from 'vitest'
@@ -42,13 +43,31 @@ const trends: CategoryTrend[] = [
     deltaPct: -6,
   },
   {
+    // A genuine no-change month: two real months, identical spend.
     category: 'Rent',
     total: 720000,
     share: 26,
-    series: [720, 720, 720, 720, 720, 720],
+    series: [0, 0, 0, 0, 720, 720],
+    deltaPct: 0,
+  },
+  {
+    // No previous window to compare against (null base).
+    category: 'Utilities',
+    total: 90000,
+    share: 4,
+    series: [0, 0, 0, 0, 88, 90],
     deltaPct: null,
   },
 ]
+
+/** A category with spend in a single month — the "little history" case. */
+const oneMonthTrend: CategoryTrend = {
+  category: 'Health',
+  total: 45000,
+  share: 5,
+  series: [0, 0, 0, 0, 45, 0],
+  deltaPct: null,
+}
 
 describe('<CategoryTrends>', () => {
   test('renders a row per category with total + share', () => {
@@ -56,8 +75,8 @@ describe('<CategoryTrends>', () => {
 
     expect(screen.getByText('ARS 624.000')).toBeInTheDocument()
     expect(screen.getByText('22% of spend')).toBeInTheDocument()
-    // One sparkline polyline per category with a drawable (≥2-point) series.
-    expect(container.querySelectorAll('polyline')).toHaveLength(3)
+    // One polyline per category with real (≥2 non-zero month) history.
+    expect(container.querySelectorAll('polyline')).toHaveLength(4)
   })
 
   test('a rising category shows a positive vs-prev delta (amber direction)', () => {
@@ -72,9 +91,24 @@ describe('<CategoryTrends>', () => {
     expect(screen.getByText('−6%')).toBeInTheDocument()
   })
 
-  test('a null-base category reads "flat"', () => {
+  test('a genuine 0% change reads "flat"', () => {
     renderTrends(trends)
     expect(screen.getByText('flat')).toBeInTheDocument()
+  })
+
+  test('a null-base category reads "no prior data", not "flat"', () => {
+    renderTrends(trends)
+    // The visible glyph is a muted dash; the accessible name is descriptive.
+    expect(screen.queryByText('flat')).not.toBeNull()
+    expect(screen.getByText('no prior data')).toBeInTheDocument()
+  })
+
+  test('a one-month series omits the polyline and shows a muted dash', () => {
+    const { container } = renderTrends([oneMonthTrend])
+    // Not enough history to draw an honest sparkline.
+    expect(container.querySelectorAll('polyline')).toHaveLength(0)
+    // Its trend cell falls back to the muted em/dash placeholder.
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0)
   })
 
   test('shows a calm empty note when there are no trends', () => {
