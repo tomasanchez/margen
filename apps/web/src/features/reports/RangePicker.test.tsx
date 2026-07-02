@@ -5,7 +5,7 @@
  * lives in the URL as `?range=`. These mount the picker bound to the REAL
  * `useReportRange` hook under a memory router registered with
  * `validateReportsSearch`, then assert: selecting a non-default range WRITES
- * `?range=` to the URL; selecting the default 6M CLEARS it (short URL); and the
+ * `?range=` to the URL; selecting the default 3M CLEARS it (short URL); and the
  * initial `?range=` in the URL drives the active segment. English-pinned (ADR-105).
  */
 
@@ -58,9 +58,9 @@ function renderPicker(initialEntry = '/reports') {
 }
 
 describe('RangePicker URL wiring', () => {
-  test('defaults to 6M with no range in the URL', async () => {
+  test('defaults to 3M with no range in the URL', async () => {
     renderPicker('/reports')
-    expect(await screen.findByTestId('active')).toHaveTextContent('6M')
+    expect(await screen.findByTestId('active')).toHaveTextContent('3M')
   })
 
   test('selecting a non-default range writes ?range= to the URL', async () => {
@@ -77,13 +77,13 @@ describe('RangePicker URL wiring', () => {
     expect(screen.getByTestId('active')).toHaveTextContent('12M')
   })
 
-  test('selecting the default 6M clears the range from the URL (short URL)', async () => {
-    const router = renderPicker('/reports?range=3M')
+  test('selecting the default 3M clears the range from the URL (short URL)', async () => {
+    const router = renderPicker('/reports?range=6M')
     await waitFor(() =>
-      expect(screen.getByTestId('active')).toHaveTextContent('3M'),
+      expect(screen.getByTestId('active')).toHaveTextContent('6M'),
     )
 
-    await userEvent.click(screen.getByRole('button', { name: '6M' }))
+    await userEvent.click(screen.getByRole('button', { name: '3M' }))
 
     await waitFor(() =>
       expect(
