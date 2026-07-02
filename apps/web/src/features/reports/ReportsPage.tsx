@@ -30,9 +30,10 @@ import { MonthSwitcher } from '../../components/MonthSwitcher'
 import { currentViewingMonth, type ViewingMonth } from '../../components/months'
 import { toYearMonth } from '../home/queries'
 import { useSummary } from '../home/queries'
-import { useBudgets } from '../budgets/queries'
+import { useBudgets, useBudgetIncome } from '../budgets/queries'
 import { usePreferredRate } from '../budgets/queries'
 import { useSettings } from '../settings/queries'
+import { useDisplayCurrency } from '../settings/displayCurrencyContext'
 import { useNetWorthHistory } from './queries'
 import { SpendingTrendChart } from './SpendingTrendChart'
 import { CategoryTable } from './CategoryTable'
@@ -40,6 +41,7 @@ import { NetWorthChart } from './NetWorthChart'
 import { BudgetVsActualTable } from './BudgetVsActualTable'
 import { ExportButtons } from './ExportButtons'
 import type { DisplayCurrency } from '../../api/settingsClient'
+import type { Currency } from '../../mock/types'
 
 /** The net-worth history window: the last 12 months, ending at the current month. */
 const HISTORY_MONTHS = 12
@@ -73,7 +75,17 @@ export function ReportsPage({
   // Reused readers (ADR-163): the summaries + budgets clients already power Home
   // and the Budgets page; the Reports panels consume the same cache.
   const summaryQuery = useSummary(month)
-  const budgetsQuery = useBudgets(yearMonth)
+
+  // The budget is denominated in the INCOME's currency (ADR-156), NOT the ARS
+  // default nor a live-rate display conversion. Mirror the Budgets page EXACTLY
+  // (BudgetsPage.tsx): derive the currency from the income (falling back to the
+  // preferred display currency until an income is set), then thread it through
+  // `useBudgets` so target/spent/remaining all arrive in the same currency and
+  // reconcile with the Budgets page for the same month.
+  const { preferredCurrency } = useDisplayCurrency()
+  const incomeQuery = useBudgetIncome(yearMonth)
+  const budgetCurrency: Currency = incomeQuery.data?.currency ?? preferredCurrency
+  const budgetsQuery = useBudgets(yearMonth, budgetCurrency)
 
   // The net-worth history (ADR-164) + the SAME live rate the snapshot uses
   // (preferred-rate source, ADR-151), so the converted "current" point matches
