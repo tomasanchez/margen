@@ -16,7 +16,7 @@ from uuid import UUID
 from pydantic import Field
 
 from margen_api.domain.messages import Command, Message
-from margen_api.domain.models.value_objects import Currency, FxRateType, Kind
+from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, RecurringCadence
 
 
 class TransactionDocumentPayload(Message):
@@ -96,6 +96,9 @@ class CreateTransaction(Command):
     card: str | None = None
     notes: str | None = None
     recurring: bool = False
+    recurring_cadence: RecurringCadence | None = None
+    installments_total: int | None = None
+    installments_index: int | None = None
     counts_toward_monotributo: bool = False
     account_id: UUID | None = None
     offsets_transaction_id: UUID | None = None
@@ -129,6 +132,9 @@ class UpdateTransaction(Command):
     payment_method: str | None = None
     notes: str | None = None
     recurring: bool | None = None
+    recurring_cadence: RecurringCadence | None = None
+    installments_total: int | None = None
+    installments_index: int | None = None
     counts_toward_monotributo: bool | None = None
     account_id: UUID | None = None
 

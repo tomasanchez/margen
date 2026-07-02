@@ -17,6 +17,7 @@ import pytest
 from margen_api.domain.models.exceptions import (
     EmptyNameError,
     InvalidAmountError,
+    InvalidInstallmentError,
     UnknownCurrencyError,
     UnknownKindError,
 )
@@ -25,7 +26,7 @@ from margen_api.domain.models.transaction import (
     build_transaction,
     materialize_usd_amount,
 )
-from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
+from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, RecurringCadence, TxType
 
 A_DATE = date(2026, 6, 12)
 
@@ -560,3 +561,107 @@ class TestReimbursementKind:
 
         # THEN
         assert transaction.counts_toward_monotributo is False
+
+
+class TestForecastScheduleFields:
+    """The forecast schedule block is optional and lightly validated (ADR-174)."""
+
+    async def test_defaults_are_none(self):
+        """
+        GIVEN a plain expense with no schedule fields
+        WHEN the transaction is built
+        THEN the cadence and instalment fields default to None
+        """
+        # WHEN
+        transaction = _build()
+
+        # THEN
+        assert transaction.recurring_cadence is None
+        assert transaction.installments_total is None
+        assert transaction.installments_index is None
+
+    @pytest.mark.parametrize(
+        ("supplied", "expected"),
+        [
+            ("monthly", RecurringCadence.MONTHLY),
+            ("quarterly", RecurringCadence.QUARTERLY),
+            ("annual", RecurringCadence.ANNUAL),
+            ("installment", RecurringCadence.INSTALLMENT),
+            (RecurringCadence.MONTHLY, RecurringCadence.MONTHLY),
+        ],
+    )
+    async def test_known_cadence_is_parsed(self, supplied: object, expected: RecurringCadence):
+        """
+        GIVEN a known cadence token or member
+        WHEN the transaction is built
+        THEN it is coerced to the matching RecurringCadence member
+        """
+        # WHEN
+        transaction = _build(recurring_cadence=supplied)
+
+        # THEN
+        assert transaction.recurring_cadence is expected
+
+    async def test_unknown_cadence_normalizes_to_none(self):
+        """
+        GIVEN an unrecognized cadence token
+        WHEN the transaction is built
+        THEN it normalizes to None (lenient, ADR-031) rather than raising
+        """
+        # WHEN
+        transaction = _build(recurring_cadence="fortnightly")
+
+        # THEN
+        assert transaction.recurring_cadence is None
+
+    async def test_valid_installment_pair_is_accepted(self):
+        """
+        GIVEN a consistent instalment pair (index 2 of total 6)
+        WHEN the transaction is built
+        THEN both figures are kept
+        """
+        # WHEN
+        transaction = _build(recurring_cadence=RecurringCadence.INSTALLMENT, installments_total=6, installments_index=2)
+
+        # THEN
+        assert transaction.installments_total == 6
+        assert transaction.installments_index == 2
+
+    async def test_index_may_equal_total(self):
+        """
+        GIVEN the final instalment (index == total)
+        WHEN the transaction is built
+        THEN it is accepted (the last payment is valid)
+        """
+        # WHEN
+        transaction = _build(installments_total=3, installments_index=3)
+
+        # THEN
+        assert transaction.installments_index == 3
+
+    @pytest.mark.parametrize(
+        ("total", "index"),
+        [(3, 4), (0, 0), (5, 0), (2, -1)],
+    )
+    async def test_inconsistent_installment_pair_is_rejected(self, total: int, index: int):
+        """
+        GIVEN an inconsistent instalment pair (index > total, or a non-positive figure)
+        WHEN the transaction is built
+        THEN InvalidInstallmentError is raised (ADR-174)
+        """
+        # WHEN / THEN
+        with pytest.raises(InvalidInstallmentError):
+            _build(installments_total=total, installments_index=index)
+
+    async def test_lone_installment_figure_is_accepted(self):
+        """
+        GIVEN only one instalment figure (a lone total, no index)
+        WHEN the transaction is built
+        THEN it is accepted — the invariant only fires when BOTH are present (ADR-174)
+        """
+        # WHEN
+        transaction = _build(installments_total=6)
+
+        # THEN
+        assert transaction.installments_total == 6
+        assert transaction.installments_index is None

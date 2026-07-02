@@ -24,10 +24,21 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from margen_api.domain.models.value_objects import Currency
-from margen_api.entrypoint.dependencies import AuthUser, ReportsReader, SummaryReader, TransactionReader
-from margen_api.entrypoint.reports_schemas import NetWorthHistoryResponse, ReportsOverviewResponse
+from margen_api.entrypoint.dependencies import (
+    AuthUser,
+    ForecastReader,
+    ReportsReader,
+    SummaryReader,
+    TransactionReader,
+)
+from margen_api.entrypoint.reports_schemas import (
+    ForecastResponse,
+    NetWorthHistoryResponse,
+    ReportsOverviewResponse,
+)
 from margen_api.entrypoint.schemas import ResponseModel
 from margen_api.service_layer.csv_export import category_summary_csv, transactions_csv
+from margen_api.service_layer.forecast import DEFAULT_HORIZON, MAX_HORIZON, MIN_HORIZON
 from margen_api.service_layer.net_worth_history import DEFAULT_MONTHS, MAX_MONTHS, MIN_MONTHS
 from margen_api.service_layer.reports_overview import ReportsRange
 
@@ -104,6 +115,51 @@ async def overview(
     """
     model = await reader.overview(user.id, range_key=range_.value, currency=currency)
     return ResponseModel(data=ReportsOverviewResponse.from_read_model(model))
+
+
+@router.get(
+    "/forecast",
+    name="Cash-flow forecast",
+    status_code=status.HTTP_200_OK,
+    response_model=ResponseModel[ForecastResponse],
+)
+async def forecast(
+    reader: ForecastReader,
+    user: AuthUser,
+    horizon: Annotated[
+        int,
+        Query(
+            ge=MIN_HORIZON,
+            le=MAX_HORIZON,
+            description="Number of forward months to project (1..12, default 6). Starts the month AFTER this one.",
+            examples=[6],
+        ),
+    ] = DEFAULT_HORIZON,
+    currency: Annotated[
+        Currency,
+        Query(description="The denomination currency: 'ARS' (default) or 'USD' (ADR-168)."),
+    ] = Currency.ARS,
+) -> ResponseModel[ForecastResponse]:
+    """Return the caller's schedule/commitment-driven cash-flow forecast (ADR-176, ADR-177, ADR-131).
+
+    Projects a forward per-month series over ``horizon`` months (starting the month
+    AFTER the current month) of COMMITTED outflows only (v1: no discretionary band, no
+    projected income): flagged recurring subscription streams repeated on their cadence,
+    instalment tails (remaining cuotas), and the configured monotributo monthly cuota as
+    a committed AFIP-ARS tax outflow in every month (ADR-177). A stream projects only
+    into months strictly after its latest actual occurrence, so actuals own the past and
+    projection owns the future (no double-count, ADR-176).
+
+    Every figure is denominated in ``currency`` (ADR-168): ``ARS`` sums the authoritative
+    ``amount``; ``USD`` sums the ``usd_amount`` snapshot, excludes committed rows that
+    lack one and surfaces their count as ``unconverted`` so a USD total is never silently
+    understated (ADR-152). The monotributo cuota is AFIP-ARS and is included at its ARS
+    value on both paths (ADR-177). The forecast is scoped to ``user.id`` so a caller only
+    sees their own commitments (ADR-108, ADR-131). An out-of-range ``horizon`` or
+    out-of-set ``currency`` is rejected with ``422`` at boundary validation.
+    """
+    model = await reader.forecast(user.id, horizon=horizon, currency=currency)
+    return ResponseModel(data=ForecastResponse.from_read_model(model))
 
 
 @router.get(

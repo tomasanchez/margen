@@ -32,7 +32,7 @@ from margen_api.domain.commands.statement import (
     StatementLineResolution,
 )
 from margen_api.domain.models.transaction import build_transaction
-from margen_api.domain.models.value_objects import Currency, Kind
+from margen_api.domain.models.value_objects import Currency, Kind, RecurringCadence
 from margen_api.service_layer.handlers import import_statement
 
 pytestmark = pytest.mark.integration
@@ -313,3 +313,79 @@ class TestImportStatementMerge:
 
         # THEN — exactly one transaction row exists: the merge did not create a duplicate.
         assert row_count == 1
+
+
+class TestImportStatementInstallmentRecovery:
+    """A recovered cuota persists the instalment forecast fields through real columns (ADR-175).
+
+    Guards the cuota-recovery path (ADR-175/176) against a real database: an import line
+    carrying structured ``installments_total`` / ``installments_index`` must persist as an
+    EXPENSE stamped with ``recurring_cadence='installment'`` and both figures, round-tripping
+    the new nullable ``VARCHAR``/``INTEGER`` columns; a line with no instalment marker keeps
+    NULLs. The mocked SQLite tier cannot prove the real-column round-trip.
+    """
+
+    async def test_installment_line_persists_forecast_schedule_fields(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN an import with an instalment line (recovered cuota 2/6) and a plain line
+        WHEN the real handler runs against PostgreSQL in one unit of work
+        THEN the instalment expense persists recurring_cadence='installment' with the
+             recovered total/index, and the plain line carries no cadence (ADR-175)
+        """
+        # GIVEN
+        pdf_bytes = b"%PDF-1.4 installment statement"
+        command = ImportStatement(
+            user_id=A_USER,
+            document=StatementDocumentPayload(
+                pdf_bytes=pdf_bytes,
+                content_type="application/pdf",
+                byte_size=len(pdf_bytes),
+                bank_name="Galicia",
+                network="VISA",
+                card_last4="5771",
+                issuer_cuit="30-50000173-5",
+                statement_number="VI00000000069436999",
+            ),
+            lines=[
+                StatementLineInput(
+                    occurred_on=date(2026, 6, 19),
+                    name="Fridge 6 cuotas",
+                    amount=Decimal("5000.00"),
+                    currency=Currency.ARS,
+                    category="Home",
+                    notes="Cuota 2/6",
+                    installments_total=6,
+                    installments_index=2,
+                ),
+                StatementLineInput(
+                    occurred_on=date(2026, 6, 19),
+                    name="Coffee",
+                    amount=Decimal("700.00"),
+                    currency=Currency.ARS,
+                ),
+            ],
+        )
+
+        # WHEN
+        result = await import_statement(command, SqlAlchemyUnitOfWork(session_factory))
+
+        # THEN — both rows persisted; the instalment fields round-trip through real columns.
+        assert len(result.created_transaction_ids) == 2
+        async with session_factory() as session:
+            repository = SqlAlchemyTransactionRepository(session)
+            loaded = {
+                transaction.name: transaction
+                for transaction_id in result.created_transaction_ids
+                if (transaction := await repository.get(transaction_id, A_USER)) is not None
+            }
+
+        fridge = loaded["Fridge 6 cuotas"]
+        assert fridge.recurring_cadence is RecurringCadence.INSTALLMENT
+        assert fridge.installments_total == 6
+        assert fridge.installments_index == 2
+        coffee = loaded["Coffee"]
+        assert coffee.recurring_cadence is None
+        assert coffee.installments_total is None
+        assert coffee.installments_index is None

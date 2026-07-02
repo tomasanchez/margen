@@ -92,6 +92,58 @@ class Currency(StrEnum):
             raise UnknownCurrencyError(value) from exc
 
 
+class RecurringCadence(StrEnum):
+    """How often a recurring / committed outflow repeats (ADR-174, ADR-176).
+
+    A tolerant, OPTIONAL classifier on the transaction aggregate that drives the
+    cash-flow forecast (ADR-176). ``monthly`` / ``quarterly`` / ``annual`` describe a
+    subscription-style recurring stream's period; ``installment`` marks one payment of
+    a fixed-length instalment plan (a "cuota N/M") whose remaining payments the
+    forecast projects forward. The field is nullable everywhere: an unset cadence — the
+    common case — simply carries ``None`` (ADR-174), so :meth:`parse` returns ``None``
+    for a null or unknown token rather than raising, keeping the classifier lenient
+    (ADR-031).
+
+    Attributes:
+        MONTHLY: Repeats every calendar month (e.g. a streaming subscription, rent).
+        QUARTERLY: Repeats every three calendar months.
+        ANNUAL: Repeats once per calendar year.
+        INSTALLMENT: One payment of a fixed-length instalment plan (a cuota N/M);
+            the remaining payments are projected on a monthly cadence (ADR-176).
+    """
+
+    MONTHLY = "monthly"
+    QUARTERLY = "quarterly"
+    ANNUAL = "annual"
+    INSTALLMENT = "installment"
+
+    @classmethod
+    def parse(cls, value: object) -> RecurringCadence | None:
+        """Coerce a value to a ``RecurringCadence``, or ``None`` when absent/unknown.
+
+        Lenient by design (ADR-031, ADR-174): the cadence is an optional hint, so an
+        unset (``None``) or unrecognized token yields ``None`` rather than raising —
+        the row is accepted as "no cadence" and simply omitted from the schedule-driven
+        forecast projection.
+
+        Args:
+            value: A ``RecurringCadence`` member, a string such as ``"monthly"``, or
+                ``None``.
+
+        Returns:
+            The matching member, or ``None`` when ``value`` is ``None`` or not one of
+            the known cadences.
+        """
+        if value is None:
+            return None
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(value)
+        except ValueError:
+            return None
+
+
 class InstitutionType(StrEnum):
     """The kind of financial institution in the net-worth model (ADR-122, ADR-134).
 

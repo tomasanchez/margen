@@ -14,7 +14,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
+from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, RecurringCadence, TxType
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +40,10 @@ class TransactionReadModel:
             ``None`` when there is no card (ADR-117).
         notes: Free-form optional note, distinct from ``name`` (ADR-024).
         recurring: Whether the movement repeats.
+        recurring_cadence: How often a committed outflow repeats (``monthly`` /
+            ``quarterly`` / ``annual`` / ``installment``), else ``None`` (ADR-174).
+        installments_total: The instalment plan's total payments, else ``None`` (ADR-174).
+        installments_index: This payment's 1-based position in the plan, else ``None`` (ADR-174).
         counts_toward_monotributo: Monotributo counting hint.
         statement_document_id: Link to the source statement document for an imported
             credit-card expense, else ``None`` for a manually-entered transaction.
@@ -71,6 +75,9 @@ class TransactionReadModel:
     card: str | None
     notes: str | None
     recurring: bool
+    recurring_cadence: RecurringCadence | None
+    installments_total: int | None
+    installments_index: int | None
     counts_toward_monotributo: bool
     statement_document_id: UUID | None
     account_id: UUID | None

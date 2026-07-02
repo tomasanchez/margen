@@ -32,6 +32,26 @@ class EmptyNameError(TransactionError):
         super().__init__("name must be a non-empty display label")
 
 
+class InvalidInstallmentError(TransactionError):
+    """Raised when an instalment index/total pair is inconsistent (ADR-174).
+
+    An instalment marker is ``N/M`` — the ``N``-th of ``M`` payments — so both figures
+    must be positive and ``N`` may not exceed ``M`` (ADR-174). Any other combination is
+    a true invariant violation the boundary maps to ``422`` (ADR-031). Absent (both
+    ``None``) is fine — the fields are optional; the mismatch only fires when at least
+    one is present and the pair is invalid. The carried ``index``/``total`` let the
+    entrypoint build a meaningful message.
+    """
+
+    def __init__(self, index: object, total: object) -> None:
+        self.index = index
+        self.total = total
+        super().__init__(
+            f"invalid instalment marker: index {index!r} of total {total!r} "
+            "(both must be positive and index must not exceed total)"
+        )
+
+
 class UnknownKindError(TransactionError):
     """Raised when a transaction kind is not one of the known kinds."""
 

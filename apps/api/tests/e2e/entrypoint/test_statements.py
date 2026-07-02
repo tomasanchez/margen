@@ -540,6 +540,14 @@ class TestImportStatement:
         assert imported["MERPAGO*PASSLINE"]["notes"] == "Compra 20-03-26 · Cuota 03/03"
         assert imported["Express Av Cordoba 3721"]["notes"] == "Compra 08-05-26"
 
+        # AND — the parsed cuota "03/03" is recovered as structured instalment fields so
+        # the forecast can project the tail; a non-cuota line carries no cadence (ADR-175).
+        assert imported["MERPAGO*PASSLINE"]["recurringCadence"] == "installment"
+        assert imported["MERPAGO*PASSLINE"]["installmentsTotal"] == 3
+        assert imported["MERPAGO*PASSLINE"]["installmentsIndex"] == 3
+        assert imported["Express Av Cordoba 3721"]["recurringCadence"] is None
+        assert imported["Express Av Cordoba 3721"]["installmentsTotal"] is None
+
         # THEN — the document is reachable through the shared statement document id.
         download = await test_client.get(f"{STATEMENTS}/{statement_document_id}/document")
         assert download.status_code == status.HTTP_200_OK
@@ -586,6 +594,60 @@ class TestImportStatement:
         listed = (await test_client.get(TRANSACTIONS)).json()["data"]
         row = next(line for line in listed if line["name"] == "MERPAGO*PASSLINE")
         assert row["notes"] == expected_notes
+
+    @pytest.mark.parametrize(
+        ("cuota", "expected_cadence", "expected_total", "expected_index"),
+        [
+            # A well-formed marker is recovered as structured instalment fields (ADR-175).
+            ("2/6", "installment", 6, 2),
+            # A padded marker parses just the same.
+            ("03/03", "installment", 3, 3),
+            # Malformed markers are ignored — no cadence, no instalment fields (ADR-175).
+            ("weird", None, None, None),
+            ("3/3/3", None, None, None),
+            ("x/6", None, None, None),
+            ("0/6", None, None, None),  # non-positive index.
+            ("7/6", None, None, None),  # index exceeds total.
+        ],
+    )
+    async def test_import_recovers_or_ignores_cuota(
+        self,
+        test_client: httpx.AsyncClient,
+        cuota: str,
+        expected_cadence: str | None,
+        expected_total: int | None,
+        expected_index: int | None,
+    ):
+        """
+        GIVEN an imported line carrying a well-formed or malformed cuota marker
+        WHEN the import endpoint is posted
+        THEN a well-formed marker is recovered as recurringCadence='installment' with the
+             parsed total/index, and a malformed marker is ignored (no cadence) (ADR-175)
+        """
+        # GIVEN
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        body = _import_body(
+            pdf_base64=encoded,
+            lines=[
+                {
+                    "occurredOn": "2026-06-19",
+                    "name": "Fridge plan",
+                    "amount": "5000.00",
+                    "currency": "ARS",
+                    "cuota": cuota,
+                }
+            ],
+        )
+
+        # WHEN
+        await test_client.post(f"{STATEMENTS}/import", json=body)
+
+        # THEN
+        listed = (await test_client.get(TRANSACTIONS)).json()["data"]
+        row = next(line for line in listed if line["name"] == "Fridge plan")
+        assert row["recurringCadence"] == expected_cadence
+        assert row["installmentsTotal"] == expected_total
+        assert row["installmentsIndex"] == expected_index
 
     async def test_explicit_note_is_preserved_over_the_composed_one(self, test_client: httpx.AsyncClient):
         """

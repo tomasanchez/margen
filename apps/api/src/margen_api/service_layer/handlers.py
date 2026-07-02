@@ -38,7 +38,7 @@ from margen_api.domain.models.transaction import (
     build_transaction,
     materialize_usd_amount,
 )
-from margen_api.domain.models.value_objects import Kind
+from margen_api.domain.models.value_objects import Kind, RecurringCadence
 from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
 
 # Mutable fields a patch may carry; ``None`` in the command means "leave
@@ -58,6 +58,9 @@ _PATCHABLE_FIELDS = (
     "payment_method",
     "notes",
     "recurring",
+    "recurring_cadence",
+    "installments_total",
+    "installments_index",
     "counts_toward_monotributo",
     "account_id",
 )
@@ -162,6 +165,9 @@ async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork
         card=command.card,
         notes=command.notes,
         recurring=command.recurring,
+        recurring_cadence=command.recurring_cadence,
+        installments_total=command.installments_total,
+        installments_index=command.installments_index,
         counts_toward_monotributo=command.counts_toward_monotributo,
         account_id=command.account_id,
         offsets_transaction_id=command.offsets_transaction_id,
@@ -286,7 +292,11 @@ def _create_statement_line(
     Builds the aggregate through the domain factory so invariants run (ADR-031),
     injecting a generated identity and the shared ``now`` timestamps (ADR-026), and
     links it to the saved statement document. The aggregate is stamped with
-    ``user_id`` so an imported row is owned exactly like a manual one (ADR-108).
+    ``user_id`` so an imported row is owned exactly like a manual one (ADR-108). When
+    the parser recovered a cuota ``N/M`` (ADR-175), the created expense is stamped with
+    ``recurring_cadence='installment'`` plus the recovered total/index so the forecast
+    can project the plan's remaining payments (ADR-176); a line without a recovered
+    cuota carries no cadence.
 
     Args:
         uow: The unit of work whose repository stages the new aggregate.
@@ -298,6 +308,9 @@ def _create_statement_line(
     Returns:
         The generated identity of the staged transaction.
     """
+    # A recovered instalment marker classifies the row for the forecast (ADR-175/176);
+    # a line with no structured cuota carries no cadence and is a plain one-off expense.
+    cadence = RecurringCadence.INSTALLMENT if line.installments_total is not None else None
     transaction = build_transaction(
         transaction_id=uuid4(),
         created_at=now,
@@ -316,6 +329,9 @@ def _create_statement_line(
         payment_method=line.payment_method,
         card=line.card,
         notes=line.notes,
+        recurring_cadence=cadence,
+        installments_total=line.installments_total,
+        installments_index=line.installments_index,
         statement_document_id=document_id,
         user_id=user_id,
     )

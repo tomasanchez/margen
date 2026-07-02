@@ -19,6 +19,12 @@ from decimal import Decimal
 from pydantic import Field
 
 from margen_api.entrypoint.schemas import CamelCaseModel
+from margen_api.service_layer.forecast_read_models import (
+    CommitmentLine,
+    CommitmentSource,
+    ForecastMonth,
+    ForecastSeries,
+)
 from margen_api.service_layer.reports_overview_read_models import (
     CashFlowPoint,
     CategoryTrend,
@@ -190,5 +196,72 @@ class ReportsOverviewResponse(CamelCaseModel):
             cash_flow=[CashFlowPointResponse.from_read_model(point) for point in model.cash_flow],
             category_trends=[CategoryTrendResponse.from_read_model(trend) for trend in model.category_trends],
             fx_summary=FxSummaryResponse.from_read_model(model.fx_summary),
+            unconverted=model.unconverted,
+        )
+
+
+class ForecastMonthResponse(CamelCaseModel):
+    """One forecast month's committed outflow total in the requested currency (ADR-176)."""
+
+    month: str = Field(description="Calendar month as 'YYYY-MM'.")
+    committed: Decimal = Field(description="SUM of committed outflows this month in the requested currency.")
+    total: Decimal = Field(description="Total projected outflow this month; equals committed in v1 (ADR-176).")
+    confidence: str = Field(description="'committed' when the figure is entirely committed outflows (ADR-176).")
+
+    @classmethod
+    def from_read_model(cls, model: ForecastMonth) -> ForecastMonthResponse:
+        """Build the forecast-month response from a read model."""
+        return cls(month=model.month, committed=model.committed, total=model.total, confidence=model.confidence)
+
+
+class CommitmentLineResponse(CamelCaseModel):
+    """One committed outflow stream projected across the horizon (ADR-176, ADR-177)."""
+
+    source: CommitmentSource = Field(description="'subscription', 'installment' or 'tax'.")
+    label: str = Field(description="Human label for the stream (transaction name, or the tax label).")
+    amount: Decimal = Field(description="Per-occurrence committed amount in the requested currency.")
+    currency: str = Field(description="The denomination the amount is expressed in (ARS / USD).")
+    months: list[str] = Field(description="Horizon months (YYYY-MM, oldest-first) this stream lands a payment in.")
+    remaining_count: int | None = Field(
+        default=None,
+        description="For an instalment tail, the number of payments still to come; null otherwise (ADR-176).",
+    )
+
+    @classmethod
+    def from_read_model(cls, model: CommitmentLine) -> CommitmentLineResponse:
+        """Build the commitment-line response from a read model."""
+        return cls(
+            source=model.source,
+            label=model.label,
+            amount=model.amount,
+            currency=model.currency,
+            months=list(model.months),
+            remaining_count=model.remaining_count,
+        )
+
+
+class ForecastResponse(CamelCaseModel):
+    """The full schedule/commitment-driven cash-flow forecast payload (ADR-176, ADR-177)."""
+
+    horizon: int = Field(description="The number of forward months projected (clamped 1..12; default 6).")
+    currency: str = Field(description="The denomination currency (ARS / USD), echoed back.")
+    months: list[ForecastMonthResponse] = Field(
+        description="Oldest-first per-month committed-outflow series, starting the month AFTER the current month.",
+    )
+    commitments: list[CommitmentLineResponse] = Field(
+        description="The distinct committed streams (subscriptions, instalment tails, monotributo cuota).",
+    )
+    unconverted: int = Field(
+        description="Count of committed rows excluded from a USD denomination for lacking a snapshot; 0 on ARS.",
+    )
+
+    @classmethod
+    def from_read_model(cls, model: ForecastSeries) -> ForecastResponse:
+        """Build the forecast response from a read model (ADR-030)."""
+        return cls(
+            horizon=model.horizon,
+            currency=model.currency,
+            months=[ForecastMonthResponse.from_read_model(month) for month in model.months],
+            commitments=[CommitmentLineResponse.from_read_model(line) for line in model.commitments],
             unconverted=model.unconverted,
         )

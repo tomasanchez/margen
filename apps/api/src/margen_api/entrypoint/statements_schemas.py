@@ -47,6 +47,39 @@ _PURCHASE_NOTE_PREFIX = "Compra "
 _NOTE_SEPARATOR = " · "
 
 
+def _parse_cuota(cuota: str | None) -> tuple[int | None, int | None]:
+    """Parse an installment marker ``"N/M"`` into ``(index, total)`` defensively (ADR-175).
+
+    The parser extracts a cuota cell such as ``"03/03"``; this recovers the numeric
+    ``(index, total)`` so an imported instalment expense can be stamped with
+    ``recurring_cadence='installment'`` and its remaining payments projected by the
+    forecast (ADR-176). Parsing is deliberately lenient (ADR-031): a ``None`` marker,
+    a marker that is not exactly two slash-separated integers, or an inconsistent pair
+    (non-positive, or ``index > total``) yields ``(None, None)`` so a malformed cuota
+    is simply ignored rather than rejecting the import.
+
+    Args:
+        cuota: The parsed installment marker such as ``"3/3"`` / ``"03/06"``, or ``None``.
+
+    Returns:
+        The ``(index, total)`` pair when the marker is a well-formed, consistent
+        ``N/M``; ``(None, None)`` otherwise.
+    """
+    if cuota is None:
+        return None, None
+    parts = cuota.split("/")
+    if len(parts) != 2:
+        return None, None
+    try:
+        index = int(parts[0])
+        total = int(parts[1])
+    except ValueError:
+        return None, None
+    if index < 1 or total < 1 or index > total:
+        return None, None
+    return index, total
+
+
 def _compose_statement_note(purchase_date: date | None, cuota: str | None) -> str | None:
     """Compose a statement line's system note from purchase date + cuota (ADR-089).
 
@@ -437,12 +470,17 @@ class StatementLineRequest(CamelCaseModel):
         When no explicit note is supplied, composes the system note from the original
         purchase date and the installment ``cuota`` marker as
         ``"Compra dd-mm-yy · Cuota 3/3"`` (ADR-089; the ``· Cuota n/m`` part only when
-        a cuota exists). An explicit user note is preserved verbatim. Carries the
-        per-line reconciliation choice through (ADR-085).
+        a cuota exists). An explicit user note is preserved verbatim. The cuota marker
+        is ALSO parsed to structured ``(installmentsIndex, installmentsTotal)`` (ADR-175)
+        so the imported instalment expense carries ``recurring_cadence='installment'``
+        and the forecast can project its remaining payments (ADR-176); a malformed marker
+        is ignored (both stay ``None``). Carries the per-line reconciliation choice
+        through (ADR-085).
         """
         notes = self.notes
         if notes is None:
             notes = _compose_statement_note(self.purchase_date, self.cuota)
+        index, total = _parse_cuota(self.cuota)
         return StatementLineInput(
             occurred_on=self.occurred_on,
             name=self.name,
@@ -456,6 +494,8 @@ class StatementLineRequest(CamelCaseModel):
             payment_method=self.payment_method,
             card=self.card,
             notes=notes,
+            installments_total=total,
+            installments_index=index,
             resolution=self.resolution,
             match_transaction_id=self.match_transaction_id,
         )

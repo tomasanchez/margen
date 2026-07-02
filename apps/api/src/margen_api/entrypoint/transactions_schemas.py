@@ -38,7 +38,7 @@ from margen_api.domain.commands.transaction import (
     TransactionDocumentPayload,
     UpdateTransaction,
 )
-from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
+from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, RecurringCadence, TxType
 from margen_api.entrypoint.schemas import CamelCaseModel
 from margen_api.service_layer.read_models import TransactionReadModel
 
@@ -168,6 +168,18 @@ class TransactionResponse(CamelCaseModel):
     fx_rate_type: FxRateType | None = Field(default=None, description="FX rate family (defaults to MEP for USD rows).")
     fx_rate_as_of: datetime | None = Field(default=None, description="Timestamp the FX rate was observed.")
     recurring: bool = Field(description="Whether the movement repeats.")
+    recurring_cadence: RecurringCadence | None = Field(
+        default=None,
+        description="How often a committed outflow repeats: monthly / quarterly / annual / installment (ADR-174).",
+    )
+    installments_total: int | None = Field(
+        default=None,
+        description="For an installment cadence, the plan's total payments (the M of a cuota N/M); null otherwise.",
+    )
+    installments_index: int | None = Field(
+        default=None,
+        description="For an installment cadence, this payment's 1-based position (the N of a cuota N/M); null otherwise.",
+    )
     counts_toward_monotributo: bool = Field(description="Monotributo counting hint (income / invoice only).")
     account_id: UUID | None = Field(
         default=None,
@@ -214,6 +226,9 @@ class TransactionResponse(CamelCaseModel):
             fx_rate_type=model.fx_rate_type,
             fx_rate_as_of=model.fx_rate_as_of,
             recurring=model.recurring,
+            recurring_cadence=model.recurring_cadence,
+            installments_total=model.installments_total,
+            installments_index=model.installments_index,
             counts_toward_monotributo=model.counts_toward_monotributo,
             account_id=model.account_id,
             offsets_transaction_id=model.offsets_transaction_id,
@@ -280,6 +295,18 @@ class TransactionCreateRequest(CamelCaseModel):
         description="Card / detail label for display, e.g. 'VISA ·5771'; null when none (ADR-117).",
     )
     recurring: bool = Field(default=False, description="Whether the movement repeats.")
+    recurring_cadence: RecurringCadence | None = Field(
+        default=None,
+        description="How often a committed outflow repeats: monthly / quarterly / annual / installment (ADR-174).",
+    )
+    installments_total: int | None = Field(
+        default=None,
+        description="For an installment cadence, the plan's total payments (the M of a cuota N/M); optional.",
+    )
+    installments_index: int | None = Field(
+        default=None,
+        description="For an installment cadence, this payment's 1-based position (the N of a cuota N/M); optional.",
+    )
     counts_toward_monotributo: bool = Field(
         default=False,
         description="Monotributo counting hint; forced False for expense (ADR-031).",
@@ -333,6 +360,9 @@ class TransactionCreateRequest(CamelCaseModel):
             card=self.card,
             notes=self.notes,
             recurring=self.recurring,
+            recurring_cadence=self.recurring_cadence,
+            installments_total=self.installments_total,
+            installments_index=self.installments_index,
             counts_toward_monotributo=self.counts_toward_monotributo,
             account_id=self.account_id,
             offsets_transaction_id=self.offsets_transaction_id,
@@ -394,6 +424,12 @@ class TransactionPatchRequest(CamelCaseModel):
         description="New normalized bank / channel label. Aliased to 'bank' (ADR-117).",
     )
     recurring: bool | None = Field(default=None, description="New recurring flag.")
+    recurring_cadence: RecurringCadence | None = Field(
+        default=None,
+        description="New recurring cadence: monthly / quarterly / annual / installment; null leaves it unchanged.",
+    )
+    installments_total: int | None = Field(default=None, description="New instalment plan total; null unchanged.")
+    installments_index: int | None = Field(default=None, description="New instalment 1-based position; null unchanged.")
     counts_toward_monotributo: bool | None = Field(default=None, description="New Monotributo counting hint.")
     account_id: UUID | None = Field(
         default=None,
@@ -430,6 +466,9 @@ class TransactionPatchRequest(CamelCaseModel):
             payment_method=self.payment_method,
             notes=self.notes,
             recurring=self.recurring,
+            recurring_cadence=self.recurring_cadence,
+            installments_total=self.installments_total,
+            installments_index=self.installments_index,
             counts_toward_monotributo=self.counts_toward_monotributo,
             account_id=self.account_id,
         )
