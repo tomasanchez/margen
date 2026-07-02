@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
@@ -77,12 +77,30 @@ function buildTestRouter() {
     path: '/budgets',
     component: () => <div>budgets route</div>,
   })
+  const reportsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/reports',
+    component: () => <div>reports route</div>,
+  })
+  const transfersRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/transfers',
+    component: () => <div>transfers route</div>,
+  })
+  const importRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/import-statement',
+    component: () => <div>import route</div>,
+  })
   const routeTree = rootRoute.addChildren([
     homeRoute,
     transactionsRoute,
     monotributoRoute,
     accountsRoute,
     budgetsRoute,
+    reportsRoute,
+    transfersRoute,
+    importRoute,
   ])
   return createRouter({
     routeTree,
@@ -263,4 +281,149 @@ test('hides the Monotributo nav item when the module is disabled (ADR-126/127)',
   expect(
     screen.getAllByRole('link', { name: /Import/ }).length,
   ).toBeGreaterThan(0)
+})
+
+/**
+ * Mobile nav drawer (ADR-172). jsdom renders every breakpoint surface, so the
+ * mobile hamburger + drawer are assertable here even though they are
+ * display-guarded to `xs` in the running app.
+ */
+
+test('the mobile menu button opens the nav drawer (ADR-172)', async () => {
+  const user = userEvent.setup()
+  renderShell(settings(true))
+  await screen.findByRole('heading', { name: 'Your command center' })
+
+  const menuButton = screen.getByRole('button', { name: 'Open menu' })
+  // a11y: haspopup + collapsed state before opening.
+  expect(menuButton).toHaveAttribute('aria-haspopup', 'dialog')
+  expect(menuButton).toHaveAttribute('aria-expanded', 'false')
+  expect(menuButton).toHaveAttribute('aria-controls', 'mobile-nav-drawer')
+
+  await user.click(menuButton)
+
+  // The drawer is a labelled nav ("Menu") that is now in the DOM.
+  expect(await screen.findByRole('navigation', { name: 'Menu' })).toBeInTheDocument()
+  expect(menuButton).toHaveAttribute('aria-expanded', 'true')
+})
+
+test('the drawer carries the full navigation incl. Transfers/Import (ADR-172)', async () => {
+  const user = userEvent.setup()
+  renderShell(settings(true))
+  await screen.findByRole('heading', { name: 'Your command center' })
+
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  const drawerNav = await screen.findByRole('navigation', { name: 'Menu' })
+
+  // Scope link queries to the drawer nav so we assert the drawer's own contents,
+  // independent of the desktop sidebar (both render in jsdom).
+  const inDrawer = within(drawerNav)
+  expect(inDrawer.getByRole('link', { name: 'Accounts' })).toHaveAttribute(
+    'href',
+    '/accounts',
+  )
+  expect(inDrawer.getByRole('link', { name: 'Budgets' })).toHaveAttribute(
+    'href',
+    '/budgets',
+  )
+  expect(inDrawer.getByRole('link', { name: 'Transfers' })).toHaveAttribute(
+    'href',
+    '/transfers',
+  )
+  expect(
+    inDrawer.getByRole('link', { name: 'Import statement' }),
+  ).toHaveAttribute('href', '/import-statement')
+  // Monotributo is present when the module is enabled.
+  expect(inDrawer.getByRole('link', { name: 'Monotributo' })).toHaveAttribute(
+    'href',
+    '/monotributo',
+  )
+})
+
+test('the drawer hides Monotributo when the module is disabled (ADR-126/160)', async () => {
+  const user = userEvent.setup()
+  renderShell(settings(false))
+  await screen.findByRole('heading', { name: 'Your command center' })
+
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  const drawerNav = await screen.findByRole('navigation', { name: 'Menu' })
+  const inDrawer = within(drawerNav)
+
+  expect(inDrawer.queryByRole('link', { name: 'Monotributo' })).toBeNull()
+  // Transfers + Import (ungated tools) still present.
+  expect(inDrawer.getByRole('link', { name: 'Transfers' })).toBeInTheDocument()
+  expect(
+    inDrawer.getByRole('link', { name: 'Import statement' }),
+  ).toBeInTheDocument()
+})
+
+test('tapping a drawer nav item navigates and closes the drawer (ADR-172)', async () => {
+  const user = userEvent.setup()
+  renderShell(settings(true))
+  await screen.findByRole('heading', { name: 'Your command center' })
+
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  const drawerNav = await screen.findByRole('navigation', { name: 'Menu' })
+
+  await user.click(within(drawerNav).getByRole('link', { name: 'Accounts' }))
+
+  // Routed content swaps to Accounts...
+  expect(await screen.findByText('accounts route')).toBeInTheDocument()
+  // ...and the drawer nav is torn down (temporary Drawer unmounts on close).
+  await waitFor(() =>
+    expect(screen.queryByRole('navigation', { name: 'Menu' })).toBeNull(),
+  )
+})
+
+test('the mobile pill no longer carries Accounts or Budgets (ADR-172)', async () => {
+  renderShell(settings(true))
+  await screen.findByRole('heading', { name: 'Your command center' })
+
+  // The pill is the "Primary" nav rendered as icon-only links. Accounts/Budgets
+  // moved to the drawer, so the pill must not expose them. The desktop sidebar
+  // (also "Primary") still does — assert against the pill specifically.
+  const primaryNavs = screen.getAllByRole('navigation', { name: 'Primary' })
+  // Both the sidebar and pill are "Primary" navs; there are exactly two.
+  expect(primaryNavs.length).toBe(2)
+
+  // Locate the pill as the Primary nav that has Home but NOT Accounts.
+  const pillNav = primaryNavs.find(
+    (nav) =>
+      within(nav).queryByRole('link', { name: 'Home' }) !== null &&
+      within(nav).queryByRole('link', { name: 'Accounts' }) === null,
+  )
+  expect(pillNav).toBeDefined()
+  const inPill = within(pillNav as HTMLElement)
+  expect(inPill.queryByRole('link', { name: 'Accounts' })).toBeNull()
+  expect(inPill.queryByRole('link', { name: 'Budgets' })).toBeNull()
+  // It keeps the three slimmed peers.
+  expect(inPill.getByRole('link', { name: 'Home' })).toBeInTheDocument()
+  expect(inPill.getByRole('link', { name: 'Transactions' })).toBeInTheDocument()
+  expect(inPill.getByRole('link', { name: 'Reports' })).toBeInTheDocument()
+})
+
+test('the desktop sidebar still carries the full navigation (unchanged)', async () => {
+  renderShell(settings(true))
+  await screen.findByRole('heading', { name: 'Your command center' })
+
+  // The sidebar is the "Primary" nav that DOES carry the "Add transaction" CTA
+  // and the full item set (drawer is closed by default, so it is not in the DOM).
+  const primaryNavs = screen.getAllByRole('navigation', { name: 'Primary' })
+  const sidebar = primaryNavs.find(
+    (nav) => within(nav).queryByRole('link', { name: 'Accounts' }) !== null,
+  )
+  expect(sidebar).toBeDefined()
+  const inSidebar = within(sidebar as HTMLElement)
+  for (const name of [
+    'Home',
+    'Transactions',
+    'Accounts',
+    'Budgets',
+    'Reports',
+    'Transfers',
+    'Import statement',
+    'Monotributo',
+  ]) {
+    expect(inSidebar.getByRole('link', { name })).toBeInTheDocument()
+  }
 })

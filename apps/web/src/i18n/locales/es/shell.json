@@ -1,6 +1,8 @@
 {
   "nav": {
     "primary": "Principal",
+    "openMenu": "Abrir menú",
+    "menu": "Menú",
     "home": "Inicio",
     "transactions": "Movimientos",
     "accounts": "Cuentas",

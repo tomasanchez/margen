@@ -1,6 +1,8 @@
 {
   "nav": {
     "primary": "Primary",
+    "openMenu": "Open menu",
+    "menu": "Menu",
     "home": "Home",
     "transactions": "Transactions",
     "accounts": "Accounts",
