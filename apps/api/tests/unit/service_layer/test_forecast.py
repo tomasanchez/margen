@@ -281,23 +281,64 @@ class TestInstallmentTail:
 class TestMonotributo:
     """The monotributo cuota is a committed tax outflow in every horizon month (ADR-177)."""
 
-    def test_cuota_in_every_month(self):
+    def test_cuota_in_every_month_ars(self):
         """
-        GIVEN a configured monotributo cuota
+        GIVEN a configured monotributo cuota on an ARS forecast
         WHEN a 3-month forecast is built
-        THEN the cuota is added to every month and a single tax commitment line spans
-             the whole horizon
+        THEN the cuota (same ARS denomination) is added to every month total and a single
+             ARS-fixed tax commitment line spans the whole horizon (ADR-177)
         """
         # WHEN
-        series = _forecast(monotributo_cuota=Decimal("42386.74"), horizon=3)
+        series = _forecast(monotributo_cuota=Decimal("42386.74"), horizon=3, currency="ARS")
 
-        # THEN
+        # THEN — same denomination, so the cuota IS summed into the ARS month totals.
         assert [m.committed for m in series.months] == [Decimal("42386.74")] * 3
+        assert all(m.total == m.committed for m in series.months)
         (line,) = series.commitments
         assert line.source is CommitmentSource.TAX
         assert line.label == MONOTRIBUTO_LABEL
+        assert line.currency == "ARS"
+        assert line.ars_fixed is True
         assert line.months == ["2026-07", "2026-08", "2026-09"]
         assert line.remaining_count is None
+
+    def test_cuota_is_ars_fixed_and_out_of_usd_total(self):
+        """
+        GIVEN a configured monotributo cuota on a USD forecast alongside a USD subscription
+        WHEN a 3-month forecast is built
+        THEN (a) the tax line is ARS + ars_fixed, (b) the USD month totals hold ONLY the USD
+             subscription (the ARS cuota is never re-denominated into the USD total), and
+             (c) the cuota never inflates the unconverted count (ADR-177)
+        """
+        # GIVEN — a USD subscription (5.00/month) and a fixed ARS cuota on a USD request.
+        sub = RecurringStream(
+            label="Cloud", amount=Decimal("5"), cadence=RecurringCadence.MONTHLY, last_actual_month="2026-06"
+        )
+
+        # WHEN
+        series = build_forecast(
+            _REF,
+            3,
+            "USD",
+            recurring_streams=[sub],
+            installment_streams=[],
+            monotributo_cuota=Decimal("42386.74"),
+            unconverted=0,
+        )
+
+        # THEN — (a) the tax line stays ARS-fixed regardless of the requested currency.
+        tax = next(line for line in series.commitments if line.source is CommitmentSource.TAX)
+        assert tax.currency == "ARS"
+        assert tax.ars_fixed is True
+        assert tax.amount == Decimal("42386.74")
+        # (b) the USD month totals equal only the USD subscription sum — the ARS cuota is NOT added.
+        assert all(m.committed == Decimal("5.00") and m.total == Decimal("5.00") for m in series.months)
+        # (c) the fixed ARS cuota is a known figure, not a missing snapshot — unconverted stays 0.
+        assert series.unconverted == 0
+        # The subscription line follows the requested USD currency; only the tax line is ARS.
+        sub_line = next(line for line in series.commitments if line.source is CommitmentSource.SUBSCRIPTION)
+        assert sub_line.currency == "USD"
+        assert sub_line.ars_fixed is False
 
     def test_zero_or_none_cuota_is_omitted(self):
         """

@@ -55,6 +55,11 @@ class CommitmentLine:
         remaining_count: For an instalment tail, the number of payments still to come
             (``installments_total - installments_index``); ``None`` for a subscription
             or the recurring tax stream (ADR-176).
+        ars_fixed: ``True`` when the amount is an AFIP-fixed ARS figure that must never
+            be re-denominated to USD (the monotributo cuota, ADR-177); ``False`` for
+            subscriptions and instalment tails, whose amount follows the requested
+            currency. A USD forecast surfaces an ``ars_fixed`` line as its own ARS
+            figure OUTSIDE the USD month total (ADR-177).
     """
 
     source: CommitmentSource
@@ -63,6 +68,7 @@ class CommitmentLine:
     currency: str
     months: list[str]
     remaining_count: int | None = None
+    ars_fixed: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -226,6 +226,14 @@ class CommitmentLineResponse(CamelCaseModel):
         default=None,
         description="For an instalment tail, the number of payments still to come; null otherwise (ADR-176).",
     )
+    ars_fixed: bool = Field(
+        default=False,
+        description=(
+            "True when the amount is an AFIP-fixed ARS figure that must never be re-denominated to USD "
+            "(the monotributo cuota, ADR-177). Such a line is always in ARS and, on a USD forecast, is "
+            "surfaced OUTSIDE the USD month total; false for subscriptions and instalment tails."
+        ),
+    )
 
     @classmethod
     def from_read_model(cls, model: CommitmentLine) -> CommitmentLineResponse:
@@ -237,6 +245,7 @@ class CommitmentLineResponse(CamelCaseModel):
             currency=model.currency,
             months=list(model.months),
             remaining_count=model.remaining_count,
+            ars_fixed=model.ars_fixed,
         )
 
 

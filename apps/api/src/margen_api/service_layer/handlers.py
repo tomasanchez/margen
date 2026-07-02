@@ -571,6 +571,13 @@ def _apply_patch(existing: Transaction, command: UpdateTransaction) -> Transacti
         value = getattr(command, name)
         if value is not None:
             fields[name] = value
+    # Installment total/index only mean anything under the installment cadence. When the
+    # resolved cadence is anything else, force both to None so downgrading a plan (e.g.
+    # installment -> monthly) clears the stale plan fields — the frontend sends nulls to
+    # clear, and null means "leave unchanged" here, so the two sides must agree (ADR-174).
+    if fields["recurring_cadence"] != RecurringCadence.INSTALLMENT:
+        fields["installments_total"] = None
+        fields["installments_index"] = None
     return build_transaction(
         transaction_id=existing.id,
         created_at=existing.created_at,

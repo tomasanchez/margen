@@ -16,7 +16,9 @@ already-denominated figures to these pure, I/O-free functions (like
   (``installments_total - installments_index``) on a monthly cadence starting the
   month after the plan's last actual occurrence, capped at the horizon (ADR-176);
 * add the configured monotributo monthly cuota as a committed AFIP-ARS tax outflow in
-  every horizon month (ADR-177); and
+  every horizon month (ADR-177) — always denominated ARS with ``ars_fixed=True``, summed
+  into the month total ONLY on an ARS request (it is never re-denominated into a USD
+  total, nor counted as ``unconverted``); and
 * sum the per-month committed total and emit the ``commitments`` breakdown for the UI.
 
 All money is denominated in the requested currency by the adapter (ADR-168): it sums
@@ -66,6 +68,10 @@ _CENTS = Decimal("0.01")
 
 # The monotributo commitment's stable label (ADR-177); the frontend localizes it.
 MONOTRIBUTO_LABEL = "Monotributo"
+
+# The requested-currency token that shares the monotributo cuota's AFIP-ARS
+# denomination — the only currency the cuota may be summed into a month total (ADR-177).
+CURRENCY_ARS = "ARS"
 
 
 def clamp_horizon(horizon: int) -> int:
@@ -229,10 +235,17 @@ def build_forecast(
     Composes the forward horizon (starting the month AFTER the current month, ADR-176),
     projects each recurring stream on its cadence and each instalment plan's remaining
     tail (both only into months strictly after their latest actual — no double-count),
-    adds the monotributo monthly cuota in every horizon month (ADR-177), and sums the
-    per-month committed total. A stream whose denominated amount is ``None`` (a USD row
-    lacking a snapshot, ADR-152) is skipped from the sums but the exclusion is already
-    reflected in ``unconverted``.
+    adds the monotributo monthly cuota commitment in every horizon month (ADR-177), and
+    sums the per-month committed total. A stream whose denominated amount is ``None`` (a
+    USD row lacking a snapshot, ADR-152) is skipped from the sums but the exclusion is
+    already reflected in ``unconverted``.
+
+    The monotributo cuota is always an AFIP-fixed ARS figure (ADR-177): its commitment
+    line is always ``currency="ARS"`` with ``ars_fixed=True`` regardless of the requested
+    currency, and it is added into the month total ONLY when ``currency == "ARS"`` (same
+    denomination). On a USD request it is NOT summed into the USD total (it can't be
+    re-denominated) and never increments ``unconverted`` — it still appears as its own ARS
+    commitment line so the frontend can surface it separately.
 
     Args:
         reference: The reference date (server "today"); its month anchors the horizon.
@@ -240,8 +253,9 @@ def build_forecast(
         currency: The requested denomination currency (``ARS`` / ``USD``), echoed back.
         recurring_streams: The flagged recurring expense streams to project.
         installment_streams: The instalment plans whose tails to project.
-        monotributo_cuota: The configured monotributo monthly cuota in the requested
-            currency, or ``None`` when monotributo is not configured / not applicable.
+        monotributo_cuota: The configured monotributo monthly cuota as an AFIP-fixed ARS
+            amount (ADR-177), or ``None`` when monotributo is not configured / not
+            applicable. Always ARS regardless of the requested ``currency``.
         unconverted: Count of committed rows excluded from a USD denomination for
             lacking a snapshot; always ``0`` on the ARS path (ADR-152).
 
@@ -290,15 +304,23 @@ def build_forecast(
 
     if monotributo_cuota is not None and monotributo_cuota > _ZERO:
         cuota = _money(monotributo_cuota)
-        for key in month_keys:
-            totals[key] += cuota
+        # The cuota is an AFIP-fixed ARS liability — always denominated ARS and never
+        # re-denominated to USD (ADR-177). It joins the month total only when the
+        # request is in the SAME denomination (ARS); on a USD request it can't be summed
+        # into the USD total without re-denominating (forbidden), so it is surfaced only
+        # as its own ARS commitment line for the frontend to render separately. It never
+        # touches ``unconverted`` — it is a known fixed ARS figure, not a missing snapshot.
+        if currency == CURRENCY_ARS:
+            for key in month_keys:
+                totals[key] += cuota
         commitments.append(
             CommitmentLine(
                 source=CommitmentSource.TAX,
                 label=MONOTRIBUTO_LABEL,
                 amount=cuota,
-                currency=currency,
+                currency=CURRENCY_ARS,
                 months=list(month_keys),
+                ars_fixed=True,
             )
         )
 

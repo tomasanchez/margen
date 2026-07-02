@@ -87,8 +87,9 @@ def _series() -> ForecastSeries:
                 source=CommitmentSource.TAX,
                 label="Monotributo",
                 amount=Decimal("50.00"),
-                currency="USD",
+                currency="ARS",
                 months=["2026-07", "2026-08", "2026-09"],
+                ars_fixed=True,
             ),
         ],
         unconverted=2,
@@ -144,7 +145,12 @@ class TestForecastContract:
         assert commitments["Fridge"]["source"] == "installment"
         assert commitments["Fridge"]["remainingCount"] == 1
         assert commitments["Fridge"]["months"] == ["2026-07"]
+        assert commitments["Netflix"]["arsFixed"] is False
+        assert commitments["Fridge"]["arsFixed"] is False
         assert commitments["Monotributo"]["source"] == "tax"
+        # The monotributo cuota is an AFIP-fixed ARS figure even on a USD forecast (ADR-177).
+        assert commitments["Monotributo"]["currency"] == "ARS"
+        assert commitments["Monotributo"]["arsFixed"] is True
         # The router forwards the horizon/currency and scopes to the owner (ADR-108).
         assert reader.requested_horizon == 3
         assert reader.requested_currency == Currency.USD
@@ -351,6 +357,33 @@ class TestForecastDbBacked:
         # THEN — a positive goods cuota lands.
         tax = next(line for line in data["commitments"] if line["source"] == "tax")
         assert Decimal(tax["amount"]) > Decimal(0)
+
+    async def test_monotributo_cuota_is_ars_fixed_and_out_of_usd_total(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a configured monotributo category
+        WHEN the USD forecast is read with no other commitments
+        THEN the cuota is an ARS-fixed tax line NOT summed into the USD month totals and
+             not counted as unconverted (ADR-177)
+        """
+        # GIVEN — a configured category and a USD forecast request.
+        patched = await test_client.patch(
+            SETTINGS,
+            json={"monotributoCurrentCategory": "A", "monotributoActivityType": "services"},
+        )
+        assert patched.status_code == status.HTTP_200_OK, patched.text
+
+        # WHEN
+        data = (await test_client.get(FORECAST, params={"horizon": 2, "currency": "USD"})).json()["data"]
+
+        # THEN — the cuota surfaces as its own ARS-fixed line, never re-denominated to USD.
+        tax = next(line for line in data["commitments"] if line["source"] == "tax")
+        assert tax["currency"] == "ARS"
+        assert tax["arsFixed"] is True
+        assert Decimal(tax["amount"]) > Decimal(0)
+        # It is NOT summed into the USD month totals and never inflates unconverted.
+        assert data["currency"] == "USD"
+        assert data["unconverted"] == 0
+        assert all(m["committed"] == "0.00" and m["total"] == "0.00" for m in data["months"])
 
     async def test_no_config_omits_the_tax_leg(self, test_client: httpx.AsyncClient):
         """

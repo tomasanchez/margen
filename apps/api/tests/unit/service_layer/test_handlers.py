@@ -22,7 +22,7 @@ from margen_api.domain.commands.transaction import (
 )
 from margen_api.domain.models.exceptions import TransactionNotFoundError
 from margen_api.domain.models.transaction import build_transaction
-from margen_api.domain.models.value_objects import Currency, Kind
+from margen_api.domain.models.value_objects import Currency, Kind, RecurringCadence
 from margen_api.service_layer.handlers import (
     create_transaction,
     delete_transaction,
@@ -204,6 +204,57 @@ class TestUpdateHandler:
 
         # THEN
         assert uow.committed_aggregates[transaction_id].counts_toward_monotributo is False
+
+    async def test_downgrading_cadence_from_installment_clears_plan_fields(self):
+        """
+        GIVEN an installment transaction with a total/index plan
+        WHEN a patch switches its cadence to monthly (the frontend sends null plan fields)
+        THEN both installment plan fields are cleared, not left stale (ADR-174)
+        """
+        # GIVEN — an installment plan (cuota 2/4).
+        uow = FakeUnitOfWork()
+        transaction_id = _seed(
+            uow,
+            recurring_cadence=RecurringCadence.INSTALLMENT,
+            installments_total=4,
+            installments_index=2,
+        )
+        # The edit form sends nulls to clear; only the cadence carries a new value.
+        command = UpdateTransaction(id=transaction_id, recurring_cadence=RecurringCadence.MONTHLY, user_id=A_USER)
+
+        # WHEN
+        await update_transaction(command, uow)
+
+        # THEN — the stale plan fields are dropped alongside the cadence change.
+        updated = uow.committed_aggregates[transaction_id]
+        assert updated.recurring_cadence is RecurringCadence.MONTHLY
+        assert updated.installments_total is None
+        assert updated.installments_index is None
+
+    async def test_patch_keeping_installment_cadence_preserves_plan_fields(self):
+        """
+        GIVEN an installment transaction with a total/index plan
+        WHEN a patch touches an unrelated field while the cadence stays installment
+        THEN the installment plan fields are preserved (only a downgrade clears them, ADR-174)
+        """
+        # GIVEN — an installment plan (cuota 2/4).
+        uow = FakeUnitOfWork()
+        transaction_id = _seed(
+            uow,
+            recurring_cadence=RecurringCadence.INSTALLMENT,
+            installments_total=4,
+            installments_index=2,
+        )
+        command = UpdateTransaction(id=transaction_id, name="Renamed plan", user_id=A_USER)
+
+        # WHEN
+        await update_transaction(command, uow)
+
+        # THEN — cadence is still installment, so the plan fields survive.
+        updated = uow.committed_aggregates[transaction_id]
+        assert updated.recurring_cadence is RecurringCadence.INSTALLMENT
+        assert updated.installments_total == 4
+        assert updated.installments_index == 2
 
     async def test_missing_id_raises_not_found(self):
         """

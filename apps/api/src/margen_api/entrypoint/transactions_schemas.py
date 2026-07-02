@@ -301,11 +301,13 @@ class TransactionCreateRequest(CamelCaseModel):
     )
     installments_total: int | None = Field(
         default=None,
-        description="For an installment cadence, the plan's total payments (the M of a cuota N/M); optional.",
+        ge=1,
+        description="For an installment cadence, the plan's total payments (the M of a cuota N/M); optional, >= 1.",
     )
     installments_index: int | None = Field(
         default=None,
-        description="For an installment cadence, this payment's 1-based position (the N of a cuota N/M); optional.",
+        ge=1,
+        description="For an installment cadence, this payment's 1-based position (the N of a cuota N/M); optional, >= 1.",
     )
     counts_toward_monotributo: bool = Field(
         default=False,
@@ -428,8 +430,12 @@ class TransactionPatchRequest(CamelCaseModel):
         default=None,
         description="New recurring cadence: monthly / quarterly / annual / installment; null leaves it unchanged.",
     )
-    installments_total: int | None = Field(default=None, description="New instalment plan total; null unchanged.")
-    installments_index: int | None = Field(default=None, description="New instalment 1-based position; null unchanged.")
+    installments_total: int | None = Field(
+        default=None, ge=1, description="New instalment plan total (>= 1); null leaves it unchanged."
+    )
+    installments_index: int | None = Field(
+        default=None, ge=1, description="New instalment 1-based position (>= 1); null leaves it unchanged."
+    )
     counts_toward_monotributo: bool | None = Field(default=None, description="New Monotributo counting hint.")
     account_id: UUID | None = Field(
         default=None,
