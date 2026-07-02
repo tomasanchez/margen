@@ -14,6 +14,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
+import pytest
+
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
 from margen_api.service_layer.csv_export import category_summary_csv, transactions_csv
 from margen_api.service_layer.read_models import TransactionReadModel
@@ -191,6 +193,63 @@ class TestTransactionsCsv:
         # A field with a comma is quoted in the raw text.
         assert '"Coto, sucursal 3"' in text
 
+    @pytest.mark.parametrize(
+        "trigger",
+        ["=", "+", "-", "@", "\t", "\r"],
+    )
+    async def test_formula_injection_trigger_in_name_is_prefixed_with_quote(self, trigger: str):
+        """
+        GIVEN a transaction name that begins with a formula/control trigger
+        WHEN it is rendered
+        THEN the emitted name cell is neutralized with a leading single quote
+        """
+        # GIVEN — a crafted name a spreadsheet would otherwise evaluate on open.
+        name = f'{trigger}HYPERLINK("http://evil","x")'
+
+        # WHEN
+        rows = _rows(transactions_csv([_transaction(name=name)]))
+
+        # THEN — the cell is prefixed with a single quote (the standard mitigation).
+        assert rows[1][2] == f"'{name}"
+
+    @pytest.mark.parametrize(
+        "trigger",
+        ["=", "+", "-", "@", "\t", "\r"],
+    )
+    async def test_formula_injection_trigger_in_category_is_prefixed_with_quote(self, trigger: str):
+        """
+        GIVEN a transaction category that begins with a formula/control trigger
+        WHEN it is rendered
+        THEN the emitted category cell is neutralized with a leading single quote
+        """
+        # GIVEN
+        category = f"{trigger}cmd|'/c calc'!A1"
+
+        # WHEN
+        rows = _rows(transactions_csv([_transaction(category=category)]))
+
+        # THEN — category is column index 4.
+        assert rows[1][4] == f"'{category}"
+
+    async def test_normal_name_is_not_prefixed_but_still_quoted(self):
+        """
+        GIVEN an ordinary name with a comma but no leading trigger
+        WHEN it is rendered
+        THEN it round-trips unchanged (NO quote prefix) and is RFC-4180 quoted
+        """
+        # GIVEN — a benign business name; the comma forces RFC-4180 quoting only.
+        name = "Café, S.A."
+
+        # WHEN
+        text = transactions_csv([_transaction(name=name)])
+        rows = _rows(text)
+
+        # THEN — no injection prefix; the value survives the round-trip verbatim.
+        assert rows[1][2] == name
+        assert not rows[1][2].startswith("'")
+        # The comma-bearing value is RFC-4180 quoted in the raw text.
+        assert '"Café, S.A."' in text
+
 
 class TestCategorySummaryCsv:
     """``category_summary_csv`` renders the month's category breakdown (ADR-165, ADR-042)."""
@@ -246,3 +305,27 @@ class TestCategorySummaryCsv:
         assert rows[1] == ["Food", "250.50", "100", "150.5"]
         # A None delta renders as an empty field, not the string "None".
         assert rows[2] == ["Uncategorized", "0", "0", ""]
+
+    async def test_formula_injection_category_is_prefixed_via_shared_guard(self):
+        """
+        GIVEN a summary category name beginning with a formula trigger
+        WHEN the summary is rendered
+        THEN the category cell is neutralized, proving the guard is inherited centrally
+        """
+        # GIVEN — the same guard as the transactions export, applied in ``_text``.
+        summary = self._summary(
+            [
+                CategorySummary(
+                    category="=1+1",
+                    amount=Decimal("10.00"),
+                    share=Decimal("100"),
+                    delta_pct=None,
+                ),
+            ]
+        )
+
+        # WHEN
+        rows = _rows(category_summary_csv(summary))
+
+        # THEN
+        assert rows[1][0] == "'=1+1"

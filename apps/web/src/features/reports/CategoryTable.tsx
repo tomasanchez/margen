@@ -26,6 +26,7 @@ import Box from '@mui/material/Box'
 import ArrowUpwardRoundedIcon from '@mui/icons-material/ArrowUpwardRounded'
 import ArrowDownwardRoundedIcon from '@mui/icons-material/ArrowDownwardRounded'
 import { SectionCard } from '../../components/SectionCard'
+import { ErrorState } from '../../components/ErrorState'
 import { useDisplayMoney } from '../settings/displayCurrencyContext'
 import { categoryLabel } from '../transactions/presentation'
 import { formatDelta, formatPercent } from '../../lib/format'
@@ -36,6 +37,10 @@ export interface CategoryTableProps {
   categories: CategorySpend[] | undefined
   /** Whether the summary query is pending. */
   loading?: boolean
+  /** Whether the summary query errored (renders the calm fallback). */
+  isError?: boolean
+  /** Retry handler for the error state. */
+  onRetry?: () => void
 }
 
 /** The signed month-over-month delta cell: icon + sign + percent (never color alone). */
@@ -73,9 +78,25 @@ function DeltaCell({ delta }: { delta: number | null | undefined }) {
   )
 }
 
-export function CategoryTable({ categories, loading = false }: CategoryTableProps) {
+export function CategoryTable({
+  categories,
+  loading = false,
+  isError = false,
+  onRetry,
+}: CategoryTableProps) {
   const { t } = useTranslation('reports')
   const formatMoney = useDisplayMoney()
+
+  // A failed query gets the calm ErrorState — not an eternal skeleton (ADR-037).
+  if (isError) {
+    return (
+      <ErrorState
+        title={t('categories.errorTitle')}
+        description={t('categories.errorDescription')}
+        onRetry={onRetry}
+      />
+    )
+  }
 
   if (loading || !categories) {
     return (

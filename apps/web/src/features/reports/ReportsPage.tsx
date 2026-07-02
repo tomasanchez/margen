@@ -126,10 +126,14 @@ export function ReportsPage({
           <SpendingTrendChart
             trend={summaryQuery.data?.trend}
             loading={summaryQuery.isPending}
+            isError={summaryQuery.isError}
+            onRetry={() => void summaryQuery.refetch()}
           />
           <CategoryTable
             categories={summaryQuery.data?.categories}
             loading={summaryQuery.isPending}
+            isError={summaryQuery.isError}
+            onRetry={() => void summaryQuery.refetch()}
           />
         </Box>
 
@@ -146,6 +150,8 @@ export function ReportsPage({
         <BudgetVsActualTable
           period={budgetsQuery.data}
           loading={budgetsQuery.isPending}
+          isError={budgetsQuery.isError}
+          onRetry={() => void budgetsQuery.refetch()}
         />
 
         <ExportButtons month={yearMonth} />

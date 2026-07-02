@@ -4,6 +4,8 @@
   "trend": {
     "title": "Tendencia de gastos",
     "subtitle": "Gastos mensuales de los últimos 6 meses.",
+    "errorTitle": "No se pudo cargar la tendencia de gastos",
+    "errorDescription": "No pudimos contactar al servidor para tus gastos mensuales. Probá de nuevo.",
     "tooltipLabel": "Gastos",
     "accessibleItem": "{{month}}: {{amount}}",
     "accessibleSummary": "Gastos mensuales: {{summary}}."
@@ -17,6 +19,8 @@
     "colShare": "Participación",
     "colDelta": "vs mes anterior",
     "deltaNone": "—",
+    "errorTitle": "No se pudo cargar el desglose por categoría",
+    "errorDescription": "No pudimos contactar al servidor para las categorías de este mes. Probá de nuevo.",
     "empty": "Todavía no hay gastos registrados en este mes."
   },
   "netWorth": {
@@ -39,6 +43,8 @@
     "colSpent": "Gastado",
     "colRemaining": "Restante",
     "over": "{{amount}} de más",
+    "errorTitle": "No se pudo cargar presupuesto vs real",
+    "errorDescription": "No pudimos contactar al servidor para tus presupuestos. Probá de nuevo.",
     "empty": "Todavía no hay objetivos de presupuesto para este mes."
   },
   "export": {
