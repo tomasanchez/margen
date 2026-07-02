@@ -28,16 +28,18 @@ const trends: CategoryTrend[] = [
   {
     category: 'Food',
     total: 624000,
+    // deltaPct arrives already as a PERCENTAGE (22 = +22%), matching the backend
+    // wire contract (e.g. "-20", "100") — never a fraction.
     share: 22,
     series: [512, 540, 560, 580, 600, 624],
-    deltaPct: 0.22,
+    deltaPct: 22,
   },
   {
     category: 'Transport',
     total: 285000,
     share: 10,
     series: [320, 300, 290, 285, 280, 285],
-    deltaPct: -0.06,
+    deltaPct: -6,
   },
   {
     category: 'Rent',
@@ -60,13 +62,13 @@ describe('<CategoryTrends>', () => {
 
   test('a rising category shows a positive vs-prev delta (amber direction)', () => {
     renderTrends(trends)
-    // deltaPct 0.22 → +22%.
+    // deltaPct 22 (a percentage) → +22%.
     expect(screen.getByText('+22%')).toBeInTheDocument()
   })
 
   test('a falling category shows a negative vs-prev delta (green direction)', () => {
     renderTrends(trends)
-    // deltaPct −0.06 → −6% (Unicode minus).
+    // deltaPct −6 (a percentage) → −6% (Unicode minus).
     expect(screen.getByText('−6%')).toBeInTheDocument()
   })
 

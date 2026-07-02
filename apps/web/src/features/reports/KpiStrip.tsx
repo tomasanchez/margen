@@ -88,10 +88,11 @@ export function KpiStrip({ kpis, currency }: KpiStripProps) {
   const { t } = useTranslation('reports')
   const { current, previous } = kpis
 
-  // Savings rate arrives as a fraction (0.571); show it as a whole percentage
-  // and compute its delta in percentage POINTS (not a relative % change).
-  const rateCurrent = current.savingsRate * 100
-  const ratePrevious = previous.savingsRate * 100
+  // Savings rate arrives already as a PERCENTAGE (e.g. 57.1 = 57.1%); show it
+  // as a whole percent and compute its delta in percentage POINTS (not a
+  // relative % change). No ×100 — the backend sends the percentage directly.
+  const rateCurrent = current.savingsRate
+  const ratePrevious = previous.savingsRate
 
   const cards: KpiCard[] = [
     {

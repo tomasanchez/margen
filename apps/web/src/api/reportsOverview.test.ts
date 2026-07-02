@@ -22,13 +22,14 @@ const dto: ReportsOverviewDto = {
       income: '4200.00',
       expenses: '1800.00',
       netSaved: '2400.00',
-      savingsRate: '0.571',
+      // savingsRate is a PERCENTAGE-string per the backend contract (e.g. "60").
+      savingsRate: '57.1',
     },
     previous: {
       income: '4000.00',
       expenses: '2000.00',
       netSaved: '2000.00',
-      savingsRate: '0.5',
+      savingsRate: '50',
     },
   },
   cashFlow: [
@@ -41,7 +42,8 @@ const dto: ReportsOverviewDto = {
       total: '420.00',
       share: '22',
       series: ['60.00', '65.00', '70.00', '72.00', '75.00', '78.00'],
-      deltaPct: '-0.05',
+      // deltaPct is a PERCENTAGE-string per the backend contract (e.g. "-20").
+      deltaPct: '-5',
     },
     {
       category: 'Rent',
@@ -70,7 +72,9 @@ describe('adaptReportsOverview', () => {
     expect(overview.range).toBe('6M')
     expect(overview.currency).toBe('USD')
     expect(overview.kpis.current.income).toBe(4200)
-    expect(overview.kpis.current.savingsRate).toBeCloseTo(0.571)
+    // savingsRate is parsed verbatim (a percentage), never re-scaled.
+    expect(overview.kpis.current.savingsRate).toBeCloseTo(57.1)
+    expect(overview.kpis.previous.savingsRate).toBe(50)
     expect(overview.kpis.previous.expenses).toBe(2000)
     expect(overview.unconverted).toBe(3)
   })
@@ -89,7 +93,8 @@ describe('adaptReportsOverview', () => {
     expect(food.total).toBe(420)
     expect(food.share).toBe(22)
     expect(food.series).toEqual([60, 65, 70, 72, 75, 78])
-    expect(food.deltaPct).toBeCloseTo(-0.05)
+    // deltaPct is parsed verbatim (a percentage), never re-scaled.
+    expect(food.deltaPct).toBeCloseTo(-5)
     // A category with no prior base keeps its null delta (no misleading number).
     expect(rent.deltaPct).toBeNull()
   })

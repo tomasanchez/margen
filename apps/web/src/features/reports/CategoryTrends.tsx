@@ -89,8 +89,9 @@ function TrendRow({
   const deltaLabel =
     direction === 'flat' || trend.deltaPct == null
       ? t('categoryTrends.flat')
-      : // deltaPct is a fraction (−0.06); render as a signed whole percent.
-        formatDelta(trend.deltaPct * 100, 0)
+      : // deltaPct arrives already as a PERCENTAGE (−6 = −6%); render as a
+        // signed whole percent with no scaling.
+        formatDelta(trend.deltaPct, 0)
 
   return (
     <Box

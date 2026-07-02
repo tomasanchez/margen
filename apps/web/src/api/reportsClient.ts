@@ -75,8 +75,9 @@ export interface NetWorthHistory {
 // Reports overview (ADR-167, ADR-168, ADR-169) — the range-based analytics
 // payload. Every money field is a Decimal STRING (ADR-025) ALREADY denominated
 // in the requested currency (ADR-168): the frontend never re-converts. Share /
-// savings-rate / delta percentages arrive as plain number-strings ("60",
-// "-20", "0.571") — the adapter parses them at the display edge (ADR-102).
+// savings-rate / delta PERCENTAGES arrive as plain number-strings ("60",
+// "-20", "37.5") — the adapter parses them verbatim at the display edge
+// (ADR-102), never re-scaling them.
 // ---------------------------------------------------------------------------
 
 /** The allowed analytics windows (ADR-167). */
@@ -87,7 +88,7 @@ export interface ReportsKpiDto {
   income: string
   expenses: string
   netSaved: string
-  /** net_saved / income as a fraction (e.g. "0.571"); "0" when income ≤ 0. */
+  /** net_saved / income as a PERCENTAGE (e.g. "57.1", "60"); "0" when income ≤ 0. */
   savingsRate: string
 }
 
@@ -112,7 +113,7 @@ export interface CategoryTrendDto {
   share: string
   /** Trailing-6-month monthly totals for a sparkline, oldest-first. */
   series: string[]
-  /** Percent change vs the previous window as a fraction-string; null when no base. */
+  /** Percent change vs the previous window as a PERCENTAGE-string ("-20", "100"); null when no base. */
   deltaPct: string | null
 }
 
@@ -147,7 +148,7 @@ export interface ReportsKpi {
   income: number
   expenses: number
   netSaved: number
-  /** Savings rate as a fraction in [−∞, 1] (0.571 = 57.1%). */
+  /** Savings rate as a PERCENTAGE (57.1 = 57.1%); 0 when income ≤ 0. */
   savingsRate: number
 }
 
@@ -172,7 +173,7 @@ export interface CategoryTrend {
   share: number
   /** Trailing-6-month totals for the sparkline, oldest-first. */
   series: number[]
-  /** Percent change vs the previous window as a fraction (−0.06 = −6%); null when no base. */
+  /** Percent change vs the previous window as a PERCENTAGE (−6 = −6%); null when no base. */
   deltaPct: number | null
 }
 
