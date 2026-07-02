@@ -24,16 +24,25 @@ export type TxType = 'expense' | 'income'
 /**
  * Finer-grained transaction kind. `invoice` is income that counts toward the
  * Monotributo annual limit; `income` is other inflow (e.g. a refund).
+ *
+ * `reimbursement` is a payback from a friend for a shared expense the owner
+ * fronted (ADR-158). It is a real cash inflow (`type='income'`) but is EXCLUDED
+ * from income totals + Monotributo turnover, and instead reduces the NET spend of
+ * the specific expense it is linked to via {@link Transaction.offsetsTransactionId}
+ * (ADR-159/160). It carries NO FX snapshot of its own — its USD value inherits the
+ * linked expense's rate (ADR-161).
  */
-export type TxKind = 'expense' | 'income' | 'invoice'
+export type TxKind = 'expense' | 'income' | 'invoice' | 'reimbursement'
 
 /**
  * Spending/earning categories shown in filters and the Add form.
  *
  * `Housing` + `Education` are the MVP budget-category delta (ADR-140). `Rent` is
  * RETAINED as a tolerant alias for historical rows (do NOT remove); the picker
- * prefers `Housing`. The Phase-2 additions (Utilities/Social/DebtService/
- * FamilySupport) are intentionally NOT here yet.
+ * prefers `Housing`. `Social` is a discretionary "Wants" category (group
+ * meals/outings); it groups under Wants via the backend `isEssential=false`
+ * flag. The remaining Phase-2 additions (Utilities/DebtService/FamilySupport)
+ * are intentionally NOT here yet.
  */
 export type Category =
   | 'Income'
@@ -47,6 +56,7 @@ export type Category =
   | 'Shopping'
   | 'Entertainment'
   | 'Services'
+  | 'Social'
   | 'Taxes'
   | 'Fees'
   | 'Other'
@@ -184,6 +194,13 @@ export interface Transaction {
   currency: Currency
   type: TxType
   kind: TxKind
+  /**
+   * The EXPENSE this transaction offsets, present only when
+   * `kind === 'reimbursement'` (ADR-159); `null`/absent otherwise. A payback links
+   * to the source expense it pays back so its amount reduces that expense's
+   * category-month NET spend (ADR-160), regardless of when the payback arrived.
+   */
+  offsetsTransactionId?: string | null
   /** ARS-equivalent magnitude (always positive; sign comes from `type`). */
   amountNum: number
   /** Original USD amount, present only when `currency === 'USD'`. */
@@ -259,6 +276,14 @@ export interface NewTransactionInput {
   currency: Currency
   type: TxType
   kind: TxKind
+  /**
+   * The source EXPENSE a reimbursement pays back (ADR-159). Set ONLY when
+   * `kind === 'reimbursement'`; the create client sends it as `offsetsTransactionId`
+   * so the backend links the payback to its expense and nets the category-month
+   * spend (ADR-160). The backend 404s if the target is missing/not owned and 422s
+   * if it isn't an expense.
+   */
+  offsetsTransactionId?: string | null
   amountNum: number
   usd?: number
   rate?: number

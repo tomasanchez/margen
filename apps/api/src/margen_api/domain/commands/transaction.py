@@ -74,6 +74,11 @@ class CreateTransaction(Command):
     existing create contract unchanged. ``user_id`` is the authenticated owner the
     entrypoint sets from ``AuthUser.id`` before dispatch (ADR-108); the handler
     stores it on the inserted row so the transaction is owned from creation.
+
+    For ``kind='reimbursement'`` (ADR-158) the optional ``offsets_transaction_id``
+    links the payback to the EXPENSE it reduces (ADR-159). The handler validates
+    that the target exists, is owned by the same user, and is an EXPENSE (ADR-130)
+    before persisting; the domain forces the link ``None`` for every other kind.
     """
 
     occurred_on: date
@@ -93,6 +98,7 @@ class CreateTransaction(Command):
     recurring: bool = False
     counts_toward_monotributo: bool = False
     account_id: UUID | None = None
+    offsets_transaction_id: UUID | None = None
     user_id: str
     document: TransactionDocumentPayload | None = None
 

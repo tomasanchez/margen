@@ -22,9 +22,9 @@ const PRIOR: BudgetPeriod = {
   pressure: null,
   unconverted: 0,
   categories: [
-    { category: 'Housing', target: '300000.00', targetCurrency: 'ARS', spent: '0', remaining: null, isEssential: true },
-    { category: 'Food', target: '100000.00', targetCurrency: 'ARS', spent: '0', remaining: null, isEssential: true },
-    { category: 'Transport', target: null, targetCurrency: null, spent: '0', remaining: null, isEssential: false },
+    { category: 'Housing', target: '300000.00', targetCurrency: 'ARS', spent: '0', reimbursed: '0', remaining: null, isEssential: true },
+    { category: 'Food', target: '100000.00', targetCurrency: 'ARS', spent: '0', reimbursed: '0', remaining: null, isEssential: true },
+    { category: 'Transport', target: null, targetCurrency: null, spent: '0', reimbursed: '0', remaining: null, isEssential: false },
   ],
 }
 

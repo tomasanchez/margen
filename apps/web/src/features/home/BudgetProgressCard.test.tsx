@@ -37,9 +37,9 @@ const PERIOD: BudgetPeriod = {
   pressure: null,
   unconverted: 0,
   categories: [
-    { category: 'Food', target: '120000.00', targetCurrency: 'ARS', spent: '90000.00', remaining: '30000.00', isEssential: true },
-    { category: 'Rent', target: '200000.00', targetCurrency: 'ARS', spent: '230000.00', remaining: '-30000.00', isEssential: true },
-    { category: 'Transport', target: null, targetCurrency: null, spent: '15000.00', remaining: null, isEssential: false },
+    { category: 'Food', target: '120000.00', targetCurrency: 'ARS', spent: '90000.00', reimbursed: '0', remaining: '30000.00', isEssential: true },
+    { category: 'Rent', target: '200000.00', targetCurrency: 'ARS', spent: '230000.00', reimbursed: '0', remaining: '-30000.00', isEssential: true },
+    { category: 'Transport', target: null, targetCurrency: null, spent: '15000.00', reimbursed: '0', remaining: null, isEssential: false },
   ],
 }
 
@@ -52,7 +52,7 @@ const EMPTY_PERIOD: BudgetPeriod = {
   pressure: null,
   unconverted: 0,
   categories: [
-    { category: 'Food', target: null, targetCurrency: null, spent: '90000.00', remaining: null, isEssential: true },
+    { category: 'Food', target: null, targetCurrency: null, spent: '90000.00', reimbursed: '0', remaining: null, isEssential: true },
   ],
 }
 

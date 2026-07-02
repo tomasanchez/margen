@@ -27,6 +27,7 @@ from sqlalchemy import (
     Text,
     false,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -109,6 +110,19 @@ class TransactionRecord(Base):
         nullable=True,
         index=True,
     )
+    # The offset link for a reimbursement (ADR-159): a nullable SELF-FK to the
+    # EXPENSE this payback reduces. Populated only for ``kind='reimbursement'`` rows
+    # (the domain forces it NULL for every other kind); NULL everywhere else. A
+    # ``ondelete=SET NULL`` orphans a payback rather than cascading when the source
+    # expense is deleted. The target-exists / same-owner / is-expense checks are an
+    # application-layer concern (ADR-130); the FK only guarantees referential
+    # integrity, not ownership. Indexed (partial, WHERE kind='reimbursement') so the
+    # net-spend join is cheap (ADR-160).
+    offsets_transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("transactions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -124,4 +138,12 @@ class TransactionRecord(Base):
     __table_args__ = (
         # Newest-first listing and date-range queries sort on occurred_on (ADR-026).
         Index("ix_transactions_occurred_on", "occurred_on"),
+        # A partial index over the reimbursement offset link so the net-spend join
+        # (ADR-160) reads only the payback rows. ``postgresql_where`` is honored on
+        # PostgreSQL and harmlessly ignored on the SQLite e2e tier.
+        Index(
+            "ix_transactions_offsets_transaction_id",
+            "offsets_transaction_id",
+            postgresql_where=text("kind = 'reimbursement'"),
+        ),
     )

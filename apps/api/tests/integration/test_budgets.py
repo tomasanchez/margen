@@ -58,6 +58,196 @@ def _line(lines, category: str):
     return next(line for line in lines if line.category == category)
 
 
+def _usd_expense(occurred_on: date, amount: str, category: str, rate: str, *, user_id: str = OWNER):
+    """Build an ARS expense carrying an FX snapshot (rate => usd_amount) for USD netting (ADR-148)."""
+    return build_transaction(
+        transaction_id=uuid4(),
+        occurred_on=occurred_on,
+        name=f"{category} spend",
+        kind=Kind.EXPENSE,
+        amount=Decimal(amount),
+        currency=Currency.ARS,
+        category=category,
+        fx_rate=Decimal(rate),
+        fx_source="bolsa",
+        user_id=user_id,
+        created_at=_MOMENT,
+        updated_at=_MOMENT,
+    )
+
+
+def _legacy_usd_expense(occurred_on: date, amount: str, usd: str, category: str, *, user_id: str = OWNER):
+    """Build a legacy USD expense carrying a ``usd_amount`` snapshot but NO ``fx_rate`` (ADR-029/ADR-031).
+
+    Mirrors the pre-backfill shape: a USD-denominated expense whose ``usd_amount`` was
+    captured but whose ``fx_rate`` is NULL. It is counted on the gross USD side (which
+    filters only ``usd_amount IS NOT NULL``), so its paybacks must reduce it too — the
+    proportional USD reduction (ADR-161) depends only on ``usd_amount`` and ``amount``.
+    """
+    return build_transaction(
+        transaction_id=uuid4(),
+        occurred_on=occurred_on,
+        name=f"{category} spend",
+        kind=Kind.EXPENSE,
+        amount=Decimal(amount),
+        currency=Currency.USD,
+        usd_amount=Decimal(usd),
+        category=category,
+        user_id=user_id,
+        created_at=_MOMENT,
+        updated_at=_MOMENT,
+    )
+
+
+def _reimbursement(occurred_on: date, amount: str, offsets, *, user_id: str = OWNER):
+    """Build a reimbursement linked to an expense id (ADR-158/159)."""
+    return build_transaction(
+        transaction_id=uuid4(),
+        occurred_on=occurred_on,
+        name="Friend pays back",
+        kind=Kind.REIMBURSEMENT,
+        amount=Decimal(amount),
+        currency=Currency.ARS,
+        offsets_transaction_id=offsets,
+        user_id=user_id,
+        created_at=_MOMENT,
+        updated_at=_MOMENT,
+    )
+
+
+class TestReimbursementNetSpend:
+    """Net category spend subtracts linked reimbursements on real PostgreSQL (ADR-159/160/161/162)."""
+
+    async def test_ars_net_subtracts_paybacks_attributed_to_expense_month(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a June Social expense with two paybacks — one in June, one in July —
+        WHEN the owner's June budget is read
+        THEN Social spend is net of BOTH paybacks (attributed to the expense's month,
+             ADR-159), and reimbursed reports the gross reduction (ADR-160)
+        """
+        # GIVEN — one Social expense in June; paybacks in June and July both link it.
+        async with session_factory() as session:
+            repository = SqlAlchemyTransactionRepository(session)
+            expense = _expense(date(2026, 6, 5), "10000.00", "Social")
+            repository.add(expense)
+            repository.add(_reimbursement(date(2026, 6, 20), "3000.00", expense.id))
+            repository.add(_reimbursement(date(2026, 7, 2), "2000.00", expense.id))
+            await session.commit()
+
+        # WHEN
+        session = session_factory()
+        try:
+            june = await SqlAlchemyBudgetReader(session).monthly_budget(JUNE, OWNER)
+            july = await SqlAlchemyBudgetReader(session).monthly_budget(date(2026, 7, 1), OWNER)
+            await session.rollback()
+        finally:
+            await session.close()
+
+        # THEN — June nets both paybacks by the expense month; July shows no Social spend.
+        social = _line(june.categories, "Social")
+        assert social.spent == Decimal("5000.00")  # 10000 - (3000 + 2000)
+        assert social.reimbursed == Decimal("5000.00")
+        july_social = _line(july.categories, "Social")
+        assert july_social.spent == Decimal("0")
+        assert july_social.reimbursed == Decimal("0")
+
+    async def test_over_refund_floors_at_zero(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN a Social expense of 10000 with paybacks totalling 12000 (over-refund)
+        WHEN the owner's June budget is read
+        THEN Social spend floors at zero, never negative (ADR-162)
+        """
+        # GIVEN
+        async with session_factory() as session:
+            repository = SqlAlchemyTransactionRepository(session)
+            expense = _expense(date(2026, 6, 5), "10000.00", "Social")
+            repository.add(expense)
+            repository.add(_reimbursement(date(2026, 6, 20), "7000.00", expense.id))
+            repository.add(_reimbursement(date(2026, 6, 21), "5000.00", expense.id))
+            await session.commit()
+
+        # WHEN
+        session = session_factory()
+        try:
+            model = await SqlAlchemyBudgetReader(session).monthly_budget(JUNE, OWNER)
+            await session.rollback()
+        finally:
+            await session.close()
+
+        # THEN — floored at zero; gross reduction still reported.
+        social = _line(model.categories, "Social")
+        assert social.spent == Decimal("0")
+        assert social.reimbursed == Decimal("12000.00")
+
+    async def test_usd_reduction_rides_the_linked_expense_rate(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN a Social expense of ARS 10000 captured at rate 1000 (USD 10.00) and a
+              linked payback of ARS 3000
+        WHEN the owner's USD June budget is read
+        THEN the payback's USD reduction is 3000/1000 = 3.00 so net USD is 7.00 (ADR-161)
+        """
+        # GIVEN
+        async with session_factory() as session:
+            repository = SqlAlchemyTransactionRepository(session)
+            expense = _usd_expense(date(2026, 6, 5), "10000.00", "Social", "1000")
+            repository.add(expense)
+            repository.add(_reimbursement(date(2026, 6, 20), "3000.00", expense.id))
+            await session.commit()
+
+        # WHEN
+        session = session_factory()
+        try:
+            model = await SqlAlchemyBudgetReader(session).monthly_budget(JUNE, OWNER, Currency.USD)
+            await session.rollback()
+        finally:
+            await session.close()
+
+        # THEN — 10.00 - (3000/1000) = 7.00 net USD; reimbursed 3.00 USD.
+        social = _line(model.categories, "Social")
+        assert social.spent == Decimal("7.00")
+        assert social.reimbursed == Decimal("3.00")
+
+    async def test_legacy_usd_expense_without_fx_rate_is_still_reduced(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a legacy USD Social expense with a usd_amount snapshot but NULL fx_rate
+              (ADR-029) and a linked ARS payback
+        WHEN the owner's USD June budget is read
+        THEN the payback reduces the USD spend via the proportional form (ADR-161) — the
+             legacy expense does NOT leak unreduced spend, because the USD reduction now
+             excludes on usd_amount ALONE, matching the gross USD side (not fx_rate)
+        """
+        # GIVEN — legacy USD expense: ARS-equivalent 10000, usd_amount 10.00, fx_rate NULL;
+        # an ARS 3000 payback links it. Proportional reduction = 10.00 * (3000/10000) = 3.00.
+        async with session_factory() as session:
+            repository = SqlAlchemyTransactionRepository(session)
+            expense = _legacy_usd_expense(date(2026, 6, 5), "10000.00", "10.00", "Social")
+            repository.add(expense)
+            repository.add(_reimbursement(date(2026, 6, 20), "3000.00", expense.id))
+            await session.commit()
+
+        # WHEN
+        session = session_factory()
+        try:
+            usd = await SqlAlchemyBudgetReader(session).monthly_budget(JUNE, OWNER, Currency.USD)
+            ars = await SqlAlchemyBudgetReader(session).monthly_budget(JUNE, OWNER)
+            await session.rollback()
+        finally:
+            await session.close()
+
+        # THEN — USD net = 10.00 - 3.00 = 7.00 (reduced, not the leaked gross 10.00).
+        usd_social = _line(usd.categories, "Social")
+        assert usd_social.spent == Decimal("7.00")
+        assert usd_social.reimbursed == Decimal("3.00")
+        # THEN — ARS parity: authoritative amount nets exactly (10000 - 3000 = 7000).
+        ars_social = _line(ars.categories, "Social")
+        assert ars_social.spent == Decimal("7000.00")
+        assert ars_social.reimbursed == Decimal("3000.00")
+
+
 class TestBudgetUpsert:
     """The upsert replaces a target in place against the real UNIQUE constraint."""
 

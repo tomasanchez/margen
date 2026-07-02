@@ -55,30 +55,35 @@ def build_budget_lines(
     targets: Mapping[str, Decimal],
     spent: Mapping[str, Decimal],
     target_currencies: Mapping[str, str] | None = None,
+    reimbursed: Mapping[str, Decimal] | None = None,
 ) -> list[BudgetLine]:
-    """Join targets and spend into one line per expense category (ADR-125, ADR-042, ADR-152).
+    """Join targets, net spend and reimbursements into one line per category (ADR-125, ADR-042, ADR-152, ADR-160).
 
     For each category in :func:`budgetable_categories`, pairs its ``target`` (the
-    budget amount, or ``None`` when unset) with its ``spent`` (the month's actual
-    expense total, ``0`` when none), computes ``remaining = target - spent`` when a
-    target exists (``None`` otherwise), and flags whether the category is essential
-    (a "Needs" floor category, ADR-143) so the client can group Needs vs Wants. Each
-    line also carries the NATIVE currency the target was STORED in
-    (``target_currency``), so the client can convert it to the preferred display
-    currency (ADR-152/155); it is ``None`` for a category with no target.
+    budget amount, or ``None`` when unset) with its NET ``spent`` (gross expense minus
+    linked reimbursements, floored at zero, ADR-160/162; ``0`` when none), computes
+    ``remaining = target - spent`` when a target exists (``None`` otherwise), and flags
+    whether the category is essential (a "Needs" floor category, ADR-143) so the client
+    can group Needs vs Wants. Each line also carries the ``reimbursed`` reduction (the
+    gross linked paybacks before the floor, ADR-159/161) so the client can render a
+    reimbursed chip, and the NATIVE currency the target was STORED in
+    (``target_currency``, ADR-152/155).
 
     Args:
         targets: The owner's per-category targets for the month, keyed by category.
-        spent: The month's per-category expense totals, keyed by category (ADR-042).
+        spent: The month's per-category NET expense totals, keyed by category (ADR-160).
         target_currencies: The native currency each target was stored in (``'USD'``
             or ``'ARS'``, ADR-152), keyed by category. Defaults to empty when the
             caller does not supply it; a category absent here yields a ``None``
             ``target_currency`` even if it has a target.
+        reimbursed: The gross reimbursement reduction per category (ADR-159/161), keyed
+            by category. Defaults to empty; a category absent here reads ``0``.
 
     Returns:
         One :class:`BudgetLine` per expense category, sorted by category name.
     """
     currencies = target_currencies or {}
+    reimbursements = reimbursed or {}
     lines: list[BudgetLine] = []
     for category in budgetable_categories(targets, spent):
         target = targets.get(category)
@@ -89,6 +94,7 @@ def build_budget_lines(
                 category=category,
                 target=target,
                 spent=category_spent,
+                reimbursed=reimbursements.get(category, _ZERO),
                 remaining=remaining,
                 is_essential=is_essential(category),
                 # The native stored currency only makes sense when a target exists;

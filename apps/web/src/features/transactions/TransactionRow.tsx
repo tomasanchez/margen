@@ -29,6 +29,7 @@ import AttachFileIcon from '@mui/icons-material/AttachFile'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
 import NotesOutlinedIcon from '@mui/icons-material/NotesOutlined'
 import OpenInNewOutlinedIcon from '@mui/icons-material/OpenInNewOutlined'
+import UndoOutlinedIcon from '@mui/icons-material/UndoOutlined'
 import { Amount } from '../../components/Amount'
 import { FxBadge } from '../../components/FxBadge'
 import { formatDispDate } from '../../lib/format'
@@ -203,6 +204,12 @@ interface TransactionRowProps {
   onEdit: (transaction: Transaction) => void
   /** Delete this row (delete mutation). */
   onDelete: (transaction: Transaction) => void
+  /**
+   * Open the Add flow to record a REIMBURSEMENT (payback) against this EXPENSE
+   * row (ADR-158/159). Present only for expense rows; when omitted (or the row
+   * isn't an expense) the action is hidden.
+   */
+  onReimburse?: (transaction: Transaction) => void
   /** Disable the actions while a delete for this row is in flight. */
   busy?: boolean
   /**
@@ -272,11 +279,15 @@ function RowActions({
   transaction,
   onEdit,
   onDelete,
+  onReimburse,
   busy,
   className,
 }: TransactionRowProps & { className?: string }) {
   const { t } = useTranslation(['transactions', 'common'])
   const label = transaction.name
+  // The "add reimbursement" action links a payback to THIS expense (ADR-158/159);
+  // shown only for expense rows that have a handler wired.
+  const canReimburse = onReimburse && transaction.type === 'expense'
   return (
     <Stack
       direction="row"
@@ -284,6 +295,24 @@ function RowActions({
       className={className}
       sx={{ justifyContent: 'flex-end' }}
     >
+      {canReimburse ? (
+        <Tooltip title={t('transactions:row.reimburse')}>
+          <span>
+            <IconButton
+              size="small"
+              aria-label={t('transactions:row.reimburseFor', { name: label })}
+              disabled={busy}
+              onClick={() => onReimburse(transaction)}
+              sx={{
+                color: 'text.disabled',
+                '&:hover': { color: 'primary.main' },
+              }}
+            >
+              <UndoOutlinedIcon fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
+      ) : null}
       <Tooltip title={t('common:actions.edit')}>
         <span>
           <IconButton
@@ -346,7 +375,13 @@ function hasAttachedDocument(transaction: Transaction): boolean {
  * object URL (ADR-073/081), and surfaces a calm error as text — not color alone
  * (ADR-019/037) — beside the trigger on failure.
  */
-function RowOverflowMenu({ transaction, onEdit, onDelete, busy }: TransactionRowProps) {
+function RowOverflowMenu({
+  transaction,
+  onEdit,
+  onDelete,
+  onReimburse,
+  busy,
+}: TransactionRowProps) {
   const { t } = useTranslation(['transactions', 'common'])
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const open = Boolean(anchorEl)
@@ -358,6 +393,8 @@ function RowOverflowMenu({ transaction, onEdit, onDelete, busy }: TransactionRow
   )
   const { open: openDocument, loading, error } = useDocumentOpener(fetchBlob)
   const showPdf = hasAttachedDocument(transaction)
+  // Add-reimbursement item: only for expense rows with a handler (ADR-158/159).
+  const canReimburse = onReimburse && transaction.type === 'expense'
 
   const handleOpen = (event: MouseEvent<HTMLElement>) => {
     event.stopPropagation()
@@ -368,6 +405,10 @@ function RowOverflowMenu({ transaction, onEdit, onDelete, busy }: TransactionRow
   const handleEdit = () => {
     handleClose()
     onEdit(transaction)
+  }
+  const handleReimburse = () => {
+    handleClose()
+    onReimburse?.(transaction)
   }
   const handleDelete = () => {
     handleClose()
@@ -455,6 +496,15 @@ function RowOverflowMenu({ transaction, onEdit, onDelete, busy }: TransactionRow
           <ListItemText primary={t('common:actions.edit')} />
         </MenuItem>
 
+        {canReimburse ? (
+          <MenuItem onClick={handleReimburse} disabled={busy} sx={{ py: 1.25 }}>
+            <ListItemIcon sx={{ color: 'text.secondary' }}>
+              <UndoOutlinedIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText primary={t('transactions:row.reimburse')} />
+          </MenuItem>
+        ) : null}
+
         {showPdf ? (
           <MenuItem onClick={handleOpenPdf} disabled={loading} sx={{ py: 1.25 }}>
             <ListItemIcon sx={{ color: 'text.secondary' }}>
@@ -537,6 +587,9 @@ export function TransactionRow(props: TransactionRowProps) {
           >
             {t.name}
           </Typography>
+          {t.kind === 'reimbursement' ? (
+            <RowBadge tone="gold">{translate('row.reimbursement')}</RowBadge>
+          ) : null}
           {t.recurring ? <RowBadge>{translate('row.recurring')}</RowBadge> : null}
           {isUsd ? <FxBadge /> : null}
           <InvoiceAttachmentBadge transaction={t} />
@@ -675,6 +728,11 @@ export function TransactionRowMobile(props: TransactionRowProps) {
           >
             {t.name}
           </Typography>
+          {t.kind === 'reimbursement' ? (
+            <RowBadge tone="gold">
+              {translate('transactions:row.reimbursement')}
+            </RowBadge>
+          ) : null}
           {t.recurring ? (
             <RowBadge>{translate('transactions:row.recurring')}</RowBadge>
           ) : null}

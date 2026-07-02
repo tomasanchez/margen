@@ -29,6 +29,8 @@ from margen_api.domain.commands.transaction import (
 from margen_api.domain.models.exceptions import (
     AccountNotFoundError,
     MergeTargetNotFoundError,
+    OffsetTargetNotExpenseError,
+    OffsetTargetNotFoundError,
     TransactionNotFoundError,
 )
 from margen_api.domain.models.transaction import (
@@ -84,6 +86,43 @@ async def _check_account_ownership(uow: AbstractUnitOfWork, account_id: UUID | N
         raise AccountNotFoundError(account_id)
 
 
+async def _check_offset_link(
+    uow: AbstractUnitOfWork,
+    kind: Kind,
+    offsets_transaction_id: UUID | None,
+    user_id: str,
+) -> None:
+    """Verify a reimbursement's offset link points at the caller's own expense (ADR-159, ADR-130).
+
+    A ``kind='reimbursement'`` transaction may link an ``offsets_transaction_id`` to
+    the EXPENSE it reduces (ADR-159). This mirrors the account-ownership guard
+    (ADR-130): the transaction repository loads the target **scoped to ``user_id``**,
+    so a missing row or one owned by another user is not found and raises
+    :class:`OffsetTargetNotFoundError` (404 at the boundary, ADR-111). A target that
+    exists but is not an EXPENSE (an income, invoice or another reimbursement) raises
+    :class:`OffsetTargetNotExpenseError` (422). When there is no link — or the kind is
+    not a reimbursement — the check is a no-op (the domain forces the link ``None`` for
+    every other kind, so this only fires for a reimbursement that supplied one).
+
+    Args:
+        uow: The unit of work providing the transaction repository (inside its boundary).
+        kind: The kind of the transaction being created.
+        offsets_transaction_id: The linked expense id, or ``None`` when none.
+        user_id: The authenticated owner the target must belong to.
+
+    Raises:
+        OffsetTargetNotFoundError: When the target is missing or owned by another user.
+        OffsetTargetNotExpenseError: When the target exists but is not an EXPENSE.
+    """
+    if kind is not Kind.REIMBURSEMENT or offsets_transaction_id is None:
+        return
+    target = await uow.transactions.get(offsets_transaction_id, user_id)
+    if target is None:
+        raise OffsetTargetNotFoundError(offsets_transaction_id)
+    if target.kind is not Kind.EXPENSE:
+        raise OffsetTargetNotExpenseError(offsets_transaction_id, target.kind.value)
+
+
 async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork) -> UUID:
     """Record a new transaction and return its generated identity.
 
@@ -125,10 +164,16 @@ async def create_transaction(command: CreateTransaction, uow: AbstractUnitOfWork
         recurring=command.recurring,
         counts_toward_monotributo=command.counts_toward_monotributo,
         account_id=command.account_id,
+        offsets_transaction_id=command.offsets_transaction_id,
         user_id=command.user_id,
     )
     async with uow:
         await _check_account_ownership(uow, command.account_id, command.user_id)
+        # A reimbursement's offset link must point at one of the caller's own expenses
+        # (ADR-159); mirror the account-ownership guard (ADR-130). ``transaction.kind``
+        # is the normalized kind, and the domain has already forced the link ``None``
+        # for a non-reimbursement, so this only validates a genuine payback link.
+        await _check_offset_link(uow, transaction.kind, transaction.offsets_transaction_id, command.user_id)
         uow.transactions.add(transaction)
         if command.document is not None:
             # Flush the transaction first so the document's foreign key resolves;

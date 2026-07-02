@@ -52,6 +52,7 @@ import {
   TYPE_OPTIONS,
   activeFilterCount,
   buildEditPrefill,
+  buildReimbursementPrefill,
   filterTransactions,
   hasActiveFilters,
   type TransactionFilters,
@@ -392,6 +393,10 @@ export function TransactionsPage({
   const mobileFilterCount = activeFilterCount(filters)
 
   const handleEdit = (t: Transaction) => openAdd(buildEditPrefill(t))
+  // Open the Add flow pre-set to record a reimbursement linked to this expense
+  // (ADR-158/159): kind=reimbursement + offsetsTransactionId bound to the row.
+  const handleReimburse = (t: Transaction) =>
+    openAdd(buildReimbursementPrefill(t))
   const handleDelete = (t: Transaction) => deleteMutation.mutate(t.id)
   const deletingId =
     deleteMutation.isPending && typeof deleteMutation.variables === 'string'
@@ -570,6 +575,7 @@ export function TransactionsPage({
                       transaction={t}
                       onEdit={handleEdit}
                       onDelete={handleDelete}
+                      onReimburse={handleReimburse}
                       busy={deletingId === t.id}
                       accountNames={accountNames}
                     />
@@ -583,6 +589,7 @@ export function TransactionsPage({
                       transaction={t}
                       onEdit={handleEdit}
                       onDelete={handleDelete}
+                      onReimburse={handleReimburse}
                       busy={deletingId === t.id}
                       accountNames={accountNames}
                     />

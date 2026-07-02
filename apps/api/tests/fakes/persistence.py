@@ -1048,6 +1048,7 @@ def _project(transaction: Transaction) -> TransactionReadModel:
         counts_toward_monotributo=transaction.counts_toward_monotributo,
         statement_document_id=transaction.statement_document_id,
         account_id=transaction.account_id,
+        offsets_transaction_id=transaction.offsets_transaction_id,
         created_at=transaction.created_at,
         updated_at=transaction.updated_at,
     )

@@ -70,6 +70,13 @@ export interface TransactionDto {
   currency: Currency
   type: TxType
   kind: TxKind
+  /**
+   * The EXPENSE a reimbursement offsets (ADR-159), or `null` when this isn't a
+   * reimbursement. For a `kind='reimbursement'` row `type` is `'income'` and the
+   * FX fields (`usd`/`rate`/`fxSource`) are `null` — its USD value inherits the
+   * linked expense's rate (ADR-161). Absent on legacy payloads.
+   */
+  offsetsTransactionId?: string | null
   amountNum: string
   usd?: string | null
   rate?: string | null
@@ -122,6 +129,12 @@ interface TransactionCreateBody {
    * account (ADR-130).
    */
   accountId?: string | null
+  /**
+   * The source EXPENSE a reimbursement pays back (ADR-159). Sent ONLY for a
+   * `kind='reimbursement'` create so the backend links the payback and nets the
+   * category-month spend (ADR-160). Omitted for every other kind.
+   */
+  offsetsTransactionId?: string
   usd?: number
   rate?: number
   /** Client-supplied FX snapshot rate as a Decimal string (ARS per 1 USD, ADR-148/149). */
@@ -249,6 +262,12 @@ export function adaptTransaction(dto: TransactionDto): Transaction {
     currency: dto.currency,
     type: dto.type,
     kind: dto.kind,
+    // The offset link (ADR-159): carried through when present (incl. null for a
+    // non-reimbursement row), so a reimbursement row can read as a payback linked
+    // to its expense. Absent on legacy payloads → left off the shape.
+    ...(dto.offsetsTransactionId !== undefined
+      ? { offsetsTransactionId: dto.offsetsTransactionId }
+      : {}),
     amountNum: parseMoney(dto.amountNum) ?? 0,
     ...(usd !== undefined ? { usd } : {}),
     ...(rate !== undefined ? { rate } : {}),
@@ -295,6 +314,13 @@ export function toCreateBody(input: NewTransactionInput): TransactionCreateBody 
   // null for an explicitly-unlinked row). The lenient backend defaults a missing
   // value, so we only send it when present.
   if (input.accountId !== undefined) body.accountId = input.accountId
+  // The offset link (ADR-159): sent ONLY when the input carries a target — a
+  // reimbursement create. The backend links the payback to its expense and nets
+  // the category-month spend (ADR-160); it drops the FX fields itself (ADR-161),
+  // and the form never supplies them for a reimbursement anyway.
+  if (input.offsetsTransactionId != null) {
+    body.offsetsTransactionId = input.offsetsTransactionId
+  }
   if (input.usd !== undefined) body.usd = input.usd
   if (input.rate !== undefined) body.rate = input.rate
   // The per-transaction FX snapshot (ADR-148/149): the client supplies the rate

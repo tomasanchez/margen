@@ -51,10 +51,22 @@ class BudgetLineResponse(CamelCaseModel):
         default=None,
         description="The budget target for the category this month; null when unset (ADR-125).",
     )
-    spent: Decimal = Field(description="The category's ARS-equivalent expense total for the month (ADR-042).")
+    spent: Decimal = Field(
+        description=(
+            "The category's NET expense total for the month — gross expense minus linked "
+            "reimbursements, floored at zero (ADR-160/162)."
+        ),
+    )
+    reimbursed: Decimal = Field(
+        description=(
+            "The gross reimbursement reduction attributed to this category-month before "
+            "the floor (ADR-159/161); 0 when no linked payback fell here. Lets the client "
+            "render a 'reimbursed' chip alongside the net spent. Serialized as 'reimbursed'."
+        ),
+    )
     remaining: Decimal | None = Field(
         default=None,
-        description="target - spent when a target is set; null otherwise (ADR-125).",
+        description="target - spent (net) when a target is set; null otherwise (ADR-125).",
     )
     is_essential: bool = Field(
         description="Whether the category is an essential 'Needs' floor category, serialized as 'isEssential' (ADR-143).",
@@ -76,6 +88,7 @@ class BudgetLineResponse(CamelCaseModel):
             category=model.category,
             target=model.target,
             spent=model.spent,
+            reimbursed=model.reimbursed,
             remaining=model.remaining,
             is_essential=model.is_essential,
             target_currency=model.target_currency,

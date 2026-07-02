@@ -31,6 +31,9 @@
   },
   "row": {
     "recurring": "recurring",
+    "reimbursement": "reimbursement",
+    "reimburse": "Add reimbursement",
+    "reimburseFor": "Add a reimbursement for {{name}}",
     "edit": "Edit {{name}}",
     "delete": "Delete {{name}}",
     "openInvoicePdf": "Open invoice PDF",
@@ -91,7 +94,15 @@
     "title": {
       "edit": "Edit transaction",
       "newExpense": "New expense",
-      "newInvoice": "New invoice · income"
+      "newInvoice": "New invoice · income",
+      "reimbursement": "Record a payback"
+    },
+    "reimbursement": {
+      "offsetsLabel": "Paying back",
+      "offsetsAmount": "Original expense · {{amount}}",
+      "hint": "This payback reduces what you spent on this expense — it won't count as income.",
+      "errorNotFound": "We couldn't find the expense this pays back. It may have been deleted.",
+      "errorNotExpense": "A payback can only be linked to an expense."
     },
     "close": "Close",
     "duplicate": "Looks like you already imported this invoice. You can still save it if this is intentional.",

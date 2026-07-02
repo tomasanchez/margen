@@ -20,6 +20,7 @@ import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ResponsiveModal } from '../../components/ResponsiveModal'
 import type { NewTransactionInput } from '../../mock/types'
+import { TransactionApiError } from '../../api/transactionsClient'
 import { useAddTransaction as useAddTransactionFlow } from './addContext'
 import {
   useAddTransaction as useAddTransactionMutation,
@@ -51,8 +52,12 @@ export function AddEditTransaction() {
   }
 
   // Remount the form whenever a new flow opens so its seeded state is fresh.
+  // Include the reimbursement offset id so opening the payback flow from a
+  // different expense (both add-mode, same type) remounts with the new link.
   const formKey = isOpen
-    ? `${prefill?.id ?? 'new'}-${prefill?.type ?? 'expense'}`
+    ? `${prefill?.id ?? 'new'}-${prefill?.type ?? 'expense'}-${
+        prefill?.offsetsTransactionId ?? ''
+      }`
     : 'closed'
 
   const formNode = (
@@ -70,6 +75,21 @@ export function AddEditTransaction() {
   // closes on success, so it stays open with the user's input intact while this
   // calm snackbar explains the failure and lets them retry by saving again.
   const saveError = updateMutation.isError || addMutation.isError
+
+  // For a reimbursement create the offset link can be rejected: 404 when the
+  // target expense is missing / not owned, 422 when the target isn't an expense
+  // (ADR-159). Map those to specific, calm copy so the user understands the link
+  // problem rather than a generic "couldn't save"; any other failure keeps the
+  // generic message.
+  const addErr = addMutation.error
+  const reimbursementErrorMessage =
+    prefill?.kind === 'reimbursement' && addErr instanceof TransactionApiError
+      ? addErr.status === 404
+        ? t('form.reimbursement.errorNotFound')
+        : addErr.status === 422
+          ? t('form.reimbursement.errorNotExpense')
+          : t('form.saveError')
+      : t('form.saveError')
   const saveErrorSnackbar = (
     <Snackbar
       open={saveError && isOpen}
@@ -90,7 +110,7 @@ export function AddEditTransaction() {
         }}
         sx={{ width: '100%' }}
       >
-        {t('form.saveError')}
+        {reimbursementErrorMessage}
       </Alert>
     </Snackbar>
   )
