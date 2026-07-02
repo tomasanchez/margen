@@ -129,10 +129,11 @@ const budgetsRoute = createRoute({
 const reportsRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/reports',
-  // The month lives in the URL as `?month=YYYY-MM` (ADR-040/128): the route
-  // validates it and `ReportsRoute` binds it to the page via `useReportMonth`
-  // (mirroring `/budgets`), so reload / back-forward / deep-links keep the
-  // selected month. Absent means the current month.
+  // The analytics WINDOW lives in the URL as `?range=` (3M/6M/12M/YTD, ADR-167):
+  // the route validates it and `ReportsRoute` binds it to the page via
+  // `useReportRange` (mirroring how `/budgets` owns its month), so reload /
+  // back-forward / deep-links keep the selected window. Absent means the default
+  // 6M window.
   validateSearch: validateReportsSearch,
   component: ReportsRoute,
 })

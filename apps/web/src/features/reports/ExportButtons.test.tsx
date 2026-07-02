@@ -60,7 +60,7 @@ describe('<ExportButtons>', () => {
     renderButtons()
 
     await userEvent.click(
-      screen.getByRole('button', { name: /export transactions/i }),
+      screen.getByRole('button', { name: /transactions csv/i }),
     )
 
     await waitFor(() =>
@@ -76,7 +76,7 @@ describe('<ExportButtons>', () => {
     renderButtons()
 
     await userEvent.click(
-      screen.getByRole('button', { name: /export category summary/i }),
+      screen.getByRole('button', { name: /category summary csv/i }),
     )
 
     await waitFor(() =>
@@ -91,7 +91,7 @@ describe('<ExportButtons>', () => {
     renderButtons()
 
     await userEvent.click(
-      screen.getByRole('button', { name: /export transactions/i }),
+      screen.getByRole('button', { name: /transactions csv/i }),
     )
 
     expect(
