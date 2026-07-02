@@ -30,12 +30,19 @@ import {
 } from 'recharts'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
-import { useDisplayMoney } from '../settings/displayCurrencyContext'
+import { useDisplayCurrency } from '../settings/displayCurrencyContext'
+import { formatCompactAxis } from '../../lib/format'
 import { localizeShortMonthToken } from '../../i18n/locale'
 import type { TrendPoint } from '../../mock/types'
 
-/** Fixed plot height; the width is responsive so the chart never overflows. */
-const CHART_HEIGHT = 208
+/**
+ * Minimum plot height (a floor). The plot area FLEXES to fill the card
+ * (`flex: 1`) so the bars anchor to the card's bottom edge — the two top Reports
+ * cards stretch to equal height (ADR-166), and a fixed height would leave a dead
+ * band below the bars. This floor keeps the chart legible on a short card / in a
+ * single-column layout.
+ */
+const CHART_MIN_HEIGHT = 208
 
 /**
  * Cap on a single bar's width. With a sparse trend (e.g. the owner's data — one
@@ -71,7 +78,10 @@ export function SpendingTrendChart({
 }: SpendingTrendChartProps) {
   const { t } = useTranslation('reports')
   const theme = useTheme()
-  const formatMoney = useDisplayMoney()
+  // The full formatter (tooltip + accessible summary) converts ARS→display and
+  // names the currency; the effective currency + live rate let the compact axis
+  // tick show the SAME converted magnitude (ADR-056, ADR-166).
+  const { formatMoney, effectiveCurrency, rate } = useDisplayCurrency()
 
   const data = useMemo<ChartDatum[]>(
     () =>
@@ -101,7 +111,7 @@ export function SpendingTrendChart({
       <SectionCard title={t('trend.title')} subtitle={t('trend.subtitle')}>
         <Skeleton
           variant="rounded"
-          height={CHART_HEIGHT}
+          height={CHART_MIN_HEIGHT}
           sx={{ borderRadius: '10px' }}
         />
       </SectionCard>
@@ -126,13 +136,28 @@ export function SpendingTrendChart({
   const asNumber = (value: unknown): number =>
     typeof value === 'number' && Number.isFinite(value) ? value : 0
 
+  // The datum `value` is the ARS-stored figure; convert it to the effective
+  // display currency (as `formatMoney` does) BEFORE the compact axis label so
+  // the ticks read in the same currency as the tooltip (ADR-056/166).
+  const compactTick = (value: unknown): string => {
+    const ars = asNumber(value)
+    const display =
+      effectiveCurrency === 'USD' && rate ? ars / rate : ars
+    return formatCompactAxis(display, effectiveCurrency)
+  }
+
   return (
     <SectionCard title={t('trend.title')} subtitle={t('trend.subtitle')}>
       <Box component="p" sx={visuallyHidden}>
         {t('trend.accessibleSummary', { summary: accessibleSummary })}
       </Box>
 
-      <Box aria-hidden sx={{ width: '100%', height: CHART_HEIGHT }}>
+      {/* Flex to fill the card so bars anchor to its bottom (ADR-166); the
+          min-height is a floor for short / single-column layouts. */}
+      <Box
+        aria-hidden
+        sx={{ flex: 1, minHeight: CHART_MIN_HEIGHT, width: '100%' }}
+      >
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={data}
@@ -155,8 +180,10 @@ export function SpendingTrendChart({
               tick={{ fontSize: 11, fill: axisColor }}
               tickLine={false}
               axisLine={false}
-              width={56}
-              tickFormatter={(value) => formatMoney(asNumber(value))}
+              // Compact ticks ("$1,9 M") stay narrow so they never wrap/clip;
+              // the tooltip + accessible summary keep the full formatter (ADR-166).
+              width={48}
+              tickFormatter={compactTick}
             />
             <Tooltip
               cursor={{ fill: theme.palette.action.hover }}
@@ -171,6 +198,7 @@ export function SpendingTrendChart({
                 fontSize: 12,
               }}
               labelStyle={{ color: theme.palette.text.primary }}
+              itemStyle={{ color: theme.palette.text.primary }}
             />
             <Bar
               dataKey="value"

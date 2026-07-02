@@ -224,6 +224,43 @@ export function formatMillionsCompact(n: number | null | undefined): string {
 }
 
 /**
+ * Compact magnitude formatter for CHART AXIS TICKS (ADR-166). A full
+ * {@link formatCurrency} tick ("USD 1.854,3") is too wide for a Y-axis and wraps
+ * or clips; this abbreviates the magnitude with `Intl.NumberFormat`
+ * `notation: 'compact'` in the es-AR domain locale (ADR-102) — e.g.
+ * `1_854_300 -> "$1,9 M"`, `2_000 -> "$2 mil"`, `9_500_000_000 ->
+ * "$9500 M"`. The `$` prefix keeps the axis narrow (the tooltip + the
+ * accessible summary still use the FULL {@link formatCurrency}, which names the
+ * currency, so ARS vs USD is never ambiguous). Only for axis ticks.
+ *
+ * es-AR compact notation emits its own suffix WORDS ("mil", "M") with a NBSP
+ * separator; we keep them rather than forcing English "k"/"M" so the axis reads
+ * consistently with the rest of the app's es-AR figures in both UI languages.
+ */
+const compactMagnitude = new Intl.NumberFormat(MONEY_LOCALE, {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+})
+
+/**
+ * Compact axis-tick label for a money magnitude, prefixed with the display
+ * currency's symbol: `formatCompactAxis(1854300, 'ARS')` yields a short
+ * "$1,9 M"-style token. The magnitude is taken by absolute value (axes render
+ * non-negative ticks). ARS uses the bare `$` (Argentine peso convention); USD
+ * uses `US$` so a USD axis is never mistaken for pesos. The narrow prefix keeps
+ * the axis compact while the tooltip + accessible summary keep the FULL
+ * {@link formatCurrency}. A pure, unit-testable helper — never inline this in a
+ * `tickFormatter`.
+ */
+export function formatCompactAxis(
+  n: number | null | undefined,
+  currency: Currency = 'ARS',
+): string {
+  const prefix = currency === 'USD' ? 'US$' : '$'
+  return `${prefix}${compactMagnitude.format(Math.abs(safe(n)))}`
+}
+
+/**
  * Display helper for the seeded short date. The mock stores dates as already
  * human-friendly / literal strings (e.g. "Jun 12", or an ISO `occurredOn` shown
  * verbatim); this pass-through trims and provides a stable em-dash placeholder

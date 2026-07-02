@@ -32,7 +32,7 @@ import {
 } from 'recharts'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
-import { formatCurrency } from '../../lib/format'
+import { formatCurrency, formatCompactAxis } from '../../lib/format'
 import { localizeShortMonthToken } from '../../i18n/locale'
 import { shortMonthLabel } from '../../api/summariesClient'
 import type { DisplayCurrency } from '../../api/settingsClient'
@@ -42,8 +42,12 @@ import {
   hasAnyConvertedValue,
 } from './netWorthSeries'
 
-/** Fixed plot height; the width is responsive so the chart never overflows. */
-const CHART_HEIGHT = 240
+/**
+ * Minimum plot height (a floor). The plot area FLEXES to fill the card so the
+ * line reaches the card's bottom edge (ADR-166); this floor keeps it legible on
+ * a short card. The width is responsive so the chart never overflows.
+ */
+const CHART_MIN_HEIGHT = 240
 
 export interface NetWorthChartProps {
   /** The net-worth history read model, or undefined while loading. */
@@ -118,7 +122,7 @@ export function NetWorthChart({
       <SectionCard title={t('netWorth.title')} subtitle={t('netWorth.subtitle')}>
         <Skeleton
           variant="rounded"
-          height={CHART_HEIGHT}
+          height={CHART_MIN_HEIGHT}
           sx={{ borderRadius: '10px' }}
         />
       </SectionCard>
@@ -173,7 +177,12 @@ export function NetWorthChart({
         {t('netWorth.accessibleSummary', { summary: accessibleSummary })}
       </Box>
 
-      <Box aria-hidden sx={{ width: '100%', height: CHART_HEIGHT }}>
+      {/* Flex to fill the card so the line reaches its bottom (ADR-166); the
+          min-height is a floor for short / single-column layouts. */}
+      <Box
+        aria-hidden
+        sx={{ flex: 1, minHeight: CHART_MIN_HEIGHT, width: '100%' }}
+      >
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={data}
@@ -192,9 +201,11 @@ export function NetWorthChart({
               tick={{ fontSize: 11, fill: axisColor }}
               tickLine={false}
               axisLine={false}
-              width={56}
+              // Compact ticks ("$1,9 M") stay narrow so they never wrap/clip;
+              // the tooltip + accessible summary keep the full formatter (ADR-166).
+              width={48}
               tickFormatter={(value) =>
-                formatCurrency(asNumber(value), displayCurrency)
+                formatCompactAxis(asNumber(value), displayCurrency)
               }
             />
             <Tooltip
@@ -209,6 +220,7 @@ export function NetWorthChart({
                 fontSize: 12,
               }}
               labelStyle={{ color: theme.palette.text.primary }}
+              itemStyle={{ color: theme.palette.text.primary }}
             />
             <Line
               type="monotone"
