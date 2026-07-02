@@ -67,7 +67,11 @@
       "willImport": "Will import",
       "skipped": "Skipped",
       "skipAriaLabel": "Skip {{name}} — currently set to import",
-      "importAriaLabel": "Import {{name}} — currently skipped"
+      "importAriaLabel": "Import {{name}} — currently skipped",
+      "cuotaIndexPlaceholder": "N",
+      "cuotaTotalPlaceholder": "M",
+      "cuotaIndexAriaLabel": "Current cuota number for {{name}}",
+      "cuotaTotalAriaLabel": "Total cuotas for {{name}}"
     },
     "compare": {
       "fromStatement": "From this statement",

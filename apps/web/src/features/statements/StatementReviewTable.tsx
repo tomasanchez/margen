@@ -45,6 +45,7 @@ import TableCell from '@mui/material/TableCell'
 import TableContainer from '@mui/material/TableContainer'
 import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
+import TextField from '@mui/material/TextField'
 import ToggleButton from '@mui/material/ToggleButton'
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
 import Typography from '@mui/material/Typography'
@@ -58,6 +59,7 @@ import { categoryLabel } from '../transactions/presentation'
 import { monoFontFamily } from '../../theme'
 import type { StatementMatch, StatementParse } from '../../api/statementsClient'
 import {
+  parseCuota,
   useStatementReviewState,
   type ReviewLine,
   type ReviewResolution,
@@ -333,6 +335,7 @@ function LineRow({
   onToggleKeep,
   onCategoryChange,
   onResolutionChange,
+  onCuotaChange,
   cardLabel,
   disabled,
 }: {
@@ -340,6 +343,7 @@ function LineRow({
   onToggleKeep: (id: string, keep: boolean) => void
   onCategoryChange: (id: string, category: string) => void
   onResolutionChange: (id: string, resolution: ReviewResolution) => void
+  onCuotaChange: (id: string, index: number | null, total: number | null) => void
   cardLabel: string
   disabled: boolean
 }) {
@@ -350,6 +354,19 @@ function LineRow({
   const kept = line.keep
   const match = line.match
   const isDuplicate = match !== undefined
+  // The detected installment marker (ADR-175), parsed into editable index/total.
+  // Editing either recomposes the `cuota` string, which the backend re-parses into
+  // structured installment fields on import. A parse of a `null`/blank/malformed
+  // marker yields empty fields.
+  const cuota = parseCuota(line.cuota)
+  const emitCuota = (index: number | null, total: number | null) =>
+    onCuotaChange(line.id, index, total)
+  const toIntOrNull = (raw: string): number | null => {
+    const trimmed = raw.trim()
+    if (!/^\d+$/.test(trimmed)) return null
+    const value = Number.parseInt(trimmed, 10)
+    return Number.isFinite(value) && value > 0 ? value : null
+  }
   // Non-color status: an explicit word + strike-through on skipped rows so the
   // keep/exclude state never depends on the dimmed hue alone (ADR-019).
   const statusWord = kept
@@ -504,22 +521,56 @@ function LineRow({
             ))}
           </Select>
         </TableCell>
-        <TableCell>
-          {line.cuota ? (
-            <Chip
-              label={line.cuota}
+        {/* Installment (cuota) editor (ADR-175): the parser detects "Cuota N/M";
+            surface it as an editable index/total pair so the user confirms/corrects
+            it before import. The recomposed "N/M" string flows through the import
+            request, where the backend re-parses it into structured installment
+            fields and stamps recurring_cadence='installment' (ADR-175/176). Fields
+            are disabled when the line is skipped. */}
+        <TableCell sx={{ minWidth: 130 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <TextField
+              value={cuota.index ?? ''}
+              onChange={(e) => emitCuota(toIntOrNull(e.target.value), cuota.total)}
               size="small"
-              variant="outlined"
-              sx={{
-                fontFamily: monoFontFamily,
-                fontSize: 11.5,
-                borderColor: 'var(--mg-border-2)',
-                color: 'text.secondary',
+              disabled={disabled || !kept}
+              placeholder={t('review.line.cuotaIndexPlaceholder')}
+              slotProps={{
+                htmlInput: {
+                  inputMode: 'numeric',
+                  'aria-label': t('review.line.cuotaIndexAriaLabel', {
+                    name: line.name,
+                  }),
+                  style: { textAlign: 'center', padding: '4px 2px', width: 34 },
+                },
               }}
+              sx={{ '& .MuiInputBase-input': { fontFamily: monoFontFamily, fontSize: 12 } }}
             />
-          ) : (
-            <Typography sx={{ fontSize: 12, color: 'text.disabled' }}>—</Typography>
-          )}
+            <Typography
+              aria-hidden
+              component="span"
+              sx={{ fontSize: 12, color: 'text.disabled' }}
+            >
+              /
+            </Typography>
+            <TextField
+              value={cuota.total ?? ''}
+              onChange={(e) => emitCuota(cuota.index, toIntOrNull(e.target.value))}
+              size="small"
+              disabled={disabled || !kept}
+              placeholder={t('review.line.cuotaTotalPlaceholder')}
+              slotProps={{
+                htmlInput: {
+                  inputMode: 'numeric',
+                  'aria-label': t('review.line.cuotaTotalAriaLabel', {
+                    name: line.name,
+                  }),
+                  style: { textAlign: 'center', padding: '4px 2px', width: 34 },
+                },
+              }}
+              sx={{ '& .MuiInputBase-input': { fontFamily: monoFontFamily, fontSize: 12 } }}
+            />
+          </Box>
         </TableCell>
         <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
           <Box
@@ -747,6 +798,7 @@ export function StatementReviewTable({
                 onToggleKeep={review.toggleKeep}
                 onCategoryChange={review.setCategory}
                 onResolutionChange={review.setResolution}
+                onCuotaChange={review.setCuota}
                 cardLabel={cardLabel}
                 disabled={isImporting}
               />

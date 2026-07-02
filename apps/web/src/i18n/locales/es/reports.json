@@ -59,7 +59,10 @@
     "overBy": "Sobre el techo por",
     "openPlanner": "Abrir planificador de Monotributo →",
     "errorTitle": "No se pudo cargar la trayectoria de Monotributo",
-    "errorDescription": "No pudimos contactar al servidor para tu estado de Monotributo. Probá de nuevo."
+    "errorDescription": "No pudimos contactar al servidor para tu estado de Monotributo. Probá de nuevo.",
+    "forwardTitle": "Comprometido a futuro",
+    "forwardCuota": "{{amount}} / mes",
+    "forwardNote": "Tu cuota mensual fija, proyectada en el pronóstico de flujo de caja."
   },
   "fx": {
     "title": "Cambio y poder de compra",
@@ -89,6 +92,31 @@
     "note_one": "{{count}} movimiento no tiene tipo de cambio registrado, así que los montos en USD pueden estar subestimados.",
     "note_other": "{{count}} movimientos no tienen tipo de cambio registrado, así que los montos en USD pueden estar subestimados.",
     "action": "Completar tipos de cambio"
+  },
+  "forecast": {
+    "sectionTitle": "Pronóstico de flujo de caja",
+    "sectionSubtitle": "Tus egresos comprometidos en los próximos {{months}} meses.",
+    "title": "Egresos comprometidos",
+    "subtitle": "Suscripciones, impuestos y cuotas pendientes, mes a mes.",
+    "committed": "Comprometido",
+    "committedTotal": "total comprometido",
+    "empty": "Todavía no hay gastos comprometidos para proyectar. Etiquetá una suscripción o cuota para verla acá.",
+    "accessibleItem": "{{month}}: comprometido {{committed}}",
+    "accessibleSummary": "Egreso comprometido por mes: {{summary}}.",
+    "unconverted_one": "{{count}} movimiento comprometido no tiene tipo de cambio registrado, así que el pronóstico en USD puede estar subestimado.",
+    "unconverted_other": "{{count}} movimientos comprometidos no tienen tipo de cambio registrado, así que el pronóstico en USD puede estar subestimado.",
+    "errorTitle": "No se pudo cargar tu pronóstico",
+    "errorDescription": "No pudimos contactar al servidor para tu pronóstico de flujo de caja. Probá de nuevo.",
+    "commitments": {
+      "title": "Compromisos próximos",
+      "subtitle": "Cómo se prorratean tus gastos a futuro.",
+      "subscriptions": "Suscripciones",
+      "taxes": "Impuestos",
+      "installments": "Cuotas",
+      "remaining_one": "Cuota — queda {{count}}",
+      "remaining_other": "Cuota — quedan {{count}}",
+      "empty": "Todavía no hay flujos comprometidos. Etiquetá una suscripción, impuesto o cuota para proyectarla."
+    }
   },
   "export": {
     "title": "Exportar y compartir",

@@ -14,6 +14,7 @@
  * "current" point matches the Home net-worth card.
  */
 
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   fetchNetWorthHistory,
@@ -22,6 +23,9 @@ import {
   type ReportsOverview,
   type ReportsRange,
 } from '../../api/reportsClient'
+import { fetchForecast, type ForecastSeries } from '../../api/forecastClient'
+import { useDisplayCurrency } from '../settings/displayCurrencyContext'
+import { rangeToHorizon } from './reportsFormat'
 import type { Currency } from '../../mock/types'
 
 /** Stable query-key factory for the Reports domain. */
@@ -37,6 +41,14 @@ export const reportsKeys = {
    */
   overview: (range: ReportsRange, currency: Currency) =>
     [...reportsKeys.all, 'overview', range, currency] as const,
+  /**
+   * The cash-flow forecast is keyed by BOTH the forward horizon and the
+   * denomination currency (ADR-176/178): switching either refetches the panel,
+   * independently of the overview cache so one failing query never blanks the
+   * other (ADR-037/178).
+   */
+  forecast: (horizon: number, currency: Currency) =>
+    [...reportsKeys.all, 'forecast', horizon, currency] as const,
 }
 
 /**
@@ -67,4 +79,43 @@ export function useNetWorthHistory(months = 12) {
     queryFn: () => fetchNetWorthHistory(months),
     staleTime: 5 * 60 * 1000,
   })
+}
+
+/**
+ * Read the schedule/commitment-driven cash-flow forecast (ADR-176/177/178): the
+ * forward committed-outflow series over `horizon` months plus the committed
+ * streams (subscriptions, installment tails, the monotributo cuota) — every figure
+ * ALREADY denominated in `currency` (ADR-168), so no client-side conversion. Keyed
+ * by `horizon` + `currency` so either changing refetches; read-only, so a generous
+ * stale window avoids a refetch on a Reports re-render. This is a SECOND async call
+ * on the Reports page — it owns its own cache so a failure surfaces a calm error in
+ * the forecast panel only, never blanking the overview panels (ADR-037/178).
+ */
+export function useForecast(horizon: number, currency: Currency) {
+  return useQuery<ForecastSeries>({
+    queryKey: reportsKeys.forecast(horizon, currency),
+    queryFn: () => fetchForecast(horizon, currency),
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+/**
+ * The forward monthly monotributo cuota from the forecast (ADR-177), or null when
+ * the forecast is absent / has no tax leg. Lets the Reports page feed the
+ * Monotributo trajectory card its forward cuota from the SAME forecast query the
+ * forecast panel uses (TanStack Query dedupes by the `horizon`+`currency` key), so
+ * no second fetch. The `tax` commitment is AFIP-ARS (native ARS, ADR-177); its
+ * per-occurrence `amount` is the fixed monthly cuota regardless of how many months
+ * it lands in, so the first tax line's amount is the figure.
+ */
+export function useForwardMonotributoCuota(range: ReportsRange): number | null {
+  const { effectiveCurrency } = useDisplayCurrency()
+  const horizon = rangeToHorizon(range)
+  const forecastQuery = useForecast(horizon, effectiveCurrency)
+  return useMemo(() => {
+    const tax = forecastQuery.data?.commitments.find(
+      (line) => line.source === 'tax',
+    )
+    return tax != null && tax.amount > 0 ? tax.amount : null
+  }, [forecastQuery.data])
 }

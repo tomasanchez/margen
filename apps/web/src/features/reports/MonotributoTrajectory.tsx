@@ -25,6 +25,16 @@ import type { MonotributoStanding, StatusLevel } from '../../mock/types'
 export interface MonotributoTrajectoryProps {
   /** The current trailing-12-month standing from the monotributo reader (ADR-046). */
   standing: MonotributoStanding
+  /**
+   * The monthly cuota the cash-flow forecast projects forward (ADR-177), in native
+   * ARS. Sourced from the forecast's `tax` commitment (the configured category's
+   * fixed AFIP-ARS cuota) so this ceiling-awareness card also shows the committed
+   * monthly outflow going forward. `null`/absent when the forecast has no tax leg
+   * (monotributo not configured) or hasn't loaded — the forward note is then
+   * omitted. This is the cuota OUTFLOW only, distinct from the turnover/ceiling
+   * projection which remains deferred (ADR-170).
+   */
+  forwardCuota?: number | null
 }
 
 /** Whether a status band warrants the amber "Watch" badge vs the calm "OK". */
@@ -32,7 +42,10 @@ function isWatch(status: StatusLevel): boolean {
   return status === 'watch' || status === 'close' || status === 'over'
 }
 
-export function MonotributoTrajectory({ standing }: MonotributoTrajectoryProps) {
+export function MonotributoTrajectory({
+  standing,
+  forwardCuota,
+}: MonotributoTrajectoryProps) {
   const { t } = useTranslation('reports')
 
   const { used, annualLimit, category, remaining, percentUsed, status } = standing
@@ -159,6 +172,43 @@ export function MonotributoTrajectory({ standing }: MonotributoTrajectoryProps) 
           valueColor={over ? 'var(--mg-risk-text)' : 'var(--mg-safe-text)'}
         />
       </Box>
+
+      {/* Forward projection (ADR-177): the fixed monthly cuota the forecast
+          commits going forward. Native ARS — the cuota is an AFIP-ARS obligation
+          and must NOT be re-denominated (ADR-177). Omitted when the forecast has
+          no tax leg (monotributo not configured) or a non-positive figure. */}
+      {typeof forwardCuota === 'number' && forwardCuota > 0 ? (
+        <Box
+          sx={{
+            mt: 2,
+            px: 1.5,
+            py: 1.25,
+            bgcolor: 'color-mix(in srgb, var(--mg-gold) 8%, transparent)',
+            border: '1px solid var(--mg-border-2)',
+            borderRadius: 2,
+          }}
+        >
+          <Typography variant="overline" component="p" sx={{ mb: 0.25 }}>
+            {t('monotributo.forwardTitle')}
+          </Typography>
+          <Typography
+            component="p"
+            sx={{
+              fontFamily: monoFontFamily,
+              fontSize: 15,
+              fontWeight: 600,
+              color: 'text.primary',
+            }}
+          >
+            {t('monotributo.forwardCuota', {
+              amount: formatCurrency(forwardCuota, 'ARS'),
+            })}
+          </Typography>
+          <Typography sx={{ fontSize: 11.5, mt: 0.25 }} color="text.secondary">
+            {t('monotributo.forwardNote')}
+          </Typography>
+        </Box>
+      ) : null}
 
       <Box sx={{ mt: 'auto', pt: 2 }}>
         <Link

@@ -38,6 +38,7 @@ import type {
   Currency,
   FxRateType,
   NewTransactionInput,
+  RecurringCadence,
   TxType,
 } from '../../mock/types'
 import type {
@@ -157,6 +158,19 @@ function round2(n: number): number {
 }
 
 /**
+ * Parse a whole-number installment count (the `N`/`M` of a cuota, ADR-174). Only
+ * digits are accepted; a blank, non-numeric, zero, or negative value yields `NaN`
+ * so callers can treat it as "unset / invalid". A decimal is rejected (a cuota
+ * count is an integer), so "3.5" → NaN.
+ */
+function parsePositiveInt(raw: string): number {
+  const trimmed = raw.trim()
+  if (trimmed === '' || !/^\d+$/.test(trimmed)) return Number.NaN
+  const value = Number.parseInt(trimmed, 10)
+  return Number.isFinite(value) && value > 0 ? value : Number.NaN
+}
+
+/**
  * A positive rate as a Decimal string with up to 6 dp (the fx_rate snapshot
  * scale, NUMERIC(18,6)), trailing zeros dropped so the string stays tidy. Mirrors
  * the same helper in {@link captureFx} so the form + capture agree on encoding.
@@ -183,6 +197,14 @@ export interface SuggestedRateValues {
   readonly MEP: number | null
   readonly official: number | null
 }
+
+/**
+ * The recurrence choice the optional form control offers (ADR-174). `'none'` is
+ * the UI sentinel for a one-off (no recurrence), mapped to a null `recurringCadence`
+ * on save; the rest map 1:1 to the {@link RecurringCadence} union. Only when
+ * `'installment'` is chosen do the installment total/index fields apply.
+ */
+export type RecurrenceOption = 'none' | RecurringCadence
 
 export interface AddEditFormState {
   /** Edit mode if an id was prefilled; otherwise add mode. */
@@ -303,6 +325,29 @@ export interface AddEditFormState {
 
   readonly notes: string
   setNotes: (next: string) => void
+
+  // --- Recurrence / installments (ADR-174) --------------------------------
+  //
+  // Optional, calm-by-default commitment metadata driving the cash-flow forecast
+  // (ADR-173/176). Most expenses leave `recurrence='none'`. The installment
+  // total/index fields are only meaningful (and only serialized) when
+  // `recurrence='installment'`.
+
+  /** The chosen recurrence (`'none'` = one-off), seeded from the prefill on edit. */
+  readonly recurrence: RecurrenceOption
+  setRecurrence: (next: RecurrenceOption) => void
+  /** Raw installment-TOTAL string as typed (the `M` of "Cuota N/M"); blank = unset. */
+  readonly installmentsTotalText: string
+  setInstallmentsTotalText: (next: string) => void
+  /** Raw installment-INDEX string as typed (the `N`); blank = unset. */
+  readonly installmentsIndexText: string
+  setInstallmentsIndexText: (next: string) => void
+  /**
+   * True when an installment index/total pair is invalid: a non-positive value, or
+   * an index that EXCEEDS the total (ADR-174 UI validation). Blank fields are not
+   * an error (the pair is simply omitted). Drives the field error + blocks save.
+   */
+  readonly installmentsError: boolean
 
   /** ARS-equivalent magnitude for the current entry (USD→ARS when needed). */
   readonly amountArs: number
@@ -534,6 +579,23 @@ export function useAddEditFormState(
   const [name, setName] = useState<string>(prefill?.name ?? '')
   const [notes, setNotes] = useState<string>(prefill?.notes ?? '')
 
+  // Recurrence / installments (ADR-174). Seeded from the prefill on edit so a
+  // recurring/installment tag round-trips; a fresh add starts as a one-off. The
+  // installment count fields prefill from the row's stored plan when present.
+  const [recurrence, setRecurrence] = useState<RecurrenceOption>(
+    prefill?.recurringCadence ?? 'none',
+  )
+  const [installmentsTotalText, setInstallmentsTotalText] = useState<string>(
+    typeof prefill?.installmentsTotal === 'number'
+      ? String(prefill.installmentsTotal)
+      : '',
+  )
+  const [installmentsIndexText, setInstallmentsIndexText] = useState<string>(
+    typeof prefill?.installmentsIndex === 'number'
+      ? String(prefill.installmentsIndex)
+      : '',
+  )
+
   // In-form ARCA invoice upload (ADR-072). The parse autofills the fields above
   // via `applyParsedInvoice`; the base64 `document` is stashed here so saving
   // attaches the PDF, and `duplicate` drives the calm non-blocking warning. The
@@ -567,6 +629,42 @@ export function useAddEditFormState(
     const parsed = parseAmountInput(arsRateText)
     return Number.isFinite(parsed) && parsed > 0 ? parsed : Number.NaN
   }, [arsRateText])
+
+  // Parsed installment total/index (positive integers, or NaN when blank/invalid).
+  // The pair only applies for an installment recurrence; the values are otherwise
+  // inert. A blank field is "unset" (not an error); a present-but-invalid value or
+  // an index exceeding the total is the error the UI surfaces (ADR-174).
+  const installmentsTotal = useMemo(
+    () => parsePositiveInt(installmentsTotalText),
+    [installmentsTotalText],
+  )
+  const installmentsIndex = useMemo(
+    () => parsePositiveInt(installmentsIndexText),
+    [installmentsIndexText],
+  )
+  const installmentsError = useMemo(() => {
+    if (recurrence !== 'installment') return false
+    const totalBlank = installmentsTotalText.trim() === ''
+    const indexBlank = installmentsIndexText.trim() === ''
+    // A present field that didn't parse to a positive int is invalid.
+    if (!totalBlank && !Number.isFinite(installmentsTotal)) return true
+    if (!indexBlank && !Number.isFinite(installmentsIndex)) return true
+    // When BOTH are present, the index must not exceed the total (ADR-174).
+    if (
+      Number.isFinite(installmentsTotal) &&
+      Number.isFinite(installmentsIndex) &&
+      installmentsIndex > installmentsTotal
+    ) {
+      return true
+    }
+    return false
+  }, [
+    recurrence,
+    installmentsTotalText,
+    installmentsIndexText,
+    installmentsTotal,
+    installmentsIndex,
+  ])
 
   // Prefill the visible ARS rate field from the app's cached preferred rate as
   // soon as it lands, UNLESS the user has already typed one (or an edit seeded a
@@ -779,6 +877,10 @@ export function useAddEditFormState(
     setAccountId('')
     setName('')
     setNotes('')
+    // Reset recurrence back to a one-off (ADR-174).
+    setRecurrence('none')
+    setInstallmentsTotalText('')
+    setInstallmentsIndexText('')
     setOccurredOn(maxOccurredOn)
     setImportedDocument(null)
     setAttachedFileName(null)
@@ -830,7 +932,10 @@ export function useAddEditFormState(
     Number.isFinite(amount) &&
     amount > 0 &&
     !usdRateMissing &&
-    Number.isFinite(amountArs)
+    Number.isFinite(amountArs) &&
+    // A malformed installment pair (index > total, or a non-positive value) blocks
+    // save so a bogus plan never reaches the forecast (ADR-174).
+    !installmentsError
 
   const buildInput = (): NewTransactionInput => {
     // A reimbursement (ADR-158): a stripped-down ARS inflow linked to its source
@@ -903,6 +1008,25 @@ export function useAddEditFormState(
       ...(mode === 'add' && importedDocument
         ? { document: importedDocument }
         : {}),
+    }
+
+    // Recurrence / installments (ADR-174). On EDIT we always send the cadence
+    // (incl. null for "one-off") so clearing a recurrence persists; on ADD we send
+    // it only when set (the lenient backend defaults a missing value). The
+    // installment counts ride along only for an installment cadence — the client
+    // (`toCreateBody`/`toPatchBody`) clears them for the other cadences.
+    const cadence: RecurringCadence | null =
+      recurrence === 'none' ? null : recurrence
+    if (mode === 'edit' || cadence !== null) {
+      base.recurringCadence = cadence
+      if (cadence === 'installment') {
+        if (Number.isFinite(installmentsTotal)) {
+          base.installmentsTotal = installmentsTotal
+        }
+        if (Number.isFinite(installmentsIndex)) {
+          base.installmentsIndex = installmentsIndex
+        }
+      }
     }
 
     if (currency === 'USD') {
@@ -985,6 +1109,13 @@ export function useAddEditFormState(
     setName,
     notes,
     setNotes,
+    recurrence,
+    setRecurrence,
+    installmentsTotalText,
+    setInstallmentsTotalText,
+    installmentsIndexText,
+    setInstallmentsIndexText,
+    installmentsError,
     amountArs,
     usdRateMissing,
     canSave,

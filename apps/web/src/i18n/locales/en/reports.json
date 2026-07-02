@@ -59,7 +59,10 @@
     "overBy": "Over the ceiling by",
     "openPlanner": "Open Monotributo planner →",
     "errorTitle": "Couldn't load the Monotributo trajectory",
-    "errorDescription": "We couldn't reach the server for your Monotributo standing. Try again."
+    "errorDescription": "We couldn't reach the server for your Monotributo standing. Try again.",
+    "forwardTitle": "Committed going forward",
+    "forwardCuota": "{{amount}} / month",
+    "forwardNote": "Your fixed monthly cuota, projected into the cash-flow forecast."
   },
   "fx": {
     "title": "FX & purchasing power",
@@ -89,6 +92,31 @@
     "note_one": "{{count}} transaction lacks an FX snapshot, so the USD figures may be understated.",
     "note_other": "{{count}} transactions lack an FX snapshot, so the USD figures may be understated.",
     "action": "Backfill FX rates"
+  },
+  "forecast": {
+    "sectionTitle": "Cash-flow forecast",
+    "sectionSubtitle": "Your committed outflows over the next {{months}} months.",
+    "title": "Committed outflows",
+    "subtitle": "Subscriptions, taxes and installment tails, month by month.",
+    "committed": "Committed",
+    "committedTotal": "committed total",
+    "empty": "No committed expenses to project yet. Tag a subscription or installment to see it here.",
+    "accessibleItem": "{{month}}: committed {{committed}}",
+    "accessibleSummary": "Committed outflow by month: {{summary}}.",
+    "unconverted_one": "{{count}} committed transaction lacks an FX snapshot, so the USD forecast may be understated.",
+    "unconverted_other": "{{count}} committed transactions lack an FX snapshot, so the USD forecast may be understated.",
+    "errorTitle": "Couldn't load your forecast",
+    "errorDescription": "We couldn't reach the server for your cash-flow forecast. Try again.",
+    "commitments": {
+      "title": "Upcoming commitments",
+      "subtitle": "How your expenses pro-rate going forward.",
+      "subscriptions": "Subscriptions",
+      "taxes": "Taxes",
+      "installments": "Installments",
+      "remaining_one": "Cuota — {{count}} left",
+      "remaining_other": "Cuota — {{count}} left",
+      "empty": "No committed streams yet. Tag a subscription, tax or installment to project it."
+    }
   },
   "export": {
     "title": "Export & share",

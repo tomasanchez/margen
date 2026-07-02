@@ -606,6 +606,18 @@ export function buildEditPrefill(
         : {}),
     ...(t.fxSource !== undefined ? { fxSource: t.fxSource } : {}),
     ...(t.recurring !== undefined ? { recurring: t.recurring } : {}),
+    // Carry the recurrence / installment metadata so the form's recurrence control
+    // shows the row's committed-stream tag on edit and it round-trips on re-save
+    // (ADR-174). Omitted when the row is a one-off (no cadence).
+    ...(t.recurringCadence != null
+      ? { recurringCadence: t.recurringCadence }
+      : {}),
+    ...(t.installmentsTotal != null
+      ? { installmentsTotal: t.installmentsTotal }
+      : {}),
+    ...(t.installmentsIndex != null
+      ? { installmentsIndex: t.installmentsIndex }
+      : {}),
     // Carry the existing free-text note so it survives a re-save on edit (ADR-088).
     ...(t.notes ? { notes: t.notes } : {}),
   }
