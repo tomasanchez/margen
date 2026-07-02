@@ -53,8 +53,8 @@ export function deltaIsGood(
 export type TrendDirection = 'up' | 'down' | 'flat'
 
 /**
- * Direction of a category's vs-previous delta (a FRACTION from the backend, e.g.
- * −0.06). Null (no base) reads as flat. Used to pick the sparkline colour and
+ * Direction of a category's vs-previous delta (a PERCENTAGE from the backend,
+ * e.g. −6). Null (no base) reads as flat. Used to pick the sparkline colour and
  * the delta chip treatment (green for a DOWN spend, amber for UP — ADR-167).
  */
 export function trendDirection(deltaPct: number | null): TrendDirection {

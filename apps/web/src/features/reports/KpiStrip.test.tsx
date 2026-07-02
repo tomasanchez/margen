@@ -25,8 +25,10 @@ function renderStrip(kpis: ReportsKpis, currency: 'ARS' | 'USD' = 'ARS') {
 }
 
 const baseKpis: ReportsKpis = {
-  current: { income: 4200, expenses: 1800, netSaved: 2400, savingsRate: 0.571 },
-  previous: { income: 4000, expenses: 2000, netSaved: 2000, savingsRate: 0.5 },
+  // savingsRate arrives already as a PERCENTAGE (57.1 = 57.1%), matching the
+  // backend wire contract (e.g. "60", "37.5") — never a fraction.
+  current: { income: 4200, expenses: 1800, netSaved: 2400, savingsRate: 57.1 },
+  previous: { income: 4000, expenses: 2000, netSaved: 2000, savingsRate: 50 },
 }
 
 describe('<KpiStrip>', () => {
@@ -39,7 +41,7 @@ describe('<KpiStrip>', () => {
     expect(screen.getByText('Savings rate')).toBeInTheDocument()
 
     expect(screen.getByText('USD 4.200')).toBeInTheDocument()
-    // Savings rate shows the fraction as a whole percent.
+    // Savings rate (a percentage, 57.1) shows rounded to a whole percent.
     expect(screen.getByText('57%')).toBeInTheDocument()
   })
 
@@ -67,7 +69,7 @@ describe('<KpiStrip>', () => {
 
   test('savings-rate delta is shown in percentage points', () => {
     renderStrip(baseKpis)
-    // 57.1pp − 50.0pp = +7.1pp.
+    // 57.1 − 50 = +7.1 percentage points.
     expect(screen.getByText('+7.1pp')).toBeInTheDocument()
   })
 })
