@@ -164,10 +164,14 @@ describe('TransactionsPage delete', () => {
     // The search push is debounced (~300ms, ADR-116) before the list narrows.
     await waitFor(() => expect(shownCount()).toBe(1), { timeout: 2000 })
 
-    const deleteButton = screen.getAllByRole('button', {
-      name: 'Delete Farmacity',
+    // Delete now lives behind the row's overflow "Actions" menu (shared by both
+    // breakpoints). Open the menu, then click the Remove item.
+    const actionsTrigger = screen.getAllByRole('button', {
+      name: 'Actions for Farmacity',
     })[0]
-    await user.click(deleteButton)
+    await user.click(actionsTrigger)
+    const deleteItem = await screen.findByRole('menuitem', { name: 'Delete' })
+    await user.click(deleteItem)
 
     await waitFor(() =>
       expect(screen.queryByText('Farmacity')).not.toBeInTheDocument(),

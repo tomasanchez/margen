@@ -3,10 +3,12 @@
  *
  * Desktop: a 5-column grid — date (mono), description + card meta (with optional
  * "recurring" and FX badges, ellipsis-truncated), category (color dot + label),
- * the <Amount> (right-aligned, FX subline on USD rows), and hover/focus Edit +
- * Delete actions. Mobile: a condensed two-column layout (name + category·bank on
- * the left, amount + date on the right) with the row itself tappable to edit and
- * a trailing delete action.
+ * the <Amount> (right-aligned, FX subline on USD rows), and a trailing overflow
+ * "Actions" menu (⋮) that fades in on row hover/focus-within. Mobile: a condensed
+ * two-column layout (name + category·bank on the left, amount + date on the
+ * right) with the row itself tappable to edit and the SAME trailing overflow menu
+ * (always visible). Both breakpoints share ONE menu-driven actions affordance
+ * ({@link RowOverflowMenu}); only the trigger's visibility differs.
  *
  * All money goes through <Amount>/format; the row never inlines number styling.
  */
@@ -15,12 +17,12 @@ import { useCallback, useId, useState, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import CircularProgress from '@mui/material/CircularProgress'
+import Divider from '@mui/material/Divider'
 import IconButton from '@mui/material/IconButton'
 import ListItemIcon from '@mui/material/ListItemIcon'
 import ListItemText from '@mui/material/ListItemText'
 import Menu from '@mui/material/Menu'
 import MenuItem from '@mui/material/MenuItem'
-import Stack from '@mui/material/Stack'
 import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
@@ -274,81 +276,6 @@ function CategoryDot({ category }: { category: Transaction['category'] }) {
   )
 }
 
-/** Edit + Delete action cluster, reused by both variants. */
-function RowActions({
-  transaction,
-  onEdit,
-  onDelete,
-  onReimburse,
-  busy,
-  className,
-}: TransactionRowProps & { className?: string }) {
-  const { t } = useTranslation(['transactions', 'common'])
-  const label = transaction.name
-  // The "add reimbursement" action links a payback to THIS expense (ADR-158/159);
-  // shown only for expense rows that have a handler wired.
-  const canReimburse = onReimburse && transaction.type === 'expense'
-  return (
-    <Stack
-      direction="row"
-      spacing={0.5}
-      className={className}
-      sx={{ justifyContent: 'flex-end' }}
-    >
-      {canReimburse ? (
-        <Tooltip title={t('transactions:row.reimburse')}>
-          <span>
-            <IconButton
-              size="small"
-              aria-label={t('transactions:row.reimburseFor', { name: label })}
-              disabled={busy}
-              onClick={() => onReimburse(transaction)}
-              sx={{
-                color: 'text.disabled',
-                '&:hover': { color: 'primary.main' },
-              }}
-            >
-              <UndoOutlinedIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
-      ) : null}
-      <Tooltip title={t('common:actions.edit')}>
-        <span>
-          <IconButton
-            size="small"
-            aria-label={t('transactions:row.edit', { name: label })}
-            disabled={busy}
-            onClick={() => onEdit(transaction)}
-            sx={{
-              color: 'text.disabled',
-              '&:hover': { color: 'primary.main' },
-            }}
-          >
-            <EditOutlinedIcon fontSize="small" />
-          </IconButton>
-        </span>
-      </Tooltip>
-      <Tooltip title={t('common:actions.delete')}>
-        <span>
-          <IconButton
-            size="small"
-            aria-label={t('transactions:row.delete', { name: label })}
-            disabled={busy}
-            onClick={() => onDelete(transaction)}
-            sx={{
-              color: 'text.disabled',
-              '&:hover': { color: 'error.main' },
-            }}
-          >
-            <DeleteOutlineIcon fontSize="small" />
-          </IconButton>
-        </span>
-      </Tooltip>
-    </Stack>
-  )
-}
-
 /**
  * Whether a row has a stored document to open — the same condition the inline
  * {@link InvoiceAttachmentBadge} uses (imported ARCA invoices are persisted with
@@ -359,16 +286,47 @@ function hasAttachedDocument(transaction: Transaction): boolean {
 }
 
 /**
- * Kebab (⋮) overflow menu for the mobile row (ADR-017). Consolidates the
- * per-row actions — Edit, Remove, and (when a document is attached) Open PDF —
- * behind a single labeled icon button, so the cramped mobile row no longer has
- * a trash icon and a "PDF" chip competing with the amount and date.
+ * A single entry in the row's actions menu — a declarative descriptor so new
+ * actions can be added by pushing to the list (below) rather than hand-writing
+ * per-breakpoint JSX. `render()` returns whether the item is shown for a given
+ * row; `danger` flags the destructive Remove item for `error.main` styling; a
+ * `dividerBefore` renders a separator above the item (used before Remove).
+ */
+interface RowActionItem {
+  key: string
+  label: string
+  icon: React.ReactNode
+  onSelect: () => void
+  /** Predicate deciding whether this item is present for the current row. */
+  show: boolean
+  /** Disable (but keep visible) while a mutation is in flight (ADR-036/037). */
+  disabled?: boolean
+  /** Destructive styling for the Remove item. */
+  danger?: boolean
+  /** Render a <Divider /> above this item. */
+  dividerBefore?: boolean
+}
+
+/**
+ * Shared kebab (⋮) overflow "Actions" menu for BOTH row variants (ADR-017).
+ * Consolidates the per-row actions — Edit, Add reimbursement (expense-only),
+ * Open PDF (when a document is attached), and Remove — behind a single labeled
+ * icon button. This is the ONE affordance for desktop and mobile alike: the
+ * desktop grid row and the condensed mobile row both render it. The only
+ * difference is visibility of the TRIGGER — desktop hides it until the row is
+ * hovered/focused (`hideTriggerUntilActive`, via the `.tx-row-actions` opacity
+ * fade — opacity, not display, so keyboard users keep it in the tab order);
+ * mobile always shows the kebab. The MENU and its items are identical.
+ *
+ * Items are built as a declarative {@link RowActionItem} list filtered by each
+ * item's `show` predicate, so future actions are added by extending the list
+ * (Edit, Add reimbursement, Open PDF, divider, Remove) — no duplicated JSX.
  *
  * Accessibility (ADR-019): the trigger carries an `aria-label`, `aria-haspopup`,
  * and `aria-expanded`; the menu items are real `MenuItem`s with an icon AND a
- * text label (non-color cues); the menu is keyboard-operable and closes on
- * action. Remove preserves the calm delete flow + the `busy` disabled state
- * (ADR-036/037).
+ * text label (non-color cues); the menu is keyboard-operable, closes on action,
+ * and returns focus to the trigger (MUI Menu). Remove/Reimburse preserve the
+ * calm `busy` disabled state (ADR-036/037).
  *
  * "Open PDF" drives the SAME authed document opener as the inline badge: it
  * fetches the stored bytes WITH the bearer token (ADR-092), opens a short-lived
@@ -381,7 +339,16 @@ function RowOverflowMenu({
   onDelete,
   onReimburse,
   busy,
-}: TransactionRowProps) {
+  hideTriggerUntilActive,
+}: TransactionRowProps & {
+  /**
+   * Desktop calm UX: hide the trigger until the row is hovered/focused-within.
+   * The trigger stays in the tab order (opacity, not display), so keyboard users
+   * never lose the affordance (ADR-019). Mobile leaves this off (kebab always
+   * visible).
+   */
+  hideTriggerUntilActive?: boolean
+}) {
   const { t } = useTranslation(['transactions', 'common'])
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const open = Boolean(anchorEl)
@@ -392,36 +359,76 @@ function RowOverflowMenu({
     [transaction.id],
   )
   const { open: openDocument, loading, error } = useDocumentOpener(fetchBlob)
-  const showPdf = hasAttachedDocument(transaction)
-  // Add-reimbursement item: only for expense rows with a handler (ADR-158/159).
-  const canReimburse = onReimburse && transaction.type === 'expense'
 
+  const handleClose = () => setAnchorEl(null)
   const handleOpen = (event: MouseEvent<HTMLElement>) => {
     event.stopPropagation()
     setAnchorEl(event.currentTarget)
   }
-  const handleClose = () => setAnchorEl(null)
+  /** Close the menu, then run the action (keeps focus return to the trigger). */
+  const runAndClose = (action: () => void) => () => {
+    handleClose()
+    action()
+  }
 
-  const handleEdit = () => {
-    handleClose()
-    onEdit(transaction)
-  }
-  const handleReimburse = () => {
-    handleClose()
-    onReimburse?.(transaction)
-  }
-  const handleDelete = () => {
-    handleClose()
-    onDelete(transaction)
-  }
-  const handleOpenPdf = () => {
-    handleClose()
-    openDocument()
-  }
+  // Declarative item list. Order: Edit, Add reimbursement, Open PDF, divider,
+  // Remove. Each item's `show` gates its presence; extend this list to add
+  // future actions without touching the render below.
+  const items: RowActionItem[] = [
+    {
+      key: 'edit',
+      label: t('common:actions.edit'),
+      icon: <EditOutlinedIcon fontSize="small" />,
+      onSelect: runAndClose(() => onEdit(transaction)),
+      show: true,
+    },
+    {
+      key: 'reimburse',
+      label: t('transactions:row.reimburse'),
+      icon: <UndoOutlinedIcon fontSize="small" />,
+      onSelect: runAndClose(() => onReimburse?.(transaction)),
+      // The "add reimbursement" action links a payback to THIS expense
+      // (ADR-158/159); shown only for expense rows that have a handler wired.
+      show: Boolean(onReimburse) && transaction.type === 'expense',
+      disabled: busy,
+    },
+    {
+      key: 'openPdf',
+      label: t('transactions:row.openPdf'),
+      icon: <OpenInNewOutlinedIcon fontSize="small" />,
+      onSelect: runAndClose(() => openDocument()),
+      show: hasAttachedDocument(transaction),
+      disabled: loading,
+    },
+    {
+      key: 'delete',
+      label: t('common:actions.delete'),
+      icon: <DeleteOutlineIcon fontSize="small" />,
+      onSelect: runAndClose(() => onDelete(transaction)),
+      show: true,
+      disabled: busy,
+      danger: true,
+      dividerBefore: true,
+    },
+  ]
+  const visibleItems = items.filter((item) => item.show)
 
   return (
     <Box
-      sx={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 0.5 }}
+      className={hideTriggerUntilActive ? 'tx-row-actions' : undefined}
+      sx={{
+        flex: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: 0.5,
+        // Desktop: fade the trigger in on row hover/focus-within. Kept in the tab
+        // order (opacity, not display), and forced visible while the menu is open
+        // so it never vanishes mid-interaction.
+        ...(hideTriggerUntilActive
+          ? { opacity: open ? 1 : 0, transition: 'opacity 120ms ease' }
+          : null),
+      }}
       // The kebab and its menu are actions, not the row's edit affordance: keep
       // taps from bubbling to the surrounding tappable name button.
       onClick={(event) => event.stopPropagation()}
@@ -446,7 +453,9 @@ function RowOverflowMenu({
       ) : null}
       <IconButton
         size="small"
-        aria-label={t('transactions:row.actionsAriaLabel', { name: transaction.name })}
+        aria-label={t('transactions:row.actionsAriaLabel', {
+          name: transaction.name,
+        })}
         aria-haspopup="menu"
         aria-controls={open ? menuId : undefined}
         aria-expanded={open ? 'true' : undefined}
@@ -489,41 +498,24 @@ function RowOverflowMenu({
           },
         }}
       >
-        <MenuItem onClick={handleEdit} sx={{ py: 1.25 }}>
-          <ListItemIcon sx={{ color: 'text.secondary' }}>
-            <EditOutlinedIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText primary={t('common:actions.edit')} />
-        </MenuItem>
-
-        {canReimburse ? (
-          <MenuItem onClick={handleReimburse} disabled={busy} sx={{ py: 1.25 }}>
-            <ListItemIcon sx={{ color: 'text.secondary' }}>
-              <UndoOutlinedIcon fontSize="small" />
+        {visibleItems.map((item) => [
+          item.dividerBefore ? (
+            <Divider key={`${item.key}-divider`} sx={{ my: 0.5 }} />
+          ) : null,
+          <MenuItem
+            key={item.key}
+            onClick={item.onSelect}
+            disabled={item.disabled}
+            sx={{ py: 1.25, ...(item.danger ? { color: 'error.main' } : null) }}
+          >
+            <ListItemIcon
+              sx={{ color: item.danger ? 'error.main' : 'text.secondary' }}
+            >
+              {item.icon}
             </ListItemIcon>
-            <ListItemText primary={t('transactions:row.reimburse')} />
-          </MenuItem>
-        ) : null}
-
-        {showPdf ? (
-          <MenuItem onClick={handleOpenPdf} disabled={loading} sx={{ py: 1.25 }}>
-            <ListItemIcon sx={{ color: 'text.secondary' }}>
-              <OpenInNewOutlinedIcon fontSize="small" />
-            </ListItemIcon>
-            <ListItemText primary={t('transactions:row.openPdf')} />
-          </MenuItem>
-        ) : null}
-
-        <MenuItem
-          onClick={handleDelete}
-          disabled={busy}
-          sx={{ py: 1.25, color: 'error.main' }}
-        >
-          <ListItemIcon sx={{ color: 'error.main' }}>
-            <DeleteOutlineIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText primary={t('common:actions.delete')} />
-        </MenuItem>
+            <ListItemText primary={item.label} />
+          </MenuItem>,
+        ])}
       </Menu>
     </Box>
   )
@@ -647,12 +639,11 @@ export function TransactionRow(props: TransactionRowProps) {
         />
       </Box>
 
-      <RowActions
-        {...props}
-        className="tx-row-actions"
-        // Hidden until hover/focus-within (desktop calm), but reachable: opacity
-        // (not display) keeps the buttons in the tab order.
-      />
+      {/* Trailing actions column: the SAME overflow menu the mobile row uses,
+          but the trigger fades in on row hover/focus-within (desktop calm). It
+          stays keyboard-reachable — opacity, not display, keeps it in the tab
+          order (ADR-019). */}
+      <RowOverflowMenu {...props} hideTriggerUntilActive />
     </Box>
   )
 }

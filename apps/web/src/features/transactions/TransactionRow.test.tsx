@@ -474,3 +474,157 @@ describe('mobile row overflow menu', () => {
     expect(screen.queryByRole('menuitem', { name: 'Open PDF' })).toBeNull()
   })
 })
+
+// Desktop row overflow menu (ADR-017, ADR-019): the desktop row now shares the
+// SAME single "Actions" overflow menu as the mobile row — the separate inline
+// Edit / Delete / reimburse icon buttons are gone from the row surface. The
+// trigger is labeled "Actions for {{name}}", and opening it reveals Edit /
+// Remove and (on expenses with a handler) Add reimbursement. Each item fires the
+// matching handler; income rows have no reimbursement item. Assertions go
+// through roles/labels, not the hover-opacity styling.
+describe('desktop row overflow menu', () => {
+  const expense: Transaction = {
+    ...baseUsd,
+    id: 'exp-1',
+    currency: 'ARS',
+    type: 'expense',
+    kind: 'expense',
+    name: 'Coto supermarket',
+    category: 'Food',
+    bank: 'Galicia',
+    usd: undefined,
+    rate: undefined,
+    fxRateType: undefined,
+  }
+  const income: Transaction = {
+    ...baseUsd,
+    id: 'inc-1',
+    currency: 'ARS',
+    type: 'income',
+    kind: 'income',
+    name: 'Salary',
+    category: 'Income',
+    usd: undefined,
+    rate: undefined,
+    fxRateType: undefined,
+  }
+
+  function renderDesktop(
+    t: Transaction,
+    handlers: {
+      onEdit?: (t: Transaction) => void
+      onDelete?: (t: Transaction) => void
+      onReimburse?: (t: Transaction) => void
+      busy?: boolean
+    } = {},
+  ) {
+    return render(
+      <ThemeProvider theme={darkTheme}>
+        <TransactionRow
+          transaction={t}
+          onEdit={handlers.onEdit ?? (() => {})}
+          onDelete={handlers.onDelete ?? (() => {})}
+          onReimburse={handlers.onReimburse ?? (() => {})}
+          busy={handlers.busy}
+        />
+      </ThemeProvider>,
+    )
+  }
+
+  test('exposes a single labeled Actions menu trigger (no inline icon buttons)', () => {
+    renderDesktop(expense)
+    const trigger = screen.getByRole('button', {
+      name: 'Actions for Coto supermarket',
+    })
+    expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
+    // The old separate inline icon buttons are gone from the row surface — the
+    // actions now live behind the menu.
+    expect(
+      screen.queryByRole('button', { name: /^Delete Coto supermarket/ }),
+    ).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: /^Edit Coto supermarket/ }),
+    ).toBeNull()
+    expect(
+      screen.queryByRole('button', {
+        name: /^Add a reimbursement for Coto supermarket/,
+      }),
+    ).toBeNull()
+    // The menu is not mounted until opened.
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  test('opening an expense menu reveals Edit, Add reimbursement, and Remove', async () => {
+    const user = userEvent.setup()
+    renderDesktop(expense)
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Coto supermarket' }),
+    )
+    const menu = await screen.findByRole('menu', {
+      name: 'Actions for Coto supermarket',
+    })
+    expect(
+      within(menu).getByRole('menuitem', { name: 'Edit' }),
+    ).toBeInTheDocument()
+    expect(
+      within(menu).getByRole('menuitem', { name: 'Add reimbursement' }),
+    ).toBeInTheDocument()
+    expect(
+      within(menu).getByRole('menuitem', { name: 'Delete' }),
+    ).toBeInTheDocument()
+  })
+
+  test('an income row has no Add reimbursement item', async () => {
+    const user = userEvent.setup()
+    renderDesktop(income)
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Salary' }),
+    )
+    const menu = await screen.findByRole('menu', { name: 'Actions for Salary' })
+    expect(
+      within(menu).getByRole('menuitem', { name: 'Edit' }),
+    ).toBeInTheDocument()
+    expect(
+      within(menu).getByRole('menuitem', { name: 'Delete' }),
+    ).toBeInTheDocument()
+    expect(
+      within(menu).queryByRole('menuitem', { name: 'Add reimbursement' }),
+    ).toBeNull()
+  })
+
+  test('Edit fires onEdit with the transaction and closes the menu', async () => {
+    const user = userEvent.setup()
+    const onEdit = vi.fn()
+    renderDesktop(expense, { onEdit })
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Coto supermarket' }),
+    )
+    await user.click(await screen.findByRole('menuitem', { name: 'Edit' }))
+    expect(onEdit).toHaveBeenCalledWith(expense)
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+  })
+
+  test('Remove fires onDelete with the transaction', async () => {
+    const user = userEvent.setup()
+    const onDelete = vi.fn()
+    renderDesktop(expense, { onDelete })
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Coto supermarket' }),
+    )
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+    expect(onDelete).toHaveBeenCalledWith(expense)
+  })
+
+  test('Add reimbursement fires onReimburse with the transaction', async () => {
+    const user = userEvent.setup()
+    const onReimburse = vi.fn()
+    renderDesktop(expense, { onReimburse })
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Coto supermarket' }),
+    )
+    await user.click(
+      await screen.findByRole('menuitem', { name: 'Add reimbursement' }),
+    )
+    expect(onReimburse).toHaveBeenCalledWith(expense)
+  })
+})
