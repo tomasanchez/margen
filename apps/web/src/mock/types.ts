@@ -616,5 +616,13 @@ export interface CategorySpend {
   pct: number
   /** Optional month-over-month rise label, e.g. "+22%". */
   up?: string
+  /**
+   * Signed month-over-month delta percentage vs the same category last month
+   * (ADR-042), or `null` when the prior month's total was 0. The Home card only
+   * surfaces a positive rise via {@link CategorySpend.up}; the Reports category
+   * table shows the full signed delta (rises AND falls). Optional so mock data
+   * without a delta stays valid.
+   */
+  deltaPct?: number | null
 }
 
