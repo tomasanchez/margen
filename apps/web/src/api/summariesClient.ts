@@ -153,6 +153,10 @@ function adaptCategorySpend(dto: SummaryCategoryDto): CategorySpend {
     category: asCategory(dto.category),
     amount: parseDecimal(dto.amount),
     pct: parseDecimal(dto.share),
+    // The Home card shows only a positive rise via `up`; the Reports category
+    // table reads the full SIGNED `deltaPct` (rises and falls, null when the
+    // prior month was 0) — so the parsed delta is carried through here too.
+    deltaPct: delta,
     ...(rose ? { up: `+${Math.round(delta)}%` } : {}),
   }
 }

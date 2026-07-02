@@ -5,6 +5,7 @@
     "transactions": "Transactions",
     "accounts": "Accounts",
     "budgets": "Budgets",
+    "reports": "Reports",
     "transfers": "Transfers",
     "monotributo": "Monotributo",
     "import": "Import statement",
@@ -13,6 +14,7 @@
     "transactionsShort": "Activity",
     "accountsShort": "Accounts",
     "budgetsShort": "Budgets",
+    "reportsShort": "Reports",
     "transfersShort": "Transfers",
     "monotributoShort": "Mono",
     "importShort": "Import"
