@@ -3,8 +3,8 @@
  *
  * The analytics window lives in `?range=`: validate narrows a raw param to one of
  * the four presets (rejecting garbage + the stale `month` param),
- * `searchToReportRange` derives the live range (defaulting to 6M when absent),
- * and `rangeToReportsSearch` round-trips a range back, omitting the default 6M.
+ * `searchToReportRange` derives the live range (defaulting to 3M when absent),
+ * and `rangeToReportsSearch` round-trips a range back, omitting the default 3M.
  */
 
 import { describe, expect, test } from 'vitest'
@@ -46,16 +46,16 @@ describe('searchToReportRange', () => {
     expect(searchToReportRange({ range: '3M' })).toBe('3M')
   })
 
-  test('falls back to the default 6M when absent or invalid', () => {
+  test('falls back to the default 3M when absent or invalid', () => {
     expect(searchToReportRange({})).toBe(DEFAULT_REPORTS_RANGE)
-    expect(searchToReportRange({ range: undefined })).toBe('6M')
+    expect(searchToReportRange({ range: undefined })).toBe('3M')
   })
 })
 
 describe('rangeToReportsSearch', () => {
-  test('omits the default 6M (short URL) and encodes any other range', () => {
-    expect(rangeToReportsSearch('6M')).toEqual({})
-    expect(rangeToReportsSearch('3M')).toEqual({ range: '3M' })
+  test('omits the default 3M (short URL) and encodes any other range', () => {
+    expect(rangeToReportsSearch('3M')).toEqual({})
+    expect(rangeToReportsSearch('6M')).toEqual({ range: '6M' })
     expect(rangeToReportsSearch('YTD')).toEqual({ range: 'YTD' })
   })
 })
