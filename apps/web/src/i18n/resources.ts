@@ -26,6 +26,7 @@ import enTransactions from './locales/en/transactions.json'
 import enTransfers from './locales/en/transfers.json'
 import enStatements from './locales/en/statements.json'
 import enMonotributo from './locales/en/monotributo.json'
+import enReports from './locales/en/reports.json'
 import enSettings from './locales/en/settings.json'
 
 // Spanish catalogs.
@@ -41,6 +42,7 @@ import esTransactions from './locales/es/transactions.json'
 import esTransfers from './locales/es/transfers.json'
 import esStatements from './locales/es/statements.json'
 import esMonotributo from './locales/es/monotributo.json'
+import esReports from './locales/es/reports.json'
 import esSettings from './locales/es/settings.json'
 
 /** Supported UI locales (ADR-100/ADR-101): English + Argentine Spanish. */
@@ -68,6 +70,7 @@ export const NAMESPACES = [
   'transfers',
   'statements',
   'monotributo',
+  'reports',
   'settings',
 ] as const
 export type Namespace = (typeof NAMESPACES)[number]
@@ -94,6 +97,7 @@ export const resources = {
     transfers: enTransfers,
     statements: enStatements,
     monotributo: enMonotributo,
+    reports: enReports,
     settings: enSettings,
   },
   es: {
@@ -109,6 +113,7 @@ export const resources = {
     transfers: esTransfers,
     statements: esStatements,
     monotributo: esMonotributo,
+    reports: esReports,
     settings: esSettings,
   },
 } as const

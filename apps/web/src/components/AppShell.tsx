@@ -28,6 +28,8 @@ import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
 import AccountBalanceWalletOutlinedIcon from '@mui/icons-material/AccountBalanceWalletOutlined'
 import PieChartIcon from '@mui/icons-material/PieChart'
 import PieChartOutlinedIcon from '@mui/icons-material/PieChartOutlined'
+import BarChartIcon from '@mui/icons-material/BarChart'
+import BarChartOutlinedIcon from '@mui/icons-material/BarChartOutlined'
 import { AccountMenu } from './AccountMenu'
 import { MonthSwitcher } from './MonthSwitcher'
 import { MonthProvider } from './MonthProvider'
@@ -56,6 +58,7 @@ interface NavRoute {
     | '/transactions'
     | '/accounts'
     | '/budgets'
+    | '/reports'
     | '/transfers'
     | '/monotributo'
     | '/import-statement'
@@ -107,6 +110,14 @@ const PRIMARY_NAV_ITEMS: NavItem[] = [
     shortLabelKey: 'nav.budgetsShort',
     icon: <PieChartOutlinedIcon fontSize="small" />,
     activeIcon: <PieChartIcon fontSize="small" />,
+  },
+  {
+    kind: 'route',
+    to: '/reports',
+    labelKey: 'nav.reports',
+    shortLabelKey: 'nav.reportsShort',
+    icon: <BarChartOutlinedIcon fontSize="small" />,
+    activeIcon: <BarChartIcon fontSize="small" />,
   },
 ]
 

@@ -1,0 +1,59 @@
+{
+  "title": "Reportes",
+  "subtitle": "Tendencias, detalle por categoría, patrimonio en el tiempo y exportación CSV.",
+  "trend": {
+    "title": "Tendencia de gastos",
+    "subtitle": "Gastos mensuales de los últimos 6 meses.",
+    "errorTitle": "No se pudo cargar la tendencia de gastos",
+    "errorDescription": "No pudimos contactar al servidor para tus gastos mensuales. Probá de nuevo.",
+    "tooltipLabel": "Gastos",
+    "accessibleItem": "{{month}}: {{amount}}",
+    "accessibleSummary": "Gastos mensuales: {{summary}}."
+  },
+  "categories": {
+    "title": "Desglose por categoría",
+    "subtitle": "A dónde fue el gasto de este mes.",
+    "tableAria": "Gasto por categoría",
+    "colCategory": "Categoría",
+    "colAmount": "Monto",
+    "colShare": "Participación",
+    "colDelta": "vs mes anterior",
+    "deltaNone": "—",
+    "errorTitle": "No se pudo cargar el desglose por categoría",
+    "errorDescription": "No pudimos contactar al servidor para las categorías de este mes. Probá de nuevo.",
+    "empty": "Todavía no hay gastos registrados en este mes."
+  },
+  "netWorth": {
+    "title": "Patrimonio en el tiempo",
+    "subtitle": "Trayectoria del saldo mensual, al tipo de cambio actual.",
+    "errorTitle": "No se pudo cargar el historial de patrimonio",
+    "errorDescription": "No pudimos contactar al servidor para tu historial de saldos. Probá de nuevo.",
+    "empty": "Todavía no hay historial de saldos.",
+    "rateUnavailable": "Tipo de cambio no disponible, así que no se puede mostrar el total en varias monedas. Probá en un momento.",
+    "tooltipLabel": "Patrimonio",
+    "accessibleItem": "{{month}}: {{amount}}",
+    "accessibleSummary": "Patrimonio por mes: {{summary}}."
+  },
+  "budgets": {
+    "title": "Presupuesto vs real",
+    "subtitle": "Objetivo contra gasto de este mes.",
+    "tableAria": "Presupuesto contra real por categoría",
+    "colCategory": "Categoría",
+    "colTarget": "Objetivo",
+    "colSpent": "Gastado",
+    "colRemaining": "Restante",
+    "over": "{{amount}} de más",
+    "errorTitle": "No se pudo cargar presupuesto vs real",
+    "errorDescription": "No pudimos contactar al servidor para tus presupuestos. Probá de nuevo.",
+    "empty": "Todavía no hay objetivos de presupuesto para este mes."
+  },
+  "export": {
+    "title": "Exportar",
+    "subtitle": "Descargá tus datos en CSV.",
+    "transactions": "Exportar movimientos",
+    "transactionsBusy": "Preparando…",
+    "summary": "Exportar resumen por categoría",
+    "summaryBusy": "Preparando…",
+    "error": "No se pudo preparar la descarga. Probá de nuevo."
+  }
+}

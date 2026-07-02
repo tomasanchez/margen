@@ -76,21 +76,28 @@ describe('adaptSummary', () => {
       category: 'Food',
       amount: 300,
       pct: 50,
+      // The full signed delta is carried for the Reports category table (ADR-163),
+      // alongside the positive-only `up` badge the Home card shows.
+      deltaPct: 200,
       up: '+200%',
     })
-    // A positive fractional delta is rounded.
+    // A positive fractional delta is rounded for the badge; the raw delta is kept.
     expect(categories[4].up).toBe('+22%')
+    expect(categories[4].deltaPct).toBe(22.4)
   })
 
-  test('omits the up badge for null, zero, or negative deltaPct', () => {
+  test('omits the up badge for null, zero, or negative deltaPct but keeps the raw delta', () => {
     const { categories } = adaptSummary(summaryDto)
 
-    // null delta (no prior data) -> no badge.
+    // null delta (no prior data) -> no badge, null delta carried through.
     expect('up' in categories[1]).toBe(false)
-    // negative delta (spend fell) -> no badge.
+    expect(categories[1].deltaPct).toBeNull()
+    // negative delta (spend fell) -> no badge, but the fall is carried for Reports.
     expect('up' in categories[2]).toBe(false)
+    expect(categories[2].deltaPct).toBe(-10)
     // zero delta -> no badge.
     expect('up' in categories[3]).toBe(false)
+    expect(categories[3].deltaPct).toBe(0)
   })
 })
 

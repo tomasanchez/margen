@@ -1,0 +1,59 @@
+{
+  "title": "Reports",
+  "subtitle": "Trends, category detail, net worth over time, and CSV export.",
+  "trend": {
+    "title": "Spending trend",
+    "subtitle": "Monthly expenses over the last 6 months.",
+    "errorTitle": "Couldn't load the spending trend",
+    "errorDescription": "We couldn't reach the server for your monthly expenses. Try again.",
+    "tooltipLabel": "Expenses",
+    "accessibleItem": "{{month}}: {{amount}}",
+    "accessibleSummary": "Monthly expenses: {{summary}}."
+  },
+  "categories": {
+    "title": "Category breakdown",
+    "subtitle": "Where this month's spending went.",
+    "tableAria": "Spending by category",
+    "colCategory": "Category",
+    "colAmount": "Amount",
+    "colShare": "Share",
+    "colDelta": "vs last month",
+    "deltaNone": "—",
+    "errorTitle": "Couldn't load the category breakdown",
+    "errorDescription": "We couldn't reach the server for this month's categories. Try again.",
+    "empty": "No spending recorded for this month yet."
+  },
+  "netWorth": {
+    "title": "Net worth over time",
+    "subtitle": "Monthly balance trajectory, at the current rate.",
+    "errorTitle": "Couldn't load net-worth history",
+    "errorDescription": "We couldn't reach the server for your balance history. Try again.",
+    "empty": "No balance history yet.",
+    "rateUnavailable": "Live rate unavailable, so the mixed-currency total can't be shown. Try again shortly.",
+    "tooltipLabel": "Net worth",
+    "accessibleItem": "{{month}}: {{amount}}",
+    "accessibleSummary": "Net worth by month: {{summary}}."
+  },
+  "budgets": {
+    "title": "Budget vs actual",
+    "subtitle": "Target versus spend for this month.",
+    "tableAria": "Budget versus actual by category",
+    "colCategory": "Category",
+    "colTarget": "Target",
+    "colSpent": "Spent",
+    "colRemaining": "Remaining",
+    "over": "{{amount}} over",
+    "errorTitle": "Couldn't load budget vs actual",
+    "errorDescription": "We couldn't reach the server for your budgets. Try again.",
+    "empty": "No budget targets set for this month yet."
+  },
+  "export": {
+    "title": "Export",
+    "subtitle": "Download your data as CSV.",
+    "transactions": "Export transactions",
+    "transactionsBusy": "Preparing…",
+    "summary": "Export category summary",
+    "summaryBusy": "Preparing…",
+    "error": "Couldn't prepare the download. Please try again."
+  }
+}

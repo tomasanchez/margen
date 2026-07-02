@@ -44,6 +44,8 @@ from margen_api.service_layer.monotributo_repository import (
 )
 from margen_api.service_layer.read_models import TransactionReadModel
 from margen_api.service_layer.reader import AbstractTransactionReader
+from margen_api.service_layer.reports_read_models import NetWorthHistory
+from margen_api.service_layer.reports_reader import AbstractReportsReader
 from margen_api.service_layer.repository import AbstractTransactionRepository
 from margen_api.service_layer.settings_read_models import AppSettings
 from margen_api.service_layer.settings_reader import AbstractSettingsReader
@@ -941,6 +943,31 @@ class FakeSummaryReader(AbstractSummaryReader):
         self.requested_month = month
         self.requested_user_id = user_id
         return self._summary
+
+
+class FakeReportsReader(AbstractReportsReader):
+    """Reports reader returning a canned :class:`NetWorthHistory` for route tests (ADR-164).
+
+    The route tests assert wiring and the HTTP contract, not the cumulative SQL
+    (covered by the pure-function and integration tiers), so this fake records the
+    requested owner and months and returns the history it was given (ADR-032, ADR-108).
+    """
+
+    def __init__(self, history: NetWorthHistory) -> None:
+        """Initialize the reader with the history every call returns.
+
+        Args:
+            history: The net-worth history every ``net_worth_history`` call returns.
+        """
+        self._history = history
+        self.requested_user_id: str | None = None
+        self.requested_months: int | None = None
+
+    async def net_worth_history(self, user_id: str, *, months: int = 12) -> NetWorthHistory:
+        """Record the requested owner and months and return the canned history (ADR-108)."""
+        self.requested_user_id = user_id
+        self.requested_months = months
+        return self._history
 
 
 class FakeInsightsReader(AbstractInsightsReader):
