@@ -33,13 +33,16 @@ export interface RowAmountView {
  *       re-derivation at the live rate. The frontend carries that materialized
  *       `usd_amount` as {@link Transaction.usd} (the contract aliases the stored
  *       `usd_amount` to the JSON `usd` — ADR-148), so ONE branch covers every
- *       snapshotted row: USD-account rows, ARS expenses, transfer fees (#1), and
- *       reimbursements inheriting the linked expense's rate (ADR-161). A snapshot
- *       is present iff `usd` is a finite number (equivalently `fxSource` set).
- *     - a row WITHOUT a snapshot (ARS income per ADR-156, legacy rows, a fee/row
- *       whose rate was unavailable at capture) falls back to a LIVE-rate
- *       conversion (`amount ÷ rate`) when a rate exists, else stays NATIVE ARS.
- *       Never NaN/blank.
+ *       snapshotted row: USD-account rows, ARS expenses, and transfer fees (#1). A
+ *       snapshot is present iff `usd` is a finite number (equivalently `fxSource`
+ *       set).
+ *     - a row WITHOUT a snapshot falls back to a LIVE-rate conversion
+ *       (`amount ÷ rate`) when a rate exists, else stays NATIVE ARS. Never
+ *       NaN/blank. This includes ARS income (ADR-156), legacy rows, a fee/row
+ *       whose rate was unavailable at capture, AND reimbursements: a reimbursement
+ *       ledger row carries its OWN `usd_amount = null` (ADR-161) — it has no
+ *       snapshot of its own — so it displays via this live-rate fallback just like
+ *       ARS income (it does NOT inherit the linked expense's rate here).
  *
  * Pure + unit-testable: the caller passes the effective currency + live rate.
  */
@@ -62,8 +65,10 @@ export function resolveRowAmount(
   }
 
   // USD-effective. A snapshotted row (USD-account rows, ARS expenses, transfer
-  // fees, reimbursements — ADR-148/161) shows its materialized per-tx USD (the
-  // JSON `usd`), historically accurate and NEVER re-derived at the live rate.
+  // fees — ADR-148) shows its materialized per-tx USD (the JSON `usd`),
+  // historically accurate and NEVER re-derived at the live rate. Reimbursements
+  // carry no own snapshot (usd_amount null, ADR-161) so they miss this branch and
+  // fall through to the live-rate fallback below.
   if (typeof t.usd === 'number' && Number.isFinite(t.usd)) {
     return { value: t.usd, currency: 'USD' }
   }

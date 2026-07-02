@@ -218,7 +218,14 @@ export interface Transaction {
   offsetsTransactionId?: string | null
   /** ARS-equivalent magnitude (always positive; sign comes from `type`). */
   amountNum: number
-  /** Original USD amount, present only when `currency === 'USD'`. */
+  /**
+   * The MATERIALIZED USD equivalent of the row's FX snapshot (ADR-148): the
+   * backend computes `usd_amount = round(amount ÷ fx_rate, 2)` and serializes it
+   * as the JSON `usd` for ANY snapshotted row — ARS expenses, transfer fees, and
+   * USD rows alike — leaving it absent for a row with no snapshot. It is the
+   * frozen HISTORICAL USD value of the row, not "the original USD amount for USD
+   * rows only".
+   */
   usd?: number
   /** MEP rate used for the USD→ARS conversion, present only for USD rows. */
   rate?: number

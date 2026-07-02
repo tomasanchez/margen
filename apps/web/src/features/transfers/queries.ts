@@ -77,6 +77,16 @@ function useInvalidateTransferDerived() {
  * fee ACCOUNT's currency comes from the loaded accounts; the preferred source +
  * the already-warm preferred rate come from settings/`usePreferredRate` (the same
  * cached rate the Add flow reuses).
+ *
+ * Currency is resolved AUTHORITATIVELY: capture only runs once the accounts query
+ * has RESOLVED (`isSuccess`), and per-fee only when that fee's account is present
+ * in the resolved set. If the currency can't be determined (accounts not loaded /
+ * errored / stale, or the account absent) the fee is sent SNAPSHOT-LESS — no
+ * rate/fxSource — so it lands null-USD and is eligible for the ADR-150 backfill
+ * later. We never default an unknown currency to ARS: a wrong-currency snapshot
+ * (an ARS rate stamped on a real USD fee → a bogus ~$0 usd_amount the backfill
+ * won't correct) is worse than no snapshot. Skipping capture never blocks the
+ * transfer — the fee still saves, just without a snapshot.
  */
 export function useCreateTransfer() {
   const invalidate = useInvalidateTransferDerived()
@@ -90,22 +100,32 @@ export function useCreateTransfer() {
       if (!input.fees || input.fees.length === 0) {
         return transfersClient.create(input)
       }
-      // Resolve each fee ACCOUNT's currency so an ARS fee captures a rate while a
-      // USD fee stays native. Default to ARS when the account isn't found (the
-      // common fee case) — capture then degrades safely if no rate is available.
+      // Resolve each fee ACCOUNT's currency AUTHORITATIVELY so an ARS fee captures
+      // a rate while a USD fee stays native — and, critically, an UNKNOWN currency
+      // never captures at all. We only trust the accounts map once the query has
+      // RESOLVED (`isSuccess`): a loading/errored/stale cache would let a real USD
+      // fee be mistaken for ARS and stamped with an ARS-per-USD rate, materializing
+      // a bogus ~$0 usd_amount the ADR-150 backfill can't fix (the row already has
+      // a non-null snapshot). When the accounts set isn't resolved, or a fee's
+      // account is absent from it, we SKIP that fee's capture and send it
+      // snapshot-less (null-USD, backfilled later, ADR-150) rather than guess.
+      const resolvedAccounts = accountsQuery.isSuccess
+        ? accountsQuery.data
+        : undefined
       const currencyByAccount = new Map<string, Currency>()
-      for (const account of accountsQuery.data ?? []) {
+      for (const account of resolvedAccounts ?? []) {
         currencyByAccount.set(account.id, account.currency)
       }
       const fees: TransferFeeInput[] = await Promise.all(
-        input.fees.map((fee) =>
-          captureFxForFee(
-            fee,
-            currencyByAccount.get(fee.accountId) ?? 'ARS',
-            preferredRateSource,
-            { cachedRate },
-          ),
-        ),
+        input.fees.map((fee) => {
+          const currency = currencyByAccount.get(fee.accountId)
+          // Currency unknown (accounts unresolved or account absent): skip capture
+          // — leave the fee snapshot-less rather than default to ARS.
+          if (currency === undefined) return fee
+          return captureFxForFee(fee, currency, preferredRateSource, {
+            cachedRate,
+          })
+        }),
       )
       return transfersClient.create({ ...input, fees })
     },
