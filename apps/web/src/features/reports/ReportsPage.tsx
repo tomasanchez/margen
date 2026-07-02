@@ -132,7 +132,10 @@ export function ReportsPage({
             display: 'grid',
             gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
             gap: 2.5,
-            alignItems: 'start',
+            // Stretch so the trend card matches the category card's height and
+            // the bar chart fills to the card bottom (ADR-166). Card content
+            // (the category table) stays top-aligned via SectionCard's flow.
+            alignItems: 'stretch',
           }}
         >
           <SpendingTrendChart
