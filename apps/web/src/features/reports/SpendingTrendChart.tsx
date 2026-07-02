@@ -35,7 +35,15 @@ import { localizeShortMonthToken } from '../../i18n/locale'
 import type { TrendPoint } from '../../mock/types'
 
 /** Fixed plot height; the width is responsive so the chart never overflows. */
-const CHART_HEIGHT = 220
+const CHART_HEIGHT = 208
+
+/**
+ * Cap on a single bar's width. With a sparse trend (e.g. the owner's data — one
+ * populated month among six empty slots) an uncapped bar stretches to fill its
+ * band and reads awkwardly wide; capping keeps every bar a consistent, balanced
+ * width across the six slots so a lone month looks intentional, not clipped.
+ */
+const MAX_BAR_SIZE = 52
 
 export interface SpendingTrendChartProps {
   /** The 6-month trend (from the summaries reader), or undefined while loading. */
@@ -128,7 +136,11 @@ export function SpendingTrendChart({
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={data}
-            margin={{ top: 8, right: 12, bottom: 4, left: 4 }}
+            barCategoryGap="18%"
+            // A wider right margin keeps the rightmost (current-month) bar clear
+            // of the container edge so it is never clipped; the left margin holds
+            // the Y-axis labels.
+            margin={{ top: 8, right: 16, bottom: 4, left: 4 }}
           >
             <CartesianGrid stroke={gridColor} strokeDasharray="3 3" vertical={false} />
             <XAxis
@@ -160,7 +172,12 @@ export function SpendingTrendChart({
               }}
               labelStyle={{ color: theme.palette.text.primary }}
             />
-            <Bar dataKey="value" radius={[5, 5, 0, 0]} isAnimationActive={false}>
+            <Bar
+              dataKey="value"
+              radius={[5, 5, 0, 0]}
+              maxBarSize={MAX_BAR_SIZE}
+              isAnimationActive={false}
+            >
               {data.map((datum) => (
                 <Cell
                   key={datum.label}
