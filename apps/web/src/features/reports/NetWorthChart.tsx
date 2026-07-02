@@ -43,11 +43,12 @@ import {
 } from './netWorthSeries'
 
 /**
- * Minimum plot height (a floor). The plot area FLEXES to fill the card so the
- * line reaches the card's bottom edge (ADR-166); this floor keeps it legible on
- * a short card. The width is responsive so the chart never overflows.
+ * Fixed plot height. This chart is a STANDALONE full-width card (in a Stack, not
+ * a stretched grid row), so it has no sibling to size against — a definite height
+ * is required or the `ResponsiveContainer` (height="100%") resolves to 0 and the
+ * line vanishes. The width stays responsive so the chart never overflows.
  */
-const CHART_MIN_HEIGHT = 240
+const CHART_HEIGHT = 240
 
 export interface NetWorthChartProps {
   /** The net-worth history read model, or undefined while loading. */
@@ -122,7 +123,7 @@ export function NetWorthChart({
       <SectionCard title={t('netWorth.title')} subtitle={t('netWorth.subtitle')}>
         <Skeleton
           variant="rounded"
-          height={CHART_MIN_HEIGHT}
+          height={CHART_HEIGHT}
           sx={{ borderRadius: '10px' }}
         />
       </SectionCard>
@@ -177,12 +178,9 @@ export function NetWorthChart({
         {t('netWorth.accessibleSummary', { summary: accessibleSummary })}
       </Box>
 
-      {/* Flex to fill the card so the line reaches its bottom (ADR-166); the
-          min-height is a floor for short / single-column layouts. */}
-      <Box
-        aria-hidden
-        sx={{ flex: 1, minHeight: CHART_MIN_HEIGHT, width: '100%' }}
-      >
+      {/* A definite height is mandatory: ResponsiveContainer measures its parent,
+          and a flex:1 box in this non-stretched Stack card would resolve to 0. */}
+      <Box aria-hidden sx={{ height: CHART_HEIGHT, width: '100%' }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={data}
