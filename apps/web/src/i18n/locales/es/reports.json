@@ -105,6 +105,7 @@
     "accessibleSummary": "Egreso comprometido por mes: {{summary}}.",
     "unconverted_one": "{{count}} movimiento comprometido no tiene tipo de cambio registrado, así que el pronóstico en USD puede estar subestimado.",
     "unconverted_other": "{{count}} movimientos comprometidos no tienen tipo de cambio registrado, así que el pronóstico en USD puede estar subestimado.",
+    "monotributoUsdCaveat": "El Monotributo ({{amount}}/mes) se muestra por separado y se excluye del total en USD.",
     "errorTitle": "No se pudo cargar tu pronóstico",
     "errorDescription": "No pudimos contactar al servidor para tu pronóstico de flujo de caja. Probá de nuevo.",
     "commitments": {

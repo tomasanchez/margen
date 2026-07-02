@@ -32,6 +32,7 @@ const forecastDto: ForecastSeriesDto = {
       label: 'Netflix',
       amount: '5000.00',
       currency: 'ARS',
+      arsFixed: false,
       months: ['2026-08', '2026-09'],
       remainingCount: null,
     },
@@ -40,6 +41,7 @@ const forecastDto: ForecastSeriesDto = {
       label: 'Monotributo',
       amount: '85000.00',
       currency: 'ARS',
+      arsFixed: true,
       months: ['2026-08', '2026-09'],
       remainingCount: null,
     },
@@ -48,6 +50,7 @@ const forecastDto: ForecastSeriesDto = {
       label: 'Samsung TV cuota 8/12',
       amount: '30000.00',
       currency: 'ARS',
+      arsFixed: false,
       months: ['2026-08'],
       remainingCount: 9,
     },
@@ -98,6 +101,7 @@ describe('adaptForecastSeries', () => {
           label: 'Monotributo',
           amount: '85000',
           currency: 'ARS',
+          arsFixed: true,
           months: ['2026-08'],
           remainingCount: null,
         },
@@ -109,6 +113,36 @@ describe('adaptForecastSeries', () => {
     expect(series.currency).toBe('USD')
     // The tax line stays ARS even on a USD request (ADR-177).
     expect(series.commitments[0].currency).toBe('ARS')
+    // …and is flagged as the fixed AFIP-ARS obligation (ADR-177).
+    expect(series.commitments[0].arsFixed).toBe(true)
+  })
+
+  test('carries arsFixed through the adapter, defaulting to false when absent', () => {
+    const { commitments } = adaptForecastSeries(forecastDto)
+
+    expect(commitments.find((c) => c.source === 'tax')?.arsFixed).toBe(true)
+    expect(commitments.find((c) => c.source === 'subscription')?.arsFixed).toBe(
+      false,
+    )
+    expect(commitments.find((c) => c.source === 'installment')?.arsFixed).toBe(
+      false,
+    )
+
+    // A pre-flag payload (no arsFixed) defaults to false rather than undefined.
+    const legacy = adaptForecastSeries({
+      ...forecastDto,
+      commitments: [
+        {
+          source: 'subscription',
+          label: 'Figma',
+          amount: '12',
+          currency: 'USD',
+          months: ['2026-08'],
+          remainingCount: null,
+        } as unknown as ForecastSeriesDto['commitments'][number],
+      ],
+    })
+    expect(legacy.commitments[0].arsFixed).toBe(false)
   })
 
   test('parses garbage money to 0 and tolerates missing arrays', () => {

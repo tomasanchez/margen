@@ -11,11 +11,14 @@
  * so a line renders in exactly the denomination the backend computed and never
  * re-converts.
  *
- * Grouped in a fixed, stable order (subscriptions → taxes → installments) so the
- * panel reads the same each render; an empty group is omitted. When there are no
- * commitments at all the card shows a calm note (the v1 commitment-tagging caveat,
- * ADR-173). Accessibility (ADR-019): the remaining-count is a WORD ("left"), never
- * a colour; each group is a labelled list.
+ * Grouped in a fixed, stable order (subscriptions → installments) so the panel
+ * reads the same each render; an empty group is omitted. The monotributo `tax`
+ * cuota is NOT listed here — it is a fixed AFIP-ARS obligation surfaced by the
+ * Monotributo trajectory card as the forward cuota (ADR-177), so it is filtered
+ * out to avoid a duplicate, mislabelled row. When there are no commitments at all
+ * the card shows a calm note (the v1 commitment-tagging caveat, ADR-173).
+ * Accessibility (ADR-019): the remaining-count is a WORD ("left"), never a
+ * colour; each group is a labelled list.
  */
 
 import { useMemo } from 'react'
@@ -32,10 +35,13 @@ export interface CommitmentsListProps {
   commitments: CommitmentLine[]
 }
 
-/** The fixed render order of the commitment groups (ADR-176/177). */
+/**
+ * The fixed render order of the commitment groups (ADR-176/177). The `tax` cuota
+ * is intentionally absent: it is the fixed AFIP-ARS monotributo obligation shown
+ * on the Monotributo trajectory card, not here (ADR-177).
+ */
 const GROUP_ORDER: readonly CommitmentSource[] = [
   'subscription',
-  'tax',
   'installment',
 ] as const
 
@@ -106,12 +112,12 @@ function CommitmentGroup({
   lines: CommitmentLine[]
 }) {
   const { t } = useTranslation('reports')
+  // The `tax` cuota never reaches this list (filtered out; ADR-177), so only the
+  // subscription vs installment headings are relevant.
   const heading =
     source === 'subscription'
       ? t('forecast.commitments.subscriptions')
-      : source === 'tax'
-        ? t('forecast.commitments.taxes')
-        : t('forecast.commitments.installments')
+      : t('forecast.commitments.installments')
 
   return (
     <Box component="section" sx={{ '& + &': { mt: 2 } }}>

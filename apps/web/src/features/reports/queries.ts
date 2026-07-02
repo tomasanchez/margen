@@ -114,7 +114,7 @@ export function useForwardMonotributoCuota(range: ReportsRange): number | null {
   const forecastQuery = useForecast(horizon, effectiveCurrency)
   return useMemo(() => {
     const tax = forecastQuery.data?.commitments.find(
-      (line) => line.source === 'tax',
+      (line) => line.source === 'tax' || line.arsFixed,
     )
     return tax != null && tax.amount > 0 ? tax.amount : null
   }, [forecastQuery.data])

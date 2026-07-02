@@ -23,6 +23,7 @@ import Box from '@mui/material/Box'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import { ErrorState } from '../../components/ErrorState'
+import { formatCurrency } from '../../lib/format'
 import { useDisplayCurrency } from '../settings/displayCurrencyContext'
 import { useForecast } from './queries'
 import { ForecastChart } from './ForecastChart'
@@ -44,6 +45,19 @@ export function ForecastPanel({ range }: ForecastPanelProps) {
   const horizon = rangeToHorizon(range)
   const forecastQuery = useForecast(horizon, effectiveCurrency)
   const forecast = forecastQuery.data
+
+  // The monotributo cuota is a fixed AFIP-ARS obligation (ADR-177): on a USD view
+  // the backend EXCLUDES it from the totals and returns it only as its own ARS
+  // line, so we surface a calm note pointing to where it lives (the Monotributo
+  // trajectory card) and echo the ARS cuota. On the ARS view the cuota is
+  // legitimately in the total, so no caveat.
+  const monotributoCuota = forecast?.commitments.find(
+    (line) => line.source === 'tax' || line.arsFixed,
+  )
+  const showMonotributoUsdCaveat =
+    effectiveCurrency === 'USD' &&
+    monotributoCuota != null &&
+    monotributoCuota.amount > 0
 
   return (
     <Box>
@@ -71,6 +85,21 @@ export function ForecastPanel({ range }: ForecastPanelProps) {
           <Link to="/settings" style={{ color: 'var(--mg-gold)', fontWeight: 600 }}>
             {t('unconverted.action')}
           </Link>
+        </Typography>
+      ) : null}
+
+      {/* Calm monotributo caveat (ADR-177): the AFIP-ARS cuota is excluded from a
+          USD total and shown on the Monotributo trajectory card — say so quietly
+          so the USD forecast reads honestly. Same note styling as `unconverted`. */}
+      {showMonotributoUsdCaveat ? (
+        <Typography
+          sx={{ fontSize: 12.5, mb: 2 }}
+          color="text.secondary"
+          role="note"
+        >
+          {t('forecast.monotributoUsdCaveat', {
+            amount: formatCurrency(monotributoCuota.amount, 'ARS'),
+          })}
         </Typography>
       ) : null}
 

@@ -2,12 +2,12 @@
  * Render tests for {@link CommitmentsList} (ADR-176, ADR-177).
  *
  * The upcoming-commitments / installments-tail view: the committed streams grouped
- * by source (subscriptions, taxes, installments). Asserts each group heading
- * appears for a non-empty group, an installment row shows its remaining-cuota count
- * (the load-bearing "N left" signal, never colour), amounts render in each line's
- * OWN currency (the tax line stays ARS even alongside USD lines, ADR-177), an empty
- * group is omitted, and no commitments at all degrades to a calm note.
- * English-pinned (ADR-105).
+ * by source (subscriptions, installments). Asserts each group heading appears for a
+ * non-empty group, an installment row shows its remaining-cuota count (the
+ * load-bearing "N left" signal, never colour), amounts render in each line's OWN
+ * currency, the monotributo `tax` cuota is NOT listed here (it lives on the
+ * Monotributo trajectory card, ADR-177), an empty group is omitted, and no
+ * commitments at all degrades to a calm note. English-pinned (ADR-105).
  */
 
 import { describe, expect, test } from 'vitest'
@@ -23,6 +23,7 @@ const commitments: CommitmentLine[] = [
     label: 'Netflix',
     amount: 5000,
     currency: 'ARS',
+    arsFixed: false,
     months: ['2026-08', '2026-09'],
     remainingCount: null,
   },
@@ -31,6 +32,7 @@ const commitments: CommitmentLine[] = [
     label: 'Monotributo',
     amount: 85_000,
     currency: 'ARS',
+    arsFixed: true,
     months: ['2026-08', '2026-09'],
     remainingCount: null,
   },
@@ -39,6 +41,7 @@ const commitments: CommitmentLine[] = [
     label: 'Samsung TV',
     amount: 30_000,
     currency: 'ARS',
+    arsFixed: false,
     months: ['2026-08'],
     remainingCount: 9,
   },
@@ -57,10 +60,18 @@ describe('<CommitmentsList>', () => {
     renderList(commitments)
 
     expect(screen.getByRole('list', { name: 'Subscriptions' })).toBeInTheDocument()
-    expect(screen.getByRole('list', { name: 'Taxes' })).toBeInTheDocument()
     expect(screen.getByRole('list', { name: 'Installments' })).toBeInTheDocument()
     expect(screen.getByText('Netflix')).toBeInTheDocument()
-    expect(screen.getByText('Monotributo')).toBeInTheDocument()
+  })
+
+  test('does NOT list the monotributo tax cuota (it lives on the trajectory card)', () => {
+    renderList(commitments)
+
+    // The tax cuota is a fixed AFIP-ARS obligation surfaced separately (ADR-177),
+    // so neither a Taxes group nor the mislabelled amount appears here.
+    expect(screen.queryByRole('list', { name: 'Taxes' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Monotributo')).not.toBeInTheDocument()
+    expect(screen.queryByText('ARS 85.000')).not.toBeInTheDocument()
   })
 
   test('an installment row shows its remaining-cuota count as a word', () => {
@@ -71,13 +82,14 @@ describe('<CommitmentsList>', () => {
     expect(screen.getByText('ARS 30.000')).toBeInTheDocument()
   })
 
-  test('renders each line in its own currency (tax stays ARS beside USD)', () => {
+  test('renders each line in its own currency and drops the tax line', () => {
     renderList([
       {
         source: 'subscription',
         label: 'Figma',
         amount: 12,
         currency: 'USD',
+        arsFixed: false,
         months: ['2026-08'],
         remainingCount: null,
       },
@@ -86,14 +98,16 @@ describe('<CommitmentsList>', () => {
         label: 'Monotributo',
         amount: 85_000,
         currency: 'ARS',
+        arsFixed: true,
         months: ['2026-08'],
         remainingCount: null,
       },
     ])
 
     expect(screen.getByText('USD 12')).toBeInTheDocument()
-    // The tax line is AFIP-ARS and never re-denominated (ADR-177).
-    expect(screen.getByText('ARS 85.000')).toBeInTheDocument()
+    // The tax line is filtered out — it is shown on the Monotributo card (ADR-177).
+    expect(screen.queryByText('ARS 85.000')).not.toBeInTheDocument()
+    expect(screen.queryByText('Monotributo')).not.toBeInTheDocument()
   })
 
   test('omits an empty group and does not show its heading', () => {

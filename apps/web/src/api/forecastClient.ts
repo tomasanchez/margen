@@ -12,9 +12,12 @@
  * Every figure is ALREADY denominated in the requested currency by the backend
  * (ADR-168): this client only unwraps the `{ data }` envelope (ADR-030) and
  * parses the Decimal STRINGS (ADR-025) to numbers at the display edge (ADR-102) —
- * it NEVER re-converts. The monotributo `tax` commitment is AFIP-ARS and is
- * reported at its ARS value on both the ARS and USD paths (ADR-177); its
- * `currency` field on the line says so. `unconverted` surfaces the committed rows
+ * it NEVER re-converts. The monotributo `tax` commitment is AFIP-ARS
+ * (`arsFixed:true`, `currency:'ARS'`) and is reported at its ARS value on both
+ * paths (ADR-177); it is summed into the month `committed`/`total` only on an ARS
+ * request — on a USD request the backend EXCLUDES it from the totals and returns
+ * it only as its own ARS commitment line, so the panel surfaces it separately and
+ * never adds it back in. `unconverted` surfaces the committed rows
  * a USD denomination dropped for lacking an FX snapshot, so a USD total is never
  * silently understated (ADR-152/168) — the panel shows a calm caveat when it > 0.
  *
@@ -61,6 +64,13 @@ export interface CommitmentLineDto {
   amount: string
   /** The denomination the amount is expressed in (`ARS` / `USD`). */
   currency: string
+  /**
+   * Whether this stream is a fixed AFIP-ARS obligation (the monotributo cuota,
+   * ADR-177). When `true` the line is ALWAYS ARS and is summed into the month
+   * totals only on an ARS request; on a USD request it is EXCLUDED from
+   * `committed`/`total` and returned only as its own ARS commitment line.
+   */
+  arsFixed: boolean
   /** The forecast months (`YYYY-MM`, oldest-first) this stream lands a payment in. */
   months: string[]
   /**
@@ -104,6 +114,12 @@ export interface CommitmentLine {
   amount: number
   /** The denomination the amount is expressed in (`ARS` / `USD`). */
   currency: Currency
+  /**
+   * Whether this stream is a fixed AFIP-ARS obligation (the monotributo cuota,
+   * ADR-177) — always ARS, in the month totals only on the ARS request and
+   * excluded from a USD total (surfaced separately). Defaults to `false`.
+   */
+  arsFixed: boolean
   /** The forecast months (`YYYY-MM`, oldest-first) this stream lands a payment in. */
   months: string[]
   /** Remaining payments for an installment tail; `null` for a subscription/tax. */
@@ -180,6 +196,9 @@ export function adaptCommitmentLine(dto: CommitmentLineDto): CommitmentLine {
     label: dto.label,
     amount: parseDecimal(dto.amount),
     currency: asCurrency(dto.currency),
+    // A fixed AFIP-ARS obligation (the monotributo cuota, ADR-177); default false
+    // so pre-flag payloads and non-tax streams read as regular committed lines.
+    arsFixed: dto.arsFixed === true,
     months: dto.months ?? [],
     // A null remaining count is meaningful ("not an installment"); keep it null.
     remainingCount:

@@ -105,6 +105,7 @@
     "accessibleSummary": "Committed outflow by month: {{summary}}.",
     "unconverted_one": "{{count}} committed transaction lacks an FX snapshot, so the USD forecast may be understated.",
     "unconverted_other": "{{count}} committed transactions lack an FX snapshot, so the USD forecast may be understated.",
+    "monotributoUsdCaveat": "Monotributo ({{amount}}/mo) is shown separately and excluded from the USD total.",
     "errorTitle": "Couldn't load your forecast",
     "errorDescription": "We couldn't reach the server for your cash-flow forecast. Try again.",
     "commitments": {
