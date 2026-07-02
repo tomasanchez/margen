@@ -21,10 +21,18 @@ import {
   transfersClient,
   type CreatedTransfer,
 } from '../../api/transfersClient'
-import type { NewTransferInput, Transfer } from '../../mock/types'
-import { accountsKeys } from '../accounts/queries'
+import type {
+  Currency,
+  NewTransferInput,
+  Transfer,
+  TransferFeeInput,
+} from '../../mock/types'
+import { accountsKeys, useAccounts } from '../accounts/queries'
 import { transactionsKeys } from '../transactions/queries'
 import { homeQueryKeys } from '../home/queries'
+import { useSettings } from '../settings/queries'
+import { usePreferredRate } from '../budgets/queries'
+import { captureFxForFee } from '../transactions/captureFx'
 
 /** Stable query-key factory for the transfers domain. */
 export const transfersKeys = {
@@ -55,11 +63,52 @@ function useInvalidateTransferDerived() {
   }
 }
 
-/** Create a transfer (+ optional fee lines), then refresh balances + expenses. */
+/**
+ * Create a transfer (+ optional fee lines), then refresh balances + expenses.
+ *
+ * A fee is a `kind=expense` on its account (ADR-135), so — like the Add/Edit
+ * transaction flow — each fee is stamped with an FX snapshot (`rate` +
+ * `fxSource`) BEFORE the POST (ADR-148/149): the client captures the day's
+ * preferred-source rate (ADR-151) so the backend materializes the fee expense's
+ * `usd_amount = amount ÷ rate`. Without this an ARS fee landed with no USD value
+ * (the bug). Capture reuses {@link captureFxForFee}/`captureFxForCreate` so the
+ * rate decision never drifts (USD fees stay native; an unavailable rate degrades
+ * to no snapshot rather than a guess — the row is backfilled later, ADR-150). The
+ * fee ACCOUNT's currency comes from the loaded accounts; the preferred source +
+ * the already-warm preferred rate come from settings/`usePreferredRate` (the same
+ * cached rate the Add flow reuses).
+ */
 export function useCreateTransfer() {
   const invalidate = useInvalidateTransferDerived()
+  const accountsQuery = useAccounts()
+  const settingsQuery = useSettings()
+  const preferredRateSource = settingsQuery.data?.preferredRateSource
+  const preferredRateQuery = usePreferredRate()
+  const cachedRate = preferredRateQuery.data
   return useMutation<CreatedTransfer, Error, NewTransferInput>({
-    mutationFn: (input) => transfersClient.create(input),
+    mutationFn: async (input) => {
+      if (!input.fees || input.fees.length === 0) {
+        return transfersClient.create(input)
+      }
+      // Resolve each fee ACCOUNT's currency so an ARS fee captures a rate while a
+      // USD fee stays native. Default to ARS when the account isn't found (the
+      // common fee case) — capture then degrades safely if no rate is available.
+      const currencyByAccount = new Map<string, Currency>()
+      for (const account of accountsQuery.data ?? []) {
+        currencyByAccount.set(account.id, account.currency)
+      }
+      const fees: TransferFeeInput[] = await Promise.all(
+        input.fees.map((fee) =>
+          captureFxForFee(
+            fee,
+            currencyByAccount.get(fee.accountId) ?? 'ARS',
+            preferredRateSource,
+            { cachedRate },
+          ),
+        ),
+      )
+      return transfersClient.create({ ...input, fees })
+    },
     onSuccess: invalidate,
   })
 }

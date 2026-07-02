@@ -14,9 +14,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { captureFxForCreate, casaForSource } from './captureFx'
+import { captureFxForCreate, captureFxForFee, casaForSource } from './captureFx'
 import { fetchCurrentRate } from '../../api/fxClient'
-import type { NewTransactionInput } from '../../mock/types'
+import type { NewTransactionInput, TransferFeeInput } from '../../mock/types'
 
 vi.mock('../../api/fxClient', () => ({ fetchCurrentRate: vi.fn() }))
 const mockCurrent = vi.mocked(fetchCurrentRate)
@@ -222,6 +222,69 @@ describe('captureFxForCreate — idempotency', () => {
   test('returns an already-stamped input unchanged (no second fetch)', async () => {
     const input = arsExpense({ fxRate: '1240', fxSource: 'backfill' })
     const result = await captureFxForCreate(input, 'bolsa')
+    expect(result).toBe(input)
+    expect(mockCurrent).not.toHaveBeenCalled()
+  })
+})
+
+/** A minimal transfer fee line (raw, pre-snapshot). */
+function fee(over: Partial<TransferFeeInput> = {}): TransferFeeInput {
+  return { accountId: 'acc-1', amount: '15.00', label: 'Wire fee', ...over }
+}
+
+describe('captureFxForFee — transfer fees carry a snapshot like a normal expense', () => {
+  test('an ARS fee captures the day rate + source (fixes the blank-USD fee bug)', async () => {
+    // The bug: an ARS fee used to land with no rate/source, so its usd_amount was
+    // blank. A fee is an EXPENSE, so it must capture the day's preferred rate.
+    const result = await captureFxForFee(fee(), 'ARS', 'bolsa', {
+      cachedRate: 1250,
+    })
+    expect(result.rate).toBe('1250')
+    expect(result.fxSource).toBe('bolsa')
+    expect(mockCurrent).not.toHaveBeenCalled()
+  })
+
+  test('an ARS fee falls back to a fetch when no cached rate is on hand', async () => {
+    mockCurrent.mockResolvedValue(1240)
+    const result = await captureFxForFee(fee(), 'ARS', 'bolsa')
+    expect(mockCurrent).toHaveBeenCalledWith('bolsa', undefined)
+    expect(result.rate).toBe('1240')
+    expect(result.fxSource).toBe('bolsa')
+  })
+
+  test('uses the oficial casa when the preferred source is oficial', async () => {
+    const result = await captureFxForFee(fee(), 'ARS', 'oficial', {
+      cachedRate: 1050,
+    })
+    expect(result.rate).toBe('1050')
+    expect(result.fxSource).toBe('oficial')
+  })
+
+  test('a USD fee stays NATIVE — no snapshot, no fetch (already USD)', async () => {
+    const input = fee({ accountId: 'acc-usd', amount: '5.00', label: 'USD fee' })
+    const result = await captureFxForFee(input, 'USD', 'bolsa', {
+      cachedRate: 1250,
+    })
+    expect(result.rate).toBeUndefined()
+    expect(result.fxSource).toBeUndefined()
+    expect(result).toEqual(input)
+    expect(mockCurrent).not.toHaveBeenCalled()
+  })
+
+  test('an unavailable rate leaves the ARS fee UNCHANGED (no guess, backfilled later)', async () => {
+    mockCurrent.mockResolvedValue(null)
+    const input = fee()
+    const result = await captureFxForFee(input, 'ARS', 'bolsa')
+    expect(result.rate).toBeUndefined()
+    expect(result.fxSource).toBeUndefined()
+    expect(result).toEqual(input)
+  })
+
+  test('an already-snapshotted fee is returned unchanged (idempotent, no fetch)', async () => {
+    const input = fee({ rate: '1200', fxSource: 'manual' })
+    const result = await captureFxForFee(input, 'ARS', 'bolsa', {
+      cachedRate: 1250,
+    })
     expect(result).toBe(input)
     expect(mockCurrent).not.toHaveBeenCalled()
   })

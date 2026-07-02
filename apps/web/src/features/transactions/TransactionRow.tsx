@@ -36,6 +36,8 @@ import { Amount } from '../../components/Amount'
 import { FxBadge } from '../../components/FxBadge'
 import { formatDispDate } from '../../lib/format'
 import { monoFontFamily } from '../../theme'
+import { useDisplayCurrency } from '../settings/displayCurrencyContext'
+import { resolveRowAmount } from './rowAmount'
 import type { Transaction } from '../../mock/types'
 import { fetchInvoiceDocument } from '../../api/invoicesClient'
 import { useDocumentOpener } from '../../api/useDocumentOpener'
@@ -226,6 +228,27 @@ interface TransactionRowProps {
 
 /** Shared empty lookup so a missing `accountNames` prop is a stable reference. */
 const EMPTY_ACCOUNT_NAMES: ReadonlyMap<string, string> = new Map()
+
+/**
+ * The row's <Amount>, rendered in the effective display currency (ADR-056). One
+ * component for BOTH row variants so the currency logic never drifts between
+ * desktop and mobile.
+ */
+function RowAmount({ transaction }: { transaction: Transaction }) {
+  const { effectiveCurrency, rate } = useDisplayCurrency()
+  const view = resolveRowAmount(transaction, effectiveCurrency, rate)
+  return (
+    <Amount
+      value={view.value}
+      type={transaction.type}
+      currency={view.currency}
+      size="sm"
+      fxUsd={view.fxUsd}
+      fxRate={view.fxRate}
+      fxSource={view.fxSource}
+    />
+  )
+}
 
 /** Small inline badge (recurring / FX) — a bordered pill, token-colored. */
 function RowBadge({
@@ -628,15 +651,7 @@ export function TransactionRow(props: TransactionRowProps) {
       </Box>
 
       <Box sx={{ justifySelf: 'end', textAlign: 'right' }}>
-        <Amount
-          value={t.amountNum}
-          type={t.type}
-          currency="ARS"
-          size="sm"
-          fxUsd={isUsd ? t.usd : undefined}
-          fxRate={isUsd ? t.rate : undefined}
-          fxSource={isUsd ? t.fxRateType : undefined}
-        />
+        <RowAmount transaction={t} />
       </Box>
 
       {/* Trailing actions column: the SAME overflow menu the mobile row uses,
@@ -765,15 +780,7 @@ export function TransactionRowMobile(props: TransactionRowProps) {
           textAlign: 'right',
         }}
       >
-        <Amount
-          value={t.amountNum}
-          type={t.type}
-          currency="ARS"
-          size="sm"
-          fxUsd={isUsd ? t.usd : undefined}
-          fxRate={isUsd ? t.rate : undefined}
-          fxSource={isUsd ? t.fxRateType : undefined}
-        />
+        <RowAmount transaction={t} />
         <Typography
           component="span"
           sx={{
