@@ -29,6 +29,7 @@ import {
   YAxis,
 } from 'recharts'
 import { SectionCard } from '../../components/SectionCard'
+import { ErrorState } from '../../components/ErrorState'
 import { useDisplayMoney } from '../settings/displayCurrencyContext'
 import { localizeShortMonthToken } from '../../i18n/locale'
 import type { TrendPoint } from '../../mock/types'
@@ -41,6 +42,10 @@ export interface SpendingTrendChartProps {
   trend: TrendPoint[] | undefined
   /** Whether the summary query is pending. */
   loading?: boolean
+  /** Whether the summary query errored (renders the calm fallback). */
+  isError?: boolean
+  /** Retry handler for the error state. */
+  onRetry?: () => void
 }
 
 /** One localized bar datum Recharts renders. */
@@ -53,6 +58,8 @@ interface ChartDatum {
 export function SpendingTrendChart({
   trend,
   loading = false,
+  isError = false,
+  onRetry,
 }: SpendingTrendChartProps) {
   const { t } = useTranslation('reports')
   const theme = useTheme()
@@ -69,6 +76,17 @@ export function SpendingTrendChart({
       })),
     [trend],
   )
+
+  // A failed query gets the calm ErrorState — not an eternal skeleton (ADR-037).
+  if (isError) {
+    return (
+      <ErrorState
+        title={t('trend.errorTitle')}
+        description={t('trend.errorDescription')}
+        onRetry={onRetry}
+      />
+    )
+  }
 
   if (loading || !trend) {
     return (

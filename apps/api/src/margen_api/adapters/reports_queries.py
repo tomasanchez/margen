@@ -129,7 +129,9 @@ class SqlAlchemyReportsReader(AbstractReportsReader):
         The signed delta is ``-magnitude`` for an expense and ``+magnitude`` for every
         inflow (income / invoice / reimbursement), in the account's native currency
         (ADR-123). Only transactions attributed to an account contribute to net worth
-        (a null ``account_id`` is excluded, ADR-122). Scoped to the owner (ADR-131).
+        (a null ``account_id`` is excluded, ADR-122). Scoped to the owner on BOTH
+        the transaction and the joined account so the two net-worth paths anchor on
+        the account owner identically to the snapshot in ``account_queries`` (ADR-131).
         """
         native_usd = func.coalesce(TransactionRecord.usd_amount, TransactionRecord.amount)
         statement = (
@@ -140,7 +142,10 @@ class SqlAlchemyReportsReader(AbstractReportsReader):
                 TransactionRecord.amount.label("amount"),
                 native_usd.label("native_usd"),
             )
-            .join(AccountRecord, AccountRecord.id == TransactionRecord.account_id)
+            .join(
+                AccountRecord,
+                (AccountRecord.id == TransactionRecord.account_id) & (AccountRecord.user_id == owner),
+            )
             .where(TransactionRecord.user_id == owner)
         )
         result = await self.session.execute(statement)

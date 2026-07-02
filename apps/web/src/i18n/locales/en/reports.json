@@ -4,6 +4,8 @@
   "trend": {
     "title": "Spending trend",
     "subtitle": "Monthly expenses over the last 6 months.",
+    "errorTitle": "Couldn't load the spending trend",
+    "errorDescription": "We couldn't reach the server for your monthly expenses. Try again.",
     "tooltipLabel": "Expenses",
     "accessibleItem": "{{month}}: {{amount}}",
     "accessibleSummary": "Monthly expenses: {{summary}}."
@@ -17,6 +19,8 @@
     "colShare": "Share",
     "colDelta": "vs last month",
     "deltaNone": "—",
+    "errorTitle": "Couldn't load the category breakdown",
+    "errorDescription": "We couldn't reach the server for this month's categories. Try again.",
     "empty": "No spending recorded for this month yet."
   },
   "netWorth": {
@@ -39,6 +43,8 @@
     "colSpent": "Spent",
     "colRemaining": "Remaining",
     "over": "{{amount}} over",
+    "errorTitle": "Couldn't load budget vs actual",
+    "errorDescription": "We couldn't reach the server for your budgets. Try again.",
     "empty": "No budget targets set for this month yet."
   },
   "export": {

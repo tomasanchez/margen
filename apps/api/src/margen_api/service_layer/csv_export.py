@@ -11,6 +11,14 @@ not a UI surface — no i18n, ADR-165). ``csv.writer`` handles quoting/escaping 
 values containing commas, quotes or newlines and normalizes line endings, so the
 output is faithful RFC-4180 CSV. Money is rendered as the plain :class:`Decimal`
 string (ADR-025); ``None`` renders as an empty field.
+
+User-controlled text cells (a transaction ``name``, a ``category``) are additionally
+guarded against CSV formula injection: a spreadsheet (Excel, Sheets, LibreOffice)
+evaluates a cell whose first character is a formula trigger (``= + - @``) or a
+control character (TAB, CR), so a crafted value like ``=HYPERLINK("http://evil")``
+would execute on open. We neutralize such a cell by prefixing a single quote ``'``
+(the standard mitigation). RFC-4180 quoting still applies on top. Numeric/Decimal
+cells are never touched.
 """
 
 from __future__ import annotations
@@ -46,14 +54,41 @@ _TRANSACTION_HEADER = (
 # reader (ADR-042).
 _SUMMARY_HEADER = ("category", "amount", "share_pct", "delta_pct")
 
+# Leading characters a spreadsheet treats as the start of a formula or as control
+# input. A cell beginning with any of these is neutralized with a leading quote so
+# it is rendered as literal text on open, not executed (CSV formula injection).
+_INJECTION_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _sanitize(text: str) -> str:
+    """Neutralize a formula-injection trigger at the start of a text cell.
+
+    A spreadsheet evaluates a cell whose first character is ``= + - @`` or a
+    leading TAB/CR, so a crafted transaction ``name``/``category`` could execute on
+    open. Prefixing a single quote ``'`` (the standard mitigation) forces the cell
+    to render as literal text. A safe value is returned unchanged; ``csv.writer``
+    still applies RFC-4180 quoting on top.
+    """
+    if text.startswith(_INJECTION_TRIGGERS):
+        return f"'{text}"
+    return text
+
 
 def _text(value: object | None) -> str:
     """Render a cell value as text; ``None`` becomes an empty field.
 
     :class:`Decimal` and other scalars render via ``str`` so money keeps its exact
-    Decimal representation (ADR-025); ``csv.writer`` then handles any quoting.
+    Decimal representation (ADR-025); ``csv.writer`` then handles any quoting. Any
+    ``str`` cell is passed through :func:`_sanitize` so a user-controlled value that
+    starts with a formula/control trigger is neutralized centrally — every export
+    (transactions, summary, and any future CSV) inherits the guard. Non-``str``
+    scalars (``Decimal``, dates, UUIDs) are never a formula trigger and pass through.
     """
-    return "" if value is None else str(value)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return _sanitize(value)
+    return str(value)
 
 
 def _render(header: Sequence[str], rows: Sequence[Sequence[object | None]]) -> str:

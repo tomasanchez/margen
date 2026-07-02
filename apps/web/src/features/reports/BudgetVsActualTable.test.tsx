@@ -8,8 +8,9 @@
  * English-pinned (ADR-105).
  */
 
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { ThemeProvider } from '@mui/material/styles'
 import { darkTheme } from '../../theme'
 import { BudgetVsActualTable } from './BudgetVsActualTable'
@@ -84,5 +85,21 @@ describe('<BudgetVsActualTable>', () => {
       period: { ...period, categories: [line({ target: null, remaining: null })] },
     })
     expect(screen.getByText(/No budget targets set/i)).toBeInTheDocument()
+  })
+
+  test('renders the calm ErrorState (not a skeleton) when the query errors', () => {
+    // Query error: isError, no data. Must NOT spin an eternal skeleton (ADR-037).
+    const { container } = renderTable({ period: undefined, isError: true })
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(screen.getByText(/Couldn't load budget vs actual/i)).toBeInTheDocument()
+    expect(container.querySelector('.MuiSkeleton-root')).toBeNull()
+  })
+
+  test('offers a retry action wired to the callback on error', async () => {
+    const onRetry = vi.fn()
+    const user = userEvent.setup()
+    renderTable({ period: undefined, isError: true, onRetry })
+    await user.click(screen.getByRole('button', { name: /retry|try again/i }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
   })
 })

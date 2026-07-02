@@ -26,6 +26,7 @@ import TableRow from '@mui/material/TableRow'
 import Typography from '@mui/material/Typography'
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded'
 import { SectionCard } from '../../components/SectionCard'
+import { ErrorState } from '../../components/ErrorState'
 import { categoryLabel } from '../transactions/presentation'
 import { formatCurrency } from '../../lib/format'
 import type { BudgetPeriod } from '../../api/budgetsClient'
@@ -43,6 +44,10 @@ export interface BudgetVsActualTableProps {
   period: BudgetPeriod | undefined
   /** Whether the budgets query is pending. */
   loading?: boolean
+  /** Whether the budgets query errored (renders the calm fallback). */
+  isError?: boolean
+  /** Retry handler for the error state. */
+  onRetry?: () => void
 }
 
 /** The remaining cell: an over-budget figure is flagged with a word + icon (not color). */
@@ -82,8 +87,21 @@ function RemainingCell({
 export function BudgetVsActualTable({
   period,
   loading = false,
+  isError = false,
+  onRetry,
 }: BudgetVsActualTableProps) {
   const { t } = useTranslation('reports')
+
+  // A failed query gets the calm ErrorState — not an eternal skeleton (ADR-037).
+  if (isError) {
+    return (
+      <ErrorState
+        title={t('budgets.errorTitle')}
+        description={t('budgets.errorDescription')}
+        onRetry={onRetry}
+      />
+    )
+  }
 
   if (loading || !period) {
     return (
