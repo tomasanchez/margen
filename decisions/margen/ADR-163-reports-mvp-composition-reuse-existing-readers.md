@@ -4,7 +4,7 @@ adr: 163
 title: Reports MVP composition — reuse existing readers, add net-worth history and CSV export
 category: architecture
 date: 2026-07-02
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -55,3 +55,4 @@ No new aggregator endpoint is added. The frontend composes the view from the fou
 ## Status History
 
 - 2026-07-02: accepted
+- 2026-07-02: superseded by ADR-167
