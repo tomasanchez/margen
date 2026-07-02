@@ -1,0 +1,102 @@
+{
+  "title": "Reports",
+  "subtitle": "The story behind the numbers, over time.",
+  "rangeSubtitle": "{{span}} · compared with the previous {{months}} months",
+  "range": {
+    "ariaLabel": "Analytics range",
+    "3M": "3M",
+    "6M": "6M",
+    "12M": "12M",
+    "YTD": "YTD",
+    "vsPrevious": "vs previous period"
+  },
+  "kpi": {
+    "income": "Income",
+    "expenses": "Expenses",
+    "netSaved": "Net saved",
+    "savingsRate": "Savings rate",
+    "vsPrev": "vs prev",
+    "noDelta": "—",
+    "points": "pp"
+  },
+  "cashFlow": {
+    "title": "Cash flow",
+    "subtitle": "Money in vs. money out, each month — not just what you spent.",
+    "income": "Income",
+    "expenses": "Expenses",
+    "netSaved": "net saved",
+    "accessibleItem": "{{month}}: income {{income}}, expenses {{expenses}}",
+    "accessibleSummary": "Monthly cash flow: {{summary}}."
+  },
+  "categoryTrends": {
+    "title": "Category trends",
+    "subtitle": "What's moving, not just what's big.",
+    "tableAria": "Category trends",
+    "colCategory": "Category",
+    "colTotal": "Total",
+    "colTrend": "6-mo trend",
+    "colDelta": "vs prev",
+    "share": "{{share}}% of spend",
+    "flat": "flat",
+    "noPrior": "—",
+    "noPriorAria": "no prior data",
+    "empty": "No spending recorded for this range yet.",
+    "accessibleItem": "{{category}}: {{total}}",
+    "accessibleSummary": "Category totals: {{summary}}."
+  },
+  "monotributo": {
+    "title": "Monotributo trajectory",
+    "description": "How close your trailing-12-month invoicing is to the category ceiling.",
+    "watch": "Watch",
+    "ok": "OK",
+    "meterAria": "{{percent}} of the Category {{category}} ceiling used",
+    "legendInvoiced": "Invoiced",
+    "legendCeiling": "Cat {{category}} ceiling",
+    "legendOver": "Over ceiling",
+    "invoiced": "Invoiced · last 12 mo",
+    "ceiling": "Category {{category}} ceiling",
+    "remaining": "Remaining before ceiling",
+    "overBy": "Over the ceiling by",
+    "openPlanner": "Open Monotributo planner →",
+    "errorTitle": "Couldn't load the Monotributo trajectory",
+    "errorDescription": "We couldn't reach the server for your Monotributo standing. Try again."
+  },
+  "fx": {
+    "title": "FX & purchasing power",
+    "subtitle": "USD in, ARS out.",
+    "description": "You invoice in dollars and spend in pesos — this is the rate you actually captured.",
+    "avgMep": "avg MEP captured",
+    "mepUnavailable": "No rate captured",
+    "usdInvoiced": "invoiced this period",
+    "accessibleSummary": "Average MEP captured {{mep}}; USD invoiced {{usd}}."
+  },
+  "overview": {
+    "errorTitle": "Couldn't load your reports",
+    "errorDescription": "We couldn't reach the server for your analytics. Try again."
+  },
+  "netWorth": {
+    "title": "Net worth over time",
+    "subtitle": "Monthly balance trajectory, at the current rate.",
+    "errorTitle": "Couldn't load net-worth history",
+    "errorDescription": "We couldn't reach the server for your balance history. Try again.",
+    "empty": "No balance history yet.",
+    "rateUnavailable": "Live rate unavailable, so the mixed-currency total can't be shown. Try again shortly.",
+    "tooltipLabel": "Net worth",
+    "accessibleItem": "{{month}}: {{amount}}",
+    "accessibleSummary": "Net worth by month: {{summary}}."
+  },
+  "unconverted": {
+    "note_one": "{{count}} transaction lacks an FX snapshot, so the USD figures may be understated.",
+    "note_other": "{{count}} transactions lack an FX snapshot, so the USD figures may be understated.",
+    "action": "Backfill FX rates"
+  },
+  "export": {
+    "title": "Export & share",
+    "subtitle": "Hand it to your contador, or keep a copy.",
+    "transactions": "Transactions CSV",
+    "transactionsBusy": "Preparing…",
+    "summary": "Category summary CSV",
+    "summaryBusy": "Preparing…",
+    "error": "Couldn't prepare the download. Please try again."
+  }
+}

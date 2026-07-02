@@ -1,10 +1,13 @@
 {
   "nav": {
     "primary": "Principal",
+    "openMenu": "Abrir menú",
+    "menu": "Menú",
     "home": "Inicio",
     "transactions": "Movimientos",
     "accounts": "Cuentas",
     "budgets": "Presupuestos",
+    "reports": "Reportes",
     "transfers": "Transferencias",
     "monotributo": "Monotributo",
     "import": "Importar resumen",
@@ -13,6 +16,7 @@
     "transactionsShort": "Actividad",
     "accountsShort": "Cuentas",
     "budgetsShort": "Presupuestos",
+    "reportsShort": "Reportes",
     "transfersShort": "Transferencias",
     "monotributoShort": "Mono",
     "importShort": "Importar"

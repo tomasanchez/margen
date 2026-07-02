@@ -11,6 +11,8 @@ import { HomePage } from './features/home/HomePage'
 import { AccountsPage } from './features/accounts/AccountsPage'
 import { BudgetsRoute } from './features/budgets/BudgetsRoute'
 import { validateBudgetsSearch } from './features/budgets/budgetsSearch'
+import { ReportsRoute } from './features/reports/ReportsRoute'
+import { validateReportsSearch } from './features/reports/reportsSearch'
 import { TransfersPage } from './features/transfers/TransfersPage'
 import { ImportStatement } from './features/statements/ImportStatement'
 import { MonotributoRoute } from './features/monotributo/MonotributoRoute'
@@ -124,6 +126,18 @@ const budgetsRoute = createRoute({
   component: BudgetsRoute,
 })
 
+const reportsRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: '/reports',
+  // The analytics WINDOW lives in the URL as `?range=` (3M/6M/12M/YTD, ADR-167):
+  // the route validates it and `ReportsRoute` binds it to the page via
+  // `useReportRange` (mirroring how `/budgets` owns its month), so reload /
+  // back-forward / deep-links keep the selected window. Absent means the default
+  // 6M window.
+  validateSearch: validateReportsSearch,
+  component: ReportsRoute,
+})
+
 const transfersRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/transfers',
@@ -157,6 +171,7 @@ const routeTree = rootRoute.addChildren([
     transactionsRoute,
     accountsRoute,
     budgetsRoute,
+    reportsRoute,
     transfersRoute,
     importStatementRoute,
     monotributoRoute,

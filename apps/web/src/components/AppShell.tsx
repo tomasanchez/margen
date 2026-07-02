@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Link,
@@ -10,25 +10,24 @@ import AppBar from '@mui/material/AppBar'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Fab from '@mui/material/Fab'
+import IconButton from '@mui/material/IconButton'
 import Snackbar from '@mui/material/Snackbar'
 import Toolbar from '@mui/material/Toolbar'
 import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import AddIcon from '@mui/icons-material/Add'
-import UploadFileIcon from '@mui/icons-material/UploadFile'
-import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
-import SwapHorizOutlinedIcon from '@mui/icons-material/SwapHorizOutlined'
-import HomeIcon from '@mui/icons-material/Home'
-import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined'
-import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
-import ReceiptLongOutlinedIcon from '@mui/icons-material/ReceiptLongOutlined'
-import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
-import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined'
-import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
-import AccountBalanceWalletOutlinedIcon from '@mui/icons-material/AccountBalanceWalletOutlined'
-import PieChartIcon from '@mui/icons-material/PieChart'
-import PieChartOutlinedIcon from '@mui/icons-material/PieChartOutlined'
+import MenuIcon from '@mui/icons-material/Menu'
 import { AccountMenu } from './AccountMenu'
+import { BrandMark } from './BrandMark'
+import { NavDrawer } from './NavDrawer'
+import { SidebarNavLink } from './SidebarNavLink'
+import {
+  PRIMARY_NAV_ITEMS,
+  IMPORT_NAV_ITEM,
+  MONOTRIBUTO_NAV_ITEM,
+  TRANSFERS_NAV_ITEM,
+  type NavItem,
+} from './navItems'
 import { MonthSwitcher } from './MonthSwitcher'
 import { MonthProvider } from './MonthProvider'
 import { useViewingMonth } from './monthContext'
@@ -47,197 +46,6 @@ const CONTENT_MAX_WIDTH = 1240
  */
 const MOBILE_SCROLL_CLEARANCE =
   'calc(124px + env(safe-area-inset-bottom))'
-
-/** A navigable destination wired to a router route. */
-interface NavRoute {
-  kind: 'route'
-  to:
-    | '/'
-    | '/transactions'
-    | '/accounts'
-    | '/budgets'
-    | '/transfers'
-    | '/monotributo'
-    | '/import-statement'
-  /** i18n key (shell ns) for the sidebar label. */
-  labelKey: string
-  /** i18n key (shell ns) for the shorter mobile bottom-nav label. */
-  shortLabelKey: string
-  /** Outlined icon shown when the route is inactive. */
-  icon: ReactNode
-  /** Filled icon variant shown when the route is active (non-color cue, ADR-019). */
-  activeIcon: ReactNode
-}
-
-type NavItem = NavRoute
-
-/**
- * Primary navigation (ADR-127): the everyday PFM peers. Home / Transactions /
- * Accounts stay top-level on both the desktop sidebar and the mobile pill.
- */
-const PRIMARY_NAV_ITEMS: NavItem[] = [
-  {
-    kind: 'route',
-    to: '/',
-    labelKey: 'nav.home',
-    shortLabelKey: 'nav.homeShort',
-    icon: <HomeOutlinedIcon fontSize="small" />,
-    activeIcon: <HomeIcon fontSize="small" />,
-  },
-  {
-    kind: 'route',
-    to: '/transactions',
-    labelKey: 'nav.transactions',
-    shortLabelKey: 'nav.transactionsShort',
-    icon: <ReceiptLongOutlinedIcon fontSize="small" />,
-    activeIcon: <ReceiptLongIcon fontSize="small" />,
-  },
-  {
-    kind: 'route',
-    to: '/accounts',
-    labelKey: 'nav.accounts',
-    shortLabelKey: 'nav.accountsShort',
-    icon: <AccountBalanceWalletOutlinedIcon fontSize="small" />,
-    activeIcon: <AccountBalanceWalletIcon fontSize="small" />,
-  },
-  {
-    kind: 'route',
-    to: '/budgets',
-    labelKey: 'nav.budgets',
-    shortLabelKey: 'nav.budgetsShort',
-    icon: <PieChartOutlinedIcon fontSize="small" />,
-    activeIcon: <PieChartIcon fontSize="small" />,
-  },
-]
-
-/**
- * Secondary "Tools" navigation (ADR-127): import + the optional Monotributo
- * module are demoted below the primary peers into their own grouping. The
- * Monotributo entry is settings-gated (ADR-126) — see {@link Sidebar}, which
- * filters it out when the module is disabled.
- */
-const TRANSFERS_NAV_ITEM: NavItem = {
-  kind: 'route',
-  to: '/transfers',
-  labelKey: 'nav.transfers',
-  shortLabelKey: 'nav.transfersShort',
-  icon: <SwapHorizOutlinedIcon fontSize="small" />,
-  activeIcon: <SwapHorizIcon fontSize="small" />,
-}
-
-const IMPORT_NAV_ITEM: NavItem = {
-  kind: 'route',
-  to: '/import-statement',
-  labelKey: 'nav.import',
-  shortLabelKey: 'nav.importShort',
-  icon: <UploadFileIcon fontSize="small" />,
-  activeIcon: <UploadFileIcon fontSize="small" />,
-}
-
-const MONOTRIBUTO_NAV_ITEM: NavItem = {
-  kind: 'route',
-  to: '/monotributo',
-  labelKey: 'nav.monotributo',
-  shortLabelKey: 'nav.monotributoShort',
-  icon: <AccountBalanceOutlinedIcon fontSize="small" />,
-  activeIcon: <AccountBalanceIcon fontSize="small" />,
-}
-
-/**
- * The margen brand mark — the new favicon icon (ADR-013): the sage "margin"
- * uprights + gold notch on a dark rounded tile. Rendered from the shipped raster
- * asset (`public/android-chrome-192x192.png`) at its 192px source so it stays
- * crisp on retina at this size. Decorative: `aria-hidden` + empty `alt`, with
- * the accessible name carried by the "Margen" wordmark / the surrounding
- * labelled brand link.
- */
-function MargenMark({ size = 26 }: { size?: number }) {
-  return (
-    <Box
-      component="img"
-      src="/android-chrome-192x192.png"
-      alt=""
-      aria-hidden
-      width={size}
-      height={size}
-      sx={{ width: size, height: size, display: 'block', flex: 'none', borderRadius: '7px' }}
-    />
-  )
-}
-
-/**
- * Brand mark: the margen glyph (sage margin uprights + gold notch; ADR-013). The
- * "Margen" wordmark is desktop-only on the mobile transparent bar so the left
- * slot reads as a single floating icon (ADR-017); pass `wordmark={false}` to
- * force it off.
- */
-function BrandMark({ wordmark = true }: { wordmark?: boolean }) {
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
-      <MargenMark size={26} />
-      {wordmark ? (
-        <Typography
-          component="span"
-          sx={{
-            // Hidden on the mobile transparent bar; shown from md+ (ADR-017).
-            display: { xs: 'none', md: 'block' },
-            fontWeight: 600,
-            letterSpacing: '-0.01em',
-            fontSize: 16,
-          }}
-          color="text.primary"
-        >
-          Margen
-        </Typography>
-      ) : null}
-    </Box>
-  )
-}
-
-/** A single sidebar nav link (primary or tools group), styled identically. */
-function SidebarNavLink({
-  item,
-  active,
-}: {
-  item: NavItem
-  active: boolean
-}) {
-  const { t } = useTranslation('shell')
-  return (
-    <Box
-      component={Link}
-      to={item.to}
-      aria-current={active ? 'page' : undefined}
-      sx={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 1.25,
-        px: 1.5,
-        py: 1.25,
-        borderRadius: 1.5,
-        fontSize: 14,
-        width: '100%',
-        textAlign: 'left',
-        textDecoration: 'none',
-        // Active conveyed beyond hue (ADR-019): gold color + filled icon +
-        // bolder label + selected background; inactive stays muted/outlined.
-        color: active ? 'primary.main' : 'text.secondary',
-        fontWeight: active ? 600 : 500,
-        bgcolor: active ? 'action.selected' : 'transparent',
-        '& .MuiSvgIcon-root': { flex: 'none' },
-        '&:hover': { bgcolor: 'action.hover' },
-        '&:focus-visible': {
-          outline: '2px solid',
-          outlineColor: 'primary.main',
-          outlineOffset: 2,
-        },
-      }}
-    >
-      {active ? item.activeIcon : item.icon}
-      {t(item.labelKey)}
-    </Box>
-  )
-}
 
 function Sidebar({ onAddTransaction }: { onAddTransaction: () => void }) {
   const { t } = useTranslation('shell')
@@ -330,27 +138,33 @@ const PILL_ITEM_SX = {
 } as const
 
 /**
- * Floating, icon-only navigation pill (mobile only; ADR-017, ADR-019).
+ * The slim set of pill destinations (ADR-172): just the three most-used peers.
+ * The rest of navigation (Accounts, Budgets, Transfers, Import, and the optional
+ * Monotributo module) moves into the mobile {@link NavDrawer} so the pill stays
+ * uncrowded — a comfortable three ~44px touch targets.
+ */
+const PILL_NAV_ITEMS: NavItem[] = PRIMARY_NAV_ITEMS.filter((item) =>
+  item.to === '/' || item.to === '/transactions' || item.to === '/reports',
+)
+
+/**
+ * Floating, icon-only navigation pill (mobile only; ADR-017, ADR-019, ADR-172).
  *
  * Detached from every screen edge and centered near the bottom, it hugs its
  * content (capsule, soft shadow, subtle blur) rather than spanning the width.
- * Each destination is a ~44px touch target with an `aria-label` (no text label)
- * and `aria-current="page"` when active. The active item is conveyed beyond hue
- * (ADR-019): a gold-tinted rounded highlight behind the icon PLUS the gold icon
- * color PLUS the route's filled icon variant; inactive items stay muted/outlined
- * with no background.
+ * It carries only the three most-used peers (Home / Transactions / Reports);
+ * the full navigation lives in the {@link NavDrawer} opened from the top-left
+ * hamburger. Each destination is a ~44px touch target with an `aria-label` (no
+ * text label) and `aria-current="page"` when active. The active item is conveyed
+ * beyond hue (ADR-019): a gold-tinted rounded highlight behind the icon PLUS the
+ * gold icon color PLUS the route's filled icon variant; inactive items stay
+ * muted/outlined with no background.
  */
 function FloatingNavPill() {
   const { t } = useTranslation('shell')
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  // Gate the Monotributo entry on the optional-module flag (ADR-126); hidden
-  // until settings resolve to avoid a flash-then-hide.
-  const { enabled: monotributoEnabled } = useMonotributoEnabled()
 
-  // Primary peers, plus the optional Monotributo module when enabled (ADR-127).
-  const pillItems: NavItem[] = monotributoEnabled
-    ? [...PRIMARY_NAV_ITEMS, MONOTRIBUTO_NAV_ITEM]
-    : PRIMARY_NAV_ITEMS
+  const pillItems = PILL_NAV_ITEMS
 
   return (
     <Box
@@ -495,6 +309,9 @@ function AppShellBody() {
 
   const navigate = useNavigate()
   const [olderHintOpen, setOlderHintOpen] = useState(false)
+  // Mobile nav drawer (ADR-172): opened by the top-left hamburger. Desktop keeps
+  // the always-visible sidebar, so this only drives the xs surface.
+  const [navDrawerOpen, setNavDrawerOpen] = useState(false)
 
   // Going older than the 6-months-ago floor lands the user in Transactions,
   // where older dates are searchable (ADR-041). A brief, calm Snackbar explains
@@ -536,9 +353,45 @@ function AppShellBody() {
         }}
       >
         <Toolbar sx={{ gap: 1.5 }}>
-          {/* Left: brand. The wordmark is desktop-only (BrandMark hides it on xs). */}
+          {/* Left slot. Desktop (md+): the brand (mark + wordmark). Mobile (xs):
+              a floating hamburger that opens the full nav drawer (ADR-172),
+              reading as a floating control against the transparent bar (matching
+              the other mobile floating controls). */}
           <Box sx={{ flex: 1, display: 'flex', alignItems: 'center' }}>
-            <BrandMark />
+            <Box sx={{ display: { xs: 'flex', md: 'none' } }}>
+              <Tooltip title={t('nav.openMenu')}>
+                <IconButton
+                  onClick={() => setNavDrawerOpen(true)}
+                  aria-label={t('nav.openMenu')}
+                  aria-haspopup="dialog"
+                  aria-expanded={navDrawerOpen}
+                  aria-controls="mobile-nav-drawer"
+                  sx={{
+                    // Floating control against the transparent bar: paper bg +
+                    // border + subtle shadow/blur, matching the compact month
+                    // picker and the nav pill.
+                    color: 'text.secondary',
+                    borderRadius: 2,
+                    bgcolor: 'background.paper',
+                    border: 1,
+                    borderColor: 'divider',
+                    backdropFilter: 'blur(12px)',
+                    boxShadow: '0 8px 22px -14px rgba(0,0,0,0.6)',
+                    '&:hover': { bgcolor: 'action.hover' },
+                    '&:focus-visible': {
+                      outline: '2px solid',
+                      outlineColor: 'primary.main',
+                      outlineOffset: 2,
+                    },
+                  }}
+                >
+                  <MenuIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+            <Box sx={{ display: { xs: 'none', md: 'flex' }, alignItems: 'center' }}>
+              <BrandMark />
+            </Box>
           </Box>
 
           {/* Desktop (md+): centered inline month stepper — Home only (ADR-040). */}
@@ -625,9 +478,15 @@ function AppShellBody() {
         </Box>
       </Box>
 
-      {/* Mobile-only floating overlays (out of flow; ADR-017, ADR-019). */}
+      {/* Mobile-only floating overlays (out of flow; ADR-017, ADR-019, ADR-172). */}
       <FloatingNavPill />
       <AddFab onAddTransaction={onAddTransaction} />
+      <NavDrawer
+        id="mobile-nav-drawer"
+        open={navDrawerOpen}
+        onClose={() => setNavDrawerOpen(false)}
+        onAddTransaction={onAddTransaction}
+      />
 
       {/* Calm hint shown when the navigator hits its 6-month floor and we route
           to Transactions for older dates (ADR-041). Non-blocking, dismissible. */}
