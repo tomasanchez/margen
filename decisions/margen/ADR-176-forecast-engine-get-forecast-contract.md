@@ -44,7 +44,7 @@ Committed streams projected in v1:
 ### API contract
 
 ```
-GET /api/v1/forecast?horizon=<N>&currency=<ARS|USD>
+GET /api/v1/reports/forecast?horizon=<N>&currency=<ARS|USD>
 ```
 
 - `horizon`: integer, number of future months to project (default 3, max 12).
