@@ -145,11 +145,14 @@ async def _record_fee(
     (ADR-123); ownership of the fee account is verified before staging (ADR-130). The
     aggregate is built through the domain factory so invariants run (positive amount,
     ADR-031) and is stamped with ``user_id`` so it is owned like any manual expense
-    (ADR-108).
+    (ADR-108). The fee's optional FX snapshot (``fx_rate`` + ``fx_source``) is threaded
+    into the build so the fee's ``usd_amount`` materializes exactly like a normal
+    expense (``round(amount ÷ fx_rate, 2)``, ADR-148, ADR-149); a fee sent without a
+    snapshot stays null-snapshot rather than being rejected (ADR-031).
 
     Args:
         uow: The unit of work whose transaction repository stages the expense.
-        fee: The validated fee input (account, amount, label).
+        fee: The validated fee input (account, amount, label, optional FX snapshot).
         occurred_on: The transfer's date; the fee expense shares it.
         now: The shared creation/update timestamp for the operation.
         user_id: The authenticated owner the fee expense belongs to (ADR-108).
@@ -173,6 +176,8 @@ async def _record_fee(
         category=FEES_CATEGORY,
         account_id=fee.account_id,
         user_id=user_id,
+        fx_rate=fee.fx_rate,
+        fx_source=fee.fx_source,
     )
     uow.transactions.add(expense)
     return expense.id

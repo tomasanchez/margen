@@ -59,16 +59,35 @@ class TransferFeeRequest(CamelCaseModel):
 
     The fee becomes a ``kind=expense`` transaction in the "Fees" category on
     ``accountId`` in that account's native currency. The fee account must belong to
-    the caller (ADR-130).
+    the caller (ADR-130). The client may stamp an FX snapshot (``rate`` + ``fxSource``)
+    exactly as it does on a manual expense (ADR-148, ADR-149) so the fee's
+    ``usd_amount`` materializes; both are optional and a fee without them stays
+    null-snapshot (ADR-031).
     """
 
     account_id: UUID = Field(description="The account the fee is charged to; must belong to the caller.")
     amount: Decimal = Field(gt=Decimal(0), description="The positive fee magnitude in the account's native currency.")
     label: str = Field(min_length=1, description="The fee expense's display name (e.g. 'Deel fee').")
+    fx_rate: Decimal | None = Field(
+        default=None,
+        validation_alias="rate",
+        serialization_alias="rate",
+        description="The ARS-per-1-USD rate the client captured for the fee. Aliased to 'rate'; optional (ADR-149).",
+    )
+    fx_source: str | None = Field(
+        default=None,
+        description="Provenance of the fee's FX snapshot rate (e.g. 'bolsa'); optional (ADR-148, ADR-149).",
+    )
 
     def to_input(self) -> TransferFeeInput:
         """Translate the request fee into the command's :class:`TransferFeeInput`."""
-        return TransferFeeInput(account_id=self.account_id, amount=self.amount, label=self.label)
+        return TransferFeeInput(
+            account_id=self.account_id,
+            amount=self.amount,
+            label=self.label,
+            fx_rate=self.fx_rate,
+            fx_source=self.fx_source,
+        )
 
 
 class TransferCreateRequest(CamelCaseModel):

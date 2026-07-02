@@ -234,3 +234,51 @@ class TestTransferMonotributoIsolation:
         net_after = sum(account.balance for account in (await _balances_by_id(session_factory)).values())
         assert used_after == used_before
         assert net_before - net_after == Decimal("5000.00")
+
+
+class TestTransferFeeFxSnapshotIntegration:
+    """A fee's FX snapshot round-trips through the real transaction store (ADR-148/149)."""
+
+    async def test_fee_with_fx_snapshot_persists_materialized_usd_amount(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a transfer whose ARS fee carries an FX snapshot (fx_rate + fx_source)
+        WHEN the transfer is recorded and the fee expense is read back from PostgreSQL
+        THEN usd_amount is materialized (= round(amount / rate, 2)) and the rate +
+             source persist exactly like a normal expense (ADR-148, ADR-149)
+        """
+        # GIVEN
+        source = await _seed_account(session_factory, currency=Currency.ARS, opening_balance="10000")
+        destination = await _seed_account(session_factory, currency=Currency.ARS, opening_balance="0")
+
+        # WHEN — a 3000 ARS fee stamped with a MEP rate of 1000 ARS per USD.
+        result = await create_transfer(
+            CreateTransfer(
+                user_id=OWNER,
+                from_account_id=source.id,
+                to_account_id=destination.id,
+                amount_out=Decimal("2500"),
+                amount_in=Decimal("2500"),
+                occurred_on=A_DATE,
+                fees=(
+                    TransferFeeInput(
+                        account_id=source.id,
+                        amount=Decimal("3000"),
+                        label="Transfer fee",
+                        fx_rate=Decimal("1000"),
+                        fx_source="mep",
+                    ),
+                ),
+            ),
+            SqlAlchemyUnitOfWork(session_factory),
+        )
+
+        # THEN — the fee expense round-trips its materialized USD snapshot.
+        fee_id = result.fee_transaction_ids[0]
+        async with SqlAlchemyUnitOfWork(session_factory) as uow:
+            fee = await uow.transactions.get(fee_id, OWNER)
+        assert fee is not None
+        assert fee.usd_amount == Decimal("3.00")  # 3000 / 1000
+        assert fee.fx_rate == Decimal("1000")
+        assert fee.fx_source == "mep"
