@@ -177,6 +177,22 @@
       "label": "Cuenta para el Monotributo",
       "description": "Suma a tu total facturado anual"
     },
+    "recurrence": {
+      "label": "Recurrencia",
+      "options": {
+        "none": "Único",
+        "monthly": "Mensual",
+        "quarterly": "Trimestral",
+        "annual": "Anual",
+        "installment": "Cuotas"
+      },
+      "installmentIndex": "Cuota",
+      "installmentTotal": "de",
+      "installmentIndexAriaLabel": "Número de cuota actual",
+      "installmentTotalAriaLabel": "Cantidad total de cuotas",
+      "installmentError": "La cuota debe ser un número entero, y no mayor que el total.",
+      "hint": "Opcional — ayuda a proyectar este gasto en tu pronóstico de flujo de caja."
+    },
     "more": "Más detalles",
     "notes": {
       "label": "Notas",

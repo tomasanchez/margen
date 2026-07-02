@@ -26,13 +26,14 @@ import Typography from '@mui/material/Typography'
 import { ErrorState } from '../../components/ErrorState'
 import { useDisplayCurrency } from '../settings/displayCurrencyContext'
 import { useMonotributoSnapshot } from '../monotributo/queries'
-import { useReportsOverview } from './queries'
+import { useReportsOverview, useForwardMonotributoCuota } from './queries'
 import { RangePicker } from './RangePicker'
 import { KpiStrip } from './KpiStrip'
 import { CashFlowChart } from './CashFlowChart'
 import { CategoryTrends } from './CategoryTrends'
 import { MonotributoTrajectory } from './MonotributoTrajectory'
 import { FxPanel } from './FxPanel'
+import { ForecastPanel } from './ForecastPanel'
 import { ExportButtons } from './ExportButtons'
 import { rangeMonths } from './reportsFormat'
 import { DEFAULT_REPORTS_RANGE } from './reportsSearch'
@@ -68,6 +69,11 @@ export function ReportsPage({
   const { effectiveCurrency } = useDisplayCurrency()
   const overviewQuery = useReportsOverview(range, effectiveCurrency)
   const monotributoQuery = useMonotributoSnapshot()
+  // The forward monthly cuota the cash-flow forecast commits (ADR-177), fed to the
+  // Monotributo trajectory card so its forward projection appears there. Reads the
+  // SAME forecast query the panel below uses (TanStack Query dedupes by key), so no
+  // extra fetch; native ARS, never re-denominated (ADR-177).
+  const forwardCuota = useForwardMonotributoCuota(range)
 
   const overview = overviewQuery.data
 
@@ -186,7 +192,10 @@ export function ReportsPage({
                 currency={effectiveCurrency}
               />
               {monotributoQuery.data ? (
-                <MonotributoTrajectory standing={monotributoQuery.data.current} />
+                <MonotributoTrajectory
+                  standing={monotributoQuery.data.current}
+                  forwardCuota={forwardCuota}
+                />
               ) : monotributoQuery.isError ? (
                 <ErrorState
                   title={t('monotributo.errorTitle')}
@@ -201,6 +210,11 @@ export function ReportsPage({
             <FxPanel fxSummary={overview.fxSummary} />
           </>
         )}
+
+        {/* Cash-flow forecast (ADR-178): a Reports panel, owning its own async
+            query + calm loading/error/empty state so a forecast failure never
+            blanks the overview panels above (ADR-037/178). */}
+        <ForecastPanel range={range} />
 
         <ExportButtons />
       </Stack>

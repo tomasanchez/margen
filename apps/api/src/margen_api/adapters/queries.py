@@ -27,7 +27,7 @@ from margen_api.adapters.settings_repository import (
     DEFAULT_MONOTRIBUTO_ENABLED,
     DEFAULT_PREFERRED_RATE_SOURCE,
 )
-from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
+from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, RecurringCadence, TxType
 from margen_api.service_layer.insights import build_monthly_insights
 from margen_api.service_layer.insights_read_models import LatestUsdInvoice, MonthlyInsights
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
@@ -77,6 +77,9 @@ def _to_read_model(record: TransactionRecord) -> TransactionReadModel:
         card=record.card,
         notes=record.notes,
         recurring=record.recurring,
+        recurring_cadence=RecurringCadence.parse(record.recurring_cadence),
+        installments_total=record.installments_total,
+        installments_index=record.installments_index,
         counts_toward_monotributo=record.counts_toward_monotributo,
         statement_document_id=record.statement_document_id,
         account_id=record.account_id,

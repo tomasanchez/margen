@@ -29,6 +29,8 @@ from margen_api.service_layer.budget_read_models import CategoryHistory, Monthly
 from margen_api.service_layer.budget_reader import AbstractBudgetReader
 from margen_api.service_layer.budget_repository import AbstractBudgetRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore, InvoiceDocument
+from margen_api.service_layer.forecast_read_models import ForecastSeries
+from margen_api.service_layer.forecast_reader import AbstractForecastReader
 from margen_api.service_layer.insights_read_models import MonthlyInsights
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
 from margen_api.service_layer.institution_read_models import InstitutionReadModel
@@ -990,6 +992,40 @@ class FakeReportsReader(AbstractReportsReader):
         return self._history
 
 
+class FakeForecastReader(AbstractForecastReader):
+    """Forecast reader returning a canned :class:`ForecastSeries` for route tests (ADR-176).
+
+    The route tests assert wiring and the HTTP contract, not the committed-stream SQL
+    (covered by the pure-function and integration tiers), so this fake records the
+    requested owner, horizon and currency and returns the series it was given (ADR-032,
+    ADR-108).
+    """
+
+    def __init__(self, series: ForecastSeries) -> None:
+        """Initialize the reader with the forecast series every call returns.
+
+        Args:
+            series: The forecast series every ``forecast`` call returns.
+        """
+        self._series = series
+        self.requested_user_id: str | None = None
+        self.requested_horizon: int | None = None
+        self.requested_currency: Currency | None = None
+
+    async def forecast(
+        self,
+        user_id: str,
+        *,
+        horizon: int = 6,
+        currency: Currency = Currency.ARS,
+    ) -> ForecastSeries:
+        """Record the owner, horizon and currency and return the canned series (ADR-108, ADR-176)."""
+        self.requested_user_id = user_id
+        self.requested_horizon = horizon
+        self.requested_currency = currency
+        return self._series
+
+
 class FakeInsightsReader(AbstractInsightsReader):
     """Insights reader returning a canned :class:`MonthlyInsights` for route tests.
 
@@ -1092,6 +1128,9 @@ def _project(transaction: Transaction) -> TransactionReadModel:
         card=transaction.card,
         notes=transaction.notes,
         recurring=transaction.recurring,
+        recurring_cadence=transaction.recurring_cadence,
+        installments_total=transaction.installments_total,
+        installments_index=transaction.installments_index,
         counts_toward_monotributo=transaction.counts_toward_monotributo,
         statement_document_id=transaction.statement_document_id,
         account_id=transaction.account_id,

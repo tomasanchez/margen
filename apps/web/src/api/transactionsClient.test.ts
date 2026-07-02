@@ -14,6 +14,7 @@ import {
   TransactionApiError,
   adaptTransaction,
   toCreateBody,
+  toPatchBody,
   transactionsClient,
   type TransactionDto,
 } from './transactionsClient'
@@ -300,6 +301,102 @@ describe('toCreateBody', () => {
       amountNum: 5000,
     }
     expect('offsetsTransactionId' in toCreateBody(input)).toBe(false)
+  })
+})
+
+describe('recurrence / installments serialization (ADR-174)', () => {
+  const base: NewTransactionInput = {
+    occurredOn: '2026-07-01',
+    dispDate: 'Jul 01',
+    name: 'Netflix',
+    category: 'Subscriptions',
+    currency: 'ARS',
+    type: 'expense',
+    kind: 'expense',
+    amountNum: 5000,
+  }
+
+  test('adaptTransaction carries a recognized cadence + installment counts', () => {
+    const dto: TransactionDto = {
+      ...usdDto,
+      currency: 'ARS',
+      recurringCadence: 'installment',
+      installmentsTotal: 12,
+      installmentsIndex: 3,
+    }
+    const t = adaptTransaction(dto)
+    expect(t.recurringCadence).toBe('installment')
+    expect(t.installmentsTotal).toBe(12)
+    expect(t.installmentsIndex).toBe(3)
+  })
+
+  test('adaptTransaction omits an unknown cadence and non-positive counts', () => {
+    const t = adaptTransaction({
+      ...usdDto,
+      recurringCadence: 'weekly',
+      installmentsTotal: 0,
+      installmentsIndex: -1,
+    })
+    expect('recurringCadence' in t).toBe(false)
+    expect('installmentsTotal' in t).toBe(false)
+    expect('installmentsIndex' in t).toBe(false)
+  })
+
+  test('create sends installment counts ONLY for an installment cadence', () => {
+    const body = toCreateBody({
+      ...base,
+      recurringCadence: 'installment',
+      installmentsTotal: 12,
+      installmentsIndex: 3,
+    })
+    expect(body.recurringCadence).toBe('installment')
+    expect(body.installmentsTotal).toBe(12)
+    expect(body.installmentsIndex).toBe(3)
+  })
+
+  test('create clears installment counts for a non-installment cadence', () => {
+    const body = toCreateBody({
+      ...base,
+      recurringCadence: 'monthly',
+      // Stray counts must NOT ride along with a monthly stream.
+      installmentsTotal: 12,
+      installmentsIndex: 3,
+    })
+    expect(body.recurringCadence).toBe('monthly')
+    expect(body.installmentsTotal).toBeNull()
+    expect(body.installmentsIndex).toBeNull()
+  })
+
+  test('create omits the cadence entirely for a one-off (no field set)', () => {
+    const body = toCreateBody(base)
+    expect('recurringCadence' in body).toBe(false)
+    expect('installmentsTotal' in body).toBe(false)
+    expect('installmentsIndex' in body).toBe(false)
+  })
+
+  test('patch sends a null cadence to clear a recurrence, nulling the counts', () => {
+    const body = toPatchBody({ recurringCadence: null })
+    expect(body.recurringCadence).toBeNull()
+    expect(body.installmentsTotal).toBeNull()
+    expect(body.installmentsIndex).toBeNull()
+  })
+
+  test('patch carries installment counts for an installment cadence', () => {
+    const body = toPatchBody({
+      recurringCadence: 'installment',
+      installmentsTotal: 6,
+      installmentsIndex: 2,
+    })
+    expect(body.recurringCadence).toBe('installment')
+    expect(body.installmentsTotal).toBe(6)
+    expect(body.installmentsIndex).toBe(2)
+  })
+
+  test('patch omits recurrence fields entirely when the patch carries none', () => {
+    const body = toPatchBody({ name: 'renamed' })
+    expect('recurringCadence' in body).toBe(false)
+    expect('installmentsTotal' in body).toBe(false)
+    expect('installmentsIndex' in body).toBe(false)
   })
 })
 

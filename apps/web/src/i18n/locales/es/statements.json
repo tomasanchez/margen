@@ -67,7 +67,11 @@
       "willImport": "Se importa",
       "skipped": "Omitido",
       "skipAriaLabel": "Omitir {{name}} — actualmente se va a importar",
-      "importAriaLabel": "Importar {{name}} — actualmente omitido"
+      "importAriaLabel": "Importar {{name}} — actualmente omitido",
+      "cuotaIndexPlaceholder": "N",
+      "cuotaTotalPlaceholder": "M",
+      "cuotaIndexAriaLabel": "Número de cuota actual de {{name}}",
+      "cuotaTotalAriaLabel": "Total de cuotas de {{name}}"
     },
     "compare": {
       "fromStatement": "De este resumen",

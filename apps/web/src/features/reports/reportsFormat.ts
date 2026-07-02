@@ -21,6 +21,24 @@ export function rangeMonths(range: ReportsRange): number {
   return RANGE_MONTHS[range]
 }
 
+/** The default forward horizon when a range doesn't map to a specific one (ADR-178). */
+export const DEFAULT_FORECAST_HORIZON = 6
+
+/** The backend forecast horizon bounds (ADR-176): 1..12 forward months. */
+const MIN_FORECAST_HORIZON = 1
+const MAX_FORECAST_HORIZON = 12
+
+/**
+ * Map the analytics range to a forward forecast horizon (ADR-176/178). The
+ * forecast reuses the page's range control: a longer look-back implies a longer
+ * look-forward, clamped to the backend's 1..12 bound. YTD has no fixed forward
+ * span, so it falls back to the {@link DEFAULT_FORECAST_HORIZON}.
+ */
+export function rangeToHorizon(range: ReportsRange): number {
+  const horizon = range === 'YTD' ? DEFAULT_FORECAST_HORIZON : RANGE_MONTHS[range]
+  return Math.min(Math.max(horizon, MIN_FORECAST_HORIZON), MAX_FORECAST_HORIZON)
+}
+
 /**
  * A signed percent CHANGE from `previous` to `current`, as a whole-ish percent
  * (e.g. current 120 vs previous 100 → 20). Returns null when there is no base

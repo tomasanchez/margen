@@ -177,6 +177,22 @@
       "label": "Counts toward Monotributo",
       "description": "Adds to your annual invoiced total"
     },
+    "recurrence": {
+      "label": "Recurrence",
+      "options": {
+        "none": "One-off",
+        "monthly": "Monthly",
+        "quarterly": "Quarterly",
+        "annual": "Annual",
+        "installment": "Installment"
+      },
+      "installmentIndex": "Cuota",
+      "installmentTotal": "of",
+      "installmentIndexAriaLabel": "Current installment number",
+      "installmentTotalAriaLabel": "Total number of installments",
+      "installmentError": "Cuota must be a whole number, and no higher than the total.",
+      "hint": "Optional — helps project this expense in your cash-flow forecast."
+    },
     "more": "More details",
     "notes": {
       "label": "Notes",

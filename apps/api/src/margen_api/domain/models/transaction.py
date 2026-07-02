@@ -13,11 +13,16 @@ from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID, uuid4
 
-from margen_api.domain.models.exceptions import EmptyNameError, InvalidAmountError
+from margen_api.domain.models.exceptions import (
+    EmptyNameError,
+    InvalidAmountError,
+    InvalidInstallmentError,
+)
 from margen_api.domain.models.value_objects import (
     Currency,
     FxRateType,
     Kind,
+    RecurringCadence,
     TxType,
 )
 
@@ -80,6 +85,17 @@ class Transaction:
             ``"AMEX ·1234"``); ``None`` when there is no card (ADR-117).
         notes: Free-form optional note, distinct from :attr:`name` (ADR-024).
         recurring: Whether the movement repeats.
+        recurring_cadence: How often a committed outflow repeats — ``monthly`` /
+            ``quarterly`` / ``annual`` for a subscription-style stream, or
+            ``installment`` for one payment of a fixed-length instalment plan
+            (ADR-174). ``None`` for a one-off or an un-classified movement; an
+            unknown token is coerced to ``None`` (lenient, ADR-031). Drives the
+            schedule-driven cash-flow forecast (ADR-176).
+        installments_total: For an ``installment`` cadence, the plan's total number
+            of payments (the ``M`` of a cuota ``N/M``), else ``None`` (ADR-174).
+        installments_index: For an ``installment`` cadence, this payment's 1-based
+            position in the plan (the ``N`` of a cuota ``N/M``), else ``None``. When
+            both are present the aggregate enforces ``1 <= index <= total`` (ADR-174).
         counts_toward_monotributo: Only meaningful for income / invoice; forced
             ``False`` for expense (ADR-027, ADR-031).
         statement_document_id: Optional link back to the source statement document
@@ -123,6 +139,9 @@ class Transaction:
     card: str | None = None
     notes: str | None = None
     recurring: bool = False
+    recurring_cadence: RecurringCadence | None = None
+    installments_total: int | None = None
+    installments_index: int | None = None
     counts_toward_monotributo: bool = False
     statement_document_id: UUID | None = None
     account_id: UUID | None = None
@@ -135,6 +154,7 @@ class Transaction:
         """Normalize and enforce invariants on construction."""
         self.kind = Kind.parse(self.kind)
         self.currency = Currency.parse(self.currency)
+        self.recurring_cadence = RecurringCadence.parse(self.recurring_cadence)
         self._normalize()
 
     @property
@@ -171,7 +191,22 @@ class Transaction:
         if self.kind is not Kind.REIMBURSEMENT:
             self.offsets_transaction_id = None
 
+        self._normalize_installments()
         self._normalize_fx()
+
+    def _normalize_installments(self) -> None:
+        """Enforce the instalment marker invariant when index/total are present (ADR-174).
+
+        The fields are optional (a one-off carries neither), so this only validates a
+        genuine ``N/M`` pair. When BOTH are present the plan must be consistent —
+        positive figures with ``1 <= index <= total``; a violation is a true invariant
+        error (ADR-031). A lone figure is accepted as-is: the parser or client may
+        supply only one, and the forecast simply ignores an incomplete marker.
+        """
+        index = self.installments_index
+        total = self.installments_total
+        if index is not None and total is not None and not (1 <= index <= total):
+            raise InvalidInstallmentError(index, total)
 
     def _normalize_fx(self) -> None:
         """Normalize the FX snapshot block on construction (ADR-148, ADR-149, ADR-152).
@@ -243,6 +278,9 @@ def build_transaction(
     card: str | None = None,
     notes: str | None = None,
     recurring: bool = False,
+    recurring_cadence: RecurringCadence | str | None = None,
+    installments_total: int | None = None,
+    installments_index: int | None = None,
     counts_toward_monotributo: bool = False,
     statement_document_id: UUID | None = None,
     account_id: UUID | None = None,
@@ -276,6 +314,13 @@ def build_transaction(
         card: Optional card / detail label for display (ADR-117).
         notes: Optional free-form note.
         recurring: Whether the movement repeats.
+        recurring_cadence: How often a committed outflow repeats (``monthly`` /
+            ``quarterly`` / ``annual`` / ``installment``), as ``RecurringCadence`` or a
+            string; an unknown token is coerced to ``None`` (ADR-174).
+        installments_total: For an ``installment`` cadence, the plan's total payments,
+            else ``None`` (ADR-174).
+        installments_index: For an ``installment`` cadence, this payment's 1-based
+            position, else ``None`` (ADR-174).
         counts_toward_monotributo: Monotributo counting hint (income / invoice only).
         statement_document_id: Optional link to the source statement document for
             an imported credit-card expense (ADR-077); ``None`` otherwise.
@@ -294,11 +339,13 @@ def build_transaction(
     Raises:
         EmptyNameError: When ``name`` is empty or only whitespace.
         InvalidAmountError: When ``amount`` is not a positive magnitude.
+        InvalidInstallmentError: When an instalment index/total pair is inconsistent.
         UnknownKindError: When ``kind`` is not a known kind.
         UnknownCurrencyError: When ``currency`` is not a known currency.
     """
     now = datetime.now(UTC)
     resolved_fx_rate_type = FxRateType(fx_rate_type) if isinstance(fx_rate_type, str) else fx_rate_type
+    resolved_cadence = RecurringCadence.parse(recurring_cadence)
     return Transaction(
         id=transaction_id if transaction_id is not None else uuid4(),
         occurred_on=occurred_on,
@@ -316,6 +363,9 @@ def build_transaction(
         card=card,
         notes=notes,
         recurring=recurring,
+        recurring_cadence=resolved_cadence,
+        installments_total=installments_total,
+        installments_index=installments_index,
         counts_toward_monotributo=counts_toward_monotributo,
         statement_document_id=statement_document_id,
         account_id=account_id,

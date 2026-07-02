@@ -22,6 +22,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -88,6 +89,16 @@ class TransactionRecord(Base):
         nullable=False,
         server_default=false(),
     )
+    # The forecast schedule block (ADR-174), all NULLABLE with no backfill: existing
+    # rows keep NULL and are simply excluded from the schedule-driven projection until
+    # a user classifies them. ``recurring_cadence`` is a short token (monthly /
+    # quarterly / annual / installment) validated leniently in the domain (an unknown
+    # value normalizes to NULL). ``installments_total`` / ``installments_index`` carry
+    # the M and N of a cuota ``N/M`` for an instalment plan; the domain enforces
+    # ``1 <= index <= total`` when both are present (ADR-174).
+    recurring_cadence: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    installments_total: Mapped[int | None] = mapped_column(Integer(), nullable=True)
+    installments_index: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     counts_toward_monotributo: Mapped[bool] = mapped_column(
         Boolean(),
         nullable=False,

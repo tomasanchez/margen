@@ -881,3 +881,117 @@ describe('Date picker (ADR-041)', () => {
     )
   })
 })
+
+describe('Add flow — recurrence / installments (ADR-174)', () => {
+  /** Pick a recurrence option from the MUI Select combobox by its visible label. */
+  async function pickRecurrence(
+    user: ReturnType<typeof userEvent.setup>,
+    form: ReturnType<typeof within>,
+    option: string,
+  ) {
+    await user.click(form.getByRole('combobox', { name: 'Recurrence' }))
+    // MUI renders the menu options into a listbox portal on document.body.
+    await user.click(await screen.findByRole('option', { name: option }))
+  }
+
+  test('the recurrence control defaults to One-off; installment fields are hidden', async () => {
+    const { dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    // The recurrence Select is present with the calm one-off default.
+    expect(form.getByRole('combobox', { name: 'Recurrence' })).toHaveTextContent(
+      'One-off',
+    )
+    // The installment index/total fields only appear for an installment cadence.
+    expect(
+      form.queryByLabelText('Current installment number'),
+    ).not.toBeInTheDocument()
+  })
+
+  test('choosing Installment reveals the index/total fields and serializes them', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    await user.type(form.getByLabelText(/^Amount in /), '30000')
+    await pickRecurrence(user, form, 'Installment')
+
+    // The index/total pair appears (e.g. "Cuota 3 of 12").
+    const indexField = form.getByLabelText('Current installment number')
+    const totalField = form.getByLabelText('Total number of installments')
+    await user.type(indexField, '3')
+    await user.type(totalField, '12')
+
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+
+    const [input] = createMock.mock.calls[0]
+    expect(input.recurringCadence).toBe('installment')
+    expect(input.installmentsTotal).toBe(12)
+    expect(input.installmentsIndex).toBe(3)
+  })
+
+  test('a non-installment cadence carries no installment fields', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    await user.type(form.getByLabelText(/^Amount in /), '5000')
+    await pickRecurrence(user, form, 'Monthly')
+    // No installment fields for a monthly stream.
+    expect(
+      form.queryByLabelText('Current installment number'),
+    ).not.toBeInTheDocument()
+
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+
+    const [input] = createMock.mock.calls[0]
+    expect(input.recurringCadence).toBe('monthly')
+    expect(input.installmentsTotal).toBeUndefined()
+    expect(input.installmentsIndex).toBeUndefined()
+  })
+
+  test('an index greater than the total blocks save', async () => {
+    const { user, dialog } = await openAddDialog()
+    const form = within(dialog)
+
+    await user.type(form.getByLabelText(/^Amount in /), '30000')
+    await pickRecurrence(user, form, 'Installment')
+    // Index 13 > total 12 is invalid.
+    await user.type(form.getByLabelText('Current installment number'), '13')
+    await user.type(form.getByLabelText('Total number of installments'), '12')
+
+    expect(form.getByRole('button', { name: /^Save$/ })).toBeDisabled()
+    // A calm inline error explains the rule (never colour alone, ADR-019).
+    expect(
+      form.getByText(/no higher than the total/i),
+    ).toBeInTheDocument()
+  })
+
+  test('editing round-trips a stored installment plan into the controls', async () => {
+    const { dialog } = await openAddDialog({
+      id: 'edit-inst',
+      name: 'Samsung TV',
+      type: 'expense',
+      kind: 'expense',
+      currency: 'ARS',
+      category: 'Shopping',
+      bank: 'Transfer',
+      amountNum: 30000,
+      occurredOn: '2026-06-10',
+      dispDate: 'Jun 10',
+      recurringCadence: 'installment',
+      installmentsTotal: 12,
+      installmentsIndex: 3,
+    })
+    const form = within(dialog)
+
+    // The recurrence control shows Installment and the index/total prefill.
+    expect(form.getByRole('combobox', { name: 'Recurrence' })).toHaveTextContent(
+      'Installment',
+    )
+    expect(form.getByLabelText('Current installment number')).toHaveValue('3')
+    expect(form.getByLabelText('Total number of installments')).toHaveValue('12')
+  })
+})

@@ -222,7 +222,10 @@ describe('Reimbursement row label (list)', () => {
     expect(screen.getByText('reimbursement')).toBeInTheDocument()
   })
 
-  test('an EXPENSE row exposes the "Add reimbursement" action; income does not', () => {
+  test('an EXPENSE row exposes the "Add reimbursement" action; income does not', async () => {
+    // The per-row actions now live behind a shared overflow "Actions" menu
+    // (ADR-017) — open it and assert the reimbursement item's presence.
+    const user = userEvent.setup()
     const onReimburse = vi.fn()
     const { rerender } = render(
       <ThemeProvider theme={darkTheme}>
@@ -235,9 +238,16 @@ describe('Reimbursement row label (list)', () => {
       </ThemeProvider>,
     )
     // The expense row offers linking a payback to it (ADR-158/159).
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Sushiclub dinner' }),
+    )
     expect(
-      screen.getByLabelText('Add a reimbursement for Sushiclub dinner'),
+      await screen.findByRole('menuitem', { name: 'Add reimbursement' }),
     ).toBeInTheDocument()
+    // Close the menu before the rerender so its backdrop doesn't intercept the
+    // next click (focus returns to the trigger — MUI Menu).
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
 
     // An income row (even with a handler) offers no such action — you only pay
     // back an expense.
@@ -259,8 +269,10 @@ describe('Reimbursement row label (list)', () => {
         />
       </ThemeProvider>,
     )
+    await user.click(screen.getByRole('button', { name: 'Actions for Salary' }))
+    await screen.findByRole('menu', { name: 'Actions for Salary' })
     expect(
-      screen.queryByLabelText(/Add a reimbursement for/),
+      screen.queryByRole('menuitem', { name: 'Add reimbursement' }),
     ).not.toBeInTheDocument()
   })
 

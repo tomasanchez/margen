@@ -12,7 +12,7 @@ from uuid import UUID
 
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.domain.models.transaction import Transaction
-from margen_api.domain.models.value_objects import Currency, FxRateType, Kind
+from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, RecurringCadence
 
 
 def to_domain(record: TransactionRecord) -> Transaction:
@@ -45,6 +45,9 @@ def to_domain(record: TransactionRecord) -> Transaction:
         card=record.card,
         notes=record.notes,
         recurring=record.recurring,
+        recurring_cadence=RecurringCadence.parse(record.recurring_cadence),
+        installments_total=record.installments_total,
+        installments_index=record.installments_index,
         counts_toward_monotributo=record.counts_toward_monotributo,
         statement_document_id=record.statement_document_id,
         account_id=record.account_id,
@@ -100,6 +103,11 @@ def update_record(record: TransactionRecord, transaction: Transaction) -> None:
     record.card = transaction.card
     record.notes = transaction.notes
     record.recurring = transaction.recurring
+    record.recurring_cadence = (
+        transaction.recurring_cadence.value if transaction.recurring_cadence is not None else None
+    )
+    record.installments_total = transaction.installments_total
+    record.installments_index = transaction.installments_index
     record.counts_toward_monotributo = transaction.counts_toward_monotributo
     record.statement_document_id = transaction.statement_document_id
     record.account_id = transaction.account_id

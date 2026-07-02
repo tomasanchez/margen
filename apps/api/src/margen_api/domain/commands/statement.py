@@ -108,6 +108,14 @@ class StatementLineInput(Message):
         card: The card / detail label for display, e.g. ``"VISA ·5771"`` or
             ``"AMEX ·1234"``; ``None`` when there is no card (ADR-117).
         notes: Free-form note, e.g. the installment marker ``"Cuota 3/3"`` (ADR-079).
+        installments_total: The instalment plan's total payments (the ``M`` of a cuota
+            ``N/M``) recovered from the parsed marker (ADR-175), else ``None``. When
+            present the import handler stamps the created expense with
+            ``recurring_cadence='installment'`` so the forecast can project the
+            remaining payments (ADR-176). The free-text ``Cuota N/M`` note is still
+            written independently for display (ADR-079/089).
+        installments_index: This payment's 1-based position (the ``N`` of a cuota
+            ``N/M``) recovered from the parsed marker (ADR-175), else ``None``.
         resolution: The per-line reconciliation choice (ADR-085); defaults to
             ``IMPORT``.
         match_transaction_id: The existing manual expense to enrich when
@@ -127,6 +135,8 @@ class StatementLineInput(Message):
     payment_method: str | None = None
     card: str | None = None
     notes: str | None = None
+    installments_total: int | None = None
+    installments_index: int | None = None
     resolution: StatementLineResolution = StatementLineResolution.IMPORT
     match_transaction_id: UUID | None = None
 

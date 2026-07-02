@@ -35,6 +35,21 @@ export type TxType = 'expense' | 'income'
 export type TxKind = 'expense' | 'income' | 'invoice' | 'reimbursement'
 
 /**
+ * Recurrence cadence for a committed expense, driving the cash-flow forecast
+ * (ADR-173/174). `monthly` / `quarterly` / `annual` describe a subscription or
+ * periodic tax that repeats at that frequency; `installment` marks one payment of
+ * an installment plan, in which case {@link Transaction.installmentsTotal} /
+ * {@link Transaction.installmentsIndex} carry the plan's shape. `null`/absent
+ * means a one-off discretionary transaction the forecast does not project. Most
+ * expenses leave this unset.
+ */
+export type RecurringCadence =
+  | 'monthly'
+  | 'quarterly'
+  | 'annual'
+  | 'installment'
+
+/**
  * Spending/earning categories shown in filters and the Add form.
  *
  * `Housing` + `Education` are the MVP budget-category delta (ADR-140). `Rent` is
@@ -219,6 +234,27 @@ export interface Transaction {
   fxRateAsOf?: string
   recurring?: boolean
   /**
+   * Recurrence cadence driving the cash-flow forecast (ADR-174), or `null`/absent
+   * for a one-off transaction. `installment` pairs with
+   * {@link Transaction.installmentsTotal} / {@link Transaction.installmentsIndex}.
+   * Carried through the edit prefill so a recurring/installment tag survives a
+   * re-save. Most expenses leave this unset.
+   */
+  recurringCadence?: RecurringCadence | null
+  /**
+   * Total number of cuotas in an installment plan (ADR-174), e.g. `12`. Present
+   * only when {@link Transaction.recurringCadence} is `'installment'`; `null`/absent
+   * otherwise. The forecast projects `installmentsTotal - installmentsIndex`
+   * remaining payments forward.
+   */
+  installmentsTotal?: number | null
+  /**
+   * This transaction's 1-based position in its installment plan (ADR-174), e.g.
+   * `3` for "Cuota 3 of 12". Present only alongside
+   * {@link Transaction.installmentsTotal}; `null`/absent otherwise.
+   */
+  installmentsIndex?: number | null
+  /**
    * Provenance of the per-transaction FX snapshot (ADR-148), e.g. `'bolsa'`,
    * `'oficial'`, `'manual'`, or `'backfill'`. Present once a snapshot has been
    * captured (on create, import rate-fill, or backfill); absent on rows still
@@ -312,6 +348,26 @@ export interface NewTransactionInput {
    */
   fxSource?: string
   recurring?: boolean
+  /**
+   * Recurrence cadence for the cash-flow forecast (ADR-174): `monthly` /
+   * `quarterly` / `annual` for a subscription or periodic tax, `installment` for
+   * one payment of a plan, or `null`/absent for a one-off. Set by the optional
+   * recurrence control on the Add/Edit form; the create/patch client sends it as
+   * `recurringCadence`. Most expenses leave it unset.
+   */
+  recurringCadence?: RecurringCadence | null
+  /**
+   * Total number of cuotas when {@link NewTransactionInput.recurringCadence} is
+   * `'installment'` (ADR-174); `null`/absent otherwise. The UI validates that
+   * {@link NewTransactionInput.installmentsIndex} does not exceed this.
+   */
+  installmentsTotal?: number | null
+  /**
+   * This transaction's 1-based position in its installment plan (ADR-174), sent
+   * only alongside {@link NewTransactionInput.installmentsTotal}; `null`/absent
+   * otherwise.
+   */
+  installmentsIndex?: number | null
   /** Optional free-text note, distinct from `name` (backend contract, ADR-033). */
   notes?: string
   /**

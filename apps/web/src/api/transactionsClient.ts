@@ -23,6 +23,7 @@ import type {
   FxRateType,
   MonthName,
   NewTransactionInput,
+  RecurringCadence,
   Transaction,
   TxKind,
   TxType,
@@ -89,6 +90,12 @@ export interface TransactionDto {
   fxRateType?: string | null
   fxRateAsOf?: string | null
   recurring: boolean
+  /** Recurrence cadence for the forecast (ADR-174); null/absent for a one-off. */
+  recurringCadence?: string | null
+  /** Total cuotas of an installment plan (ADR-174); null/absent otherwise. */
+  installmentsTotal?: number | null
+  /** 1-based position in the installment plan (ADR-174); null/absent otherwise. */
+  installmentsIndex?: number | null
   countsTowardMonotributo: boolean
   createdAt: string
   updatedAt: string
@@ -144,6 +151,12 @@ interface TransactionCreateBody {
   fxRateType?: FxRateType
   fxRateAsOf?: string
   recurring?: boolean
+  /** Recurrence cadence for the forecast (ADR-174); omitted for a one-off. */
+  recurringCadence?: RecurringCadence | null
+  /** Total cuotas of an installment plan (ADR-174); omitted otherwise. */
+  installmentsTotal?: number | null
+  /** 1-based position in the installment plan (ADR-174); omitted otherwise. */
+  installmentsIndex?: number | null
   countsTowardMonotributo?: boolean
   notes?: string
   /** Optional imported-invoice PDF + record to store and link (ADR-070/071). */
@@ -222,6 +235,37 @@ function asMonth(value: string): MonthName {
   return value as MonthName
 }
 
+/** The known recurrence cadences, for narrowing an arbitrary backend string. */
+const RECURRING_CADENCES: readonly RecurringCadence[] = [
+  'monthly',
+  'quarterly',
+  'annual',
+  'installment',
+] as const
+
+/**
+ * Narrow the backend `recurring_cadence` string to the {@link RecurringCadence}
+ * union (ADR-174). A null/absent/unknown value → undefined (a one-off row), so an
+ * unrecognized cadence never fabricates an installment tag.
+ */
+function asRecurringCadence(
+  value: string | null | undefined,
+): RecurringCadence | undefined {
+  return value != null && (RECURRING_CADENCES as readonly string[]).includes(value)
+    ? (value as RecurringCadence)
+    : undefined
+}
+
+/**
+ * Parse a nullable installment count to a positive integer, or undefined. Guards
+ * the forecast/installment UI against a null, non-finite, or non-positive value
+ * (ADR-174): only a real positive integer counts as a captured installment field.
+ */
+function asInstallmentCount(value: number | null | undefined): number | undefined {
+  if (value == null || !Number.isFinite(value) || value <= 0) return undefined
+  return Math.trunc(value)
+}
+
 /** Narrow the backend `fx_rate_type` string to the {@link FxRateType} union. */
 function asFxRateType(
   value: string | null | undefined,
@@ -282,6 +326,20 @@ export function adaptTransaction(dto: TransactionDto): Transaction {
     ...(dto.fxSource ? { fxSource: dto.fxSource } : {}),
     ...(dto.fxRate ? { fxRate: dto.fxRate } : {}),
     ...(dto.recurring ? { recurring: dto.recurring } : {}),
+    // Forecast recurrence metadata (ADR-174): carried through when the backend
+    // sends a recognized cadence so the Add/Edit form can re-seed it on edit and
+    // the ledger can distinguish committed streams. An unknown/absent cadence is
+    // left off the shape (a one-off row). The installment counts ride along only
+    // when a real positive integer is present.
+    ...(asRecurringCadence(dto.recurringCadence) !== undefined
+      ? { recurringCadence: asRecurringCadence(dto.recurringCadence) }
+      : {}),
+    ...(asInstallmentCount(dto.installmentsTotal) !== undefined
+      ? { installmentsTotal: asInstallmentCount(dto.installmentsTotal) }
+      : {}),
+    ...(asInstallmentCount(dto.installmentsIndex) !== undefined
+      ? { installmentsIndex: asInstallmentCount(dto.installmentsIndex) }
+      : {}),
     ...(dto.notes ? { notes: dto.notes } : {}),
   }
 }
@@ -340,6 +398,27 @@ export function toCreateBody(input: NewTransactionInput): TransactionCreateBody 
   if (input.fxRateType !== undefined) body.fxRateType = input.fxRateType
   if (input.fxRateAsOf !== undefined) body.fxRateAsOf = input.fxRateAsOf
   if (input.recurring !== undefined) body.recurring = input.recurring
+  // Forecast recurrence metadata (ADR-174). The cadence is sent when the form
+  // set one; the installment counts are sent ONLY for an installment cadence (the
+  // form clears them for the other cadences, so they never travel with a
+  // monthly/quarterly/annual stream). A null cadence explicitly clears any prior
+  // recurrence on the backend.
+  if (input.recurringCadence !== undefined) {
+    body.recurringCadence = input.recurringCadence
+  }
+  if (input.recurringCadence === 'installment') {
+    if (input.installmentsTotal != null) {
+      body.installmentsTotal = input.installmentsTotal
+    }
+    if (input.installmentsIndex != null) {
+      body.installmentsIndex = input.installmentsIndex
+    }
+  } else if (input.recurringCadence !== undefined) {
+    // A non-installment cadence (or an explicit null) must not carry installment
+    // counts — send null so the backend clears any stale plan on this row.
+    body.installmentsTotal = null
+    body.installmentsIndex = null
+  }
   if (input.notes) body.notes = input.notes
   // Imported invoice: carry the base64 PDF + parsed record so the backend stores
   // and links the attachment (ADR-070/071). Omitted for manual entries.
@@ -385,6 +464,25 @@ export function toPatchBody(
   if (patch.fxRateType !== undefined) body.fxRateType = patch.fxRateType
   if (patch.fxRateAsOf !== undefined) body.fxRateAsOf = patch.fxRateAsOf
   if (patch.recurring !== undefined) body.recurring = patch.recurring
+  // Forecast recurrence metadata (ADR-174): a present cadence updates the stream;
+  // installment counts ride along only for an installment cadence, else are
+  // cleared to null so switching a plan back to a plain cadence (or one-off)
+  // drops its stale cuota shape (ADR-028 leaves an omitted field unchanged, so we
+  // send null explicitly to clear).
+  if (patch.recurringCadence !== undefined) {
+    body.recurringCadence = patch.recurringCadence
+    if (patch.recurringCadence === 'installment') {
+      if (patch.installmentsTotal != null) {
+        body.installmentsTotal = patch.installmentsTotal
+      }
+      if (patch.installmentsIndex != null) {
+        body.installmentsIndex = patch.installmentsIndex
+      }
+    } else {
+      body.installmentsTotal = null
+      body.installmentsIndex = null
+    }
+  }
   if (patch.notes !== undefined) body.notes = patch.notes
   if (patch.countsTowardMonotributo !== undefined) {
     body.countsTowardMonotributo = patch.countsTowardMonotributo

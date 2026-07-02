@@ -65,7 +65,7 @@ import {
   EXPENSE_CATEGORIES,
   useAddEditFormState,
 } from './useAddEditFormState'
-import type { FxSource } from './useAddEditFormState'
+import type { FxSource, RecurrenceOption } from './useAddEditFormState'
 
 /** Uppercase eyebrow heading shared by the form sections (token-driven). */
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -243,6 +243,19 @@ export function AddEditForm({
   const dateInputId = useId()
   const notesInputId = useId()
   const accountSelectId = useId()
+  const recurrenceSelectId = useId()
+  const installmentsTotalId = useId()
+  const installmentsIndexId = useId()
+
+  /** The recurrence options offered in the select (ADR-174), in menu order. */
+  const RECURRENCE_OPTIONS: readonly RecurrenceOption[] = [
+    'none',
+    'monthly',
+    'quarterly',
+    'annual',
+    'installment',
+  ]
+  const isInstallment = form.recurrence === 'installment'
 
   const isReimbursement = form.isReimbursement
   const isExpense = form.type === 'expense'
@@ -1077,6 +1090,83 @@ export function AddEditForm({
               </Box>
             }
           />
+        </Box>
+      ) : null}
+
+      {/* Recurrence / installments (ADR-174) — optional, calm-by-default
+          commitment metadata driving the cash-flow forecast (ADR-173/176). Most
+          expenses leave it "One-off". When "Installment" is chosen, the total +
+          index fields appear (e.g. "Cuota 3 of 12"), validated so the index never
+          exceeds the total. Hidden for a reimbursement (a payback is never a
+          recurring commitment). */}
+      {!isReimbursement ? (
+        <Box sx={{ mt: 2.5 }}>
+          <FormControl fullWidth size="small">
+            <InputLabel id={`${recurrenceSelectId}-label`}>
+              {t('form.recurrence.label')}
+            </InputLabel>
+            <Select
+              id={recurrenceSelectId}
+              labelId={`${recurrenceSelectId}-label`}
+              label={t('form.recurrence.label')}
+              value={form.recurrence}
+              onChange={(event) =>
+                form.setRecurrence(event.target.value as RecurrenceOption)
+              }
+              sx={{ borderRadius: '10px', bgcolor: 'var(--mg-paper)' }}
+            >
+              {RECURRENCE_OPTIONS.map((option) => (
+                <MenuItem key={option} value={option}>
+                  {t(`form.recurrence.options.${option}`)}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          {isInstallment ? (
+            <Box sx={{ display: 'flex', gap: 1.5, mt: 1.5 }}>
+              <TextField
+                id={installmentsIndexId}
+                label={t('form.recurrence.installmentIndex')}
+                value={form.installmentsIndexText}
+                onChange={(e) => form.setInstallmentsIndexText(e.target.value)}
+                size="small"
+                fullWidth
+                error={form.installmentsError}
+                slotProps={{
+                  htmlInput: {
+                    inputMode: 'numeric',
+                    'aria-label': t('form.recurrence.installmentIndexAriaLabel'),
+                  },
+                }}
+                sx={{ '& .MuiInputBase-input': { fontFamily: monoFontFamily } }}
+              />
+              <TextField
+                id={installmentsTotalId}
+                label={t('form.recurrence.installmentTotal')}
+                value={form.installmentsTotalText}
+                onChange={(e) => form.setInstallmentsTotalText(e.target.value)}
+                size="small"
+                fullWidth
+                error={form.installmentsError}
+                helperText={
+                  form.installmentsError
+                    ? t('form.recurrence.installmentError')
+                    : undefined
+                }
+                slotProps={{
+                  htmlInput: {
+                    inputMode: 'numeric',
+                    'aria-label': t('form.recurrence.installmentTotalAriaLabel'),
+                  },
+                }}
+                sx={{ '& .MuiInputBase-input': { fontFamily: monoFontFamily } }}
+              />
+            </Box>
+          ) : null}
+          <Typography sx={{ mt: 1, fontSize: 11.5 }} color="text.disabled">
+            {t('form.recurrence.hint')}
+          </Typography>
         </Box>
       ) : null}
 

@@ -326,6 +326,42 @@ describe('buildEditPrefill', () => {
     expect('notes' in buildEditPrefill(noNotes)).toBe(false)
   })
 
+  test('round-trips an installment plan into the prefill (ADR-174)', () => {
+    const base = SEED_TRANSACTIONS[0]
+    const plan: Transaction = {
+      ...base,
+      recurringCadence: 'installment',
+      installmentsTotal: 12,
+      installmentsIndex: 3,
+    }
+    const prefill = buildEditPrefill(plan)
+    expect(prefill.recurringCadence).toBe('installment')
+    expect(prefill.installmentsTotal).toBe(12)
+    expect(prefill.installmentsIndex).toBe(3)
+  })
+
+  test('carries a plain recurring cadence with no installment counts (ADR-174)', () => {
+    const base = SEED_TRANSACTIONS[0]
+    const monthly: Transaction = { ...base, recurringCadence: 'monthly' }
+    const prefill = buildEditPrefill(monthly)
+    expect(prefill.recurringCadence).toBe('monthly')
+    expect('installmentsTotal' in prefill).toBe(false)
+    expect('installmentsIndex' in prefill).toBe(false)
+  })
+
+  test('omits recurrence fields for a one-off row (ADR-174)', () => {
+    const oneOff: Transaction = {
+      ...SEED_TRANSACTIONS[0],
+      recurringCadence: undefined,
+      installmentsTotal: undefined,
+      installmentsIndex: undefined,
+    }
+    const prefill = buildEditPrefill(oneOff)
+    expect('recurringCadence' in prefill).toBe(false)
+    expect('installmentsTotal' in prefill).toBe(false)
+    expect('installmentsIndex' in prefill).toBe(false)
+  })
+
   test('carries the import-set card through so an edit preserves it (ADR-117)', () => {
     const imported = SEED_TRANSACTIONS.find(
       (t): t is Transaction => t.card !== undefined,

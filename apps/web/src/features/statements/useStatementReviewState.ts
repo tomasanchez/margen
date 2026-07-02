@@ -49,6 +49,45 @@ export interface ReviewLine extends StatementLine {
   resolution: ReviewResolution
 }
 
+/** A parsed installment marker: the 1-based index (`N`) and the total (`M`). */
+export interface CuotaParts {
+  /** The `N` of "Cuota N/M" (1-based position), or null when unparseable. */
+  index: number | null
+  /** The `M` of "Cuota N/M" (total payments), or null when unparseable. */
+  total: number | null
+}
+
+/**
+ * Parse a `cuota` marker string such as `"3/12"` / `"03/06"` into its numeric
+ * index/total (ADR-175). A null/blank/malformed marker (or a decimal/negative
+ * part) yields `{ index: null, total: null }` so the editor renders empty fields
+ * rather than fabricating a bogus plan. Whitespace around the parts is tolerated.
+ */
+export function parseCuota(cuota: string | undefined): CuotaParts {
+  if (!cuota) return { index: null, total: null }
+  const parts = cuota.split('/')
+  if (parts.length !== 2) return { index: null, total: null }
+  const parseInteger = (raw: string): number | null => {
+    const trimmed = raw.trim()
+    if (!/^\d+$/.test(trimmed)) return null
+    const value = Number.parseInt(trimmed, 10)
+    return Number.isFinite(value) && value > 0 ? value : null
+  }
+  return { index: parseInteger(parts[0]), total: parseInteger(parts[1]) }
+}
+
+/**
+ * Rebuild a `cuota` marker string from an edited index/total pair (ADR-175). Only a
+ * COMPLETE, valid pair (both positive integers, index ≤ total) yields a string; any
+ * incomplete or invalid pair yields `undefined` so the line drops its installment
+ * marker rather than sending a malformed one the backend would reject.
+ */
+export function formatCuota(index: number | null, total: number | null): string | undefined {
+  if (index == null || total == null) return undefined
+  if (index <= 0 || total <= 0 || index > total) return undefined
+  return `${index}/${total}`
+}
+
 export interface StatementReviewState {
   /** The editable line drafts, in statement order. */
   readonly lines: readonly ReviewLine[]
@@ -66,6 +105,13 @@ export interface StatementReviewState {
   setCategory: (id: string, category: string) => void
   /** Set a flagged line's Merge / Keep both resolution by id. */
   setResolution: (id: string, resolution: ReviewResolution) => void
+  /**
+   * Edit a line's installment marker (ADR-175) from an index/total pair. A complete
+   * valid pair sets `cuota = "N/M"`; an incomplete/invalid pair clears it. The
+   * backend re-parses the `cuota` string into structured installment fields on
+   * import, stamping `recurring_cadence='installment'` (ADR-175/176).
+   */
+  setCuota: (id: string, index: number | null, total: number | null) => void
   /** Build the import request payload from the current kept selection. */
   buildImportRequest: () => StatementImportRequest
 }
@@ -161,6 +207,18 @@ export function useStatementReviewState(
     )
   }, [])
 
+  const setCuota = useCallback(
+    (id: string, index: number | null, total: number | null) => {
+      const cuota = formatCuota(index, total)
+      setLines((current) =>
+        current.map((line) =>
+          line.id === id ? { ...line, cuota } : line,
+        ),
+      )
+    },
+    [],
+  )
+
   const includedCount = useMemo(
     () => lines.filter((line) => line.keep).length,
     [lines],
@@ -212,6 +270,7 @@ export function useStatementReviewState(
     toggleKeep,
     setCategory,
     setResolution,
+    setCuota,
     buildImportRequest,
   }
 }
