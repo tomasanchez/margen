@@ -1,27 +1,76 @@
 {
   "title": "Reportes",
-  "subtitle": "Tendencias, detalle por categoría, patrimonio en el tiempo y exportación CSV.",
-  "trend": {
-    "title": "Tendencia de gastos",
-    "subtitle": "Gastos mensuales de los últimos 6 meses.",
-    "errorTitle": "No se pudo cargar la tendencia de gastos",
-    "errorDescription": "No pudimos contactar al servidor para tus gastos mensuales. Probá de nuevo.",
-    "tooltipLabel": "Gastos",
-    "accessibleItem": "{{month}}: {{amount}}",
-    "accessibleSummary": "Gastos mensuales: {{summary}}."
+  "subtitle": "La historia detrás de los números, en el tiempo.",
+  "rangeSubtitle": "{{span}} · comparado con los {{months}} meses anteriores",
+  "range": {
+    "ariaLabel": "Rango de análisis",
+    "3M": "3M",
+    "6M": "6M",
+    "12M": "12M",
+    "YTD": "Año",
+    "vsPrevious": "vs período anterior"
   },
-  "categories": {
-    "title": "Desglose por categoría",
-    "subtitle": "A dónde fue el gasto de este mes.",
-    "tableAria": "Gasto por categoría",
+  "kpi": {
+    "income": "Ingresos",
+    "expenses": "Gastos",
+    "netSaved": "Ahorro neto",
+    "savingsRate": "Tasa de ahorro",
+    "vsPrev": "vs ant.",
+    "noDelta": "—",
+    "points": "pp"
+  },
+  "cashFlow": {
+    "title": "Flujo de caja",
+    "subtitle": "Lo que entra vs. lo que sale, cada mes — no solo lo que gastaste.",
+    "income": "Ingresos",
+    "expenses": "Gastos",
+    "netSaved": "ahorro neto",
+    "accessibleItem": "{{month}}: ingresos {{income}}, gastos {{expenses}}",
+    "accessibleSummary": "Flujo de caja mensual: {{summary}}."
+  },
+  "categoryTrends": {
+    "title": "Tendencias por categoría",
+    "subtitle": "Lo que se mueve, no solo lo que es grande.",
+    "tableAria": "Tendencias por categoría",
     "colCategory": "Categoría",
-    "colAmount": "Monto",
-    "colShare": "Participación",
-    "colDelta": "vs mes anterior",
-    "deltaNone": "—",
-    "errorTitle": "No se pudo cargar el desglose por categoría",
-    "errorDescription": "No pudimos contactar al servidor para las categorías de este mes. Probá de nuevo.",
-    "empty": "Todavía no hay gastos registrados en este mes."
+    "colTotal": "Total",
+    "colTrend": "Tendencia 6m",
+    "colDelta": "vs ant.",
+    "share": "{{share}}% del gasto",
+    "flat": "estable",
+    "empty": "Todavía no hay gastos registrados en este rango.",
+    "accessibleItem": "{{category}}: {{total}}",
+    "accessibleSummary": "Totales por categoría: {{summary}}."
+  },
+  "monotributo": {
+    "title": "Trayectoria de Monotributo",
+    "description": "Qué tan cerca está tu facturación de los últimos 12 meses del techo de la categoría.",
+    "watch": "Atención",
+    "ok": "OK",
+    "meterAria": "{{percent}} del techo de la Categoría {{category}} usado",
+    "legendInvoiced": "Facturado",
+    "legendCeiling": "Techo Cat {{category}}",
+    "legendOver": "Sobre el techo",
+    "invoiced": "Facturado · últimos 12 m",
+    "ceiling": "Techo Categoría {{category}}",
+    "remaining": "Restante antes del techo",
+    "overBy": "Sobre el techo por",
+    "openPlanner": "Abrir planificador de Monotributo →",
+    "errorTitle": "No se pudo cargar la trayectoria de Monotributo",
+    "errorDescription": "No pudimos contactar al servidor para tu estado de Monotributo. Probá de nuevo."
+  },
+  "fx": {
+    "title": "Cambio y poder de compra",
+    "subtitle": "Dólares que entran, pesos que salen.",
+    "description": "Facturás en dólares y gastás en pesos — este es el tipo de cambio que realmente capturaste.",
+    "avgMep": "MEP promedio capturado",
+    "mepUnavailable": "Sin tipo de cambio",
+    "usdInvoiced": "facturado este período",
+    "accessibleSummary": "MEP promedio capturado {{mep}}; dólares facturados {{usd}}."
+  },
+  "overview": {
+    "errorTitle": "No se pudieron cargar tus reportes",
+    "errorDescription": "No pudimos contactar al servidor para tus análisis. Probá de nuevo."
   },
   "netWorth": {
     "title": "Patrimonio en el tiempo",
@@ -34,25 +83,17 @@
     "accessibleItem": "{{month}}: {{amount}}",
     "accessibleSummary": "Patrimonio por mes: {{summary}}."
   },
-  "budgets": {
-    "title": "Presupuesto vs real",
-    "subtitle": "Objetivo contra gasto de este mes.",
-    "tableAria": "Presupuesto contra real por categoría",
-    "colCategory": "Categoría",
-    "colTarget": "Objetivo",
-    "colSpent": "Gastado",
-    "colRemaining": "Restante",
-    "over": "{{amount}} de más",
-    "errorTitle": "No se pudo cargar presupuesto vs real",
-    "errorDescription": "No pudimos contactar al servidor para tus presupuestos. Probá de nuevo.",
-    "empty": "Todavía no hay objetivos de presupuesto para este mes."
+  "unconverted": {
+    "note_one": "{{count}} movimiento no tiene tipo de cambio registrado, así que los montos en USD pueden estar subestimados.",
+    "note_other": "{{count}} movimientos no tienen tipo de cambio registrado, así que los montos en USD pueden estar subestimados.",
+    "action": "Completar tipos de cambio"
   },
   "export": {
-    "title": "Exportar",
-    "subtitle": "Descargá tus datos en CSV.",
-    "transactions": "Exportar movimientos",
+    "title": "Exportar y compartir",
+    "subtitle": "Entregáselo a tu contador, o guardá una copia.",
+    "transactions": "CSV de movimientos",
     "transactionsBusy": "Preparando…",
-    "summary": "Exportar resumen por categoría",
+    "summary": "CSV resumen por categoría",
     "summaryBusy": "Preparando…",
     "error": "No se pudo preparar la descarga. Probá de nuevo."
   }

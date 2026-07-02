@@ -23,11 +23,16 @@ import { reportsClient } from '../../api/reportsClient'
 import { useReportDownload } from './useReportDownload'
 
 export interface ExportButtonsProps {
-  /** The report month as `YYYY-MM` (drives the summary export + its filename). */
-  month: string
+  /**
+   * Optional report month as `YYYY-MM` for the category-summary export + its
+   * filename. The redesigned range-based page (ADR-167) no longer scopes to a
+   * single month, so it lets the backend default to the current server month
+   * when omitted (ADR-165); a caller can still pin a month if it has one.
+   */
+  month?: string
 }
 
-export function ExportButtons({ month }: ExportButtonsProps) {
+export function ExportButtons({ month }: ExportButtonsProps = {}) {
   const { t } = useTranslation('reports')
   const transactions = useReportDownload()
   const summary = useReportDownload()
@@ -42,7 +47,7 @@ export function ExportButtons({ month }: ExportButtonsProps) {
   const onExportSummary = () => {
     summary.download(
       () => reportsClient.fetchSummaryCsv(month),
-      `margen-summary-${month}.csv`,
+      month ? `margen-summary-${month}.csv` : 'margen-summary.csv',
     )
   }
 

@@ -1,27 +1,76 @@
 {
   "title": "Reports",
-  "subtitle": "Trends, category detail, net worth over time, and CSV export.",
-  "trend": {
-    "title": "Spending trend",
-    "subtitle": "Monthly expenses over the last 6 months.",
-    "errorTitle": "Couldn't load the spending trend",
-    "errorDescription": "We couldn't reach the server for your monthly expenses. Try again.",
-    "tooltipLabel": "Expenses",
-    "accessibleItem": "{{month}}: {{amount}}",
-    "accessibleSummary": "Monthly expenses: {{summary}}."
+  "subtitle": "The story behind the numbers, over time.",
+  "rangeSubtitle": "{{span}} · compared with the previous {{months}} months",
+  "range": {
+    "ariaLabel": "Analytics range",
+    "3M": "3M",
+    "6M": "6M",
+    "12M": "12M",
+    "YTD": "YTD",
+    "vsPrevious": "vs previous period"
   },
-  "categories": {
-    "title": "Category breakdown",
-    "subtitle": "Where this month's spending went.",
-    "tableAria": "Spending by category",
+  "kpi": {
+    "income": "Income",
+    "expenses": "Expenses",
+    "netSaved": "Net saved",
+    "savingsRate": "Savings rate",
+    "vsPrev": "vs prev",
+    "noDelta": "—",
+    "points": "pp"
+  },
+  "cashFlow": {
+    "title": "Cash flow",
+    "subtitle": "Money in vs. money out, each month — not just what you spent.",
+    "income": "Income",
+    "expenses": "Expenses",
+    "netSaved": "net saved",
+    "accessibleItem": "{{month}}: income {{income}}, expenses {{expenses}}",
+    "accessibleSummary": "Monthly cash flow: {{summary}}."
+  },
+  "categoryTrends": {
+    "title": "Category trends",
+    "subtitle": "What's moving, not just what's big.",
+    "tableAria": "Category trends",
     "colCategory": "Category",
-    "colAmount": "Amount",
-    "colShare": "Share",
-    "colDelta": "vs last month",
-    "deltaNone": "—",
-    "errorTitle": "Couldn't load the category breakdown",
-    "errorDescription": "We couldn't reach the server for this month's categories. Try again.",
-    "empty": "No spending recorded for this month yet."
+    "colTotal": "Total",
+    "colTrend": "6-mo trend",
+    "colDelta": "vs prev",
+    "share": "{{share}}% of spend",
+    "flat": "flat",
+    "empty": "No spending recorded for this range yet.",
+    "accessibleItem": "{{category}}: {{total}}",
+    "accessibleSummary": "Category totals: {{summary}}."
+  },
+  "monotributo": {
+    "title": "Monotributo trajectory",
+    "description": "How close your trailing-12-month invoicing is to the category ceiling.",
+    "watch": "Watch",
+    "ok": "OK",
+    "meterAria": "{{percent}} of the Category {{category}} ceiling used",
+    "legendInvoiced": "Invoiced",
+    "legendCeiling": "Cat {{category}} ceiling",
+    "legendOver": "Over ceiling",
+    "invoiced": "Invoiced · last 12 mo",
+    "ceiling": "Category {{category}} ceiling",
+    "remaining": "Remaining before ceiling",
+    "overBy": "Over the ceiling by",
+    "openPlanner": "Open Monotributo planner →",
+    "errorTitle": "Couldn't load the Monotributo trajectory",
+    "errorDescription": "We couldn't reach the server for your Monotributo standing. Try again."
+  },
+  "fx": {
+    "title": "FX & purchasing power",
+    "subtitle": "USD in, ARS out.",
+    "description": "You invoice in dollars and spend in pesos — this is the rate you actually captured.",
+    "avgMep": "avg MEP captured",
+    "mepUnavailable": "No rate captured",
+    "usdInvoiced": "invoiced this period",
+    "accessibleSummary": "Average MEP captured {{mep}}; USD invoiced {{usd}}."
+  },
+  "overview": {
+    "errorTitle": "Couldn't load your reports",
+    "errorDescription": "We couldn't reach the server for your analytics. Try again."
   },
   "netWorth": {
     "title": "Net worth over time",
@@ -34,25 +83,17 @@
     "accessibleItem": "{{month}}: {{amount}}",
     "accessibleSummary": "Net worth by month: {{summary}}."
   },
-  "budgets": {
-    "title": "Budget vs actual",
-    "subtitle": "Target versus spend for this month.",
-    "tableAria": "Budget versus actual by category",
-    "colCategory": "Category",
-    "colTarget": "Target",
-    "colSpent": "Spent",
-    "colRemaining": "Remaining",
-    "over": "{{amount}} over",
-    "errorTitle": "Couldn't load budget vs actual",
-    "errorDescription": "We couldn't reach the server for your budgets. Try again.",
-    "empty": "No budget targets set for this month yet."
+  "unconverted": {
+    "note_one": "{{count}} transaction lacks an FX snapshot, so the USD figures may be understated.",
+    "note_other": "{{count}} transactions lack an FX snapshot, so the USD figures may be understated.",
+    "action": "Backfill FX rates"
   },
   "export": {
-    "title": "Export",
-    "subtitle": "Download your data as CSV.",
-    "transactions": "Export transactions",
+    "title": "Export & share",
+    "subtitle": "Hand it to your contador, or keep a copy.",
+    "transactions": "Transactions CSV",
     "transactionsBusy": "Preparing…",
-    "summary": "Export category summary",
+    "summary": "Category summary CSV",
     "summaryBusy": "Preparing…",
     "error": "Couldn't prepare the download. Please try again."
   }

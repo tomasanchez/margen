@@ -1,175 +1,208 @@
 /**
- * Reports — the analytics + export surface (ADR-128, ADR-163…166).
+ * Reports — the range-based freelancer-analytics surface (ADR-167…171).
  *
- * Composes FOUR reads over the EXISTING readers plus one net-new endpoint
- * (ADR-163), with each panel owning its own calm loading/error/empty state so one
- * failed query never blanks the page (ADR-037):
+ * A single overview endpoint (ADR-169) drives the bulk of the page — the KPI
+ * strip, cash-flow chart, category trends, and FX summary — all denominated in
+ * the user's preferred display currency (ADR-168), keyed by the selected range +
+ * currency so switching either refetches everything together. The Monotributo
+ * trajectory reads the EXISTING monotributo snapshot (ADR-170); it is native ARS
+ * and independent of the display currency.
  *
- *  1. SPENDING TREND (month-over-month) — a Recharts bar chart from the summaries
- *     reader's 6-month `trend` (ADR-042), reused (no extra backend call).
- *  2. CATEGORY BREAKDOWN — an MUI table from the same summaries `categories`
- *     (category, amount, share, signed month-over-month delta).
- *  3. NET WORTH OVER TIME — a Recharts line chart from the NEW net-worth-history
- *     endpoint (ADR-164), converted client-side at the live preferred-rate MEP so
- *     the "current" point matches the Home net-worth snapshot (ADR-123).
- *  4. BUDGET VS ACTUAL — an MUI table from the budgets reader (ADR-125): target
- *     vs spent/remaining in the budget's own currency.
- *
- * Plus two CSV EXPORT buttons (transactions, category summary — ADR-165). The
- * page owns its OWN month via the URL `?month=YYYY-MM` param (ADR-040), which
- * scopes the category, budget, and summary-CSV panels; the two charts are
- * trailing windows independent of it.
+ * The analytics WINDOW (3M / 6M / 12M / YTD) lives in the URL as `?range=`
+ * (ADR-167), supplied by the route; a local-state fallback keeps the page
+ * renderable standalone (e.g. in tests). Each surface owns a calm loading / error
+ * / empty state so one failed query never blanks the page (ADR-037). Deferred
+ * panels (net worth, getting-paid, inflation-adjusted spend, PDF export) are
+ * intentionally absent (ADR-171).
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Link } from '@tanstack/react-router'
 import Box from '@mui/material/Box'
+import Skeleton from '@mui/material/Skeleton'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
-import { MonthSwitcher } from '../../components/MonthSwitcher'
-import { currentViewingMonth, type ViewingMonth } from '../../components/months'
-import { toYearMonth } from '../home/queries'
-import { useSummary } from '../home/queries'
-import { useBudgets, useBudgetIncome } from '../budgets/queries'
-import { usePreferredRate } from '../budgets/queries'
-import { useSettings } from '../settings/queries'
+import { ErrorState } from '../../components/ErrorState'
 import { useDisplayCurrency } from '../settings/displayCurrencyContext'
-import { useNetWorthHistory } from './queries'
-import { SpendingTrendChart } from './SpendingTrendChart'
-import { CategoryTable } from './CategoryTable'
-import { NetWorthChart } from './NetWorthChart'
-import { BudgetVsActualTable } from './BudgetVsActualTable'
+import { useMonotributoSnapshot } from '../monotributo/queries'
+import { useReportsOverview } from './queries'
+import { RangePicker } from './RangePicker'
+import { KpiStrip } from './KpiStrip'
+import { CashFlowChart } from './CashFlowChart'
+import { CategoryTrends } from './CategoryTrends'
+import { MonotributoTrajectory } from './MonotributoTrajectory'
+import { FxPanel } from './FxPanel'
 import { ExportButtons } from './ExportButtons'
-import type { DisplayCurrency } from '../../api/settingsClient'
-import type { Currency } from '../../mock/types'
-
-/** The net-worth history window: the last 12 months, ending at the current month. */
-const HISTORY_MONTHS = 12
+import { rangeMonths } from './reportsFormat'
+import { DEFAULT_REPORTS_RANGE } from './reportsSearch'
+import { shortMonthLabel } from '../../api/summariesClient'
+import { localizeShortMonthToken } from '../../i18n/locale'
+import type { ReportsRange } from '../../api/reportsClient'
 
 export interface ReportsPageProps {
   /**
-   * The viewing month, owned by the route via the URL `?month=YYYY-MM` param
-   * (ADR-040). Optional so the page stays renderable standalone in tests; a
-   * local-state fallback (current month) is used when omitted.
+   * The analytics range, owned by the route via the URL `?range=` param
+   * (ADR-167). Optional so the page stays renderable standalone in tests; a
+   * local-state fallback (the default window) is used when omitted.
    */
-  month?: ViewingMonth
-  /** Change the viewing month — the route writes it to the URL. */
-  onMonthChange?: (month: ViewingMonth) => void
+  range?: ReportsRange
+  /** Change the range — the route writes it to the URL. */
+  onRangeChange?: (range: ReportsRange) => void
 }
 
 export function ReportsPage({
-  month: monthProp,
-  onMonthChange,
+  range: rangeProp,
+  onRangeChange,
 }: ReportsPageProps = {}) {
   const { t } = useTranslation('reports')
-  // The page owns its OWN month (the global navigator drives Home only, ADR-040);
-  // it lives in the URL, supplied by the route. A local-state fallback keeps the
-  // page renderable standalone (e.g. in tests).
-  const [localMonth, setLocalMonth] = useState<ViewingMonth>(() =>
-    currentViewingMonth(),
-  )
-  const month = monthProp ?? localMonth
-  const setMonth = onMonthChange ?? setLocalMonth
-  const yearMonth = toYearMonth(month)
+  // The page owns its OWN range; it lives in the URL, supplied by the route. A
+  // local-state fallback keeps the page renderable standalone (e.g. in tests).
+  const [localRange, setLocalRange] = useState<ReportsRange>(DEFAULT_REPORTS_RANGE)
+  const range = rangeProp ?? localRange
+  const setRange = onRangeChange ?? setLocalRange
 
-  // Reused readers (ADR-163): the summaries + budgets clients already power Home
-  // and the Budgets page; the Reports panels consume the same cache.
-  const summaryQuery = useSummary(month)
+  // Every figure is denominated in the EFFECTIVE display currency (ADR-168):
+  // USD only when USD is preferred AND a live rate resolved, else ARS. The
+  // backend does the conversion via FX snapshots; the page never re-converts.
+  const { effectiveCurrency } = useDisplayCurrency()
+  const overviewQuery = useReportsOverview(range, effectiveCurrency)
+  const monotributoQuery = useMonotributoSnapshot()
 
-  // The budget is denominated in the INCOME's currency (ADR-156), NOT the ARS
-  // default nor a live-rate display conversion. Mirror the Budgets page EXACTLY
-  // (BudgetsPage.tsx): derive the currency from the income (falling back to the
-  // preferred display currency until an income is set), then thread it through
-  // `useBudgets` so target/spent/remaining all arrive in the same currency and
-  // reconcile with the Budgets page for the same month.
-  const { preferredCurrency } = useDisplayCurrency()
-  const incomeQuery = useBudgetIncome(yearMonth)
-  const budgetCurrency: Currency = incomeQuery.data?.currency ?? preferredCurrency
-  const budgetsQuery = useBudgets(yearMonth, budgetCurrency)
+  const overview = overviewQuery.data
 
-  // The net-worth history (ADR-164) + the SAME live rate the snapshot uses
-  // (preferred-rate source, ADR-151), so the converted "current" point matches
-  // the Home net-worth card (ADR-123).
-  const historyQuery = useNetWorthHistory(HISTORY_MONTHS)
-  const rateQuery = usePreferredRate()
-  const settingsQuery = useSettings()
-  const displayCurrency: DisplayCurrency =
-    settingsQuery.data?.preferredDisplayCurrency ?? 'ARS'
-  // The rate is only needed to convert the OTHER currency; while settings/rate
-  // resolve, the chart shows its skeleton (ADR-037).
-  const rateLoading = rateQuery.isPending || settingsQuery.isPending
+  // The range label spans the cash-flow window (first → last month); the compare
+  // label is the number of months the window covers.
+  const rangeLabel = useMemo(() => {
+    const months = overview?.cashFlow ?? []
+    if (months.length === 0) return ''
+    const first = localizeShortMonthToken(shortMonthLabel(months[0].month))
+    const last = localizeShortMonthToken(
+      shortMonthLabel(months[months.length - 1].month),
+    )
+    return months.length > 1 ? `${first} – ${last}` : first
+  }, [overview])
+
+  const subtitle =
+    rangeLabel.length > 0
+      ? t('rangeSubtitle', {
+          span: rangeLabel,
+          months: rangeMonths(range),
+        })
+      : t('subtitle')
+
+  const netSaved = overview?.kpis.current.netSaved ?? 0
 
   return (
     <Box>
       <Box
         sx={{
           display: 'flex',
-          alignItems: 'center',
+          alignItems: 'flex-end',
           justifyContent: 'space-between',
           flexWrap: 'wrap',
           gap: 2,
-          mb: 2.5,
+          mb: 3,
         }}
       >
         <Box>
           <Typography
             component="h1"
-            sx={{ fontSize: { xs: '1.25rem', md: '1.375rem' }, fontWeight: 600 }}
+            sx={{ fontSize: { xs: '1.25rem', md: '1.5rem' }, fontWeight: 600 }}
             color="text.primary"
           >
             {t('title')}
           </Typography>
-          <Typography sx={{ fontSize: 13.5, mt: 0.25 }} color="text.secondary">
-            {t('subtitle')}
+          <Typography sx={{ fontSize: 14, mt: 0.5 }} color="text.secondary">
+            {subtitle}
           </Typography>
         </Box>
-        <MonthSwitcher variant="stepper" value={month} onChange={setMonth} />
+        <RangePicker value={range} onChange={setRange} />
       </Box>
 
-      <Stack spacing={2.5}>
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
-            gap: 2.5,
-            // Stretch so the trend card matches the category card's height and
-            // the bar chart fills to the card bottom (ADR-166). Card content
-            // (the category table) stays top-aligned via SectionCard's flow.
-            alignItems: 'stretch',
-          }}
+      {/* Calm unconverted note (ADR-152/168): some window rows lack a USD
+          snapshot, so the USD figures may be understated. Never an error — a
+          quiet line linking to the one-time FX backfill. */}
+      {overview != null && overview.unconverted > 0 ? (
+        <Typography
+          sx={{ fontSize: 12.5, mb: 2 }}
+          color="text.secondary"
+          role="note"
         >
-          <SpendingTrendChart
-            trend={summaryQuery.data?.trend}
-            loading={summaryQuery.isPending}
-            isError={summaryQuery.isError}
-            onRetry={() => void summaryQuery.refetch()}
+          {t('unconverted.note', { count: overview.unconverted })}{' '}
+          <Link to="/settings" style={{ color: 'var(--mg-gold)', fontWeight: 600 }}>
+            {t('unconverted.action')}
+          </Link>
+        </Typography>
+      ) : null}
+
+      <Stack spacing={2.25}>
+        {/* KPI strip + overview-fed panels share one query (ADR-169). */}
+        {overviewQuery.isError ? (
+          <ErrorState
+            title={t('overview.errorTitle')}
+            description={t('overview.errorDescription')}
+            onRetry={() => void overviewQuery.refetch()}
           />
-          <CategoryTable
-            categories={summaryQuery.data?.categories}
-            loading={summaryQuery.isPending}
-            isError={summaryQuery.isError}
-            onRetry={() => void summaryQuery.refetch()}
-          />
-        </Box>
+        ) : overview == null ? (
+          <>
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: {
+                  xs: '1fr',
+                  sm: 'repeat(2, 1fr)',
+                  md: 'repeat(4, 1fr)',
+                },
+                gap: 2,
+              }}
+            >
+              {[0, 1, 2, 3].map((i) => (
+                <Skeleton key={i} variant="rounded" height={112} sx={{ borderRadius: '14px' }} />
+              ))}
+            </Box>
+            <Skeleton variant="rounded" height={320} sx={{ borderRadius: '16px' }} />
+          </>
+        ) : (
+          <>
+            <KpiStrip kpis={overview.kpis} currency={effectiveCurrency} />
 
-        <NetWorthChart
-          history={historyQuery.data}
-          loading={historyQuery.isPending}
-          isError={historyQuery.isError}
-          onRetry={() => void historyQuery.refetch()}
-          displayCurrency={displayCurrency}
-          rate={rateQuery.data ?? null}
-          rateLoading={rateLoading}
-        />
+            <CashFlowChart
+              cashFlow={overview.cashFlow}
+              netSaved={netSaved}
+              currency={effectiveCurrency}
+            />
 
-        <BudgetVsActualTable
-          period={budgetsQuery.data}
-          loading={budgetsQuery.isPending}
-          isError={budgetsQuery.isError}
-          onRetry={() => void budgetsQuery.refetch()}
-        />
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', md: '1.5fr 1fr' },
+                gap: 2.25,
+                alignItems: 'stretch',
+              }}
+            >
+              <CategoryTrends
+                trends={overview.categoryTrends}
+                currency={effectiveCurrency}
+              />
+              {monotributoQuery.data ? (
+                <MonotributoTrajectory standing={monotributoQuery.data.current} />
+              ) : monotributoQuery.isError ? (
+                <ErrorState
+                  title={t('monotributo.errorTitle')}
+                  description={t('monotributo.errorDescription')}
+                  onRetry={() => void monotributoQuery.refetch()}
+                />
+              ) : (
+                <Skeleton variant="rounded" height={320} sx={{ borderRadius: '16px' }} />
+              )}
+            </Box>
 
-        <ExportButtons month={yearMonth} />
+            <FxPanel fxSummary={overview.fxSummary} />
+          </>
+        )}
+
+        <ExportButtons />
       </Stack>
     </Box>
   )
