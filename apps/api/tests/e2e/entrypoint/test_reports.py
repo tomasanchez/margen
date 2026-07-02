@@ -27,13 +27,25 @@ from fastapi import status
 
 from margen_api.asgi import get_application
 from margen_api.bootstrap import ApplicationContainer, bootstrap
+from margen_api.domain.models.value_objects import Currency
 from margen_api.entrypoint.dependencies import get_reports_reader
+from margen_api.service_layer.reports_overview import add_months
+from margen_api.service_layer.reports_overview_read_models import (
+    CashFlowPoint,
+    CategoryTrend,
+    FxSummary,
+    RateSeriesPoint,
+    ReportsKpi,
+    ReportsKpis,
+    ReportsOverview,
+)
 from margen_api.service_layer.reports_read_models import NetWorthHistory, NetWorthHistoryPoint
 from margen_api.settings.database_settings import DatabaseSettings
 from tests.conftest import STUB_AUTH_USER_B, STUB_USER_ID
 from tests.fakes.persistence import FakeReportsReader
 
 REPORTS = "/api/v1/reports"
+OVERVIEW = f"{REPORTS}/overview"
 NET_WORTH_HISTORY = f"{REPORTS}/net-worth-history"
 EXPORT_TRANSACTIONS = f"{REPORTS}/export/transactions"
 EXPORT_SUMMARY = f"{REPORTS}/export/summary"
@@ -67,6 +79,288 @@ def _history() -> NetWorthHistory:
 def _rows(csv_text: str) -> list[list[str]]:
     """Parse CSV text back into string rows for assertions."""
     return list(csv.reader(io.StringIO(csv_text)))
+
+
+def _overview() -> ReportsOverview:
+    """Build a canned overview exercising every panel and the unconverted caveat."""
+    return ReportsOverview(
+        range="6M",
+        currency="USD",
+        kpis=ReportsKpis(
+            current=ReportsKpi(
+                income=Decimal("1000.00"),
+                expenses=Decimal("400.00"),
+                net_saved=Decimal("600.00"),
+                savings_rate=Decimal("60"),
+            ),
+            previous=ReportsKpi(
+                income=Decimal("800.00"),
+                expenses=Decimal("500.00"),
+                net_saved=Decimal("300.00"),
+                savings_rate=Decimal("37.5"),
+            ),
+        ),
+        cash_flow=[CashFlowPoint(month="2026-06", income=Decimal("1000.00"), expenses=Decimal("400.00"))],
+        category_trends=[
+            CategoryTrend(
+                category="Food",
+                total=Decimal("400.00"),
+                share=Decimal("100"),
+                series=[Decimal("0.00"), Decimal("400.00")],
+                delta_pct=Decimal("-20"),
+            )
+        ],
+        fx_summary=FxSummary(
+            avg_mep=Decimal("1000.000000"),
+            usd_invoiced=Decimal("1000.00"),
+            rate_series=[RateSeriesPoint(month="2026-06", rate=Decimal("1000.000000"))],
+        ),
+        unconverted=2,
+    )
+
+
+class TestReportsOverview:
+    """GET /reports/overview returns the {data} envelope for the redesign (ADR-167)."""
+
+    @pytest.fixture(name="reader")
+    def fixture_reader(self) -> FakeReportsReader:
+        """Provide a fake reports reader returning a canned overview."""
+        return FakeReportsReader(_history(), overview=_overview())
+
+    @pytest.fixture(name="client")
+    async def fixture_client(self, reader: FakeReportsReader) -> AsyncIterator[httpx.AsyncClient]:
+        """Build an ASGI client whose reports reader dependency is mocked."""
+        container = bootstrap(DatabaseSettings(URL="sqlite+aiosqlite://", AUTO_CREATE_SCHEMA=False))
+        app = get_application(container)
+        app.dependency_overrides[get_reports_reader] = lambda: reader
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
+        await container.shutdown()
+
+    async def test_returns_envelope_with_every_panel(self, client: httpx.AsyncClient, reader: FakeReportsReader):
+        """
+        GIVEN a mocked reader returning a canned overview
+        WHEN the overview endpoint is requested for the 6M USD window
+        THEN it returns 200 with the {data} envelope, camelCase panels, and forwards
+             the range/currency scoped to the authenticated owner (ADR-030, ADR-167)
+        """
+        # WHEN
+        response = await client.get(OVERVIEW, params={"range": "6M", "currency": "USD"})
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["data"]
+        assert data["range"] == "6M"
+        assert data["currency"] == "USD"
+        assert data["unconverted"] == 2
+        # KPI strip carries current + previous for the vs-previous delta (camelCase).
+        assert data["kpis"]["current"] == {
+            "income": "1000.00",
+            "expenses": "400.00",
+            "netSaved": "600.00",
+            "savingsRate": "60",
+        }
+        assert data["kpis"]["previous"]["netSaved"] == "300.00"
+        # cashFlow, categoryTrends (with sparkline series + deltaPct), fxSummary.
+        assert data["cashFlow"][0] == {"month": "2026-06", "income": "1000.00", "expenses": "400.00"}
+        trend = data["categoryTrends"][0]
+        assert trend["category"] == "Food"
+        assert trend["series"] == ["0.00", "400.00"]
+        assert trend["deltaPct"] == "-20"
+        assert data["fxSummary"]["avgMep"] == "1000.000000"
+        assert data["fxSummary"]["usdInvoiced"] == "1000.00"
+        assert data["fxSummary"]["rateSeries"][0] == {"month": "2026-06", "rate": "1000.000000"}
+        # The router forwards the range/currency and scopes to the owner (ADR-108).
+        assert reader.requested_range == "6M"
+        assert reader.requested_currency == Currency.USD
+        assert reader.requested_user_id == STUB_USER_ID
+
+    async def test_defaults_to_six_months_ars(self, client: httpx.AsyncClient, reader: FakeReportsReader):
+        """
+        GIVEN no range or currency query params
+        WHEN the overview endpoint is requested
+        THEN it returns 200 and the reader is asked for the default 6M ARS window
+        """
+        # WHEN
+        response = await client.get(OVERVIEW)
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK
+        assert reader.requested_range == "6M"
+        assert reader.requested_currency == Currency.ARS
+
+    @pytest.mark.parametrize("bad_param", [{"range": "2Y"}, {"currency": "EUR"}])
+    async def test_out_of_set_params_return_422(self, client: httpx.AsyncClient, bad_param: dict[str, str]):
+        """
+        GIVEN an out-of-set range or currency
+        WHEN the overview endpoint is requested
+        THEN boundary validation returns 422
+        """
+        # WHEN
+        response = await client.get(OVERVIEW, params=bad_param)
+
+        # THEN
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+class TestReportsOverviewDbBacked:
+    """The REAL reports reader runs its range SQL on the in-memory tier (ADR-167, ADR-168).
+
+    Drives the endpoint through the real container (no reader override) so the
+    ``SqlAlchemyReportsReader`` range aggregations execute end to end. Movements are
+    placed in the CURRENT month (the reader anchors its window at ``datetime.now``)
+    so the newest cash-flow point reflects them regardless of the run date.
+    """
+
+    async def _post(self, client: httpx.AsyncClient, **body: object) -> str:
+        """POST a transaction dated today, asserting 201, and return its id."""
+        payload: dict[str, object] = {"occurredOn": _today_iso(), "name": "Movement"}
+        payload.update(body)
+        response = await client.post(TRANSACTIONS, json=payload)
+        assert response.status_code == status.HTTP_201_CREATED, response.text
+        return response.json()["data"]["id"]
+
+    async def test_ars_overview_reconciles_kpis_and_category(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an ARS income and an ARS expense in a category this month
+        WHEN the ARS overview is read through the real reader
+        THEN the current KPIs and the category trend reflect the ARS amounts and
+             unconverted is 0 (ADR-167, ADR-168)
+        """
+        # GIVEN
+        await self._post(test_client, kind="income", amountNum="1000", name="Salary")
+        await self._post(test_client, kind="expense", amountNum="400", category="Food")
+
+        # WHEN
+        response = await test_client.get(OVERVIEW, params={"range": "3M", "currency": "ARS"})
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["data"]
+        assert data["currency"] == "ARS"
+        assert data["unconverted"] == 0
+        assert data["kpis"]["current"]["income"] == "1000.00"
+        assert data["kpis"]["current"]["expenses"] == "400.00"
+        assert data["kpis"]["current"]["netSaved"] == "600.00"
+        current_flow = data["cashFlow"][-1]
+        assert current_flow["month"] == _current_month_key()
+        assert current_flow["income"] == "1000.00"
+        food = next(trend for trend in data["categoryTrends"] if trend["category"] == "Food")
+        assert food["total"] == "400.00"
+
+    async def test_usd_overview_sums_snapshot_and_counts_unconverted(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a USD invoice with a snapshot and an ARS expense WITHOUT a USD snapshot
+        WHEN the USD overview is read through the real reader
+        THEN income sums the usd_amount snapshot, the snapshotless row is excluded and
+             surfaced in unconverted, and the FX summary carries the captured rate
+             (ADR-152, ADR-167, ADR-168)
+        """
+        # GIVEN — a USD invoice (snapshot usd=1000 @ rate 1000), a USD expense with a
+        # snapshot (usd=200 @ rate 1000) in a category, and an ARS expense (no snapshot).
+        await self._post(
+            test_client,
+            kind="invoice",
+            amountNum="1000000",
+            currency="USD",
+            usd="1000",
+            rate="1000",
+            name="Client invoice",
+        )
+        await self._post(
+            test_client,
+            kind="expense",
+            amountNum="200000",
+            currency="USD",
+            usd="200",
+            rate="1000",
+            category="Food",
+            name="USD fee",
+        )
+        await self._post(test_client, kind="expense", amountNum="400", category="Transport")
+
+        # WHEN
+        response = await test_client.get(OVERVIEW, params={"range": "3M", "currency": "USD"})
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["data"]
+        assert data["currency"] == "USD"
+        # income sums the USD snapshot; the ARS expense has no usd_amount -> excluded + counted.
+        assert data["kpis"]["current"]["income"] == "1000.00"
+        assert data["kpis"]["current"]["expenses"] == "200.00"
+        assert data["unconverted"] == 1
+        # the USD expense forms a Food category trend on the snapshot column.
+        food = next(trend for trend in data["categoryTrends"] if trend["category"] == "Food")
+        assert food["total"] == "200.00"
+        assert data["fxSummary"]["usdInvoiced"] == "1000.00"
+        assert data["fxSummary"]["avgMep"] == "1000.000000"
+
+    async def test_ars_over_refunded_month_floors_out_of_trends(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a current month whose ONLY expense is fully over-refunded by a linked
+              reimbursement, plus a sibling expense in a prior window month
+        WHEN the ARS overview is read
+        THEN the over-refunded category floors at zero and its whole month drops out of
+             the trends (ADR-160, ADR-162), while the prior month's category still shows
+        """
+        # GIVEN — the current month's only expense (Food 1000) is over-refunded by 1500,
+        # so the entire month nets to nothing; a prior-window Transport 300 still stands.
+        expense_id = await self._post(test_client, kind="expense", amountNum="1000", category="Food")
+        await self._post(
+            test_client,
+            kind="reimbursement",
+            amountNum="1500",
+            offsetsTransactionId=expense_id,
+            name="Over refund",
+        )
+        prior_month_day = add_months(date.today().replace(day=1), -1).replace(day=15).isoformat()
+        response = await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": prior_month_day,
+                "name": "Bus",
+                "kind": "expense",
+                "amountNum": "300",
+                "category": "Transport",
+            },
+        )
+        assert response.status_code == status.HTTP_201_CREATED, response.text
+
+        # WHEN
+        response = await test_client.get(OVERVIEW, params={"range": "3M", "currency": "ARS"})
+
+        # THEN — the fully over-refunded current month drops out; only Transport remains.
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["data"]
+        categories = [trend["category"] for trend in data["categoryTrends"]]
+        assert "Food" not in categories
+        assert categories == ["Transport"]
+
+    async def test_user_b_overview_excludes_user_a_data(
+        self,
+        container: ApplicationContainer,
+        test_client: httpx.AsyncClient,
+        client_for_user,
+    ):
+        """
+        GIVEN user A has income and expenses this month
+        WHEN user B reads the overview
+        THEN B's KPIs are all zero — A's data never leaks (ADR-108, ADR-131)
+        """
+        # GIVEN — user A creates movements.
+        await self._post(test_client, kind="income", amountNum="5000", name="A income")
+        await self._post(test_client, kind="expense", amountNum="900", category="Food")
+
+        # WHEN / THEN — user B sees none of A's data.
+        async with client_for_user(container, STUB_AUTH_USER_B) as client_b:
+            response = await client_b.get(OVERVIEW, params={"range": "3M", "currency": "ARS"})
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()["data"]
+            assert data["kpis"]["current"]["income"] == "0.00"
+            assert data["kpis"]["current"]["expenses"] == "0.00"
+            assert data["categoryTrends"] == []
 
 
 class TestNetWorthHistory:
