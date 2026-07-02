@@ -4,7 +4,7 @@ adr: 129
 title: Cash-flow forecasting reuses the monotributo projection engine
 category: architecture
 date: 2026-06-27
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -35,3 +35,4 @@ A recurring-schedule-driven projector (one that respects due dates, subscription
 
 - 2026-06-27: proposed
 - 2026-06-27: accepted
+- 2026-07-02: superseded by ADR-173 (schedule/commitment-driven forecast replaces pace-average approach)
