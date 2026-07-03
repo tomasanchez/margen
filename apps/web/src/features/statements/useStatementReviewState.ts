@@ -30,6 +30,12 @@ import type {
   StatementLineResolution,
   StatementParse,
 } from '../../api/statementsClient'
+import type { Account, Currency } from '../../mock/types'
+import {
+  currenciesInParse,
+  matchCardAccounts,
+  type AccountMatch,
+} from './accountMatch'
 
 /**
  * The user-facing resolution choice for a flagged line (ADR-086). Maps to the
@@ -88,9 +94,37 @@ export function formatCuota(index: number | null, total: number | null): string 
   return `${index}/${total}`
 }
 
+/**
+ * The per-currency card-account attachment for the import (ADR-184). A statement
+ * is from ONE card institution, and Argentine cards carry separate ARS + USD
+ * balances, so the attachment is decided ONCE per line-currency present in the
+ * statement — not per row. Each entry carries the currency, its auto-matched
+ * default (or `null` when the user has no matching card account), and the CURRENT
+ * selected account id (`null` = import that currency's lines unattached).
+ */
+export interface CurrencyAccountChoice {
+  /** The line currency this choice governs (ARS or USD). */
+  readonly currency: Currency
+  /** The auto-matched card account for (institution, currency), or null (ADR-184). */
+  readonly matched: AccountMatch | null
+  /** The currently selected account id, or null to import unattached. */
+  readonly selectedAccountId: string | null
+}
+
 export interface StatementReviewState {
   /** The editable line drafts, in statement order. */
   readonly lines: readonly ReviewLine[]
+  /**
+   * The per-currency card-account attachment choices (ADR-184), one per line-
+   * currency present in the statement, ARS before USD. Empty when the parse has
+   * no lines. The review UI renders a confirm/override selector per entry.
+   */
+  readonly accountChoices: readonly CurrencyAccountChoice[]
+  /**
+   * Set (or clear, with `null`) the card account a currency's lines attach to
+   * (ADR-184). No-op for a currency not present in the statement.
+   */
+  setAccountForCurrency: (currency: Currency, accountId: string | null) => void
   /** Count of lines currently kept for import (new + merged). */
   readonly includedCount: number
   /** Sum of the amounts of the kept lines importing as new (display number). */
@@ -139,6 +173,7 @@ function toLineRequest(
   line: ReviewLine,
   bank: string | undefined,
   card: string | undefined,
+  accountId: string | null,
 ): StatementLineRequest {
   const resolution = lineResolution(line)
   return {
@@ -160,6 +195,9 @@ function toLineRequest(
     ...(bank ? { bank } : {}),
     ...(card ? { card } : {}),
     ...(line.cuota ? { cuota: line.cuota } : {}),
+    // The card account the user confirmed for this line's currency (ADR-184);
+    // omitted (null) imports the line unattached — the backend is tolerant.
+    ...(accountId ? { accountId } : {}),
     resolution,
     // matchTransactionId is REQUIRED for merge; carried only then (ADR-085).
     ...(resolution === 'merge' && line.match
@@ -175,6 +213,7 @@ function toLineRequest(
  */
 export function useStatementReviewState(
   parse: StatementParse,
+  accounts: readonly Account[] = [],
 ): StatementReviewState {
   const [lines, setLines] = useState<ReviewLine[]>(() =>
     parse.lines.map((line) => ({
@@ -183,6 +222,42 @@ export function useStatementReviewState(
       // Flagged lines default to Merge (ADR-086); the value is inert otherwise.
       resolution: 'merge' as ReviewResolution,
     })),
+  )
+
+  // Auto-match the (institution, currency) card account per line-currency and
+  // seed each currency's selected account id from it (ADR-184). Recomputed when
+  // the accounts list resolves (it may be empty on first render): a currency's
+  // selection is (re)seeded to the match ONLY while the user hasn't chosen — a
+  // user override (tracked in `accountOverrides`) always wins.
+  const matches = useMemo(
+    () => matchCardAccounts(parse, accounts),
+    [parse, accounts],
+  )
+  const currencies = useMemo(() => currenciesInParse(parse), [parse])
+  // Per-currency user overrides: absent = follow the auto-match; present (id or
+  // null) = the user's explicit confirm/override. Keyed by currency.
+  const [accountOverrides, setAccountOverrides] = useState<
+    Partial<Record<Currency, string | null>>
+  >({})
+
+  const accountChoices = useMemo<CurrencyAccountChoice[]>(
+    () =>
+      currencies.map((currency) => {
+        const matched = matches.get(currency) ?? null
+        const hasOverride = currency in accountOverrides
+        const selectedAccountId = hasOverride
+          ? (accountOverrides[currency] ?? null)
+          : (matched?.id ?? null)
+        return { currency, matched, selectedAccountId }
+      }),
+    [currencies, matches, accountOverrides],
+  )
+
+  const setAccountForCurrency = useCallback(
+    (currency: Currency, accountId: string | null) => {
+      setAccountOverrides((current) => ({ ...current, [currency]: accountId }))
+    },
+    [],
   )
 
   const toggleKeep = useCallback((id: string, keep: boolean) => {
@@ -255,14 +330,28 @@ export function useStatementReviewState(
 
   const buildImportRequest = useCallback((): StatementImportRequest => {
     const kept = lines.filter((line) => line.keep)
+    // The selected account id per currency (ADR-184): each kept line attaches to
+    // the account chosen for ITS currency (ARS line → ARS card account, etc.).
+    const accountByCurrency = new Map<Currency, string | null>(
+      accountChoices.map((choice) => [choice.currency, choice.selectedAccountId]),
+    )
     return {
       document: parse.document,
-      lines: kept.map((line) => toLineRequest(line, parse.bankName, parse.card)),
+      lines: kept.map((line) =>
+        toLineRequest(
+          line,
+          parse.bankName,
+          parse.card,
+          accountByCurrency.get(line.currency) ?? null,
+        ),
+      ),
     }
-  }, [lines, parse.document, parse.bankName, parse.card])
+  }, [lines, accountChoices, parse.document, parse.bankName, parse.card])
 
   return {
     lines,
+    accountChoices,
+    setAccountForCurrency,
     includedCount,
     includedTotal,
     newCount,

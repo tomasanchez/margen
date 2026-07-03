@@ -106,6 +106,7 @@ const NO_LIABILITIES = {
     installments: '0',
     installmentsNative: { ars: '0', usd: '0' },
     ccBalance: null,
+    ccBalanceNative: { ars: '0', usd: '0' },
     other: null,
     total: '0',
   },
@@ -230,6 +231,7 @@ describe('NetWorthCard', () => {
         installments: '0',
         installmentsNative: { ars: '0', usd: '0' },
         ccBalance: null,
+        ccBalanceNative: { ars: '0', usd: '0' },
         other: null,
         total: '0',
       },
@@ -447,6 +449,7 @@ describe('NetWorthCard', () => {
         installments: '0',
         installmentsNative: { ars: '0', usd: '0' },
         ccBalance: null,
+        ccBalanceNative: { ars: '0', usd: '0' },
         other: null,
         total: '0',
       },
@@ -515,6 +518,7 @@ describe('NetWorthCard', () => {
         installments: '0',
         installmentsNative: { ars: '0', usd: '0' },
         ccBalance: null,
+        ccBalanceNative: { ars: '0', usd: '0' },
         other: null,
         total: '0',
       },
@@ -554,6 +558,7 @@ describe('NetWorthCard', () => {
         installments: '50000.00',
         installmentsNative: { ars: '50000.00', usd: '0' },
         ccBalance: null,
+        ccBalanceNative: { ars: '0', usd: '0' },
         other: null,
         total: '50000.00',
       },
@@ -589,6 +594,7 @@ describe('NetWorthCard', () => {
         installments: '40000.00',
         installmentsNative: { ars: '0', usd: '40.00' },
         ccBalance: null,
+        ccBalanceNative: { ars: '0', usd: '0' },
         other: null,
         total: '40000.00',
       },
@@ -692,6 +698,147 @@ describe('NetWorthCard', () => {
       ).toBeInTheDocument()
       expect(
         screen.queryByText('Net of commitments: ARS 1.000.000'),
+      ).not.toBeInTheDocument()
+    })
+  })
+
+  describe('credit-card balance liability leg (ADR-185/183)', () => {
+    /**
+     * ARS-only assets of 1.050.000 with an ARS-only unpaid CC balance of 30.000
+     * (native ARS) and NO installments. Net of commitments = 1.050.000 − 30.000 =
+     * 1.020.000, with a "− credit card" breakdown line and NO installments line.
+     */
+    const WITH_CC_BALANCE: NetWorth = {
+      total: '1050000.00',
+      currency: 'ARS',
+      liabilities: {
+        installments: '0',
+        installmentsNative: { ars: '0', usd: '0' },
+        ccBalance: '30000.00',
+        ccBalanceNative: { ars: '30000.00', usd: '0' },
+        other: null,
+        total: '30000.00',
+      },
+      netAfterLiabilities: '1020000.00',
+      accounts: [
+        {
+          id: 'a1',
+          institutionId: 'inst-1',
+          institutionName: 'Galicia',
+          type: 'bank',
+          currency: 'ARS',
+          balance: '1050000.00',
+          balanceConverted: '1050000.00',
+        },
+      ],
+    }
+
+    /**
+     * Both legs present: an ARS installment tail (50.000) AND a USD-denominated CC
+     * balance (USD 40). The CC balance must convert at the SAME live MEP (1.250)
+     * the assets use — USD 40 × 1.250 = ARS 50.000 — NOT the backend snapshot
+     * figure. Net of commitments = 1.050.000 − (50.000 + 50.000) = 950.000, with
+     * BOTH the "− installments" and "− credit card" lines.
+     */
+    const WITH_BOTH_LEGS: NetWorth = {
+      total: '1050000.00',
+      currency: 'ARS',
+      liabilities: {
+        installments: '50000.00',
+        installmentsNative: { ars: '50000.00', usd: '0' },
+        // Backend snapshot rate 1.000 → ARS 40.000 (STALE; must NOT be displayed).
+        ccBalance: '40000.00',
+        ccBalanceNative: { ars: '0', usd: '40.00' },
+        other: null,
+        total: '90000.00',
+      },
+      netAfterLiabilities: '960000.00',
+      accounts: [
+        {
+          id: 'a1',
+          institutionId: 'inst-1',
+          institutionName: 'Galicia',
+          type: 'bank',
+          currency: 'ARS',
+          balance: '150000.00',
+          balanceConverted: '150000.00',
+        },
+        {
+          id: 'a2',
+          institutionId: 'inst-2',
+          institutionName: 'Deel',
+          type: 'wallet',
+          currency: 'USD',
+          balance: '720.00',
+          balanceConverted: '900000.00',
+        },
+      ],
+    }
+
+    test('shows a "− credit card" line and folds it into net of commitments', async () => {
+      renderCard({ netWorth: WITH_CC_BALANCE, loading: false })
+
+      expect(await screen.findByText('ARS 1.050.000')).toBeInTheDocument()
+      expect(
+        screen.getByText('Net of commitments: ARS 1.020.000'),
+      ).toBeInTheDocument()
+      expect(screen.getByText('− ARS 30.000 credit card')).toBeInTheDocument()
+      // No installments leg in this fixture.
+      expect(screen.queryByText(/installments/)).not.toBeInTheDocument()
+    })
+
+    test('converts a USD CC balance at the live rate and combines with installments', async () => {
+      // Assets headline (ARS 150.000 + USD 720 × 1.250 = 900.000) = 1.050.000. The
+      // USD 40 CC balance converts at the SAME 1.250 → ARS 50.000; the ARS 50.000
+      // installment tail is native. Net of commitments = 1.050.000 − 100.000 =
+      // 950.000. The backend's stale ARS 40.000 CC figure must NOT appear.
+      renderCard({ netWorth: WITH_BOTH_LEGS, loading: false })
+
+      expect(await screen.findByText('ARS 1.050.000')).toBeInTheDocument()
+      expect(
+        screen.getByText('Net of commitments: ARS 950.000'),
+      ).toBeInTheDocument()
+      expect(screen.getByText('− ARS 50.000 installments')).toBeInTheDocument()
+      // The CC leg shows the live-rate figure (50.000), not the backend one (40.000).
+      expect(screen.getByText('− ARS 50.000 credit card')).toBeInTheDocument()
+      expect(
+        screen.queryByText('− ARS 40.000 credit card'),
+      ).not.toBeInTheDocument()
+    })
+
+    test('hides the whole section when there is no liability at all', async () => {
+      renderCard({ netWorth: CONVERTED, loading: false })
+      await screen.findByText('ARS 1.050.000')
+      expect(screen.queryByText(/Net of commitments/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/credit card/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/installments/)).not.toBeInTheDocument()
+    })
+
+    test('a USD CC balance degrades without NaN when the live rate is unavailable', async () => {
+      // MEP null → the assets headline drops the USD holdings (ARS 150.000 only);
+      // the USD CC + installment legs likewise drop their unconvertible parts. The
+      // ARS installment tail (50.000) stays; the USD-only CC leg drops to 0. Net of
+      // commitments = 150.000 − 50.000 = 100.000 (never NaN). The CC line still
+      // shows (native > 0) with a degraded 0 figure.
+      mockRates.mockResolvedValue({ mep: null, official: null })
+      renderCard({ netWorth: WITH_BOTH_LEGS, loading: false })
+
+      expect(await screen.findByText('ARS 150.000')).toBeInTheDocument()
+      expect(
+        screen.getByText('Net of commitments: ARS 100.000'),
+      ).toBeInTheDocument()
+      expect(screen.getByText('− ARS 50.000 installments')).toBeInTheDocument()
+      expect(screen.getByText('− ARS 0 credit card')).toBeInTheDocument()
+      expect(screen.queryByText(/NaN/)).not.toBeInTheDocument()
+    })
+
+    test('masks the credit-card leg amount under the privacy toggle', async () => {
+      renderCard({ netWorth: WITH_CC_BALANCE, loading: false, hidden: true })
+      expect(
+        await screen.findByText(`− ${maskAmount()} credit card`),
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByText('− ARS 30.000 credit card'),
       ).not.toBeInTheDocument()
     })
   })

@@ -47,13 +47,29 @@ const {
   listMock,
   setFxSnapshotMock,
   historicalRateMock,
+  accountsListMock,
 } = vi.hoisted(() => ({
   parseStatementMock: vi.fn(),
   importStatementMock: vi.fn(),
   listMock: vi.fn(),
   setFxSnapshotMock: vi.fn(),
   historicalRateMock: vi.fn(),
+  accountsListMock: vi.fn(),
 }))
+
+// The review table auto-matches statement lines to the user's card accounts by
+// (institution, currency) (ADR-184). Mock the accounts list so the match is
+// deterministic and no real network is hit.
+vi.mock('../../api/accountsClient', async () => {
+  const actual =
+    await vi.importActual<typeof import('../../api/accountsClient')>(
+      '../../api/accountsClient',
+    )
+  return {
+    ...actual,
+    accountsClient: { ...actual.accountsClient, list: accountsListMock },
+  }
+})
 
 vi.mock('../../api/statementsClient', async () => {
   const actual =
@@ -114,6 +130,18 @@ beforeEach(() => {
   listMock.mockResolvedValue([])
   setFxSnapshotMock.mockResolvedValue(undefined)
   historicalRateMock.mockResolvedValue(1200)
+  // Default: the user holds a Galicia ARS card account, so ARS statement lines
+  // auto-match to it (ADR-184). Tests override this to exercise other cases.
+  accountsListMock.mockResolvedValue([
+    {
+      id: 'galicia-ars-card',
+      institutionId: 'inst-galicia',
+      institutionName: 'Galicia',
+      type: 'card',
+      currency: 'ARS',
+      openingBalance: '0',
+    },
+  ])
 })
 
 afterEach(() => {
@@ -354,6 +382,73 @@ describe('Import statement — only the included lines are sent on import', () =
       (l: { name: string }) => l.name === 'Carrefour',
     )
     expect(carrefourLine.category).toBe('Shopping')
+  })
+})
+
+describe('Import statement — card-account attachment (ADR-184)', () => {
+  test('auto-matches ARS lines to the Galicia ARS card account and sends accountId', async () => {
+    parseStatementMock.mockResolvedValueOnce(okParse)
+    importStatementMock.mockResolvedValueOnce(importResult({ createdCount: 2 }))
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile())
+    // The confirm affordance shows the matched card account for the ARS section.
+    const arsSelect = await screen.findByRole('combobox', {
+      name: 'ARS account',
+    })
+    expect(arsSelect).toHaveTextContent('Galicia · ARS')
+
+    await user.click(screen.getByRole('button', { name: 'Import 2 expenses' }))
+
+    await waitFor(() => expect(importStatementMock).toHaveBeenCalledTimes(1))
+    const [payload] = importStatementMock.mock.calls[0]
+    // Every kept (ARS) line carries the matched card account id (ADR-184).
+    for (const line of payload.lines) {
+      expect(line.accountId).toBe('galicia-ars-card')
+    }
+  })
+
+  test('leaves lines unattached when no matching card account exists', async () => {
+    // The user has no card account for this issuer — the ARS lines import
+    // unattached (no accountId), and the section shows a calm "no match" note.
+    accountsListMock.mockResolvedValue([])
+    parseStatementMock.mockResolvedValueOnce(okParse)
+    importStatementMock.mockResolvedValueOnce(importResult({ createdCount: 2 }))
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile())
+    await screen.findByText('Galicia · VISA ·5771')
+    expect(
+      await screen.findByText(/No ARS card account/i),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Import 2 expenses' }))
+
+    await waitFor(() => expect(importStatementMock).toHaveBeenCalledTimes(1))
+    const [payload] = importStatementMock.mock.calls[0]
+    for (const line of payload.lines) {
+      expect('accountId' in line).toBe(false)
+    }
+  })
+
+  test('lets the user override the matched account to "Don\'t attach"', async () => {
+    parseStatementMock.mockResolvedValueOnce(okParse)
+    importStatementMock.mockResolvedValueOnce(importResult({ createdCount: 2 }))
+    const { user, fileInput } = renderImport()
+
+    await user.upload(fileInput, pdfFile())
+    await user.click(
+      await screen.findByRole('combobox', { name: 'ARS account' }),
+    )
+    await user.click(await screen.findByRole('option', { name: "Don't attach" }))
+
+    await user.click(screen.getByRole('button', { name: 'Import 2 expenses' }))
+
+    await waitFor(() => expect(importStatementMock).toHaveBeenCalledTimes(1))
+    const [payload] = importStatementMock.mock.calls[0]
+    for (const line of payload.lines) {
+      expect('accountId' in line).toBe(false)
+    }
   })
 })
 

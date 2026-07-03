@@ -33,6 +33,13 @@
     "statementTotal": "Statement total",
     "duplicate": "Looks like you already imported this statement. You can still import it if this is intentional.",
     "dateNote": "Lines are dated when the card is paid; the original purchase date is shown per row.",
+    "account": {
+      "title": "Card account",
+      "subtitle": "We matched these charges to your card. Confirm or pick another.",
+      "currencyLabel": "{{currency}} account",
+      "dontAttach": "Don't attach",
+      "noMatch": "No {{currency}} card account — these lines import without one."
+    },
     "tableAriaLabel": "Statement line items",
     "columns": {
       "date": "Date",

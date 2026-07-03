@@ -49,6 +49,8 @@ import TextField from '@mui/material/TextField'
 import ToggleButton from '@mui/material/ToggleButton'
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
 import Typography from '@mui/material/Typography'
+import FormControl from '@mui/material/FormControl'
+import InputLabel from '@mui/material/InputLabel'
 import CreditCardRoundedIcon from '@mui/icons-material/CreditCardRounded'
 import CompareArrowsRoundedIcon from '@mui/icons-material/CompareArrowsRounded'
 import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded'
@@ -57,10 +59,13 @@ import { CATEGORIES } from '../../mock/seed'
 import { formatCurrency, isoToDispDateLike } from './format'
 import { categoryLabel } from '../transactions/presentation'
 import { monoFontFamily } from '../../theme'
+import { useAccounts } from '../accounts/queries'
+import type { Account } from '../../mock/types'
 import type { StatementMatch, StatementParse } from '../../api/statementsClient'
 import {
   parseCuota,
   useStatementReviewState,
+  type CurrencyAccountChoice,
   type ReviewLine,
   type ReviewResolution,
 } from './useStatementReviewState'
@@ -641,13 +646,154 @@ const visuallyHiddenSx = {
   width: '1px',
 } as const
 
+/** A short "Institution · CUR" label for a card-account option. */
+function accountOptionLabel(account: Account): string {
+  return `${account.institutionName} · ${account.currency}`
+}
+
+/**
+ * The per-currency card-account attachment control (ADR-184). A statement is
+ * from ONE card and Argentine cards carry separate ARS + USD balances, so the
+ * attachment is confirmed ONCE per line-currency present in the statement — a
+ * calm confirm-the-match affordance, not a noisy per-row selector. Each currency
+ * present gets a labeled Select pre-selected to its auto-matched card account
+ * (ADR-184); the user can confirm, switch to another card account of the SAME
+ * currency, or choose "Don't attach" (import that currency's lines unattached).
+ * Only card accounts whose currency equals the section currency are offered.
+ */
+function AccountAttachSection({
+  choices,
+  accounts,
+  onChange,
+  disabled,
+}: {
+  choices: readonly CurrencyAccountChoice[]
+  accounts: readonly Account[]
+  onChange: (currency: CurrencyAccountChoice['currency'], accountId: string | null) => void
+  disabled: boolean
+}) {
+  const { t } = useTranslation('statements')
+  if (choices.length === 0) return null
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'flex-start',
+        gap: 2,
+        px: 2,
+        py: 1.75,
+        mb: 2,
+        bgcolor: 'var(--mg-paper)',
+        border: '1px solid var(--mg-border-2)',
+        borderRadius: 2.5,
+      }}
+    >
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography sx={{ fontSize: 13.5, fontWeight: 600, color: 'text.primary' }}>
+          {t('review.account.title')}
+        </Typography>
+        <Typography sx={{ fontSize: 12, color: 'text.secondary', mt: 0.25 }}>
+          {t('review.account.subtitle')}
+        </Typography>
+      </Box>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={1.5}
+        sx={{ flexWrap: 'wrap', alignItems: 'flex-start' }}
+        useFlexGap
+      >
+        {choices.map((choice) => {
+          // Only card accounts of the SAME currency are eligible options (ADR-184).
+          const options = accounts.filter(
+            (a) => a.type === 'card' && a.currency === choice.currency,
+          )
+          const value = choice.selectedAccountId ?? ''
+          const noMatch = choice.matched === null && options.length === 0
+          return (
+            <CurrencyAccountSelect
+              key={choice.currency}
+              currency={choice.currency}
+              value={value}
+              options={options}
+              noMatch={noMatch}
+              disabled={disabled}
+              onChange={(id) => onChange(choice.currency, id === '' ? null : id)}
+            />
+          )
+        })}
+      </Stack>
+    </Box>
+  )
+}
+
+/** One labeled currency section's card-account Select (ADR-184). */
+function CurrencyAccountSelect({
+  currency,
+  value,
+  options,
+  noMatch,
+  disabled,
+  onChange,
+}: {
+  currency: CurrencyAccountChoice['currency']
+  value: string
+  options: readonly Account[]
+  noMatch: boolean
+  disabled: boolean
+  onChange: (accountId: string) => void
+}) {
+  const { t } = useTranslation('statements')
+  const labelId = useId()
+  const label = t('review.account.currencyLabel', { currency })
+  // No card account of this currency exists — the lines import unattached; show a
+  // calm caption instead of an empty picker so the state is clear (ADR-184/037).
+  if (noMatch) {
+    return (
+      <Box sx={{ minWidth: 200 }}>
+        <FactLabel>{label}</FactLabel>
+        <Typography sx={{ fontSize: 13, color: 'text.secondary' }} role="note">
+          {t('review.account.noMatch', { currency })}
+        </Typography>
+      </Box>
+    )
+  }
+  return (
+    <FormControl size="small" sx={{ minWidth: 220 }} disabled={disabled}>
+      <InputLabel id={labelId}>{label}</InputLabel>
+      <Select
+        labelId={labelId}
+        label={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        sx={{ borderRadius: '10px', bgcolor: 'var(--mg-paper)', fontSize: 13 }}
+      >
+        {options.map((account) => (
+          <MenuItem key={account.id} value={account.id}>
+            {accountOptionLabel(account)}
+          </MenuItem>
+        ))}
+        <MenuItem value="">
+          <em>{t('review.account.dontAttach')}</em>
+        </MenuItem>
+      </Select>
+    </FormControl>
+  )
+}
+
 export function StatementReviewTable({
   parse,
   onImport,
   isImporting,
 }: StatementReviewTableProps) {
   const { t } = useTranslation('statements')
-  const review = useStatementReviewState(parse)
+  // The user's accounts drive the (institution, currency) auto-match for the
+  // per-currency card-account attachment (ADR-184). While loading, the accounts
+  // list is empty and no attachment defaults are seeded (lines would import
+  // unattached); the selection re-seeds to the auto-match once accounts resolve.
+  const accountsQuery = useAccounts()
+  const accounts = accountsQuery.data ?? []
+  const review = useStatementReviewState(parse, accounts)
 
   // The detected card identity as "Galicia · VISA ·5771" — the normalized bank
   // joined with the card detail (ADR-117). Falls back gracefully when a part is
@@ -741,6 +887,15 @@ export function StatementReviewTable({
           {t('review.duplicate')}
         </Alert>
       ) : null}
+
+      {/* Per-currency card-account attachment (ADR-184): confirm the auto-matched
+          (institution, currency) card account for this statement's lines. */}
+      <AccountAttachSection
+        choices={review.accountChoices}
+        accounts={accounts}
+        onChange={review.setAccountForCurrency}
+        disabled={isImporting}
+      />
 
       {/* A calm note explaining the two-date model (ADR-089/037). */}
       <Typography
