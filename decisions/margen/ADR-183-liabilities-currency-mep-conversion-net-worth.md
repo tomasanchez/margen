@@ -28,6 +28,14 @@ This is consistent with the FX-snapshot / denomination discipline established in
 
 **Mixed-denomination streams:** if an installment stream is denominated in USD and the display currency is ARS, the stream's `cuota_amount` in USD is converted to ARS at MEP. If the display currency is USD and the stream is ARS, convert ARS to USD at MEP. Streams without a resolvable rate contribute to `unconverted_count` and are excluded from `liabilities.sum`.
 
+## Amendment (2026-07-03) — convert at the LIVE display rate, not a backend snapshot
+
+The first implementation converted the liability server-side using the backend's most-recent confirmed transaction `fx_rate` (a per-transaction *snapshot* rate). But net-worth **display** is rendered at the **live** MEP rate client-side (ADR-133), so subtracting a snapshot-rate liability from a live-rate assets figure made "Net of commitments" incoherent whenever a USD installment tail existed and the two rates had drifted — contradicting this ADR's own stated intent to use the live rate (see the rejected snapshot alternative below).
+
+Corrected decision: the liabilities read model exposes the installment tail as a **native ARS/USD breakdown** (unconverted), and the **frontend converts it at the SAME live MEP rate it uses for the net-worth assets headline** (ADR-133). Both sides of `net worth − liabilities` therefore use one rate, and "Net of commitments" is coherent. The server still returns a converted `installments`/`total`/`net_after_liabilities` (at the backend rate) for API/test completeness, but the displayed card derives its figures from the native breakdown at the live rate. This *adopts* the previously-rejected "separate ARS/USD subtotals" alternative, because it is what makes live-rate coherence possible.
+
+Known bounded limitation (accepted, not fixed here): the Concept-A committed-spend accent on the **Home** view annotates a live-rate Expenses figure with snapshot-denominated committed figures (ADR-152/168), so on a USD Home view the accent is approximate; the Budget page is coherent (spend + accent both snapshot-denominated in the budget currency). This is the same live-vs-snapshot tension logged in ADR-154 and is left as-is.
+
 ## Alternatives Considered
 
 - **Fixed ARS-only liabilities (no FX conversion)**: Simpler but wrong when the owner holds USD installments (e.g., a USD-denominated loan); the ARS-only total would understate or misstate the obligation in a USD-display view; rejected.
@@ -45,3 +53,4 @@ This is consistent with the FX-snapshot / denomination discipline established in
 ## Status History
 
 - 2026-07-03: accepted
+- 2026-07-03: amended — liabilities convert at the LIVE display rate (ADR-133) via a native ARS/USD breakdown converted client-side, not the backend snapshot rate; adopts the native-subtotal approach originally rejected. Notes the Home committed-accent live-vs-snapshot limitation (ADR-154).

@@ -120,6 +120,9 @@ class TestNetWorthLiabilitiesSql:
         assert net_worth.liabilities.installments == Decimal("2000.00")
         assert net_worth.liabilities.total == Decimal("2000.00")
         assert net_worth.liabilities.cc_balance is None
+        # The native breakdown carries the unconverted ARS tail (no USD stream), ADR-183.
+        assert net_worth.liabilities.installments_native.ars == Decimal("2000.00")
+        assert net_worth.liabilities.installments_native.usd == Decimal("0.00")
         assert net_worth.net_after_liabilities == Decimal("97500.00")
 
     async def test_subscriptions_do_not_contribute(self, session_factory: async_sessionmaker[AsyncSession]):
@@ -188,6 +191,9 @@ class TestNetWorthLiabilitiesSql:
         # THEN — 3 remaining x 10 USD = 30 USD; at 1000 ARS/USD = 30,000 ARS.
         assert net_worth.currency is Currency.ARS
         assert net_worth.liabilities.installments == Decimal("30000.00")
+        # The native breakdown carries the unconverted 30 USD tail (no ARS stream), ADR-183.
+        assert net_worth.liabilities.installments_native.usd == Decimal("30.00")
+        assert net_worth.liabilities.installments_native.ars == Decimal("0.00")
 
     async def test_reservation_is_owner_scoped(self, session_factory: async_sessionmaker[AsyncSession]):
         """

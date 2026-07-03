@@ -322,8 +322,15 @@ class TestNetWorth:
         assert data["total"] == "0.00"
         assert data["currency"] == "ARS"
         assert data["accounts"] == []
-        # The liabilities reservation is present and zero for a fresh owner (ADR-180).
-        assert data["liabilities"] == {"installments": "0.00", "ccBalance": None, "other": None, "total": "0.00"}
+        # The liabilities reservation is present and zero for a fresh owner (ADR-180), including
+        # the native ARS/USD breakdown the client converts at the live rate (ADR-183 amendment).
+        assert data["liabilities"] == {
+            "installments": "0.00",
+            "installmentsNative": {"ars": "0.00", "usd": "0.00"},
+            "ccBalance": None,
+            "other": None,
+            "total": "0.00",
+        }
         assert data["netAfterLiabilities"] == "0.00"
 
     async def test_balance_reconciles_opening_plus_signed_deltas(self, test_client: httpx.AsyncClient):
@@ -446,6 +453,8 @@ class TestNetWorthLiabilities:
         assert data["liabilities"]["total"] == "2000.00"
         assert data["liabilities"]["ccBalance"] is None
         assert data["liabilities"]["other"] is None
+        # The native breakdown carries the UNCONVERTED ARS tail (no USD stream here), ADR-183.
+        assert data["liabilities"]["installmentsNative"] == {"ars": "2000.00", "usd": "0.00"}
         assert data["netAfterLiabilities"] == "97500.00"
 
     async def test_subscriptions_do_not_contribute_to_liabilities(self, test_client: httpx.AsyncClient):
@@ -540,6 +549,8 @@ class TestNetWorthLiabilities:
         # THEN — 3 remaining x 10 USD = 30 USD; at 1000 ARS/USD = 30,000 ARS.
         assert data["currency"] == "ARS"
         assert data["liabilities"]["installments"] == "30000.00"
+        # The native breakdown carries the UNCONVERTED 30 USD tail (no ARS stream here), ADR-183.
+        assert data["liabilities"]["installmentsNative"] == {"ars": "0.00", "usd": "30.00"}
 
     async def test_installment_without_structured_fields_contributes_zero(self, test_client: httpx.AsyncClient):
         """

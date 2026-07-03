@@ -13,8 +13,9 @@ SQL (AGENTS.md). The committed universe mirrors the forecast (ADR-176, ADR-177):
   Grouped by ``(name, category)``; each plan's latest occurrence supplies its remaining
   count and last-actual month, and this-month rows supply its posted amount.
 * **Monotributo cuota** — the owner's configured category's monthly cuota, an AFIP-ARS
-  committed tax outflow (ADR-177). Posted when a monotributo-category expense landed this
-  month; otherwise pending in the ARS denomination.
+  committed tax outflow (ADR-177). PAID at the ACTUAL summed amount of the ``Taxes``-category
+  expenses that landed this month (the real spend already in the Expenses total, ADR-179);
+  when none posted, PENDING at the monotributo SCALE cuota in the ARS denomination.
 
 For each stream the adapter derives, for the target month, the already-POSTED amount (the
 committed rows that landed this month) and the EXPECTED-this-month amount (the stream's
@@ -32,7 +33,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from margen_api.adapters.models.transaction import TransactionRecord
@@ -44,6 +45,8 @@ from margen_api.service_layer.committed_reader import AbstractCommittedReader
 from margen_api.service_layer.forecast_read_models import CommitmentSource
 from margen_api.service_layer.monotributo_repository import AbstractMonotributoSnapshotRepository
 from margen_api.service_layer.summaries import add_months, month_key
+
+_ZERO = Decimal(0)
 
 # The activity-type token that selects the services cuota column; anything else
 # (``bienes``) selects the goods column (ADR-046, mirrors the forecast reader).
@@ -60,6 +63,13 @@ _CADENCE_MONTHS: dict[RecurringCadence, int] = {
     RecurringCadence.QUARTERLY: 3,
     RecurringCadence.ANNUAL: 12,
 }
+
+
+def _as_decimal(value: object) -> Decimal:
+    """Coerce a SUM result to ``Decimal`` (SQLite may return a float)."""
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
 
 
 def _month_offset(from_key: str, to_key: str) -> int:
@@ -319,39 +329,48 @@ class SqlAlchemyCommittedReader(AbstractCommittedReader):
         """Derive the monotributo cuota's paid/pending figure for the target month (ADR-177/179).
 
         Returns ``None`` when the owner has no configured category (the tax leg is
-        omitted). Otherwise the AFIP-ARS cuota is PAID when a monotributo-category expense
-        landed this month, else PENDING — the cuota is a monthly committed outflow, so it
-        is always due the target month. The cuota is AFIP-ARS and ``ars_fixed`` so the
-        engine sums it only on an ARS request (ADR-177).
+        omitted). Otherwise: when one or more ``Taxes``-category expenses posted this month
+        the tax leg is PAID at their ACTUAL summed amount (the real spend already inside the
+        month's Expenses total, mirroring how subscriptions/instalments sum their real rows,
+        ADR-179) and nothing is pending; when NONE posted the tax leg is PENDING at the
+        monotributo SCALE cuota — the expected-this-month figure for a monthly committed
+        outflow (ADR-177). The scale cuota therefore drives ONLY the pending case. Both legs
+        are AFIP-ARS and ``ars_fixed`` so the engine sums the tax only on an ARS request
+        (ADR-177).
         """
         cuota = await self._monotributo_cuota(user_id)
         if cuota is None or cuota <= Decimal(0):
             return None
         posted = await self._tax_posted_this_month(owner, month=month)
-        if posted:
-            return CommittedStream(source=CommitmentSource.TAX, posted=cuota, expected=None, ars_fixed=True)
+        if posted is not None:
+            # A real Taxes outflow posted → paid is the ACTUAL spend, not the scale cuota (ADR-179).
+            return CommittedStream(source=CommitmentSource.TAX, posted=posted, expected=None, ars_fixed=True)
+        # Nothing posted → the scale cuota is the expected-this-month pending figure (ADR-177).
         return CommittedStream(source=CommitmentSource.TAX, posted=None, expected=cuota, ars_fixed=True)
 
-    async def _tax_posted_this_month(self, owner: UUID, *, month: date) -> bool:
-        """Return whether a tax (AFIP) expense landed in the target month (ADR-177, ADR-179).
+    async def _tax_posted_this_month(self, owner: UUID, *, month: date) -> Decimal | None:
+        """Return the SUM of AFIP (``Taxes``) expenses posted in the target month, or ``None`` (ADR-177/179).
 
-        The cuota flips to paid once its AFIP outflow posts. A monotributo cuota is recorded
-        in the ledger as an EXPENSE in the ``Taxes`` category (the only structured tax signal
-        available — the ``counts_toward_monotributo`` flag is meaningful only for income /
-        invoice, so an expense cannot carry it, ADR-158). When such a ``Taxes`` expense is
-        dated in the target month the cuota is treated as paid rather than still pending;
-        otherwise the known AFIP-ARS cuota remains pending.
+        The cuota flips to paid at the ACTUAL amount once its AFIP outflow posts. A monotributo
+        cuota is recorded in the ledger as an EXPENSE in the ``Taxes`` category (the only
+        structured tax signal available — the ``counts_toward_monotributo`` flag is meaningful
+        only for income / invoice, so an expense cannot carry it, ADR-158). This SUMs every such
+        ``Taxes`` expense dated in the target month (their authoritative ARS ``amount``), so the
+        paid figure is the real posted spend already inside the month's Expenses total — NOT the
+        monotributo scale cuota (ADR-179). Returns ``None`` when no ``Taxes`` expense posted this
+        month, so the caller keeps the known AFIP-ARS scale cuota as the pending figure.
         """
         upper = add_months(date(month.year, month.month, 1), 1)
-        statement = select(TransactionRecord.id).where(
+        statement = select(func.coalesce(func.sum(TransactionRecord.amount), _ZERO)).where(
             TransactionRecord.user_id == owner,
             TransactionRecord.kind == Kind.EXPENSE.value,
             TransactionRecord.category == _TAXES_CATEGORY,
             TransactionRecord.occurred_on >= date(month.year, month.month, 1),
             TransactionRecord.occurred_on < upper,
         )
-        result = await self.session.execute(statement.limit(1))
-        return result.scalar_one_or_none() is not None
+        total = _as_decimal((await self.session.execute(statement)).scalar_one())
+        # No Taxes expense posted (coalesced SUM is 0) → keep the scale cuota as pending (ADR-179).
+        return total if total != _ZERO else None
 
     async def _monotributo_cuota(self, user_id: str) -> Decimal | None:
         """Return the owner's configured monotributo monthly cuota, or ``None`` (ADR-177).

@@ -339,13 +339,16 @@ class TestCommittedDbBacked:
         assert data["paid"]["total"] == "0.00"
         assert data["pending"]["total"] == "0.00"
 
-    async def test_monotributo_cuota_flips_to_paid_when_tax_expense_posts(self, test_client: httpx.AsyncClient):
+    async def test_monotributo_cuota_paid_is_actual_posted_not_scale(self, test_client: httpx.AsyncClient):
         """
         GIVEN a configured monotributo category and a Taxes-category expense posted this month
+              whose amount DIFFERS from the monotributo scale cuota
         WHEN the ARS committed split is read
-        THEN the tax cuota is on the paid side, not pending - it flipped once the outflow posted
+        THEN paid.tax is the ACTUAL posted amount (not the scale cuota) and pending.tax flips
+             to zero - the paid figure is the real spend already in the Expenses total (ADR-179)
         """
-        # GIVEN — configure category A / services, then post a Taxes expense (the AFIP outflow signal).
+        # GIVEN — configure category A / services, then post a Taxes expense at a distinctive
+        # amount (5,000) chosen NOT to coincide with any scale cuota, so the assertion is unambiguous.
         patched = await test_client.patch(
             SETTINGS, json={"monotributoCurrentCategory": "A", "monotributoActivityType": "services"}
         )
@@ -353,17 +356,36 @@ class TestCommittedDbBacked:
         await self._post(
             test_client,
             kind="expense",
-            amountNum="42386.74",
-            name="Monotributo cuota",
+            amountNum="5000",
+            name="Bank tax",
             category="Taxes",
         )
 
         # WHEN
         data = (await test_client.get(COMMITTED, params={"month": _this_month_key(), "currency": "ARS"})).json()["data"]
 
-        # THEN — the cuota is paid (an AFIP outflow posted this month), not pending.
-        assert Decimal(data["paid"]["tax"]) > Decimal(0)
+        # THEN — paid.tax equals the ACTUAL posted spend (5,000), NOT the ~42k scale cuota; pending flips to 0.
+        assert data["paid"]["tax"] == "5000.00"
         assert data["pending"]["tax"] == "0.00"
+
+    async def test_monotributo_cuota_pending_at_scale_when_no_tax_expense_posted(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a configured monotributo category and NO Taxes-category expense posted this month
+        WHEN the ARS committed split is read
+        THEN pending.tax is the monotributo SCALE cuota and paid.tax is zero (ADR-177/179)
+        """
+        # GIVEN — configure category A / services; post nothing in the Taxes category.
+        patched = await test_client.patch(
+            SETTINGS, json={"monotributoCurrentCategory": "A", "monotributoActivityType": "services"}
+        )
+        assert patched.status_code == status.HTTP_200_OK, patched.text
+
+        # WHEN
+        data = (await test_client.get(COMMITTED, params={"month": _this_month_key(), "currency": "ARS"})).json()["data"]
+
+        # THEN — the scale cuota is the pending (expected-this-month) figure; nothing is paid.
+        assert Decimal(data["pending"]["tax"]) > Decimal(0)
+        assert data["paid"]["tax"] == "0.00"
 
     async def test_usd_excludes_snapshotless_and_counts_unconverted(self, test_client: httpx.AsyncClient):
         """

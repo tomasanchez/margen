@@ -27,7 +27,12 @@ from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
 from margen_api.domain.models.value_objects import Currency, InstitutionType
-from margen_api.service_layer.account_read_models import AccountBalance, Liabilities, NetWorth
+from margen_api.service_layer.account_read_models import (
+    AccountBalance,
+    InstallmentsNative,
+    Liabilities,
+    NetWorth,
+)
 
 _ZERO = Decimal(0)
 # Money is presented to 2 decimal places (ADR-025); FX multiplication / division
@@ -125,9 +130,12 @@ def build_liabilities(
     the FULL remaining tail. Each stream's native tail is converted into
     ``display_currency`` via the SAME MEP rate net worth uses (ADR-123/183); when the rate
     is unavailable a cross-currency figure degrades to native, consistent with how net
-    worth already degrades (ADR-132). A fully-paid plan (``remaining_count == 0``)
-    contributes nothing. Slice 1 populates only ``installments``; ``cc_balance`` and
-    ``other`` are typed ``None`` placeholders (ADR-180/182).
+    worth already degrades (ADR-132). The SAME native tails are ALSO summed unconverted per
+    currency into ``installments_native`` (ADR-183 amendment) so the client can convert the
+    liability at the LIVE MEP rate it uses for the assets headline (ADR-133), keeping "Net
+    of commitments" coherent. A fully-paid plan (``remaining_count == 0``) contributes
+    nothing. Slice 1 populates only ``installments``; ``cc_balance`` and ``other`` are typed
+    ``None`` placeholders (ADR-180/182).
 
     Args:
         installments: The active instalment streams' native tails from the adapter.
@@ -136,17 +144,25 @@ def build_liabilities(
 
     Returns:
         The assembled :class:`Liabilities` with the instalment tail summed and converted,
-        the future obligation types left as ``None`` placeholders, and the total.
+        the native ARS/USD breakdown for live-rate client conversion (ADR-183), the future
+        obligation types left as ``None`` placeholders, and the total.
     """
     installments_total = _ZERO
+    native_ars = _ZERO
+    native_usd = _ZERO
     for stream in installments:
         if stream.remaining_count <= 0:
             continue
         native_tail = stream.amount * stream.remaining_count
         installments_total += convert(native_tail, stream.currency, display_currency, mep_rate)
+        if stream.currency is Currency.USD:
+            native_usd += native_tail
+        else:
+            native_ars += native_tail
     installments_total = _money(installments_total)
     return Liabilities(
         installments=installments_total,
+        installments_native=InstallmentsNative(ars=_money(native_ars), usd=_money(native_usd)),
         cc_balance=None,
         other=None,
         total=installments_total,

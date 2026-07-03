@@ -15,7 +15,7 @@ from uuid import uuid4
 
 import pytest
 
-from margen_api.adapters.committed_queries import SqlAlchemyCommittedReader, _month_offset
+from margen_api.adapters.committed_queries import SqlAlchemyCommittedReader, _as_decimal, _month_offset
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.domain.models.value_objects import Currency, Kind, RecurringCadence
 from tests.fakes.persistence import FakeMonotributoSnapshotRepository
@@ -51,6 +51,32 @@ def _reader(config: dict | None = None) -> SqlAlchemyCommittedReader:
     """Build a session-less reader over a fake monotributo repository for the pure helpers."""
     repo = FakeMonotributoSnapshotRepository({}, config if config is not None else {}, {})
     return SqlAlchemyCommittedReader(session=None, monotributo=repo)  # type: ignore[arg-type]
+
+
+class TestAsDecimal:
+    """A summed money column is coerced to ``Decimal`` regardless of the driver's type (ADR-025)."""
+
+    def test_decimal_passes_through(self):
+        """
+        GIVEN a value already a Decimal (asyncpg returns NUMERIC as Decimal)
+        WHEN it is coerced
+        THEN the same Decimal is returned
+        """
+        # WHEN / THEN
+        assert _as_decimal(Decimal("5000.00")) == Decimal("5000.00")
+
+    def test_float_is_coerced_to_decimal(self):
+        """
+        GIVEN a float (as SQLite may return for a summed NUMERIC)
+        WHEN it is coerced
+        THEN a Decimal is returned so the tax-paid SUM stays money-typed (ADR-025)
+        """
+        # WHEN
+        result = _as_decimal(5000.0)
+
+        # THEN
+        assert result == Decimal("5000.0")
+        assert isinstance(result, Decimal)
 
 
 class TestMonthOffset:

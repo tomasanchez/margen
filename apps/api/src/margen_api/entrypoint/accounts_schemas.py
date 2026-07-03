@@ -29,6 +29,7 @@ from margen_api.entrypoint.schemas import CamelCaseModel
 from margen_api.service_layer.account_read_models import (
     AccountBalance,
     AccountReadModel,
+    InstallmentsNative,
     Liabilities,
     NetWorth,
 )
@@ -152,11 +153,30 @@ class AccountBalanceResponse(CamelCaseModel):
         )
 
 
+class InstallmentsNativeResponse(CamelCaseModel):
+    """The instalment tail as native ARS/USD sums, unconverted (ADR-183 amendment).
+
+    The client converts these at the LIVE MEP rate it uses for the net-worth assets
+    headline (ADR-133), so "Net of commitments" stays coherent when a USD tail exists.
+    """
+
+    ars: Decimal = Field(description="Sum of remaining x cuota over ARS instalment streams, native ARS; a string.")
+    usd: Decimal = Field(description="Sum of remaining x cuota over USD instalment streams, native USD; a string.")
+
+    @classmethod
+    def from_read_model(cls, model: InstallmentsNative) -> InstallmentsNativeResponse:
+        """Build the response from a native-breakdown read model (ADR-030)."""
+        return cls(ars=model.ars, usd=model.usd)
+
+
 class LiabilitiesResponse(CamelCaseModel):
     """The typed liabilities reservation returned to clients (ADR-180)."""
 
     installments: Decimal = Field(
         description="Full remaining instalment tail (sum of remaining x cuota) in the display currency; a string.",
+    )
+    installments_native: InstallmentsNativeResponse = Field(
+        description="The instalment tail as native ARS/USD sums the client converts at the live rate (ADR-183).",
     )
     cc_balance: Decimal | None = Field(
         default=None,
@@ -173,6 +193,7 @@ class LiabilitiesResponse(CamelCaseModel):
         """Build the response from a liabilities read model (ADR-030)."""
         return cls(
             installments=model.installments,
+            installments_native=InstallmentsNativeResponse.from_read_model(model.installments_native),
             cc_balance=model.cc_balance,
             other=model.other,
             total=model.total,

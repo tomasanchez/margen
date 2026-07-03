@@ -21,7 +21,12 @@ from margen_api.domain.models.institution import Institution
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.transfer import Transfer
 from margen_api.domain.models.value_objects import BudgetKind, Currency, Kind, TxType
-from margen_api.service_layer.account_read_models import AccountReadModel, Liabilities, NetWorth
+from margen_api.service_layer.account_read_models import (
+    AccountReadModel,
+    InstallmentsNative,
+    Liabilities,
+    NetWorth,
+)
 from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.account_repository import AbstractAccountRepository
 from margen_api.service_layer.budget_income_repository import AbstractBudgetIncomeRepository
@@ -764,7 +769,13 @@ def _empty_net_worth() -> NetWorth:
         total=Decimal(0),
         currency=Currency.ARS,
         accounts=[],
-        liabilities=Liabilities(installments=Decimal(0), cc_balance=None, other=None, total=Decimal(0)),
+        liabilities=Liabilities(
+            installments=Decimal(0),
+            installments_native=InstallmentsNative(ars=Decimal(0), usd=Decimal(0)),
+            cc_balance=None,
+            other=None,
+            total=Decimal(0),
+        ),
         net_after_liabilities=Decimal(0),
     )
 

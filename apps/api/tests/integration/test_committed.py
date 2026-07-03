@@ -245,6 +245,32 @@ class TestCommittedSql:
         assert split.pending.tax == expected
         assert split.paid.tax == Decimal("0.00")
 
+    async def test_monotributo_paid_tax_is_actual_posted_amount_not_scale(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a configured monotributo category and a Taxes-category expense posted this
+              month at an amount DIFFERENT from the scale cuota
+        WHEN the ARS committed split is read
+        THEN paid.tax is the ACTUAL posted amount (not the scale cuota) and pending.tax is 0 (ADR-179)
+        """
+        # GIVEN — configure category B / services, then post a Taxes expense at a distinctive 5,000.
+        async with session_factory() as session:
+            await SqlAlchemySettingsRepository(session).upsert_settings(
+                OWNER, monotributo_current_category="B", monotributo_activity_type="services"
+            )
+            await session.commit()
+        await _seed(session_factory, [_tx(name="Bank tax", category="Taxes", amount=Decimal("5000"))])
+
+        # WHEN
+        async with session_factory() as session:
+            split = await _reader(session).committed(_first_of_current_month(), OWNER, currency=Currency.ARS)
+
+        # THEN — paid.tax is the real posted spend, NOT the scale cuota; pending flips to 0.
+        assert split.paid.tax == Decimal("5000.00")
+        assert split.paid.tax != get_category("B").cuota_servicios
+        assert split.pending.tax == Decimal("0.00")
+
     async def test_committed_is_owner_scoped(self, session_factory: async_sessionmaker[AsyncSession]):
         """
         GIVEN owner A has a committed subscription this month

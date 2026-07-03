@@ -253,6 +253,64 @@ class TestBuildLiabilities:
         # THEN
         assert liabilities.installments == Decimal("20.00")
 
+    async def test_native_breakdown_ars_only_tail_is_unconverted(self):
+        """
+        GIVEN two active ARS instalment plans and a USD display currency with a MEP rate
+        WHEN the liabilities reservation is built
+        THEN installmentsNative.ars is the UNCONVERTED native ARS tail and usd is zero (ADR-183)
+        """
+        # GIVEN — 4 x 500 + 2 x 1000 = 4000 native ARS; a USD display + rate must NOT touch native.
+        plans = [
+            _installment(amount=Decimal("500"), currency=Currency.ARS, remaining_count=4),
+            _installment(amount=Decimal("1000"), currency=Currency.ARS, remaining_count=2),
+        ]
+
+        # WHEN
+        liabilities = build_liabilities(plans, display_currency=Currency.USD, mep_rate=_MEP)
+
+        # THEN — native stays 4000 ARS (unconverted); the converted figure divides by the rate.
+        assert liabilities.installments_native.ars == Decimal("4000.00")
+        assert liabilities.installments_native.usd == Decimal("0.00")
+        assert liabilities.installments == Decimal("4.00")
+
+    async def test_native_breakdown_usd_only_tail_is_unconverted(self):
+        """
+        GIVEN a USD instalment plan and an ARS display currency with a MEP rate
+        WHEN the liabilities reservation is built
+        THEN installmentsNative.usd is the UNCONVERTED native USD tail and ars is zero (ADR-183)
+        """
+        # GIVEN — 3 x 10 USD = 30 native USD; an ARS display + rate must NOT touch native.
+        plans = [_installment(amount=Decimal("10"), currency=Currency.USD, remaining_count=3)]
+
+        # WHEN
+        liabilities = build_liabilities(plans, display_currency=Currency.ARS, mep_rate=_MEP)
+
+        # THEN — native stays 30 USD (unconverted); the converted figure multiplies by the rate.
+        assert liabilities.installments_native.usd == Decimal("30.00")
+        assert liabilities.installments_native.ars == Decimal("0.00")
+        assert liabilities.installments == Decimal("30000.00")
+
+    async def test_native_breakdown_mixed_tail_groups_by_currency_unconverted(self):
+        """
+        GIVEN a mix of ARS and USD instalment plans (including a fully-paid one)
+        WHEN the liabilities reservation is built
+        THEN installmentsNative sums each currency's native tail separately, unconverted (ADR-183)
+        """
+        # GIVEN — 4 x 500 = 2000 ARS + 3 x 10 = 30 USD; a 0-remaining USD plan contributes nothing.
+        plans = [
+            _installment(amount=Decimal("500"), currency=Currency.ARS, remaining_count=4),
+            _installment(amount=Decimal("10"), currency=Currency.USD, remaining_count=3),
+            _installment(amount=Decimal("99"), currency=Currency.USD, remaining_count=0),
+        ]
+
+        # WHEN
+        liabilities = build_liabilities(plans, display_currency=Currency.ARS, mep_rate=_MEP)
+
+        # THEN — native tails grouped by currency, no MEP applied; converted = 2000 + 30x1000 = 32000.
+        assert liabilities.installments_native.ars == Decimal("2000.00")
+        assert liabilities.installments_native.usd == Decimal("30.00")
+        assert liabilities.installments == Decimal("32000.00")
+
 
 class TestNetWorthWithLiabilities:
     """Net worth carries the liabilities reservation alongside the assets-only total (ADR-180)."""
