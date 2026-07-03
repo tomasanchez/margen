@@ -33,6 +33,7 @@ from margen_api.service_layer.account_read_models import (
     InstallmentsNative,
     Liabilities,
     NetWorth,
+    OtherNative,
 )
 
 _ZERO = Decimal(0)
@@ -95,6 +96,27 @@ class CcBalanceInput:
 
 
 @dataclass(frozen=True, slots=True)
+class DebtLiabilityInput:
+    """One manual debt's native balance, for the ``liabilities.other`` leg (ADR-187).
+
+    The adapter derives one of these per :class:`~margen_api.domain.models.debt.Debt` the
+    owner maintains: its native ``current_balance`` and native currency. The pure assembly
+    sums them by currency (unconverted, into ``other_native``) and converts each to the
+    display currency via the SAME MEP rate net worth uses (ADR-123/183). Manual debts are
+    disjoint from all transaction-derived liabilities, so they never overlap the instalment
+    tail (ADR-181) or the CC balance (ADR-185) — no dedupe is needed (ADR-187).
+
+    Attributes:
+        amount: The debt's native outstanding balance in ``currency`` — a non-negative
+            magnitude (ADR-187).
+        currency: The debt's native currency (ADR-183).
+    """
+
+    amount: Decimal
+    currency: Currency
+
+
+@dataclass(frozen=True, slots=True)
 class AccountBalanceInput:
     """The raw per-account balance the adapter computes before FX conversion.
 
@@ -150,21 +172,24 @@ def build_liabilities(
     display_currency: Currency,
     mep_rate: Decimal | None,
     cc_balances: Sequence[CcBalanceInput] = (),
+    debts: Sequence[DebtLiabilityInput] = (),
 ) -> Liabilities:
-    """Assemble the typed liabilities reservation from the instalment tails and CC balance (ADR-180, ADR-181, ADR-185).
+    """Assemble the typed liabilities reservation from the instalment tails, CC balance and other debts (ADR-180, ADR-181, ADR-185, ADR-187).
 
     The instalment liability is Σ over active streams of ``remaining_count * cuota`` -
     the FULL remaining tail. The credit-card liability is Σ over the owner's outstanding
     future-dated CARD-account charges (not yet due/paid, instalments excluded — those are
-    the tail, ADR-181/185). Each native figure is converted into ``display_currency`` via
-    the SAME MEP rate net worth uses (ADR-123/183); when the rate is unavailable a
-    cross-currency figure degrades to native, consistent with how net worth already
-    degrades (ADR-132). The SAME native figures are ALSO summed unconverted per currency
-    into ``installments_native`` / ``cc_balance_native`` (ADR-183 amendment) so the client
-    can convert each liability at the LIVE MEP rate it uses for the assets headline
-    (ADR-133), keeping "Net of commitments" coherent. A fully-paid plan
-    (``remaining_count == 0``) contributes nothing. ``other`` stays a typed ``None``
-    placeholder (ADR-180); ``total`` sums the instalment tail and the CC balance.
+    the tail, ADR-181/185). The "other" liability is Σ over the owner's manual
+    :class:`~margen_api.domain.models.debt.Debt` balances (ADR-187) — disjoint from both
+    transaction-derived legs, so no dedupe is needed. Each native figure is converted into
+    ``display_currency`` via the SAME MEP rate net worth uses (ADR-123/183); when the rate
+    is unavailable a cross-currency figure degrades to native, consistent with how net
+    worth already degrades (ADR-132). The SAME native figures are ALSO summed unconverted
+    per currency into ``installments_native`` / ``cc_balance_native`` / ``other_native``
+    (ADR-183 amendment) so the client can convert each liability at the LIVE MEP rate it
+    uses for the assets headline (ADR-133), keeping "Net of commitments" coherent. A
+    fully-paid plan (``remaining_count == 0``) contributes nothing. ``total`` sums the
+    instalment tail, the CC balance and the other debts.
 
     Args:
         installments: The active instalment streams' native tails from the adapter.
@@ -172,11 +197,13 @@ def build_liabilities(
         mep_rate: The ARS-per-USD MEP rate, or ``None`` when none is available.
         cc_balances: The owner's outstanding CC-balance native subtotals per currency from
             the adapter (ADR-185); empty by default (no CARD-account charges outstanding).
+        debts: The owner's manual debt native balances from the adapter (ADR-187); empty by
+            default (no debts recorded), which yields a computed ``0`` ``other`` leg.
 
     Returns:
-        The assembled :class:`Liabilities` with the instalment tail and the CC balance
-        summed and converted, the native ARS/USD breakdowns for live-rate client conversion
-        (ADR-183), ``other`` left as a ``None`` placeholder, and the total.
+        The assembled :class:`Liabilities` with the instalment tail, the CC balance and the
+        other debts summed and converted, the native ARS/USD breakdowns for live-rate
+        client conversion (ADR-183), and the total.
     """
     installments_total = _ZERO
     native_ars = _ZERO
@@ -203,13 +230,25 @@ def build_liabilities(
             cc_native_ars += subtotal.amount
     cc_total = _money(cc_total)
 
+    other_total = _ZERO
+    other_native_ars = _ZERO
+    other_native_usd = _ZERO
+    for debt in debts:
+        other_total += convert(debt.amount, debt.currency, display_currency, mep_rate)
+        if debt.currency is Currency.USD:
+            other_native_usd += debt.amount
+        else:
+            other_native_ars += debt.amount
+    other_total = _money(other_total)
+
     return Liabilities(
         installments=installments_total,
         installments_native=InstallmentsNative(ars=_money(native_ars), usd=_money(native_usd)),
         cc_balance=cc_total,
         cc_balance_native=CcBalanceNative(ars=_money(cc_native_ars), usd=_money(cc_native_usd)),
-        other=None,
-        total=_money(installments_total + cc_total),
+        other=other_total,
+        other_native=OtherNative(ars=_money(other_native_ars), usd=_money(other_native_usd)),
+        total=_money(installments_total + cc_total + other_total),
     )
 
 
@@ -220,6 +259,7 @@ def build_net_worth(
     mep_rate: Decimal | None,
     installment_liabilities: Sequence[InstallmentLiabilityInput] = (),
     cc_balance_liabilities: Sequence[CcBalanceInput] = (),
+    debt_liabilities: Sequence[DebtLiabilityInput] = (),
 ) -> NetWorth:
     """Assemble the net-worth surface from raw per-account balances (ADR-122, ADR-123, ADR-180).
 
@@ -242,6 +282,10 @@ def build_net_worth(
             the liabilities reservation (ADR-185); empty by default. These are reserved as a
             liability and are already EXCLUDED from ``balances`` (future-dated charges are
             not in the as-of-today asset total, ADR-186), so each peso counts once.
+        debt_liabilities: The owner's manual debt native balances feeding the
+            ``liabilities.other`` leg (ADR-187); empty by default. Debts are NOT assets —
+            they never enter ``balances``/``total`` — and are disjoint from the other legs,
+            so no double-count arises (ADR-186/187).
 
     Returns:
         The assembled :class:`NetWorth` with the total, the per-account breakdown
@@ -270,6 +314,7 @@ def build_net_worth(
         display_currency=display_currency,
         mep_rate=mep_rate,
         cc_balances=cc_balance_liabilities,
+        debts=debt_liabilities,
     )
     return NetWorth(
         total=total,

@@ -337,7 +337,8 @@ class TestNetWorth:
             "installmentsNative": {"ars": "0.00", "usd": "0.00"},
             "ccBalance": "0.00",
             "ccBalanceNative": {"ars": "0.00", "usd": "0.00"},
-            "other": None,
+            "other": "0.00",
+            "otherNative": {"ars": "0.00", "usd": "0.00"},
             "total": "0.00",
         }
         assert data["netAfterLiabilities"] == "0.00"
@@ -463,7 +464,8 @@ class TestNetWorthLiabilities:
         # No CC balance for this owner: a computed zero, not a placeholder (ADR-185).
         assert data["liabilities"]["ccBalance"] == "0.00"
         assert data["liabilities"]["ccBalanceNative"] == {"ars": "0.00", "usd": "0.00"}
-        assert data["liabilities"]["other"] is None
+        # other is now a computed zero for an owner with no debts (ADR-187).
+        assert data["liabilities"]["other"] == "0.00"
         # The native breakdown carries the UNCONVERTED ARS tail (no USD stream here), ADR-183.
         assert data["liabilities"]["installmentsNative"] == {"ars": "2000.00", "usd": "0.00"}
         assert data["netAfterLiabilities"] == "97500.00"

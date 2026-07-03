@@ -63,6 +63,15 @@ _FX_SNAPSHOT = "b3c4d5e6f7a8"
 # (ON DELETE SET NULL) plus a partial index WHERE kind='reimbursement'. No data migration.
 _OFFSET_LINK = "c4d5e6f7a8b9"
 
+# The forecast-schedule fields migration (ADR-174): the head just before the debts table.
+# Seeding at it lets the debts-table test start from the pre-debts head.
+_FORECAST_FIELDS = "d5e6f7a8b9c0"
+
+# The debts migration (ADR-187): chains after the forecast-schedule fields. It creates the
+# ``debts`` table (manual other-debts liability) with a NOT NULL owner column and the two
+# NULLABLE extension-point columns. No data migration is involved.
+_DEBTS = "e6f7a8b9c0d1"
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
 # A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
@@ -487,6 +496,136 @@ class TestMigrations:
             assert "offsets_transaction_id" not in asyncio.run(_columns(integration_database_url, "transactions"))
         finally:
             asyncio.run(_drop_everything(integration_database_url))
+
+    def test_debts_migration_creates_table_with_owner_index(self, integration_database_url: str):
+        """
+        GIVEN a database at the forecast-schedule-fields revision (no debts table)
+        WHEN Alembic upgrades through the debts migration (ADR-187)
+        THEN the debts table exists with the owner + money + nullable extension columns, an
+             owned debt row persists, and the downgrade cleanly drops it again
+
+        Proves the schema add on the production PostgreSQL dialect: the ``debts`` table is
+        created with a NOT NULL ``user_id`` owner column, a NOT NULL ``current_balance``,
+        and the two NULLABLE extension-point columns (ADR-187). No data migration.
+        """
+        # GIVEN — upgrade to the forecast-fields revision (the head before ADR-187).
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _FORECAST_FIELDS)
+        try:
+            # WHEN
+            command.upgrade(config, _DEBTS)
+
+            # THEN — the debts table exists with the expected columns and NULL-ability.
+            tables = asyncio.run(_table_names(integration_database_url))
+            assert "debts" in tables
+            columns = asyncio.run(_column_map(integration_database_url, "debts"))
+            assert {"user_id", "name", "currency", "current_balance", "monthly_minimum", "rate"} <= set(columns)
+            assert columns["current_balance"] is False  # NOT NULL
+            assert columns["monthly_minimum"] is True  # nullable extension point
+            assert columns["rate"] is True  # nullable extension point
+
+            # THEN — an owned debt row (with NULL extension points) persists.
+            assert asyncio.run(_owned_debt_persists(integration_database_url)) is True
+
+            # THEN — the downgrade cleanly drops the table again.
+            command.downgrade(config, _FORECAST_FIELDS)
+            assert "debts" not in asyncio.run(_table_names(integration_database_url))
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
+    def test_head_matches_orm_metadata_no_drift(self, integration_database_url: str):
+        """
+        GIVEN a database migrated to head
+        WHEN Alembic autogenerate compares the schema against the ORM ``Base.metadata``
+        THEN it detects NO differences — the migrations match the models (no drift)
+
+        Proves the debts migration (and every prior migration) faithfully reflects the ORM
+        records on real PostgreSQL: an empty autogenerate diff means a fresh
+        ``alembic revision --autogenerate`` would produce no upgrade ops (ADR-187 asks for
+        ORM <-> migration parity).
+        """
+        # GIVEN — a database at head.
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, "head")
+        try:
+            # WHEN / THEN — autogenerate produces no schema differences.
+            diffs = asyncio.run(_autogenerate_diffs(integration_database_url))
+            assert diffs == [], f"Schema drift between ORM models and migrations: {diffs}"
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
+
+async def _owned_debt_persists(url: str) -> bool:
+    """Insert one owned debt row (NULL extension points) and confirm it round-trips (ADR-187)."""
+    engine = create_async_engine(url)
+    debt_id = uuid.uuid4()
+    insert = text(
+        "INSERT INTO debts (id, user_id, name, currency, current_balance) "
+        "VALUES (:id, :user_id, :name, :currency, :current_balance)"
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            insert,
+            {
+                "id": debt_id,
+                "user_id": uuid.UUID(_OWNER),
+                "name": "Banco Nación loan",
+                "currency": "ARS",
+                "current_balance": Decimal("100000.00"),
+            },
+        )
+        result = await connection.execute(
+            text("SELECT current_balance, monthly_minimum, rate FROM debts WHERE id = :id"),
+            {"id": debt_id},
+        )
+        row = result.one()
+    await engine.dispose()
+    return row.current_balance == Decimal("100000.00") and row.monthly_minimum is None and row.rate is None
+
+
+async def _autogenerate_diffs(url: str) -> list:
+    """Return the Alembic autogenerate diff between the live schema and ``Base.metadata``.
+
+    An empty list means the migrations are in sync with the ORM records — a fresh
+    ``alembic revision --autogenerate`` would emit no ops (no drift). Runs the comparison
+    on a synchronous connection because Alembic's ``compare_metadata`` is sync.
+
+    Some test modules register throwaway ORM records on the SHARED production
+    ``Base.metadata`` (e.g. ``uow_test_widgets`` in the unit-of-work unit test), which are
+    NOT part of any migration. When the whole suite is imported those tables pollute the
+    metadata side of the comparison as spurious "add table" ops. An ``include_object``
+    hook drops any metadata table not managed by the migrations (absent from the live DB),
+    so a stray test-only ORM table is ignored — this checks real drift only.
+    """
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+    from sqlalchemy import inspect
+
+    from margen_api.adapters import models  # noqa: F401  (registers tables on Base.metadata)
+    from margen_api.adapters.models.base import Base
+
+    engine = create_async_engine(url)
+
+    def _compare(sync_conn) -> list:  # type: ignore[no-untyped-def]
+        migrated_tables = set(inspect(sync_conn).get_table_names())
+
+        def include_object(obj, name, type_, reflected, _compare_to) -> bool:  # type: ignore[no-untyped-def]
+            # Applied to BOTH reflected (DB) and metadata (ORM) objects. Drop any table the
+            # migrations do not manage (absent from the live DB) so a test-only ORM table
+            # registered on the shared Base.metadata is not reported as spurious drift.
+            if type_ == "table" and not reflected:
+                return name in migrated_tables
+            return True
+
+        context = MigrationContext.configure(sync_conn, opts={"include_object": include_object})
+        return compare_metadata(context, Base.metadata)
+
+    async with engine.connect() as connection:
+        diffs = await connection.run_sync(_compare)
+    await engine.dispose()
+    return diffs
 
 
 async def _index_names(url: str, table: str) -> list[str | None]:

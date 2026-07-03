@@ -10,6 +10,7 @@ from margen_api.domain.messages import Event
 from margen_api.service_layer.account_repository import AbstractAccountRepository
 from margen_api.service_layer.budget_income_repository import AbstractBudgetIncomeRepository
 from margen_api.service_layer.budget_repository import AbstractBudgetRepository
+from margen_api.service_layer.debt_repository import AbstractDebtRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.institution_repository import AbstractInstitutionRepository
 from margen_api.service_layer.monotributo_repository import AbstractMonotributoSnapshotRepository
@@ -55,6 +56,9 @@ class AbstractUnitOfWork(ABC):
             ADR-138).
         budget_income: Repository for the ``BudgetIncome`` aggregate, written by the
             upsert-income handler and read by the apply-profile handler (ADR-139).
+        debts: Repository for the ``Debt`` aggregate, written by the debt
+            create/update/delete handlers; its balances feed the net-worth
+            ``liabilities.other`` leg (ADR-187).
     """
 
     transactions: AbstractTransactionRepository
@@ -67,6 +71,7 @@ class AbstractUnitOfWork(ABC):
     transfers: AbstractTransferRepository
     budgets: AbstractBudgetRepository
     budget_income: AbstractBudgetIncomeRepository
+    debts: AbstractDebtRepository
 
     async def __aenter__(self) -> AbstractUnitOfWork:
         """Enter the transaction boundary."""

@@ -20,6 +20,7 @@ from margen_api.adapters.account_queries import SqlAlchemyAccountReader
 from margen_api.adapters.budget_income_queries import SqlAlchemyBudgetIncomeReader
 from margen_api.adapters.budget_queries import SqlAlchemyBudgetReader
 from margen_api.adapters.committed_queries import SqlAlchemyCommittedReader
+from margen_api.adapters.debt_queries import SqlAlchemyDebtReader
 from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.forecast_queries import SqlAlchemyForecastReader
 from margen_api.adapters.institution_queries import SqlAlchemyInstitutionReader
@@ -39,6 +40,7 @@ from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.budget_income_reader import AbstractBudgetIncomeReader
 from margen_api.service_layer.budget_reader import AbstractBudgetReader
 from margen_api.service_layer.committed_reader import AbstractCommittedReader
+from margen_api.service_layer.debt_reader import AbstractDebtReader
 from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.forecast_reader import AbstractForecastReader
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
@@ -407,6 +409,23 @@ async def get_institution_reader(container: Container) -> AsyncIterator[Abstract
 
 
 InstitutionReader = Annotated[AbstractInstitutionReader, Depends(get_institution_reader)]
+
+
+async def get_debt_reader(container: Container) -> AsyncIterator[AbstractDebtReader]:
+    """Yield a debt reader over a request-scoped read-only session (ADR-187).
+
+    Query paths bypass the unit of work by design (ADR-028); the session opened here is
+    closed when the request finishes. Debt writes go through the message bus / unit of
+    work instead, keeping this reader read-only.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemyDebtReader(session)
+    finally:
+        await session.close()
+
+
+DebtReader = Annotated[AbstractDebtReader, Depends(get_debt_reader)]
 
 
 async def get_transfer_reader(container: Container) -> AsyncIterator[AbstractTransferReader]:

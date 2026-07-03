@@ -15,6 +15,7 @@ from margen_api.domain.models.value_objects import Currency, InstitutionType
 from margen_api.service_layer.net_worth import (
     AccountBalanceInput,
     CcBalanceInput,
+    DebtLiabilityInput,
     InstallmentLiabilityInput,
     build_liabilities,
     build_net_worth,
@@ -178,7 +179,10 @@ class TestBuildNetWorth:
         assert net_worth.liabilities.cc_balance == Decimal("0.00")
         assert net_worth.liabilities.cc_balance_native.ars == Decimal("0.00")
         assert net_worth.liabilities.cc_balance_native.usd == Decimal("0.00")
-        assert net_worth.liabilities.other is None
+        # other is now a real computed figure like cc_balance (ADR-187): zero, not None.
+        assert net_worth.liabilities.other == Decimal("0.00")
+        assert net_worth.liabilities.other_native.ars == Decimal("0.00")
+        assert net_worth.liabilities.other_native.usd == Decimal("0.00")
         assert net_worth.liabilities.total == Decimal("0.00")
         assert net_worth.net_after_liabilities == Decimal("100000.00")
 
@@ -211,7 +215,8 @@ class TestBuildLiabilities:
         assert liabilities.total == Decimal("4000.00")
         # No CC balances supplied, so the CC liability is a computed zero (ADR-185).
         assert liabilities.cc_balance == Decimal("0.00")
-        assert liabilities.other is None
+        # No debts supplied, so the other liability is a computed zero (ADR-187).
+        assert liabilities.other == Decimal("0.00")
 
     async def test_fully_paid_plan_contributes_zero(self):
         """
@@ -448,3 +453,133 @@ class TestNetWorthWithLiabilities:
         assert net_worth.liabilities.cc_balance == Decimal("4341.66")
         assert net_worth.liabilities.total == Decimal("4341.66")
         assert net_worth.net_after_liabilities == Decimal("95658.34")
+
+    async def test_other_debts_reduce_net_after_liabilities(self):
+        """
+        GIVEN an ARS account and an owned manual debt passed as an other-debt liability
+        WHEN net worth is built
+        THEN total stays assets-only and net_after_liabilities = total - other (ADR-187)
+        """
+        # GIVEN — 100,000 ARS assets; a 30,000 ARS manual debt.
+        ars = _balance(name="Galicia", currency=Currency.ARS, balance=Decimal("100000"))
+        debts = [_debt(amount=Decimal("30000"), currency=Currency.ARS)]
+
+        # WHEN
+        net_worth = build_net_worth(
+            [ars],
+            display_currency=Currency.ARS,
+            mep_rate=_MEP,
+            debt_liabilities=debts,
+        )
+
+        # THEN — total is unchanged (debts are NOT assets), other is the debt, net is derived.
+        assert net_worth.total == Decimal("100000.00")
+        assert net_worth.liabilities.other == Decimal("30000.00")
+        assert net_worth.liabilities.other_native.ars == Decimal("30000.00")
+        assert net_worth.liabilities.total == Decimal("30000.00")
+        assert net_worth.net_after_liabilities == Decimal("70000.00")
+
+    async def test_all_three_legs_fold_into_total(self):
+        """
+        GIVEN an instalment tail, a CC balance and a manual debt (all ARS)
+        WHEN net worth is built
+        THEN liabilities.total = installments + cc_balance + other (ADR-181/185/187)
+        """
+        # GIVEN — 4 x 500 tail = 2000; 1000 card balance; 30000 debt.
+        ars = _balance(name="Galicia", currency=Currency.ARS, balance=Decimal("100000"))
+        plans = [_installment(amount=Decimal("500"), currency=Currency.ARS, remaining_count=4)]
+        cards = [_cc(amount=Decimal("1000"), currency=Currency.ARS)]
+        debts = [_debt(amount=Decimal("30000"), currency=Currency.ARS)]
+
+        # WHEN
+        net_worth = build_net_worth(
+            [ars],
+            display_currency=Currency.ARS,
+            mep_rate=_MEP,
+            installment_liabilities=plans,
+            cc_balance_liabilities=cards,
+            debt_liabilities=debts,
+        )
+
+        # THEN — 2000 + 1000 + 30000 = 33000; net = 100000 - 33000.
+        assert net_worth.liabilities.installments == Decimal("2000.00")
+        assert net_worth.liabilities.cc_balance == Decimal("1000.00")
+        assert net_worth.liabilities.other == Decimal("30000.00")
+        assert net_worth.liabilities.total == Decimal("33000.00")
+        assert net_worth.net_after_liabilities == Decimal("67000.00")
+
+
+def _debt(*, amount: Decimal, currency: Currency) -> DebtLiabilityInput:
+    """Build a native manual-debt input for the net-worth 'other' leg (ADR-187)."""
+    return DebtLiabilityInput(amount=amount, currency=currency)
+
+
+class TestBuildLiabilitiesOther:
+    """``build_liabilities`` folds the manual 'other debts' leg in alongside the rest (ADR-187, ADR-183)."""
+
+    async def test_no_debts_yields_computed_zero_other(self):
+        """
+        GIVEN no manual debts
+        WHEN the liabilities reservation is built
+        THEN other is a computed 0 (not None) and the native breakdown is zero (ADR-187)
+        """
+        # WHEN
+        liabilities = build_liabilities([], display_currency=Currency.ARS, mep_rate=_MEP)
+
+        # THEN
+        assert liabilities.other == Decimal("0.00")
+        assert liabilities.other_native.ars == Decimal("0.00")
+        assert liabilities.other_native.usd == Decimal("0.00")
+
+    async def test_ars_debts_are_summed_and_added_to_total(self):
+        """
+        GIVEN two ARS manual-debt subtotals and no other legs
+        WHEN the liabilities reservation is built
+        THEN other is the ARS sum and total includes it (ADR-187)
+        """
+        # GIVEN — 30,000 + 5,000 = 35,000 ARS owed.
+        debts = [
+            _debt(amount=Decimal("30000"), currency=Currency.ARS),
+            _debt(amount=Decimal("5000"), currency=Currency.ARS),
+        ]
+
+        # WHEN
+        liabilities = build_liabilities([], display_currency=Currency.ARS, mep_rate=_MEP, debts=debts)
+
+        # THEN
+        assert liabilities.other == Decimal("35000.00")
+        assert liabilities.other_native.ars == Decimal("35000.00")
+        assert liabilities.other_native.usd == Decimal("0.00")
+        assert liabilities.total == Decimal("35000.00")
+
+    async def test_usd_debt_converts_at_mep_but_native_is_unconverted(self):
+        """
+        GIVEN a USD manual debt and an ARS display currency with a MEP rate
+        WHEN the liabilities reservation is built
+        THEN other converts at MEP while other_native.usd stays unconverted (ADR-183/187)
+        """
+        # GIVEN — 100 USD owed; at 1000 ARS/USD the converted figure is 100,000 ARS.
+        debts = [_debt(amount=Decimal("100"), currency=Currency.USD)]
+
+        # WHEN
+        liabilities = build_liabilities([], display_currency=Currency.ARS, mep_rate=_MEP, debts=debts)
+
+        # THEN
+        assert liabilities.other == Decimal("100000.00")
+        assert liabilities.other_native.usd == Decimal("100.00")
+        assert liabilities.other_native.ars == Decimal("0.00")
+
+    async def test_no_rate_degrades_usd_debt_to_native(self):
+        """
+        GIVEN a USD manual debt with no MEP rate available and an ARS display currency
+        WHEN the liabilities reservation is built
+        THEN the USD debt contributes its native figure (degrade-to-native, ADR-132/183)
+        """
+        # GIVEN
+        debts = [_debt(amount=Decimal("100"), currency=Currency.USD)]
+
+        # WHEN
+        liabilities = build_liabilities([], display_currency=Currency.ARS, mep_rate=None, debts=debts)
+
+        # THEN — degrades to 100 native rather than failing.
+        assert liabilities.other == Decimal("100.00")

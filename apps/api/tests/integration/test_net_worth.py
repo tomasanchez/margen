@@ -19,9 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from margen_api.adapters.account_queries import SqlAlchemyAccountReader
 from margen_api.adapters.account_repository import SqlAlchemyAccountRepository
+from margen_api.adapters.debt_repository import SqlAlchemyDebtRepository
 from margen_api.adapters.institution_repository import SqlAlchemyInstitutionRepository
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
 from margen_api.domain.models.account import build_account
+from margen_api.domain.models.debt import build_debt
 from margen_api.domain.models.institution import build_institution
 from margen_api.domain.models.transaction import build_transaction
 from margen_api.domain.models.value_objects import Currency, InstitutionType, Kind, RecurringCadence
@@ -459,4 +461,107 @@ class TestCcBalanceLiabilitySql:
 
         # THEN
         assert net_worth.liabilities.cc_balance == Decimal("0.00")
+        assert net_worth.total == Decimal("10000.00")
+
+
+async def _seed_debt(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    owner: str,
+    currency: Currency = Currency.ARS,
+    current_balance: Decimal = Decimal("0"),
+) -> None:
+    """Persist one manual debt for ``owner`` (ADR-187)."""
+    async with session_factory() as session:
+        debt = build_debt(
+            name="Banco Nación loan",
+            currency=currency,
+            current_balance=current_balance,
+            user_id=owner,
+        )
+        SqlAlchemyDebtRepository(session).add(debt)
+        await session.commit()
+
+
+class TestOtherDebtsLiabilitySql:
+    """The reader derives the manual other-debts leg from real rows (ADR-187, ADR-186)."""
+
+    async def test_ars_debt_is_the_other_leg_and_reduces_net_but_not_total(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN an ARS account with assets and an owned ARS debt
+        WHEN net worth is read from PostgreSQL
+        THEN total stays assets-only, liabilities.other = the debt, and
+             net_after_liabilities = total - other (ADR-187, ADR-186)
+        """
+        # GIVEN — 100,000 ARS assets; a 30,000 ARS manual debt (NOT an asset).
+        await _seed_account(session_factory, owner=OWNER, opening_balance=Decimal("100000"))
+        await _seed_debt(session_factory, owner=OWNER, current_balance=Decimal("30000"))
+
+        # WHEN
+        async with session_factory() as session:
+            net_worth = await SqlAlchemyAccountReader(session).net_worth(OWNER)
+
+        # THEN — the debt never touches the assets total; it is the other leg.
+        assert net_worth.total == Decimal("100000.00")
+        assert net_worth.liabilities.other == Decimal("30000.00")
+        assert net_worth.liabilities.other_native.ars == Decimal("30000.00")
+        assert net_worth.liabilities.other_native.usd == Decimal("0.00")
+        assert net_worth.liabilities.total == Decimal("30000.00")
+        assert net_worth.net_after_liabilities == Decimal("70000.00")
+
+    async def test_usd_debt_converts_at_mep_and_keeps_native(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN a USD debt and a captured MEP rate
+        WHEN net worth is read in the ARS display currency
+        THEN other converts at MEP while other_native.usd stays unconverted (ADR-183/187)
+        """
+        # GIVEN — a USD account whose income seeds a 1000 ARS/USD MEP rate, plus a 100 USD debt.
+        usd_account = await _seed_account(
+            session_factory, owner=OWNER, currency=Currency.USD, opening_balance=Decimal("0")
+        )
+        await _seed_transactions(
+            session_factory,
+            [
+                _tx(
+                    name="Deel payout",
+                    kind=Kind.INCOME,
+                    amount=Decimal("50"),
+                    currency=Currency.USD,
+                    usd_amount=Decimal("50"),
+                    fx_rate=Decimal("1000"),
+                    fx_source="mep",
+                    account_id=usd_account,
+                )
+            ],
+        )
+        await _seed_debt(session_factory, owner=OWNER, currency=Currency.USD, current_balance=Decimal("100"))
+
+        # WHEN
+        async with session_factory() as session:
+            net_worth = await SqlAlchemyAccountReader(session).net_worth(OWNER)
+
+        # THEN — 100 USD at 1000 ARS/USD = 100,000 ARS; native keeps the raw 100 USD.
+        assert net_worth.currency is Currency.ARS
+        assert net_worth.liabilities.other == Decimal("100000.00")
+        assert net_worth.liabilities.other_native.usd == Decimal("100.00")
+        assert net_worth.liabilities.other_native.ars == Decimal("0.00")
+
+    async def test_other_is_owner_scoped(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN owner A has a manual debt
+        WHEN owner B's net worth is read
+        THEN B's other leg is zero — A's debt never leaks (ADR-108, ADR-130)
+        """
+        # GIVEN — A records a debt; B has a plain account.
+        await _seed_debt(session_factory, owner=OWNER, current_balance=Decimal("99999"))
+        await _seed_account(session_factory, owner=OTHER_OWNER, opening_balance=Decimal("10000"))
+
+        # WHEN
+        async with session_factory() as session:
+            net_worth = await SqlAlchemyAccountReader(session).net_worth(OTHER_OWNER)
+
+        # THEN
+        assert net_worth.liabilities.other == Decimal("0.00")
         assert net_worth.total == Decimal("10000.00")

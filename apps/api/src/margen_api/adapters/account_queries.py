@@ -23,6 +23,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from margen_api.adapters.models.account import AccountRecord
 from margen_api.adapters.models.app_settings import AppSettingsRecord
+from margen_api.adapters.models.debt import DebtRecord
 from margen_api.adapters.models.institution import InstitutionRecord
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.adapters.models.transfer import TransferRecord
@@ -33,6 +34,7 @@ from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.net_worth import (
     AccountBalanceInput,
     CcBalanceInput,
+    DebtLiabilityInput,
     InstallmentLiabilityInput,
     build_net_worth,
 )
@@ -170,13 +172,48 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
         mep_rate = await self._latest_mep_rate(owner)
         installment_liabilities = await self._installment_liabilities(owner)
         cc_balance_liabilities = await self._cc_balance_liabilities(owner, today)
+        debt_liabilities = await self._debt_liabilities(owner)
         return build_net_worth(
             balances,
             display_currency=display_currency,
             mep_rate=mep_rate,
             installment_liabilities=installment_liabilities,
             cc_balance_liabilities=cc_balance_liabilities,
+            debt_liabilities=debt_liabilities,
         )
+
+    async def _debt_liabilities(self, owner: UUID) -> list[DebtLiabilityInput]:
+        """Return the owner's manual debts as native per-currency balances (ADR-187).
+
+        Sums the owner's :class:`~margen_api.adapters.models.debt.DebtRecord` balances by
+        native currency (ARS, USD) so ARS and USD stay separate for live-rate client
+        conversion (ADR-183). A debt is a manual, balance-bearing liability disjoint from
+        all transaction-derived legs (instalment tail ADR-181, CC balance ADR-185), so its
+        balance is counted only here — no dedupe against transactions is needed (ADR-187).
+        Debts are NEVER assets: their balances feed ``liabilities.other`` only, never the
+        assets ``total`` (ADR-186/187). Owner-scoped (ADR-108, ADR-130).
+
+        Args:
+            owner: The authenticated owner whose debts are summed.
+
+        Returns:
+            One :class:`DebtLiabilityInput` per native currency that has a debt balance; an
+            empty list when the owner has no debts, which yields a computed ``0`` ``other``
+            leg (ADR-187).
+        """
+        statement = (
+            select(
+                DebtRecord.currency,
+                cast(func.coalesce(func.sum(DebtRecord.current_balance), _ZERO), Numeric(18, 2)).label("balance"),
+            )
+            .where(DebtRecord.user_id == owner)
+            .group_by(DebtRecord.currency)
+        )
+        result = await self.session.execute(statement)
+        return [
+            DebtLiabilityInput(amount=_as_decimal(row.balance), currency=Currency.parse(row.currency))
+            for row in result.all()
+        ]
 
     async def _installment_liabilities(self, owner: UUID) -> list[InstallmentLiabilityInput]:
         """Return the owner's active instalment tails for the liabilities reservation (ADR-181, ADR-182).
