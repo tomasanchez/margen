@@ -297,6 +297,26 @@ class TestReportsOverviewDbBacked:
         assert data["fxSummary"]["usdInvoiced"] == "1000.00"
         assert data["fxSummary"]["avgMep"] == "1000.000000"
 
+    async def test_unconverted_counts_only_snapshotless_expenses_not_income(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a snapshot-less ARS income and a snapshot-less ARS expense this month
+        WHEN the USD overview is read
+        THEN only the expense is counted as unconverted — ARS income has no FX
+             snapshot by design and must never be backfilled (ADR-156, ADR-150, ADR-168)
+        """
+        # GIVEN — an ARS income and an ARS expense, neither carrying a USD snapshot.
+        await self._post(test_client, kind="income", amountNum="1000", name="Salary")
+        await self._post(test_client, kind="expense", amountNum="400", category="Food")
+
+        # WHEN
+        response = await test_client.get(OVERVIEW, params={"range": "3M", "currency": "USD"})
+
+        # THEN — the snapshot-less expense counts; the snapshot-less income does NOT.
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["data"]
+        assert data["currency"] == "USD"
+        assert data["unconverted"] == 1
+
     async def test_ars_over_refunded_month_floors_out_of_trends(self, test_client: httpx.AsyncClient):
         """
         GIVEN a current month whose ONLY expense is fully over-refunded by a linked

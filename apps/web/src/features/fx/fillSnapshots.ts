@@ -55,13 +55,31 @@ export interface FillSnapshotsOptions {
 }
 
 /**
- * Whether a transaction still needs an FX snapshot (ADR-148/152). A row is
- * "unconverted" when it carries no `fxSource` — the budgets surface counts these
- * and this engine is what clears them. ARS-amount is always present (ADR-025);
- * the snapshot adds the USD view, so every row without one is a candidate.
+ * Whether a transaction still needs an FX snapshot (ADR-148/150/152). A row is a
+ * backfill candidate when it carries no `fxSource` AND it is a row that is meant
+ * to hold a stored snapshot at all.
+ *
+ * ARS INFLOWS are excluded BY DESIGN, even though they carry no `fxSource`:
+ *
+ *  - ARS income converts DYNAMICALLY at the live rate and never gets a stored
+ *    snapshot (ADR-156) — freezing a historical rate onto it would fabricate a
+ *    USD figure the owner explicitly rejected.
+ *  - A reimbursement (which serializes as `type: 'income'`, `kind:
+ *    'reimbursement'`, ARS) carries NO snapshot of its own — its USD value is
+ *    INHERITED from the linked expense's rate at query time (ADR-161).
+ *
+ * Both present as an inflow (`type === 'income'`) denominated in ARS, so a single
+ * ARS-inflow guard covers both. The genuine backfill target is an EXPENSE lacking
+ * a snapshot (an ARS expense with no `fxSource`, ADR-150); those still return
+ * true. USD-native rows are unaffected by this guard.
  */
 export function needsSnapshot(tx: Transaction): boolean {
-  return tx.fxSource == null || tx.fxSource === ''
+  const hasSnapshot = tx.fxSource != null && tx.fxSource !== ''
+  if (hasSnapshot) return false
+  // ARS inflows (income + reimbursements) are dynamic/inherited by design — never
+  // stamp a frozen snapshot on them (ADR-156/161).
+  const isArsInflow = tx.type === 'income' && tx.currency === 'ARS'
+  return !isArsInflow
 }
 
 /** Count how many of `transactions` still lack a snapshot (the "unconverted" count). */
