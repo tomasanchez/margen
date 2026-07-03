@@ -26,12 +26,14 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from margen_api.domain.models.value_objects import Currency
 from margen_api.entrypoint.dependencies import (
     AuthUser,
+    CommittedReader,
     ForecastReader,
     ReportsReader,
     SummaryReader,
     TransactionReader,
 )
 from margen_api.entrypoint.reports_schemas import (
+    CommittedResponse,
     ForecastResponse,
     NetWorthHistoryResponse,
     ReportsOverviewResponse,
@@ -160,6 +162,51 @@ async def forecast(
     """
     model = await reader.forecast(user.id, horizon=horizon, currency=currency)
     return ResponseModel(data=ForecastResponse.from_read_model(model))
+
+
+@router.get(
+    "/committed",
+    name="Committed spend split",
+    status_code=status.HTTP_200_OK,
+    response_model=ResponseModel[CommittedResponse],
+)
+async def committed(
+    reader: CommittedReader,
+    user: AuthUser,
+    month: Annotated[
+        str | None,
+        Query(
+            pattern=_MONTH_PATTERN,
+            description="Target month as 'YYYY-MM'. Defaults to the current server month.",
+            examples=["2026-06"],
+        ),
+    ] = None,
+    currency: Annotated[
+        Currency,
+        Query(description="The denomination currency: 'ARS' (default) or 'USD' (ADR-168)."),
+    ] = Currency.ARS,
+) -> ResponseModel[CommittedResponse]:
+    """Return the caller's committed-spend paid/pending split for a month (ADR-179, ADR-131).
+
+    Splits the month's COMMITTED expense universe (recurring subscriptions, instalment
+    cuotas and the monotributo cuota) into **paid** — committed rows already posted this
+    month, already inside the month's Expenses total — and **pending** — expected-this-month
+    committed outflows not yet posted, evaluated per stream at offset 0 with the forecast's
+    no-double-count rule (ADR-176). A stream flips out of pending the moment its row lands
+    this month, so pending is additive context never re-added to the spent total (ADR-179).
+
+    Every figure is denominated in ``currency`` (ADR-168): ``ARS`` sums the authoritative
+    ``amount``; ``USD`` sums the ``usd_amount`` snapshot, excludes committed streams that
+    lack one and surfaces their count as ``unconverted`` (ADR-152). The monotributo cuota is
+    AFIP-ARS and is summed into a total only on the ARS path (ADR-177). The split is scoped
+    to ``user.id`` so a caller only sees their own commitments (ADR-108, ADR-131). The month
+    defaults to the current server month; a malformed ``month`` or out-of-set ``currency``
+    is rejected with ``422`` at boundary validation.
+    """
+    today = datetime.now(UTC).date()
+    target_month = month or f"{today.year:04d}-{today.month:02d}"
+    model = await reader.committed(_parse_month(target_month), user.id, currency=currency)
+    return ResponseModel(data=CommittedResponse.from_read_model(model))
 
 
 @router.get(

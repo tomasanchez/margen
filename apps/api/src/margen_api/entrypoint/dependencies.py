@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from margen_api.adapters.account_queries import SqlAlchemyAccountReader
 from margen_api.adapters.budget_income_queries import SqlAlchemyBudgetIncomeReader
 from margen_api.adapters.budget_queries import SqlAlchemyBudgetReader
+from margen_api.adapters.committed_queries import SqlAlchemyCommittedReader
 from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.forecast_queries import SqlAlchemyForecastReader
 from margen_api.adapters.institution_queries import SqlAlchemyInstitutionReader
@@ -37,6 +38,7 @@ from margen_api.bootstrap import ApplicationContainer
 from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.budget_income_reader import AbstractBudgetIncomeReader
 from margen_api.service_layer.budget_reader import AbstractBudgetReader
+from margen_api.service_layer.committed_reader import AbstractCommittedReader
 from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.forecast_reader import AbstractForecastReader
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
@@ -492,3 +494,22 @@ async def get_forecast_reader(container: Container) -> AsyncIterator[AbstractFor
 
 
 ForecastReader = Annotated[AbstractForecastReader, Depends(get_forecast_reader)]
+
+
+async def get_committed_reader(container: Container) -> AsyncIterator[AbstractCommittedReader]:
+    """Yield a committed-spend reader over a request-scoped read-only session (ADR-179).
+
+    Query paths bypass the unit of work by design (ADR-028); the session opened here is
+    closed when the request finishes. The committed reader is read-only — it derives the
+    committed paid/pending split and never mutates state. It reuses the monotributo
+    repository's ``configured_category`` read helper (constructed over the same session)
+    to read the configured tax cuota exactly as the forecast reader does (ADR-112).
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemyCommittedReader(session, SqlAlchemyMonotributoSnapshotRepository(session))
+    finally:
+        await session.close()
+
+
+CommittedReader = Annotated[AbstractCommittedReader, Depends(get_committed_reader)]

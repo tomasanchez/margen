@@ -322,6 +322,9 @@ class TestNetWorth:
         assert data["total"] == "0.00"
         assert data["currency"] == "ARS"
         assert data["accounts"] == []
+        # The liabilities reservation is present and zero for a fresh owner (ADR-180).
+        assert data["liabilities"] == {"installments": "0.00", "ccBalance": None, "other": None, "total": "0.00"}
+        assert data["netAfterLiabilities"] == "0.00"
 
     async def test_balance_reconciles_opening_plus_signed_deltas(self, test_client: httpx.AsyncClient):
         """
@@ -404,6 +407,231 @@ class TestNetWorth:
         assert by_currency["USD"]["institutionName"] == "Galicia"
         assert by_currency["ARS"]["balanceConverted"] == "100000.00"
         assert by_currency["ARS"]["institutionName"] == "Galicia"
+
+
+class TestNetWorthLiabilities:
+    """Net worth carries a typed liabilities reservation alongside the assets total (ADR-180, ADR-181, ADR-182)."""
+
+    async def test_installment_tail_is_full_remaining_and_reduces_net(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an ARS account and an active instalment plan (cuota 2 of 6, 4 remaining)
+        WHEN net worth is read
+        THEN total stays assets-only, liabilities.installments = 4 x cuota, and
+             netAfterLiabilities = total - that tail (ADR-180, ADR-181)
+        """
+        # GIVEN — opening 100000 assets; an instalment expense (cuota 500, 4 remaining).
+        account = await _create_account(test_client, openingBalance="100000")
+        await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": A_DATE,
+                "name": "Fridge",
+                "kind": "expense",
+                "amountNum": "500",
+                "category": "Home",
+                "recurringCadence": "installment",
+                "installmentsTotal": 6,
+                "installmentsIndex": 2,
+                "accountId": account["id"],
+            },
+        )
+
+        # WHEN
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN — the instalment expense reduces the account balance (100000 - 500 = 99500),
+        # and the FULL remaining tail (4 x 500 = 2000) is the liability.
+        assert data["total"] == "99500.00"
+        assert data["liabilities"]["installments"] == "2000.00"
+        assert data["liabilities"]["total"] == "2000.00"
+        assert data["liabilities"]["ccBalance"] is None
+        assert data["liabilities"]["other"] is None
+        assert data["netAfterLiabilities"] == "97500.00"
+
+    async def test_subscriptions_do_not_contribute_to_liabilities(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an account and a recurring subscription (NOT an instalment)
+        WHEN net worth is read
+        THEN the subscription does not enter the liabilities reservation (ADR-182)
+        """
+        # GIVEN
+        account = await _create_account(test_client, openingBalance="50000")
+        await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": A_DATE,
+                "name": "Netflix",
+                "kind": "expense",
+                "amountNum": "1000",
+                "recurring": True,
+                "recurringCadence": "monthly",
+                "accountId": account["id"],
+            },
+        )
+
+        # WHEN
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN — subscriptions are excluded from the reservation (ADR-182).
+        assert data["liabilities"]["installments"] == "0.00"
+        assert data["netAfterLiabilities"] == data["total"]
+
+    async def test_fully_paid_plan_contributes_zero(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an instalment plan on its LAST cuota (index == total, 0 remaining)
+        WHEN net worth is read
+        THEN it contributes nothing to the liabilities reservation (ADR-182)
+        """
+        # GIVEN — cuota 4 of 4: no remaining tail.
+        account = await _create_account(test_client, openingBalance="10000")
+        await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": A_DATE,
+                "name": "Sofa",
+                "kind": "expense",
+                "amountNum": "500",
+                "category": "Home",
+                "recurringCadence": "installment",
+                "installmentsTotal": 4,
+                "installmentsIndex": 4,
+                "accountId": account["id"],
+            },
+        )
+
+        # WHEN
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN
+        assert data["liabilities"]["installments"] == "0.00"
+
+    async def test_usd_installment_tail_converts_at_mep_rate(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a USD instalment plan (cuota 10 USD, 3 remaining) carrying a MEP rate
+        WHEN net worth is read in the ARS display currency
+        THEN the USD tail is converted at the row's MEP rate (ADR-183)
+        """
+        # GIVEN — a USD account holding a USD instalment cuota with a 1000 ARS/USD snapshot.
+        institution = await _create_institution(test_client, name="Deel", type="wallet")
+        account = await _create_account(
+            test_client, institution_id=institution["id"], currency="USD", openingBalance="0"
+        )
+        await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": A_DATE,
+                "name": "Laptop",
+                "kind": "expense",
+                "amountNum": "10000",
+                "currency": "USD",
+                "usd": "10",
+                "rate": "1000",
+                "category": "Tech",
+                "recurringCadence": "installment",
+                "installmentsTotal": 6,
+                "installmentsIndex": 3,
+                "accountId": account["id"],
+            },
+        )
+
+        # WHEN
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN — 3 remaining x 10 USD = 30 USD; at 1000 ARS/USD = 30,000 ARS.
+        assert data["currency"] == "ARS"
+        assert data["liabilities"]["installments"] == "30000.00"
+
+    async def test_installment_without_structured_fields_contributes_zero(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an instalment-cadence expense with NO structured total/index (a lone marker)
+        WHEN net worth is read
+        THEN it has no known remaining tail and contributes nothing (ADR-181)
+        """
+        # GIVEN
+        account = await _create_account(test_client, openingBalance="10000")
+        await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": A_DATE,
+                "name": "Mystery plan",
+                "kind": "expense",
+                "amountNum": "500",
+                "recurringCadence": "installment",
+                "accountId": account["id"],
+            },
+        )
+
+        # WHEN
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN
+        assert data["liabilities"]["installments"] == "0.00"
+
+    async def test_same_name_category_installment_collapses_to_one_plan(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN two instalment rows sharing the same (name, category) - an older and a newer
+        WHEN net worth is read
+        THEN they collapse to ONE plan keyed off the LATEST occurrence's remaining count (ADR-181)
+        """
+        # GIVEN — two "Sofa"/"Home" instalment rows; the newer (cuota 4/6 -> 2 remaining) is latest.
+        account = await _create_account(test_client, openingBalance="0")
+        for occurred, index in (("2026-05-01", 3), ("2026-06-01", 4)):
+            response = await test_client.post(
+                TRANSACTIONS,
+                json={
+                    "occurredOn": occurred,
+                    "name": "Sofa",
+                    "kind": "expense",
+                    "amountNum": "800",
+                    "category": "Home",
+                    "recurringCadence": "installment",
+                    "installmentsTotal": 6,
+                    "installmentsIndex": index,
+                    "accountId": account["id"],
+                },
+            )
+            assert response.status_code == status.HTTP_201_CREATED, response.text
+
+        # WHEN
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN — one plan, latest remaining = 6 - 4 = 2 -> tail 2 x 800 = 1600.
+        assert data["liabilities"]["installments"] == "1600.00"
+
+    async def test_user_b_installments_never_affect_user_a(
+        self,
+        container: ApplicationContainer,
+        test_client: httpx.AsyncClient,
+        client_for_user,
+    ):
+        """
+        GIVEN user B has an active instalment plan
+        WHEN user A reads net worth
+        THEN A's liabilities are unaffected by B's instalments (ADR-108, ADR-130)
+        """
+        # GIVEN — user B creates an instalment plan under their own account.
+        async with client_for_user(container, STUB_AUTH_USER_B) as client_b:
+            b_account = await _create_account(client_b, openingBalance="0")
+            await client_b.post(
+                TRANSACTIONS,
+                json={
+                    "occurredOn": A_DATE,
+                    "name": "B laptop",
+                    "kind": "expense",
+                    "amountNum": "1000",
+                    "category": "Tech",
+                    "recurringCadence": "installment",
+                    "installmentsTotal": 6,
+                    "installmentsIndex": 1,
+                    "accountId": b_account["id"],
+                },
+            )
+
+        # WHEN — user A (the default stub) reads net worth with no instalments of their own.
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN — A's reservation is zero; B's tail never leaks.
+        assert data["liabilities"]["installments"] == "0.00"
 
 
 class TestDomainInvariantToHttp:

@@ -21,13 +21,15 @@ from margen_api.domain.models.institution import Institution
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.transfer import Transfer
 from margen_api.domain.models.value_objects import BudgetKind, Currency, Kind, TxType
-from margen_api.service_layer.account_read_models import AccountReadModel, NetWorth
+from margen_api.service_layer.account_read_models import AccountReadModel, Liabilities, NetWorth
 from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.account_repository import AbstractAccountRepository
 from margen_api.service_layer.budget_income_repository import AbstractBudgetIncomeRepository
 from margen_api.service_layer.budget_read_models import CategoryHistory, MonthlyBudget
 from margen_api.service_layer.budget_reader import AbstractBudgetReader
 from margen_api.service_layer.budget_repository import AbstractBudgetRepository
+from margen_api.service_layer.committed_read_models import CommittedSplit
+from margen_api.service_layer.committed_reader import AbstractCommittedReader
 from margen_api.service_layer.document_store import AbstractDocumentStore, InvoiceDocument
 from margen_api.service_layer.forecast_read_models import ForecastSeries
 from margen_api.service_layer.forecast_reader import AbstractForecastReader
@@ -756,6 +758,17 @@ class FakeTransactionReader(AbstractTransactionReader):
         return _project(transaction)
 
 
+def _empty_net_worth() -> NetWorth:
+    """Build a zero ARS net worth with an empty liabilities reservation (ADR-180)."""
+    return NetWorth(
+        total=Decimal(0),
+        currency=Currency.ARS,
+        accounts=[],
+        liabilities=Liabilities(installments=Decimal(0), cc_balance=None, other=None, total=Decimal(0)),
+        net_after_liabilities=Decimal(0),
+    )
+
+
 class FakeAccountReader(AbstractAccountReader):
     """In-memory account reader projecting committed accounts (ADR-122, ADR-130, ADR-134).
 
@@ -786,9 +799,7 @@ class FakeAccountReader(AbstractAccountReader):
         """
         self._committed = committed
         self._institutions = institutions if institutions is not None else {}
-        self._net_worth = (
-            net_worth if net_worth is not None else NetWorth(total=Decimal(0), currency=Currency.ARS, accounts=[])
-        )
+        self._net_worth = net_worth if net_worth is not None else _empty_net_worth()
         self.requested_user_id: str | None = None
 
     async def list_accounts(self, user_id: str) -> list[AccountReadModel]:
@@ -1024,6 +1035,40 @@ class FakeForecastReader(AbstractForecastReader):
         self.requested_horizon = horizon
         self.requested_currency = currency
         return self._series
+
+
+class FakeCommittedReader(AbstractCommittedReader):
+    """Committed-spend reader returning a canned :class:`CommittedSplit` for route tests (ADR-179).
+
+    The route tests assert wiring and the HTTP contract, not the committed-stream SQL
+    (covered by the pure-function and integration tiers), so this fake records the
+    requested month, owner and currency and returns the split it was given (ADR-032,
+    ADR-108).
+    """
+
+    def __init__(self, split: CommittedSplit) -> None:
+        """Initialize the reader with the committed split every call returns.
+
+        Args:
+            split: The committed split every ``committed`` call returns.
+        """
+        self._split = split
+        self.requested_month: date | None = None
+        self.requested_user_id: str | None = None
+        self.requested_currency: Currency | None = None
+
+    async def committed(
+        self,
+        month: date,
+        user_id: str,
+        *,
+        currency: Currency = Currency.ARS,
+    ) -> CommittedSplit:
+        """Record the month, owner and currency and return the canned split (ADR-108, ADR-179)."""
+        self.requested_month = month
+        self.requested_user_id = user_id
+        self.requested_currency = currency
+        return self._split
 
 
 class FakeInsightsReader(AbstractInsightsReader):

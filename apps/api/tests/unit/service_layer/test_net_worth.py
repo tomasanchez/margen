@@ -14,6 +14,8 @@ from uuid import uuid4
 from margen_api.domain.models.value_objects import Currency, InstitutionType
 from margen_api.service_layer.net_worth import (
     AccountBalanceInput,
+    InstallmentLiabilityInput,
+    build_liabilities,
     build_net_worth,
     convert,
 )
@@ -155,3 +157,126 @@ class TestBuildNetWorth:
         # THEN
         assert net_worth.total == Decimal("0")
         assert net_worth.accounts == []
+
+    async def test_default_has_zero_liabilities_and_net_equals_total(self):
+        """
+        GIVEN accounts but no instalment liabilities supplied
+        WHEN net worth is built
+        THEN the liabilities reservation is zero and net_after_liabilities equals the total (ADR-180)
+        """
+        # GIVEN
+        ars = _balance(name="Galicia", currency=Currency.ARS, balance=Decimal("100000"))
+
+        # WHEN
+        net_worth = build_net_worth([ars], display_currency=Currency.ARS, mep_rate=_MEP)
+
+        # THEN — assets-only total is untouched; the reservation is a zero placeholder object.
+        assert net_worth.total == Decimal("100000.00")
+        assert net_worth.liabilities.installments == Decimal("0.00")
+        assert net_worth.liabilities.cc_balance is None
+        assert net_worth.liabilities.other is None
+        assert net_worth.liabilities.total == Decimal("0.00")
+        assert net_worth.net_after_liabilities == Decimal("100000.00")
+
+
+def _installment(*, amount: Decimal, currency: Currency, remaining_count: int) -> InstallmentLiabilityInput:
+    """Build an instalment liability input for the net-worth reservation (ADR-181)."""
+    return InstallmentLiabilityInput(amount=amount, currency=currency, remaining_count=remaining_count)
+
+
+class TestBuildLiabilities:
+    """``build_liabilities`` sums the full remaining instalment tail, converted via MEP (ADR-181, ADR-183)."""
+
+    async def test_tail_is_sum_of_remaining_times_cuota_across_plans(self):
+        """
+        GIVEN two active ARS instalment plans
+        WHEN the liabilities reservation is built
+        THEN installments = Σ remaining_count * cuota across both plans (the full tail, ADR-181)
+        """
+        # GIVEN — 4 cuotas x 500 + 2 cuotas x 1000 = 2000 + 2000 = 4000.
+        plans = [
+            _installment(amount=Decimal("500"), currency=Currency.ARS, remaining_count=4),
+            _installment(amount=Decimal("1000"), currency=Currency.ARS, remaining_count=2),
+        ]
+
+        # WHEN
+        liabilities = build_liabilities(plans, display_currency=Currency.ARS, mep_rate=_MEP)
+
+        # THEN
+        assert liabilities.installments == Decimal("4000.00")
+        assert liabilities.total == Decimal("4000.00")
+        assert liabilities.cc_balance is None
+        assert liabilities.other is None
+
+    async def test_fully_paid_plan_contributes_zero(self):
+        """
+        GIVEN a plan whose remaining count is 0 (index == total)
+        WHEN the liabilities reservation is built
+        THEN it contributes nothing to the tail (ADR-182)
+        """
+        # GIVEN
+        plans = [_installment(amount=Decimal("500"), currency=Currency.ARS, remaining_count=0)]
+
+        # WHEN
+        liabilities = build_liabilities(plans, display_currency=Currency.ARS, mep_rate=_MEP)
+
+        # THEN
+        assert liabilities.installments == Decimal("0.00")
+
+    async def test_usd_tail_converts_at_mep_rate(self):
+        """
+        GIVEN a USD instalment plan and an ARS display currency
+        WHEN the liabilities reservation is built at the MEP rate
+        THEN the native USD tail is converted to ARS (ADR-183)
+        """
+        # GIVEN — 3 cuotas x 10 USD = 30 USD; at 1000 ARS/USD = 30,000 ARS.
+        plans = [_installment(amount=Decimal("10"), currency=Currency.USD, remaining_count=3)]
+
+        # WHEN
+        liabilities = build_liabilities(plans, display_currency=Currency.ARS, mep_rate=_MEP)
+
+        # THEN
+        assert liabilities.installments == Decimal("30000.00")
+
+    async def test_no_rate_degrades_usd_tail_to_native(self):
+        """
+        GIVEN a USD instalment plan with no MEP rate available and an ARS display currency
+        WHEN the liabilities reservation is built
+        THEN the USD tail contributes its native figure (degrade-to-native, ADR-132/183)
+        """
+        # GIVEN — 2 cuotas x 10 USD = 20; no rate, so it degrades to 20 native.
+        plans = [_installment(amount=Decimal("10"), currency=Currency.USD, remaining_count=2)]
+
+        # WHEN
+        liabilities = build_liabilities(plans, display_currency=Currency.ARS, mep_rate=None)
+
+        # THEN
+        assert liabilities.installments == Decimal("20.00")
+
+
+class TestNetWorthWithLiabilities:
+    """Net worth carries the liabilities reservation alongside the assets-only total (ADR-180)."""
+
+    async def test_net_after_liabilities_is_total_minus_tail(self):
+        """
+        GIVEN an ARS account and an active instalment plan
+        WHEN net worth is built with the instalment liability
+        THEN total stays assets-only and net_after_liabilities = total - installments (ADR-180)
+        """
+        # GIVEN — 100,000 ARS assets; a 4-cuota x 500 tail = 2,000 liability.
+        ars = _balance(name="Galicia", currency=Currency.ARS, balance=Decimal("100000"))
+        plans = [_installment(amount=Decimal("500"), currency=Currency.ARS, remaining_count=4)]
+
+        # WHEN
+        net_worth = build_net_worth(
+            [ars],
+            display_currency=Currency.ARS,
+            mep_rate=_MEP,
+            installment_liabilities=plans,
+        )
+
+        # THEN — total is unchanged (assets), the reservation is the full tail, net is derived.
+        assert net_worth.total == Decimal("100000.00")
+        assert net_worth.liabilities.installments == Decimal("2000.00")
+        assert net_worth.liabilities.total == Decimal("2000.00")
+        assert net_worth.net_after_liabilities == Decimal("98000.00")

@@ -66,16 +66,52 @@ class AccountBalance:
 
 
 @dataclass(frozen=True, slots=True)
-class NetWorth:
-    """The net-worth surface: total plus per-account breakdown (ADR-122, ADR-123).
+class Liabilities:
+    """A typed breakdown of locked-in obligations, in the display currency (ADR-180).
+
+    A layered reservation added ALONGSIDE the assets-only ``total`` (ADR-122): it never
+    redefines the total, so the net-worth history stays coherent (ADR-180). The breakdown
+    is a typed object — not a scalar — so future obligation types are ADDITIVE: Slice 1
+    populates only ``installments`` (the full remaining instalment tail, ADR-181/182);
+    ``cc_balance`` and ``other`` are typed placeholders (``None`` now) that populate in a
+    later slice WITHOUT reshaping the response (ADR-180). ``total`` is the sum of the
+    present figures, kept explicit so ``net_after_liabilities`` is a simple subtraction.
 
     Attributes:
-        total: The sum of every account's converted balance, in ``currency``.
+        installments: Σ over active instalment streams of ``remaining_count * cuota``
+            (the full remaining tail, paid cuotas excluded by construction), converted to
+            the display currency via the net-worth MEP rate (ADR-181/183).
+        cc_balance: The unpaid credit-card balance liability; ``None`` in Slice 1, a typed
+            placeholder for a later slice (ADR-180).
+        other: A catch-all for other debts; ``None`` in Slice 1, a typed placeholder for a
+            later slice (ADR-180).
+        total: The sum of the present liability figures, in the display currency.
+    """
+
+    installments: Decimal
+    cc_balance: Decimal | None
+    other: Decimal | None
+    total: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class NetWorth:
+    """The net-worth surface: total, liabilities and per-account breakdown (ADR-122, ADR-180).
+
+    Attributes:
+        total: The sum of every account's converted balance (assets), in ``currency``.
+            Unchanged by the liabilities reservation (ADR-122/180).
         currency: The user's display currency the total is expressed in (ADR-056).
         accounts: The per-account breakdown, each carrying its native balance and
             the converted balance.
+        liabilities: The typed breakdown of locked-in obligations, in ``currency``
+            (ADR-180); Slice 1 populates only the instalment tail.
+        net_after_liabilities: ``total - liabilities.total``, in ``currency`` - a derived
+            view, not a redefinition of ``total`` (ADR-180).
     """
 
     total: Decimal
     currency: Currency
     accounts: list[AccountBalance]
+    liabilities: Liabilities
+    net_after_liabilities: Decimal
