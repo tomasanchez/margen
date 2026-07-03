@@ -27,15 +27,26 @@ class TransferFeeInput(Message):
     on ``account_id``, in that account's native currency, created atomically with the
     transfer (ADR-135). All fee accounts must belong to the caller (ADR-130).
 
+    A fee carries the same optional FX snapshot as a manual expense (ADR-148, ADR-149):
+    when the client stamps ``fx_rate`` + ``fx_source`` the handler materializes the
+    fee's ``usd_amount`` exactly like any expense (``round(amount ÷ fx_rate, 2)``); a
+    fee sent without a snapshot stays null-snapshot, never rejected (ADR-031).
+
     Attributes:
         account_id: The account the fee is charged to; must belong to the caller.
         amount: The positive fee magnitude in the account's native currency (ADR-025).
         label: The human label used as the fee expense's ``name`` (e.g. "Deel fee").
+        fx_rate: The ARS-per-1-USD rate the client captured for the fee, else ``None``
+            (ADR-149). When positive the handler materializes the fee's ``usd_amount``.
+        fx_source: Provenance of the fee's FX snapshot rate (e.g. ``'bolsa'``,
+            ``'mep'``), else ``None`` (ADR-148).
     """
 
     account_id: UUID
     amount: Decimal = Field(gt=Decimal(0))
     label: str = Field(min_length=1)
+    fx_rate: Decimal | None = None
+    fx_source: str | None = None
 
 
 class CreateTransfer(Command):

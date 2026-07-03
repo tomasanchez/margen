@@ -200,6 +200,79 @@ class TestTransferCreate:
         assert balances[source["id"]]["balance"] == "7470.00"  # 10000 - 2500 transfer - 30 fee
         assert balances[destination["id"]]["balance"] == "2500.00"
 
+    async def test_fee_with_fx_snapshot_materializes_usd_amount(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a transfer whose ARS fee carries an FX snapshot (rate + fxSource)
+        WHEN the transfer is created
+        THEN the fee expense in the transaction list carries a materialized USD value
+             (usd = round(amount / rate, 2)) and the persisted rate + source (ADR-148/149)
+        """
+        # GIVEN
+        source = await _create_account(test_client, opening_balance="10000")
+        destination = await _create_account(test_client, opening_balance="0")
+
+        # WHEN — a 3000 ARS fee stamped with a MEP rate of 1000 ARS per USD.
+        response = await test_client.post(
+            TRANSFERS,
+            json={
+                "fromAccountId": source["id"],
+                "toAccountId": destination["id"],
+                "amountOut": "2500",
+                "amountIn": "2500",
+                "occurredOn": A_DATE,
+                "fees": [
+                    {
+                        "accountId": source["id"],
+                        "amount": "3000",
+                        "label": "Transfer fee",
+                        "rate": "1000",
+                        "fxSource": "mep",
+                    }
+                ],
+            },
+        )
+
+        # THEN — the fee expense in the list carries the materialized USD snapshot.
+        assert response.status_code == status.HTTP_201_CREATED, response.text
+        fee_id = response.json()["data"]["feeTransactionIds"][0]
+        transactions = (await test_client.get(TRANSACTIONS)).json()["data"]
+        fee = next(tx for tx in transactions if tx["id"] == fee_id)
+        assert fee["usd"] == "3.00"  # 3000 / 1000
+        assert fee["rate"] == "1000.000000"  # NUMERIC(18,6) round-trip (ADR-148)
+        assert fee["fxSource"] == "mep"
+
+    async def test_fee_without_fx_snapshot_has_no_usd(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a transfer whose ARS fee carries NO FX snapshot
+        WHEN the transfer is created
+        THEN the fee expense persists with a null USD value and no crash (tolerant, ADR-031)
+        """
+        # GIVEN
+        source = await _create_account(test_client, opening_balance="10000")
+        destination = await _create_account(test_client, opening_balance="0")
+
+        # WHEN
+        response = await test_client.post(
+            TRANSFERS,
+            json={
+                "fromAccountId": source["id"],
+                "toAccountId": destination["id"],
+                "amountOut": "2500",
+                "amountIn": "2500",
+                "occurredOn": A_DATE,
+                "fees": [{"accountId": source["id"], "amount": "30", "label": "Transfer fee"}],
+            },
+        )
+
+        # THEN
+        assert response.status_code == status.HTTP_201_CREATED, response.text
+        fee_id = response.json()["data"]["feeTransactionIds"][0]
+        transactions = (await test_client.get(TRANSACTIONS)).json()["data"]
+        fee = next(tx for tx in transactions if tx["id"] == fee_id)
+        assert fee["usd"] is None
+        assert fee["rate"] is None
+        assert fee["fxSource"] is None
+
     async def test_transfers_do_not_leak_into_income_or_expense_summaries(self, test_client: httpx.AsyncClient):
         """
         GIVEN a same-currency transfer with NO fees between two accounts

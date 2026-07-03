@@ -79,10 +79,15 @@ export interface TransactionDto {
    */
   offsetsTransactionId?: string | null
   amountNum: string
+  /**
+   * The MATERIALIZED USD equivalent of the FX snapshot (ADR-148): the backend
+   * serializes `usd_amount = round(amount ÷ fx_rate, 2)` to this JSON `usd` for
+   * ANY snapshotted row — ARS expenses, transfer fees, and USD rows alike — and
+   * `null` for a row with no snapshot. This is NOT "the original USD amount, only
+   * for USD rows"; it is the frozen historical USD value of whatever the row is.
+   */
   usd?: string | null
   rate?: string | null
-  /** Materialized USD equivalent of the FX snapshot (ADR-148); absent pre-snapshot. */
-  usdAmount?: string | null
   /** The captured FX snapshot rate, ARS per 1 USD as a Decimal string (ADR-148). */
   fxRate?: string | null
   /** Provenance of the FX snapshot rate (ADR-148): 'bolsa'/'oficial'/'manual'/'backfill'. */

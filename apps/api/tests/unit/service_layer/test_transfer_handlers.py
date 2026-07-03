@@ -113,6 +113,74 @@ class TestCreateTransferHandler:
         assert fee.account_id == source
         assert fee.user_id == A_USER
 
+    async def test_fee_with_fx_snapshot_materializes_usd_amount(self):
+        """
+        GIVEN a transfer whose ARS fee carries an FX snapshot (fx_rate + fx_source)
+        WHEN the create handler runs
+        THEN the fee expense materializes usd_amount = round(amount / rate, 2) and
+             persists the snapshot exactly like a normal expense (ADR-148, ADR-149)
+        """
+        # GIVEN — an ARS fee account with a client-stamped MEP rate.
+        uow = FakeUnitOfWork()
+        source = _seed_account(uow, currency=Currency.ARS)
+        destination = _seed_account(uow, currency=Currency.ARS)
+        command = CreateTransfer(
+            user_id=A_USER,
+            from_account_id=source,
+            to_account_id=destination,
+            amount_out=Decimal("1000"),
+            amount_in=Decimal("1000"),
+            occurred_on=A_DATE,
+            fees=(
+                TransferFeeInput(
+                    account_id=source,
+                    amount=Decimal("10"),
+                    label="Bank fee",
+                    fx_rate=Decimal("1000"),
+                    fx_source="mep",
+                ),
+            ),
+        )
+
+        # WHEN
+        result = await create_transfer(command, uow)
+
+        # THEN
+        fee = uow.committed_aggregates[result.fee_transaction_ids[0]]
+        assert fee.currency is Currency.ARS
+        assert fee.fx_rate == Decimal("1000")
+        assert fee.fx_source == "mep"
+        assert fee.usd_amount == Decimal("0.01")
+
+    async def test_fee_without_fx_snapshot_stays_null(self):
+        """
+        GIVEN a transfer whose ARS fee carries NO FX snapshot
+        WHEN the create handler runs
+        THEN the fee expense is created with a null usd_amount and no crash (tolerant, ADR-031)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        source = _seed_account(uow, currency=Currency.ARS)
+        destination = _seed_account(uow, currency=Currency.ARS)
+        command = CreateTransfer(
+            user_id=A_USER,
+            from_account_id=source,
+            to_account_id=destination,
+            amount_out=Decimal("1000"),
+            amount_in=Decimal("1000"),
+            occurred_on=A_DATE,
+            fees=(TransferFeeInput(account_id=source, amount=Decimal("10"), label="Bank fee"),),
+        )
+
+        # WHEN
+        result = await create_transfer(command, uow)
+
+        # THEN
+        fee = uow.committed_aggregates[result.fee_transaction_ids[0]]
+        assert fee.usd_amount is None
+        assert fee.fx_rate is None
+        assert fee.fx_source is None
+
     async def test_unknown_source_account_raises_not_found(self):
         """
         GIVEN a create command whose source account does not exist

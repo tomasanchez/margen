@@ -218,7 +218,14 @@ export interface Transaction {
   offsetsTransactionId?: string | null
   /** ARS-equivalent magnitude (always positive; sign comes from `type`). */
   amountNum: number
-  /** Original USD amount, present only when `currency === 'USD'`. */
+  /**
+   * The MATERIALIZED USD equivalent of the row's FX snapshot (ADR-148): the
+   * backend computes `usd_amount = round(amount ÷ fx_rate, 2)` and serializes it
+   * as the JSON `usd` for ANY snapshotted row — ARS expenses, transfer fees, and
+   * USD rows alike — leaving it absent for a row with no snapshot. It is the
+   * frozen HISTORICAL USD value of the row, not "the original USD amount for USD
+   * rows only".
+   */
   usd?: number
   /** MEP rate used for the USD→ARS conversion, present only for USD rows. */
   rate?: number
@@ -447,6 +454,21 @@ export interface TransferFeeInput {
   amount: string
   /** Human-readable label, stored as the fee transaction's name. */
   label: string
+  /**
+   * Per-fee FX snapshot rate (ARS per 1 USD) as a Decimal STRING (ADR-148/149),
+   * captured client-side the SAME way a normal expense is (the day's preferred
+   * source rate). Present for an ARS fee so the backend materializes the fee
+   * expense's `usd_amount = amount ÷ rate`; absent for a USD fee (already USD)
+   * or when the rate was unavailable at submit time. Travels TOGETHER with
+   * {@link TransferFeeInput.fxSource} — a fee is never tagged source-without-rate.
+   */
+  rate?: string
+  /**
+   * Provenance of {@link TransferFeeInput.rate} (ADR-148), e.g. `'bolsa'`,
+   * `'oficial'`, or `'manual'`. Sent alongside `rate` so the fee expense carries
+   * a valid snapshot; omitted when no rate was captured.
+   */
+  fxSource?: string
 }
 
 /**

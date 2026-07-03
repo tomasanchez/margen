@@ -34,6 +34,7 @@ import { ColorModeProvider } from '../../theme/colorMode'
 import { TransfersPage } from './TransfersPage'
 import { transfersClient } from '../../api/transfersClient'
 import { accountsClient } from '../../api/accountsClient'
+import { fetchCurrentRate } from '../../api/fxClient'
 import type { Account, Transfer } from '../../mock/types'
 
 vi.mock('../../api/transfersClient', async (importOriginal) => {
@@ -60,6 +61,14 @@ vi.mock('../../api/accountsClient', async (importOriginal) => {
       netWorth: vi.fn(),
     },
   }
+})
+
+// The create flow now captures a per-fee FX snapshot the SAME way the Add flow
+// does (ADR-148/149): a fee is an expense, so it must carry the day's rate. Mock
+// the FX boundary so an ARS fee lands with a deterministic snapshot (no network).
+vi.mock('../../api/fxClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api/fxClient')>()
+  return { ...actual, fetchCurrentRate: vi.fn() }
 })
 
 const ACCOUNTS: Account[] = [
@@ -105,6 +114,7 @@ const mockList = vi.mocked(transfersClient.list)
 const mockCreate = vi.mocked(transfersClient.create)
 const mockRemove = vi.mocked(transfersClient.remove)
 const mockAccountsList = vi.mocked(accountsClient.list)
+const mockFetchRate = vi.mocked(fetchCurrentRate)
 
 function renderTransfersPage() {
   const queryClient = new QueryClient({
@@ -157,6 +167,8 @@ describe('TransfersPage', () => {
       feeTransactionIds: [],
     })
     mockRemove.mockResolvedValue(undefined)
+    // The day's preferred-source rate captured for an ARS fee's snapshot.
+    mockFetchRate.mockResolvedValue(1250)
   })
   afterEach(() => vi.clearAllMocks())
 
@@ -232,7 +244,7 @@ describe('TransfersPage', () => {
     expect(mockCreate).not.toHaveBeenCalled()
   })
 
-  test('a fee line is forwarded in the POST body', async () => {
+  test('an ARS fee line is forwarded WITH a captured FX snapshot (rate + source)', async () => {
     const user = userEvent.setup()
     renderTransfersPage()
     await screen.findByText('Galicia')
@@ -249,10 +261,44 @@ describe('TransfersPage', () => {
 
     await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1))
     const body = mockCreate.mock.calls[0][0]
-    // The fee account defaulted to the `from` account (acc-ars).
+    // The fee account defaulted to the `from` account (acc-ars, an ARS account),
+    // so the create flow captured the day's preferred-source rate for its snapshot
+    // (ADR-148/149) — the fix for an ARS fee that used to land with no USD value.
     expect(body.fees).toEqual([
-      { accountId: 'acc-ars', amount: '15.00', label: 'Wire fee' },
+      {
+        accountId: 'acc-ars',
+        amount: '15.00',
+        label: 'Wire fee',
+        rate: '1250',
+        fxSource: 'bolsa',
+      },
     ])
+  })
+
+  test('a USD fee line stays NATIVE (no rate captured — already USD)', async () => {
+    const user = userEvent.setup()
+    renderTransfersPage()
+    await screen.findByText('Galicia')
+
+    const dialog = await openForm(user)
+    await selectOption(user, dialog, /From account/, 'Deel · USD')
+    await selectOption(user, dialog, /To account/, 'Galicia · ARS')
+    await user.type(dialog.getByLabelText(/Amount sent/), '1000')
+    await user.type(await dialog.findByLabelText(/Amount received/), '1240000')
+
+    // The fee defaults to the `from` account (acc-usd) — a USD fee is already in
+    // dollars, so no ARS→USD snapshot is captured and no rate is fetched.
+    await user.click(dialog.getByRole('button', { name: 'Add fee' }))
+    await user.type(dialog.getByLabelText('Fee amount'), '5')
+    await user.type(dialog.getByLabelText('Fee label'), 'USD fee')
+    await user.click(dialog.getByRole('button', { name: 'Save transfer' }))
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1))
+    const body = mockCreate.mock.calls[0][0]
+    expect(body.fees).toEqual([
+      { accountId: 'acc-usd', amount: '5.00', label: 'USD fee' },
+    ])
+    expect(mockFetchRate).not.toHaveBeenCalled()
   })
 
   test('creating a transfer invalidates transfers + accounts + transactions keys', async () => {

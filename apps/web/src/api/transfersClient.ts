@@ -42,6 +42,15 @@ export interface TransferFeeBody {
   accountId: string
   amount: string
   label: string
+  /**
+   * Per-fee FX snapshot rate (ARS per 1 USD) as a Decimal string (ADR-148/149),
+   * captured client-side like a normal expense. Sent for an ARS fee so the
+   * backend materializes the fee expense's `usd_amount = amount ÷ rate`; omitted
+   * when no rate was captured. Travels together with {@link TransferFeeBody.fxSource}.
+   */
+  rate?: string
+  /** Provenance of {@link TransferFeeBody.rate} (ADR-148): 'bolsa'/'oficial'/'manual'. */
+  fxSource?: string
 }
 
 /**
@@ -126,11 +135,23 @@ export function toTransferWriteBody(input: NewTransferInput): TransferWriteBody 
   const note = input.note?.trim()
   if (note) body.note = note
   if (input.fees && input.fees.length > 0) {
-    body.fees = input.fees.map((fee) => ({
-      accountId: fee.accountId,
-      amount: fee.amount,
-      label: fee.label,
-    }))
+    body.fees = input.fees.map((fee) => {
+      const feeBody: TransferFeeBody = {
+        accountId: fee.accountId,
+        amount: fee.amount,
+        label: fee.label,
+      }
+      // INVARIANT (ADR-148): `rate` and `fxSource` travel TOGETHER so the fee
+      // expense can never be a source-without-rate. Sent only when a snapshot was
+      // captured (an ARS fee with an available rate); a USD fee / unavailable
+      // rate omits both and the fee is created without a snapshot (backfilled
+      // later, ADR-150) — never a guessed rate.
+      if (fee.rate) {
+        feeBody.rate = fee.rate
+        if (fee.fxSource) feeBody.fxSource = fee.fxSource
+      }
+      return feeBody
+    })
   }
   return body
 }

@@ -12,6 +12,12 @@ import userEvent from '@testing-library/user-event'
 import { ThemeProvider } from '@mui/material/styles'
 import { darkTheme } from '../../theme'
 import { TransactionRow, TransactionRowMobile } from './TransactionRow'
+import { resolveRowAmount } from './rowAmount'
+import {
+  DisplayCurrencyContext,
+  DEFAULT_DISPLAY_CURRENCY_VALUE,
+  type DisplayCurrencyValue,
+} from '../settings/displayCurrencyContext'
 import type { Transaction } from '../../mock/types'
 import * as invoicesClient from '../../api/invoicesClient'
 
@@ -626,5 +632,141 @@ describe('desktop row overflow menu', () => {
       await screen.findByRole('menuitem', { name: 'Add reimbursement' }),
     )
     expect(onReimburse).toHaveBeenCalledWith(expense)
+  })
+})
+
+// Preferred display currency (ADR-056/148/161): the ledger row renders in the
+// EFFECTIVE currency, mirroring Home/budgets. In USD mode a SNAPSHOTTED row shows
+// its historically-accurate per-tx USD (the contract carries `usd_amount` as the
+// JSON `usd`, so `t.usd`), NEVER a re-derivation at the live rate; a snapshot-less
+// row falls back to the live-rate conversion, or native ARS when no rate. ARS mode
+// shows the native amount as before.
+describe('resolveRowAmount (preferred display currency)', () => {
+  const arsExpense: Transaction = {
+    id: 't1',
+    occurredOn: '2026-06-01',
+    dispDate: 'Jun 1',
+    month: 'June',
+    name: 'Coto',
+    category: 'Food',
+    bank: 'Galicia',
+    currency: 'ARS',
+    type: 'expense',
+    kind: 'expense',
+    amountNum: 12500,
+  }
+
+  test('ARS mode renders the native amount (unchanged behavior)', () => {
+    const view = resolveRowAmount(arsExpense, 'ARS', 1250)
+    expect(view).toEqual({ value: 12500, currency: 'ARS' })
+  })
+
+  test('USD mode uses the per-tx snapshot USD (t.usd) — not the live rate', () => {
+    // A snapshotted ARS expense carries its materialized usd_amount as `usd`.
+    // Live rate is 1300, but the row must show its FROZEN snapshot USD (10), not
+    // 12500 / 1300 — historical accuracy over the current rate (ADR-148).
+    const view = resolveRowAmount(
+      { ...arsExpense, usd: 10, fxSource: 'bolsa' },
+      'USD',
+      1300,
+    )
+    expect(view).toEqual({ value: 10, currency: 'USD' })
+  })
+
+  test('USD mode falls back to the LIVE rate when the row has no snapshot', () => {
+    // ARS income (never snapshotted, ADR-156) / a legacy row: no `usd`, so the
+    // row converts at the live rate (12500 / 1250 = 10).
+    const view = resolveRowAmount(arsExpense, 'USD', 1250)
+    expect(view).toEqual({ value: 10, currency: 'USD' })
+  })
+
+  test('USD mode stays NATIVE ARS when no snapshot AND no live rate (never NaN)', () => {
+    const view = resolveRowAmount(arsExpense, 'USD', null)
+    expect(view).toEqual({ value: 12500, currency: 'ARS' })
+  })
+
+  test('a transfer fee shows its captured USD in USD mode once snapshotted (#1)', () => {
+    // The #1 fix: an ARS fee now carries a snapshot, so its usd_amount surfaces as
+    // `usd` and the ledger shows a real USD value instead of a blank one.
+    const fee: Transaction = {
+      ...arsExpense,
+      name: 'Wire fee',
+      category: 'Fees',
+      amountNum: 15,
+      usd: 0.012,
+      fxSource: 'bolsa',
+      fxRate: '1250',
+    }
+    const view = resolveRowAmount(fee, 'USD', 1300)
+    expect(view).toEqual({ value: 0.012, currency: 'USD' })
+  })
+
+  test('ARS mode keeps the FX subline fields for a USD-account row', () => {
+    const usdRow: Transaction = {
+      ...arsExpense,
+      currency: 'USD',
+      usd: 500,
+      rate: 1245,
+      fxRateType: 'MEP',
+    }
+    const view = resolveRowAmount(usdRow, 'ARS', 1300)
+    expect(view).toEqual({
+      value: usdRow.amountNum,
+      currency: 'ARS',
+      fxUsd: 500,
+      fxRate: 1245,
+      fxSource: 'MEP',
+    })
+  })
+})
+
+describe('TransactionRow renders in the effective currency', () => {
+  const snapshotExpense: Transaction = {
+    id: 't-usd-disp',
+    occurredOn: '2026-06-01',
+    dispDate: 'Jun 1',
+    month: 'June',
+    name: 'Coto',
+    category: 'Food',
+    bank: 'Galicia',
+    currency: 'ARS',
+    type: 'expense',
+    kind: 'expense',
+    amountNum: 12500,
+    usd: 10,
+    fxSource: 'bolsa',
+    fxRate: '1250',
+  }
+
+  function renderWithCurrency(t: Transaction, value: DisplayCurrencyValue) {
+    return render(
+      <ThemeProvider theme={darkTheme}>
+        <DisplayCurrencyContext.Provider value={value}>
+          <TransactionRow transaction={t} onEdit={() => {}} onDelete={() => {}} />
+        </DisplayCurrencyContext.Provider>
+      </ThemeProvider>,
+    )
+  }
+
+  const usdValue: DisplayCurrencyValue = {
+    ...DEFAULT_DISPLAY_CURRENCY_VALUE,
+    preferredCurrency: 'USD',
+    effectiveCurrency: 'USD',
+    rate: 1300,
+  }
+
+  test('USD mode shows the snapshot USD (accessible label names USD)', () => {
+    renderWithCurrency(snapshotExpense, usdValue)
+    // Snapshot USD (10) rendered in USD — NOT 12500 / 1300 at the live rate.
+    expect(
+      screen.getByLabelText('minus 10 US dollars'),
+    ).toBeInTheDocument()
+  })
+
+  test('ARS mode (default) shows the native ARS amount', () => {
+    renderWithCurrency(snapshotExpense, DEFAULT_DISPLAY_CURRENCY_VALUE)
+    expect(
+      screen.getByLabelText('minus 12.500 Argentine pesos'),
+    ).toBeInTheDocument()
   })
 })
