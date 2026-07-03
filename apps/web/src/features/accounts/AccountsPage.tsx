@@ -68,6 +68,7 @@ import {
 } from './grouping'
 import { accountTypeLabel } from './presentation'
 import { AccountForm } from './AccountForm'
+import { DebtsSection } from './DebtsSection'
 import { InstitutionForm } from './InstitutionForm'
 import {
   InstitutionWizard,
@@ -560,6 +561,12 @@ export function AccountsPage() {
           ))}
         </Box>
       )}
+
+      {/* Manual debts — a peer section on this page, no new nav (ADR-127/172/187).
+          Its balances feed the net-worth "other debts" leg (ADR-187/183). */}
+      <Box sx={{ mt: 2 }}>
+        <DebtsSection />
+      </Box>
 
       {/* Onboarding wizard for a NEW institution (+ optional accounts).
           Remounted per open so its internal step/queue state starts fresh. */}

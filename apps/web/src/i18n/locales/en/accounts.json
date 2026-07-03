@@ -89,6 +89,56 @@
     "title": "Can't load your accounts",
     "description": "We couldn't reach the server to load your accounts. Check your connection and try again."
   },
+  "debts": {
+    "title": "Debts",
+    "subtitle": "Loans and other balances you owe.",
+    "add": "Add debt",
+    "empty": "No debts yet. Add a loan or other balance you owe to include it in your net worth.",
+    "list": {
+      "monthlyMinimum": "Min. {{amount}} / month",
+      "rate": "{{rate}}% rate",
+      "editAria": "Edit {{name}}",
+      "deleteAria": "Delete {{name}}"
+    },
+    "form": {
+      "addTitle": "Add debt",
+      "editTitle": "Edit debt",
+      "name": {
+        "label": "Name"
+      },
+      "currency": {
+        "label": "Currency",
+        "ars": "ARS — Argentine pesos",
+        "usd": "USD — US dollars"
+      },
+      "currentBalance": {
+        "label": "Current balance",
+        "helper": "The amount you currently owe on this debt."
+      },
+      "monthlyMinimum": {
+        "label": "Monthly minimum (optional)",
+        "helper": "The minimum payment due each month, if any."
+      },
+      "rate": {
+        "label": "Rate (optional)",
+        "helper": "The interest rate, if you want to track it."
+      },
+      "cancel": "Cancel",
+      "save": "Save",
+      "saveError": "We couldn't save this debt. Check your connection and try again."
+    },
+    "delete": {
+      "title": "Delete debt",
+      "body": "Delete \"{{name}}\"? It will be removed from your net worth. This can't be undone.",
+      "cancel": "Cancel",
+      "confirm": "Delete",
+      "error": "We couldn't delete this debt. Check your connection and try again."
+    },
+    "error": {
+      "title": "Can't load your debts",
+      "description": "We couldn't reach the server to load your debts. Check your connection and try again."
+    }
+  },
   "netWorth": {
     "title": "Net worth",
     "subtitle": "Total across your accounts",
@@ -112,6 +162,7 @@
     "netOfCommitments": "Net of commitments: {{amount}}",
     "liabilityInstallments": "− {{amount}} installments",
     "liabilityCcBalance": "− {{amount}} credit card",
+    "liabilityOther": "− {{amount}} other debts",
     "mepUnavailable": "Live rate unavailable — showing each currency natively.",
     "drilldownAria": "View {{institution}} {{currency}} transactions",
     "errorTitle": "Net worth unavailable",

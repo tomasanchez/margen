@@ -89,6 +89,56 @@
     "title": "No se pueden cargar tus cuentas",
     "description": "No pudimos conectar con el servidor para cargar tus cuentas. Verificá tu conexión e intentá de nuevo."
   },
+  "debts": {
+    "title": "Deudas",
+    "subtitle": "Préstamos y otros saldos que debés.",
+    "add": "Agregar deuda",
+    "empty": "Todavía no tenés deudas. Agregá un préstamo u otro saldo que debas para incluirlo en tu patrimonio.",
+    "list": {
+      "monthlyMinimum": "Mín. {{amount}} / mes",
+      "rate": "Tasa {{rate}}%",
+      "editAria": "Editar {{name}}",
+      "deleteAria": "Eliminar {{name}}"
+    },
+    "form": {
+      "addTitle": "Agregar deuda",
+      "editTitle": "Editar deuda",
+      "name": {
+        "label": "Nombre"
+      },
+      "currency": {
+        "label": "Moneda",
+        "ars": "ARS — pesos argentinos",
+        "usd": "USD — dólares estadounidenses"
+      },
+      "currentBalance": {
+        "label": "Saldo actual",
+        "helper": "El monto que debés actualmente por esta deuda."
+      },
+      "monthlyMinimum": {
+        "label": "Mínimo mensual (opcional)",
+        "helper": "El pago mínimo que vence cada mes, si corresponde."
+      },
+      "rate": {
+        "label": "Tasa (opcional)",
+        "helper": "La tasa de interés, si querés registrarla."
+      },
+      "cancel": "Cancelar",
+      "save": "Guardar",
+      "saveError": "No pudimos guardar esta deuda. Verificá tu conexión e intentá de nuevo."
+    },
+    "delete": {
+      "title": "Eliminar deuda",
+      "body": "¿Eliminar \"{{name}}\"? Se quitará de tu patrimonio. Esta acción no se puede deshacer.",
+      "cancel": "Cancelar",
+      "confirm": "Eliminar",
+      "error": "No pudimos eliminar esta deuda. Verificá tu conexión e intentá de nuevo."
+    },
+    "error": {
+      "title": "No se pueden cargar tus deudas",
+      "description": "No pudimos conectar con el servidor para cargar tus deudas. Verificá tu conexión e intentá de nuevo."
+    }
+  },
   "netWorth": {
     "title": "Patrimonio",
     "subtitle": "Total entre tus cuentas",
@@ -112,6 +162,7 @@
     "netOfCommitments": "Neto de compromisos: {{amount}}",
     "liabilityInstallments": "− {{amount}} en cuotas",
     "liabilityCcBalance": "− {{amount}} de tarjeta",
+    "liabilityOther": "− {{amount}} en otras deudas",
     "mepUnavailable": "Cotización en vivo no disponible — mostrando cada moneda de forma nativa.",
     "drilldownAria": "Ver los movimientos de {{institution}} {{currency}}",
     "errorTitle": "Patrimonio no disponible",

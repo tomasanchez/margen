@@ -147,6 +147,21 @@ export interface CcBalanceNative {
 }
 
 /**
+ * The "other debts" balance as NATIVE ARS/USD sums, unconverted (ADR-187, ADR-183).
+ * The sum of every manual {@link Debt}'s `currentBalance` per native currency.
+ * Mirrors {@link InstallmentsNative} / {@link CcBalanceNative}: the card converts
+ * these at the SAME live MEP rate it uses for the assets headline (ADR-133), so
+ * "Net of commitments" stays coherent when a USD debt exists. Money fields are
+ * Decimal strings (ADR-025/034), parsed at the display edge.
+ */
+export interface OtherNative {
+  /** Outstanding native-ARS "other debts" balance (manual debts, ADR-187). */
+  ars: string
+  /** Outstanding native-USD "other debts" balance (manual debts, ADR-187). */
+  usd: string
+}
+
+/**
  * The typed liabilities reservation carried alongside net worth (ADR-180/181/183).
  * A layered, ADDITIVE breakdown of locked-in obligations. The DISPLAYED figures
  * are derived by the card from {@link installmentsNative} converted at the LIVE
@@ -170,8 +185,14 @@ export interface Liabilities {
   ccBalance: string | null
   /** The unpaid CC balance as native ARS/USD sums — the card converts these at the live rate (ADR-185/183). */
   ccBalanceNative: CcBalanceNative
-  /** Catch-all for other debts; null in Slice 1 (typed placeholder, ADR-180). */
+  /**
+   * Manual "other debts" balance in the display currency at the BACKEND rate; a
+   * computed "0.00" when none (ADR-187). NOT used for the card's displayed figure
+   * — the card converts {@link otherNative} at the live rate instead.
+   */
   other: string | null
+  /** The "other debts" balance as native ARS/USD sums — the card converts these at the live rate (ADR-187/183). */
+  otherNative: OtherNative
   /** Sum of the present liability figures in the display currency at the BACKEND rate (not used for display). */
   total: string
 }
@@ -274,6 +295,12 @@ const ZERO_CC_BALANCE_NATIVE: CcBalanceNative = {
   usd: ZERO_DECIMAL,
 }
 
+/** The zero native "other debts" breakdown — the default when liabilities are absent. */
+const ZERO_OTHER_NATIVE: OtherNative = {
+  ars: ZERO_DECIMAL,
+  usd: ZERO_DECIMAL,
+}
+
 /**
  * Adapt the backend net-worth payload, defaulting a missing `liabilities` /
  * `netAfterLiabilities` (ADR-180) so a pre-liabilities or malformed response
@@ -302,6 +329,12 @@ export function adaptNetWorth(dto: NetWorth): NetWorth {
             }
           : ZERO_CC_BALANCE_NATIVE,
         other: dto.liabilities.other ?? null,
+        otherNative: dto.liabilities.otherNative
+          ? {
+              ars: dto.liabilities.otherNative.ars ?? ZERO_DECIMAL,
+              usd: dto.liabilities.otherNative.usd ?? ZERO_DECIMAL,
+            }
+          : ZERO_OTHER_NATIVE,
         total: dto.liabilities.total ?? ZERO_DECIMAL,
       }
     : {
@@ -310,6 +343,7 @@ export function adaptNetWorth(dto: NetWorth): NetWorth {
         ccBalance: null,
         ccBalanceNative: ZERO_CC_BALANCE_NATIVE,
         other: null,
+        otherNative: ZERO_OTHER_NATIVE,
         total: ZERO_DECIMAL,
       }
   return {
