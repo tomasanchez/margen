@@ -73,6 +73,7 @@ import {
 import type { SuggestedRates } from '../../api/fxClient'
 import type { Currency } from '../../mock/types'
 import type {
+  CcBalanceNative,
   InstallmentsNative,
   NetWorth,
   NetWorthAccount,
@@ -158,10 +159,12 @@ function decompose(
 }
 
 /**
- * The native installment liability converted to the display currency at the LIVE
+ * A native ARS/USD liability leg converted to the display currency at the LIVE
  * MEP rate — the SAME rate the assets headline uses (ADR-133/183 amendment), so
- * `netOfCommitments = assets@live − liability@live` is coherent when a USD tail
- * exists and the backend snapshot rate has drifted.
+ * `netOfCommitments = assets@live − liability@live` is coherent when a USD leg
+ * exists and the backend snapshot rate has drifted. Used for BOTH the installment
+ * tail (ADR-181) and the unpaid credit-card balance (ADR-185): each is a native
+ * `{ars, usd}` breakdown converted identically.
  *
  * The `usd` leg is converted at `mep`; the `ars` leg is native. The result is
  * denominated in `displayCurrency` exactly as {@link decompose} handles ARS + USD
@@ -174,13 +177,13 @@ function decompose(
  * leg there is nothing to convert, so the display-currency leg stands alone
  * regardless of the rate.
  */
-function liabilityInDisplayCurrency(
-  installmentsNative: InstallmentsNative,
+function nativeInDisplayCurrency(
+  native: InstallmentsNative | CcBalanceNative,
   displayCurrency: Currency,
   mep: number | null,
 ): number {
-  const ars = num(installmentsNative.ars)
-  const usd = num(installmentsNative.usd)
+  const ars = num(native.ars)
+  const usd = num(native.usd)
   const displayNative = displayCurrency === 'USD' ? usd : ars
   const otherAmount = displayCurrency === 'USD' ? ars : usd
   const otherCurrency = otherCurrencyOf(displayCurrency)
@@ -189,6 +192,11 @@ function liabilityInDisplayCurrency(
   const convertedOther =
     convertAtMep(otherAmount, otherCurrency, displayCurrency, mep) ?? 0
   return displayNative + convertedOther
+}
+
+/** True when a native ARS/USD breakdown carries any positive amount. */
+function hasNativeLiability(native: InstallmentsNative | CcBalanceNative): boolean {
+  return num(native.ars) > 0 || num(native.usd) > 0
 }
 
 /**
@@ -205,8 +213,10 @@ function NetWorthHeadline({
   mep,
   source,
   hidden,
-  liability,
-  hasLiability,
+  installments,
+  hasInstallments,
+  ccBalance,
+  hasCcBalance,
 }: {
   decomp: Decomposition
   displayCurrency: Currency
@@ -217,30 +227,36 @@ function NetWorthHeadline({
   /**
    * The locked-in installment obligation in the display currency, converted at
    * the SAME LIVE MEP rate the assets headline uses (ADR-183 amendment/ADR-133),
-   * so `netOfCommitments = headlineValue − liability` is coherent — both sides at
-   * ONE rate. Degrades the same way the assets headline does (the unconvertible
-   * other-currency leg is dropped), never NaN. In Slice 1 the installment tail is
-   * the whole liability, so this doubles as the "− installments" breakdown amount.
+   * so both sides of `netOfCommitments` use ONE rate. Degrades like the assets
+   * headline (the unconvertible other-currency leg is dropped), never NaN. Drives
+   * the "− installments" breakdown line.
    */
-  liability: number
+  installments: number
   /**
-   * Whether any installment obligation exists (native totals > 0). Drives the
-   * LAYERED "Net of commitments" line — a clean assets-only view otherwise
-   * (ADR-180). Read from the NATIVE breakdown, so it stays true even while the
-   * rate is unavailable (the figure degrades, the line does not vanish).
+   * Whether any installment obligation exists (native totals > 0). Read from the
+   * NATIVE breakdown, so it stays true even while the rate is unavailable.
    */
-  hasLiability: boolean
+  hasInstallments: boolean
+  /**
+   * The unpaid credit-card balance in the display currency, converted at the
+   * SAME live MEP rate (ADR-185/183) — future-dated, non-installment card charges
+   * (never double-counting installments). Drives the "− credit card" line.
+   */
+  ccBalance: number
+  /** Whether any unpaid CC balance exists (native totals > 0). */
+  hasCcBalance: boolean
 }) {
   const { t } = useTranslation('accounts')
   // Headline value: the converted total when a rate exists, else the native
   // display-currency portion (we never invent a rate, ADR-133).
   const headlineValue = decomp.total ?? decomp.nativeDisplay
   // "Net of commitments" is layered on the SAME headline value the user sees, so
-  // the subtraction reads coherently (ADR-180). The `liability` was converted at
-  // the SAME live rate as `headlineValue` (ADR-183 amendment), so both sides use
-  // one rate. Only shown when something is committed — a clean assets-only view
-  // otherwise (ADR-180).
-  const showNetOfCommitments = hasLiability
+  // the subtraction reads coherently (ADR-180). Each leg was converted at the
+  // SAME live rate as `headlineValue` (ADR-183 amendment), so every side uses one
+  // rate. The line shows whenever ANY commitment exists (installments or CC
+  // balance) — a clean assets-only view otherwise (ADR-180/185).
+  const liability = installments + ccBalance
+  const showNetOfCommitments = hasInstallments || hasCcBalance
   const netOfCommitments = headlineValue - liability
 
   const showConverted =
@@ -335,7 +351,7 @@ function NetWorthHeadline({
                 : formatCurrency(netOfCommitments, displayCurrency),
             })}
           </Typography>
-          {hasLiability ? (
+          {hasInstallments ? (
             <Typography
               sx={{ fontSize: 12, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}
               color="text.secondary"
@@ -343,7 +359,19 @@ function NetWorthHeadline({
               {t('netWorth.liabilityInstallments', {
                 amount: hidden
                   ? mask
-                  : formatCurrency(liability, displayCurrency),
+                  : formatCurrency(installments, displayCurrency),
+              })}
+            </Typography>
+          ) : null}
+          {hasCcBalance ? (
+            <Typography
+              sx={{ fontSize: 12, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}
+              color="text.secondary"
+            >
+              {t('netWorth.liabilityCcBalance', {
+                amount: hidden
+                  ? mask
+                  : formatCurrency(ccBalance, displayCurrency),
               })}
             </Typography>
           ) : null}
@@ -633,10 +661,21 @@ export function NetWorthCard({
   // is read from the NATIVE totals, so it stays visible (with a degraded figure)
   // even when the rate is unavailable.
   const installmentsNative = netWorth.liabilities.installmentsNative
-  const hasLiability =
-    num(installmentsNative.ars) > 0 || num(installmentsNative.usd) > 0
-  const liability = liabilityInDisplayCurrency(
+  const hasInstallments = hasNativeLiability(installmentsNative)
+  const installments = nativeInDisplayCurrency(
     installmentsNative,
+    displayCurrency,
+    mep,
+  )
+  // The unpaid CC balance is its OWN native ARS/USD leg (ADR-185), converted at
+  // the SAME live rate as the assets + installments legs — future-dated,
+  // non-installment card charges, so it never double-counts the installment tail
+  // (ADR-186). Whether the line shows is read from the NATIVE totals so it stays
+  // visible (with a degraded figure) even when the rate is unavailable.
+  const ccBalanceNative = netWorth.liabilities.ccBalanceNative
+  const hasCcBalance = hasNativeLiability(ccBalanceNative)
+  const ccBalance = nativeInDisplayCurrency(
+    ccBalanceNative,
     displayCurrency,
     mep,
   )
@@ -668,8 +707,10 @@ export function NetWorthCard({
         mep={mep}
         source={source}
         hidden={hidden}
-        liability={liability}
-        hasLiability={hasLiability}
+        installments={installments}
+        hasInstallments={hasInstallments}
+        ccBalance={ccBalance}
+        hasCcBalance={hasCcBalance}
       />
 
       {netWorth.accounts.length === 0 ? (

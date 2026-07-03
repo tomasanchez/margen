@@ -29,6 +29,7 @@ from margen_api.entrypoint.schemas import CamelCaseModel
 from margen_api.service_layer.account_read_models import (
     AccountBalance,
     AccountReadModel,
+    CcBalanceNative,
     InstallmentsNative,
     Liabilities,
     NetWorth,
@@ -169,8 +170,24 @@ class InstallmentsNativeResponse(CamelCaseModel):
         return cls(ars=model.ars, usd=model.usd)
 
 
+class CcBalanceNativeResponse(CamelCaseModel):
+    """The unpaid credit-card balance as native ARS/USD sums, unconverted (ADR-185, ADR-183).
+
+    The client converts these at the LIVE MEP rate it uses for the net-worth assets
+    headline (ADR-133), so "Net of commitments" stays coherent when a USD balance exists.
+    """
+
+    ars: Decimal = Field(description="Outstanding native-ARS card balance (future-dated, non-instalment); a string.")
+    usd: Decimal = Field(description="Outstanding native-USD card balance (future-dated, non-instalment); a string.")
+
+    @classmethod
+    def from_read_model(cls, model: CcBalanceNative) -> CcBalanceNativeResponse:
+        """Build the response from a native-breakdown read model (ADR-030)."""
+        return cls(ars=model.ars, usd=model.usd)
+
+
 class LiabilitiesResponse(CamelCaseModel):
-    """The typed liabilities reservation returned to clients (ADR-180)."""
+    """The typed liabilities reservation returned to clients (ADR-180, ADR-185)."""
 
     installments: Decimal = Field(
         description="Full remaining instalment tail (sum of remaining x cuota) in the display currency; a string.",
@@ -180,7 +197,10 @@ class LiabilitiesResponse(CamelCaseModel):
     )
     cc_balance: Decimal | None = Field(
         default=None,
-        description="Unpaid credit-card balance liability; null in Slice 1, a typed placeholder (ADR-180).",
+        description="Unpaid credit-card balance (future-dated, non-instalment) in the display currency (ADR-185).",
+    )
+    cc_balance_native: CcBalanceNativeResponse = Field(
+        description="The unpaid CC balance as native ARS/USD sums the client converts at the live rate (ADR-185/183).",
     )
     other: Decimal | None = Field(
         default=None,
@@ -195,6 +215,7 @@ class LiabilitiesResponse(CamelCaseModel):
             installments=model.installments,
             installments_native=InstallmentsNativeResponse.from_read_model(model.installments_native),
             cc_balance=model.cc_balance,
+            cc_balance_native=CcBalanceNativeResponse.from_read_model(model.cc_balance_native),
             other=model.other,
             total=model.total,
         )

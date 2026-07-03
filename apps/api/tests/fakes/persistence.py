@@ -23,6 +23,7 @@ from margen_api.domain.models.transfer import Transfer
 from margen_api.domain.models.value_objects import BudgetKind, Currency, Kind, TxType
 from margen_api.service_layer.account_read_models import (
     AccountReadModel,
+    CcBalanceNative,
     InstallmentsNative,
     Liabilities,
     NetWorth,
@@ -772,7 +773,8 @@ def _empty_net_worth() -> NetWorth:
         liabilities=Liabilities(
             installments=Decimal(0),
             installments_native=InstallmentsNative(ars=Decimal(0), usd=Decimal(0)),
-            cc_balance=None,
+            cc_balance=Decimal(0),
+            cc_balance_native=CcBalanceNative(ars=Decimal(0), usd=Decimal(0)),
             other=None,
             total=Decimal(0),
         ),

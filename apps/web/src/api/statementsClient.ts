@@ -261,6 +261,13 @@ export interface StatementLineRequest {
   card?: string
   cuota?: string
   notes?: string
+  /**
+   * The card account the frontend deduced + the user confirmed for this line
+   * (ADR-184); omitted imports the line unattached (`account_id = null`, backend
+   * tolerant). Matched by (institution, currency): an ARS line attaches to the
+   * issuer's ARS card account, a USD line to its USD card account.
+   */
+  accountId?: string
   /** How this line resolves on import (ADR-085); defaults to `import`. */
   resolution: StatementLineResolution
   /** The existing transaction to enrich; REQUIRED when `resolution === 'merge'`. */

@@ -30,7 +30,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, status
 from fastapi.responses import Response
 
 from margen_api.domain.commands.statement import StatementImportResult
-from margen_api.domain.models.exceptions import MergeTargetNotFoundError
+from margen_api.domain.models.exceptions import AccountNotFoundError, MergeTargetNotFoundError
 from margen_api.domain.models.value_objects import Currency, Kind
 from margen_api.entrypoint.dependencies import AuthUser, Bus, StatementReader, TransactionReader
 from margen_api.entrypoint.schemas import ResponseModel
@@ -222,7 +222,8 @@ async def import_statement_endpoint(
     EXPENSE while ``merge`` enriches the existing transaction (ADR-085). Returns the
     created and merged counts and ids and the shared ``statementDocumentId``. A
     malformed ``pdfBase64`` yields ``422``; a ``merge`` pointing at a missing
-    transaction yields ``409`` (ADR-078, ADR-085).
+    transaction yields ``409`` (ADR-078, ADR-085); a line attaching a missing or
+    cross-tenant ``accountId`` yields ``404`` (ADR-184, ADR-130).
     """
     try:
         command = body.to_command(user.id)
@@ -231,6 +232,13 @@ async def import_statement_endpoint(
 
     try:
         result: StatementImportResult = await bus.handle(command)
+    except AccountNotFoundError as error:
+        # Attaching a line to a missing/cross-tenant account is a not-found, never a
+        # leak of another tenant's account roster (ADR-184, ADR-130, ADR-111).
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Account {error.account_id} not found.",
+        ) from error
     except MergeTargetNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

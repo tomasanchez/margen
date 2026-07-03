@@ -419,8 +419,10 @@ class StatementLineRequest(CamelCaseModel):
     on; ``purchaseDate`` carries the original FECHA back from parse (ADR-089). The
     system note is composed from the purchase date and the installment ``cuota``
     marker as ``"Compra dd-mm-yy · Cuota 3/3"`` (ADR-089) by :meth:`to_input` when no
-    explicit note is supplied. A ``merge`` resolution must carry ``matchTransactionId``
-    (validated here → 422). Money is ``Decimal`` (ADR-025).
+    explicit note is supplied. ``accountId`` is the card account the frontend deduced and
+    the user confirmed (ADR-184); ``null`` imports the line unattached. A ``merge``
+    resolution must carry ``matchTransactionId`` (validated here → 422). Money is
+    ``Decimal`` (ADR-025).
     """
 
     occurred_on: date = Field(description="The statement pay/due date the expense counts on (ISO 8601, ADR-089).")
@@ -435,6 +437,10 @@ class StatementLineRequest(CamelCaseModel):
     fx_rate: Decimal | None = Field(default=None, description="Stated cotización for a USD line, else null.")
     fx_rate_type: FxRateType | None = Field(default=None, description="FX rate family; null for manual confirm.")
     fx_rate_as_of: datetime | None = Field(default=None, description="Timestamp the FX rate was observed.")
+    account_id: UUID | None = Field(
+        default=None,
+        description="The card account the frontend deduced+confirmed for this line; null imports unattached (ADR-184).",
+    )
     category: str | None = Field(default=None, description="Category label, editable in review.")
     payment_method: str | None = Field(
         default=None,
@@ -490,6 +496,7 @@ class StatementLineRequest(CamelCaseModel):
             fx_rate=self.fx_rate,
             fx_rate_type=self.fx_rate_type,
             fx_rate_as_of=self.fx_rate_as_of,
+            account_id=self.account_id,
             category=self.category,
             payment_method=self.payment_method,
             card=self.card,

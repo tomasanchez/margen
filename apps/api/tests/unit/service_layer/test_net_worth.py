@@ -14,6 +14,7 @@ from uuid import uuid4
 from margen_api.domain.models.value_objects import Currency, InstitutionType
 from margen_api.service_layer.net_worth import (
     AccountBalanceInput,
+    CcBalanceInput,
     InstallmentLiabilityInput,
     build_liabilities,
     build_net_worth,
@@ -160,7 +161,7 @@ class TestBuildNetWorth:
 
     async def test_default_has_zero_liabilities_and_net_equals_total(self):
         """
-        GIVEN accounts but no instalment liabilities supplied
+        GIVEN accounts but no instalment or CC-balance liabilities supplied
         WHEN net worth is built
         THEN the liabilities reservation is zero and net_after_liabilities equals the total (ADR-180)
         """
@@ -173,7 +174,10 @@ class TestBuildNetWorth:
         # THEN — assets-only total is untouched; the reservation is a zero placeholder object.
         assert net_worth.total == Decimal("100000.00")
         assert net_worth.liabilities.installments == Decimal("0.00")
-        assert net_worth.liabilities.cc_balance is None
+        # cc_balance is now a real computed figure like installments (ADR-185): zero, not None.
+        assert net_worth.liabilities.cc_balance == Decimal("0.00")
+        assert net_worth.liabilities.cc_balance_native.ars == Decimal("0.00")
+        assert net_worth.liabilities.cc_balance_native.usd == Decimal("0.00")
         assert net_worth.liabilities.other is None
         assert net_worth.liabilities.total == Decimal("0.00")
         assert net_worth.net_after_liabilities == Decimal("100000.00")
@@ -205,7 +209,8 @@ class TestBuildLiabilities:
         # THEN
         assert liabilities.installments == Decimal("4000.00")
         assert liabilities.total == Decimal("4000.00")
-        assert liabilities.cc_balance is None
+        # No CC balances supplied, so the CC liability is a computed zero (ADR-185).
+        assert liabilities.cc_balance == Decimal("0.00")
         assert liabilities.other is None
 
     async def test_fully_paid_plan_contributes_zero(self):
@@ -312,6 +317,87 @@ class TestBuildLiabilities:
         assert liabilities.installments == Decimal("32000.00")
 
 
+def _cc(*, amount: Decimal, currency: Currency) -> CcBalanceInput:
+    """Build a native CC-balance subtotal input for the net-worth reservation (ADR-185)."""
+    return CcBalanceInput(amount=amount, currency=currency)
+
+
+class TestBuildLiabilitiesCcBalance:
+    """``build_liabilities`` folds the unpaid CC balance in alongside instalments (ADR-185, ADR-183)."""
+
+    async def test_ars_cc_balance_is_summed_and_added_to_total(self):
+        """
+        GIVEN two ARS card-balance subtotals and no instalments
+        WHEN the liabilities reservation is built
+        THEN cc_balance is the ARS sum and total includes it (ADR-185)
+        """
+        # GIVEN — 3,641.66 + 700 = 4,341.66 outstanding ARS card charges.
+        balances = [
+            _cc(amount=Decimal("3641.66"), currency=Currency.ARS),
+            _cc(amount=Decimal("700"), currency=Currency.ARS),
+        ]
+
+        # WHEN
+        liabilities = build_liabilities([], display_currency=Currency.ARS, mep_rate=_MEP, cc_balances=balances)
+
+        # THEN
+        assert liabilities.cc_balance == Decimal("4341.66")
+        assert liabilities.cc_balance_native.ars == Decimal("4341.66")
+        assert liabilities.cc_balance_native.usd == Decimal("0.00")
+        assert liabilities.installments == Decimal("0.00")
+        assert liabilities.total == Decimal("4341.66")
+
+    async def test_usd_cc_balance_converts_at_mep_but_native_is_unconverted(self):
+        """
+        GIVEN a USD card-balance subtotal and an ARS display currency with a MEP rate
+        WHEN the liabilities reservation is built
+        THEN cc_balance converts at MEP while cc_balance_native.usd stays unconverted (ADR-183)
+        """
+        # GIVEN — 100 USD outstanding; at 1000 ARS/USD the converted figure is 100,000 ARS.
+        balances = [_cc(amount=Decimal("100"), currency=Currency.USD)]
+
+        # WHEN
+        liabilities = build_liabilities([], display_currency=Currency.ARS, mep_rate=_MEP, cc_balances=balances)
+
+        # THEN — converted at MEP; the native breakdown keeps the raw 100 USD for the live rate.
+        assert liabilities.cc_balance == Decimal("100000.00")
+        assert liabilities.cc_balance_native.usd == Decimal("100.00")
+        assert liabilities.cc_balance_native.ars == Decimal("0.00")
+
+    async def test_no_rate_degrades_usd_cc_balance_to_native(self):
+        """
+        GIVEN a USD card balance with no MEP rate available and an ARS display currency
+        WHEN the liabilities reservation is built
+        THEN the USD balance contributes its native figure (degrade-to-native, ADR-132/183)
+        """
+        # GIVEN
+        balances = [_cc(amount=Decimal("100"), currency=Currency.USD)]
+
+        # WHEN
+        liabilities = build_liabilities([], display_currency=Currency.ARS, mep_rate=None, cc_balances=balances)
+
+        # THEN — degrades to 100 native rather than failing.
+        assert liabilities.cc_balance == Decimal("100.00")
+
+    async def test_cc_balance_and_installments_both_enter_total(self):
+        """
+        GIVEN both an instalment tail and an unpaid CC balance (mixed currencies)
+        WHEN the liabilities reservation is built
+        THEN total = installments + cc_balance, each converted to the display currency (ADR-185)
+        """
+        # GIVEN — 4 x 500 ARS tail = 2000; a 10 USD card balance = 10,000 ARS at MEP.
+        plans = [_installment(amount=Decimal("500"), currency=Currency.ARS, remaining_count=4)]
+        balances = [_cc(amount=Decimal("10"), currency=Currency.USD)]
+
+        # WHEN
+        liabilities = build_liabilities(plans, display_currency=Currency.ARS, mep_rate=_MEP, cc_balances=balances)
+
+        # THEN
+        assert liabilities.installments == Decimal("2000.00")
+        assert liabilities.cc_balance == Decimal("10000.00")
+        assert liabilities.total == Decimal("12000.00")
+
+
 class TestNetWorthWithLiabilities:
     """Net worth carries the liabilities reservation alongside the assets-only total (ADR-180)."""
 
@@ -338,3 +424,27 @@ class TestNetWorthWithLiabilities:
         assert net_worth.liabilities.installments == Decimal("2000.00")
         assert net_worth.liabilities.total == Decimal("2000.00")
         assert net_worth.net_after_liabilities == Decimal("98000.00")
+
+    async def test_cc_balance_reduces_net_after_liabilities(self):
+        """
+        GIVEN an ARS account and an unpaid CC balance passed as a liability
+        WHEN net worth is built
+        THEN total stays assets-only and net_after_liabilities = total - cc_balance (ADR-185)
+        """
+        # GIVEN — 100,000 ARS assets; a 4,341.66 ARS outstanding card balance.
+        ars = _balance(name="Galicia", currency=Currency.ARS, balance=Decimal("100000"))
+        balances = [_cc(amount=Decimal("4341.66"), currency=Currency.ARS)]
+
+        # WHEN
+        net_worth = build_net_worth(
+            [ars],
+            display_currency=Currency.ARS,
+            mep_rate=_MEP,
+            cc_balance_liabilities=balances,
+        )
+
+        # THEN
+        assert net_worth.total == Decimal("100000.00")
+        assert net_worth.liabilities.cc_balance == Decimal("4341.66")
+        assert net_worth.liabilities.total == Decimal("4341.66")
+        assert net_worth.net_after_liabilities == Decimal("95658.34")

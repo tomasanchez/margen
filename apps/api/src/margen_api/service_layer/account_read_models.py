@@ -87,6 +87,28 @@ class InstallmentsNative:
 
 
 @dataclass(frozen=True, slots=True)
+class CcBalanceNative:
+    """The unpaid credit-card balance as NATIVE per-currency sums, unconverted (ADR-185, ADR-183).
+
+    The owner's outstanding future-dated card charges (not yet due, so not yet paid)
+    summed by native currency with NO MEP rate applied. Each figure is
+    ``Σ signed native charge`` over the owner's CARD-account expense rows dated after
+    today and NOT part of an instalment plan (those are the instalment tail, ADR-181).
+    Mirrors :class:`InstallmentsNative`: net-worth ASSETS are displayed at the LIVE MEP
+    rate on the client (ADR-133), so exposing the liability's native breakdown lets the
+    client convert it at the SAME live rate, keeping "Net of commitments" coherent when a
+    USD balance exists and the live rate has drifted from the backend snapshot (ADR-183).
+
+    Attributes:
+        ars: Σ over ARS card charges of the outstanding native ARS balance.
+        usd: Σ over USD card charges of the outstanding native USD balance.
+    """
+
+    ars: Decimal
+    usd: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class Liabilities:
     """A typed breakdown of locked-in obligations, in the display currency (ADR-180).
 
@@ -107,8 +129,16 @@ class Liabilities:
         installments_native: The same instalment tail as NATIVE ARS/USD sums, unconverted,
             so the client can convert it at the SAME live MEP rate it uses for the assets
             headline (ADR-133) — keeping "Net of commitments" coherent (ADR-183 amendment).
-        cc_balance: The unpaid credit-card balance liability; ``None`` in Slice 1, a typed
-            placeholder for a later slice (ADR-180).
+        cc_balance: The unpaid credit-card balance liability — the owner's outstanding
+            future-dated CARD-account charges (not yet due/paid, instalments excluded),
+            converted to the display currency via the net-worth MEP rate (ADR-185/183).
+            Kept for API completeness; the client's displayed card derives its figure from
+            ``cc_balance_native`` at the LIVE rate instead (ADR-183 amendment). ``None``
+            only when the owner has no such balance is NOT the rule — it is ``0`` then;
+            the ``None`` typed placeholder is reserved for a not-yet-computed slice.
+        cc_balance_native: The same unpaid CC balance as NATIVE ARS/USD sums, unconverted,
+            so the client can convert it at the SAME live MEP rate it uses for the assets
+            headline (ADR-133) — keeping "Net of commitments" coherent (ADR-185/183).
         other: A catch-all for other debts; ``None`` in Slice 1, a typed placeholder for a
             later slice (ADR-180).
         total: The sum of the present liability figures, in the display currency.
@@ -117,6 +147,7 @@ class Liabilities:
     installments: Decimal
     installments_native: InstallmentsNative
     cc_balance: Decimal | None
+    cc_balance_native: CcBalanceNative
     other: Decimal | None
     total: Decimal
 

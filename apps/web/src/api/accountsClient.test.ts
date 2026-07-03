@@ -243,6 +243,7 @@ describe('accountsClient.netWorth', () => {
         installments: '50000.00',
         installmentsNative: { ars: '50000.00', usd: '0' },
         ccBalance: null,
+        ccBalanceNative: { ars: '0', usd: '0' },
         other: null,
         total: '50000.00',
       },
@@ -312,6 +313,7 @@ describe('accountsClient.netWorth', () => {
       installments: '0',
       installmentsNative: { ars: '0', usd: '0' },
       ccBalance: null,
+      ccBalanceNative: { ars: '0', usd: '0' },
       other: null,
       total: '0',
     })
@@ -326,6 +328,7 @@ describe('accountsClient.netWorth', () => {
         installments: '0',
         installmentsNative: { ars: '0', usd: '0' },
         ccBalance: null,
+        ccBalanceNative: { ars: '0', usd: '0' },
         other: null,
         total: '0',
       },

@@ -33,6 +33,13 @@
     "statementTotal": "Total del resumen",
     "duplicate": "Parece que ya importaste este resumen. Igual podés importarlo si es intencional.",
     "dateNote": "Las líneas se fechan cuando se paga la tarjeta; la fecha de compra original se muestra en cada fila.",
+    "account": {
+      "title": "Cuenta de tarjeta",
+      "subtitle": "Asociamos estos consumos a tu tarjeta. Confirmá o elegí otra.",
+      "currencyLabel": "Cuenta {{currency}}",
+      "dontAttach": "No asociar",
+      "noMatch": "No tenés cuenta de tarjeta {{currency}} — estas líneas se importan sin una."
+    },
     "tableAriaLabel": "Líneas del resumen",
     "columns": {
       "date": "Fecha",
