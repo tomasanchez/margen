@@ -109,6 +109,8 @@
       "official": "Oficial"
     },
     "empty": "Agregá una cuenta para ver tu patrimonio acá.",
+    "netOfCommitments": "Neto de compromisos: {{amount}}",
+    "liabilityInstallments": "− {{amount}} en cuotas",
     "mepUnavailable": "Cotización en vivo no disponible — mostrando cada moneda de forma nativa.",
     "drilldownAria": "Ver los movimientos de {{institution}} {{currency}}",
     "errorTitle": "Patrimonio no disponible",

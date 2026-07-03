@@ -61,6 +61,10 @@
   "privacy": {
     "hidden": "oculto"
   },
+  "committed": {
+    "paid": "{{amount}} comprometido",
+    "pending": "· {{amount}} aún por comprometer este mes"
+  },
   "categories": {
     "Income": "Ingresos",
     "Food": "Comida",

@@ -10,6 +10,7 @@
  * color with the explicit "+N% vs. May" text (never color alone — ADR-019).
  */
 
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Paper from '@mui/material/Paper'
@@ -19,6 +20,8 @@ import { monoFontFamily } from '../../theme'
 import { formatCurrency, formatDelta, maskAmount } from '../../lib/format'
 import { useDisplayCurrency } from '../settings/displayCurrencyContext'
 import { MaskedAmount } from './MaskedAmount'
+import { CommittedAccent } from './CommittedAccent'
+import type { CommittedSplit } from '../../api/committedClient'
 import type { MonotributoState } from '../../mock/types'
 import type { MonthMetrics } from './homeMetrics'
 
@@ -42,6 +45,12 @@ interface MetricCardProps {
   highlight?: boolean
   /** When true, mask the figure (privacy toggle, ADR-157). Caption stays shown. */
   masked?: boolean
+  /**
+   * Optional quiet accent rendered UNDER the caption (the committed-spend accent
+   * on Expenses, ADR-179). A caption/segment, not a promoted figure — never
+   * masked (it's context, not a headline amount).
+   */
+  accent?: ReactNode
 }
 
 function MetricCard({
@@ -51,6 +60,7 @@ function MetricCard({
   captionTone = 'neutral',
   highlight = false,
   masked = false,
+  accent,
 }: MetricCardProps) {
   return (
     <Paper
@@ -99,6 +109,7 @@ function MetricCard({
       >
         {caption}
       </Typography>
+      {accent ? <Box sx={{ mt: 0.5 }}>{accent}</Box> : null}
     </Paper>
   )
 }
@@ -118,6 +129,13 @@ export interface MetricCardsProps {
    * toggle, ADR-157). The delta captions and the Monotributo margin stay shown.
    */
   hidden?: boolean
+  /**
+   * The committed-spend split for the SAME viewing month + display currency
+   * (ADR-179). When present, a quiet accent under the Expenses figure shows the
+   * paid committed share (already inside the Expenses total) and, if any, the
+   * pending committed outflows still expected this month. Undefined → no accent.
+   */
+  committed?: CommittedSplit
 }
 
 /** Responsive 2-col (mobile) / 4-col (desktop) grid of the headline metrics. */
@@ -129,6 +147,7 @@ export function MetricCards({
   previousMonthLabel,
   loading = false,
   hidden = false,
+  committed,
 }: MetricCardsProps) {
   const { t } = useTranslation('home')
   // Income / Expenses / Est. savings are ARS-stored figures the user may prefer
@@ -191,6 +210,15 @@ export function MetricCards({
           month: previousMonthLabel,
         })}
         captionTone={expenseDeltaPct > 0 ? 'watch' : 'safe'}
+        // The committed split ALREADY arrives in the effective display currency
+        // (ADR-168/179): format it with `formatCurrency` bound to that currency —
+        // NOT `formatMoney`, which would re-convert an ARS figure and understate it.
+        accent={
+          <CommittedAccent
+            committed={committed}
+            formatMoney={(amount) => formatCurrency(amount, effectiveCurrency)}
+          />
+        }
       />
       <MetricCard
         label={t('metrics.savings')}

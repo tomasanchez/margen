@@ -96,9 +96,26 @@ async function expandDetails() {
  * At MEP 1.250 the USD converts to ARS 900.000, so total = 1.050.000. The
  * backend's stale `balanceConverted`/`total` are IGNORED for display (ADR-133).
  */
+/**
+ * The zero-liability net-worth tail (ADR-180): no committed obligations, so the
+ * "Net of commitments" line is suppressed. Spread into fixtures that only exercise
+ * the assets headline; a dedicated fixture below overrides it to prove the line.
+ */
+const NO_LIABILITIES = {
+  liabilities: {
+    installments: '0',
+    installmentsNative: { ars: '0', usd: '0' },
+    ccBalance: null,
+    other: null,
+    total: '0',
+  },
+  netAfterLiabilities: '1050000.00',
+} satisfies Pick<NetWorth, 'liabilities' | 'netAfterLiabilities'>
+
 const CONVERTED: NetWorth = {
   total: '1050000.00',
   currency: 'ARS',
+  ...NO_LIABILITIES,
   accounts: [
     {
       id: 'a1',
@@ -130,6 +147,7 @@ const CONVERTED: NetWorth = {
 const MULTI_ACCOUNT: NetWorth = {
   total: '1100000.00',
   currency: 'ARS',
+  ...NO_LIABILITIES,
   accounts: [
     {
       id: 'b-usd',
@@ -208,6 +226,14 @@ describe('NetWorthCard', () => {
     const usdDisplay: NetWorth = {
       total: '10000.00',
       currency: 'USD',
+      liabilities: {
+        installments: '0',
+        installmentsNative: { ars: '0', usd: '0' },
+        ccBalance: null,
+        other: null,
+        total: '0',
+      },
+      netAfterLiabilities: '10000.00',
       accounts: [
         {
           id: 'u1',
@@ -417,6 +443,14 @@ describe('NetWorthCard', () => {
     const arsOnly: NetWorth = {
       total: '150000.00',
       currency: 'ARS',
+      liabilities: {
+        installments: '0',
+        installmentsNative: { ars: '0', usd: '0' },
+        ccBalance: null,
+        other: null,
+        total: '0',
+      },
+      netAfterLiabilities: '150000.00',
       accounts: [
         {
           id: 'a1',
@@ -473,7 +507,19 @@ describe('NetWorthCard', () => {
   })
 
   test('shows the empty state when there are no accounts', async () => {
-    const empty: NetWorth = { total: '0.00', currency: 'ARS', accounts: [] }
+    const empty: NetWorth = {
+      total: '0.00',
+      currency: 'ARS',
+      accounts: [],
+      liabilities: {
+        installments: '0',
+        installmentsNative: { ars: '0', usd: '0' },
+        ccBalance: null,
+        other: null,
+        total: '0',
+      },
+      netAfterLiabilities: '0.00',
+    }
     renderCard({ netWorth: empty, loading: false })
     expect(
       await screen.findByText('Add an account to see your net worth here.'),
@@ -491,5 +537,162 @@ describe('NetWorthCard', () => {
     expect(
       await screen.findByText('Net worth unavailable'),
     ).toBeInTheDocument()
+  })
+
+  describe('net-of-commitments layered line (ADR-180/183)', () => {
+    /**
+     * ARS-only assets of 1.050.000 with an ARS-only installment tail of 50.000
+     * (native ARS, ADR-183 amendment). No USD leg means the liability is 50.000
+     * at ANY rate. The hero "Net worth" stays the assets total; a secondary "Net
+     * of commitments" reads 1.050.000 − 50.000 = 1.000.000, with a small "−
+     * installments" breakdown line.
+     */
+    const WITH_LIABILITIES: NetWorth = {
+      total: '1050000.00',
+      currency: 'ARS',
+      liabilities: {
+        installments: '50000.00',
+        installmentsNative: { ars: '50000.00', usd: '0' },
+        ccBalance: null,
+        other: null,
+        total: '50000.00',
+      },
+      netAfterLiabilities: '1000000.00',
+      accounts: [
+        {
+          id: 'a1',
+          institutionId: 'inst-1',
+          institutionName: 'Galicia',
+          type: 'bank',
+          currency: 'ARS',
+          balance: '1050000.00',
+          balanceConverted: '1050000.00',
+        },
+      ],
+    }
+
+    /**
+     * Mixed-currency assets (ARS 150.000 + USD 720) with a USD-denominated
+     * installment tail (USD 40, no ARS leg). The KEY coherence case (ADR-183
+     * amendment): the backend-converted `installments`/`total` were baked at a
+     * STALE snapshot rate (here 1.000 → ARS 40.000), but the card must convert the
+     * NATIVE USD tail at the SAME live MEP (1.250) it uses for the assets headline
+     * — USD 40 × 1.250 = ARS 50.000. So net-of-commitments = 1.050.000 − 50.000 =
+     * 1.000.000, NEVER 1.050.000 − 40.000. The backend figures are intentionally
+     * off so a regression to them is detectable.
+     */
+    const WITH_USD_TAIL: NetWorth = {
+      total: '1050000.00',
+      currency: 'ARS',
+      liabilities: {
+        // Backend snapshot rate 1.000 → ARS 40.000 (STALE; must NOT be displayed).
+        installments: '40000.00',
+        installmentsNative: { ars: '0', usd: '40.00' },
+        ccBalance: null,
+        other: null,
+        total: '40000.00',
+      },
+      netAfterLiabilities: '1010000.00',
+      accounts: [
+        {
+          id: 'a1',
+          institutionId: 'inst-1',
+          institutionName: 'Galicia',
+          type: 'bank',
+          currency: 'ARS',
+          balance: '150000.00',
+          balanceConverted: '150000.00',
+        },
+        {
+          id: 'a2',
+          institutionId: 'inst-2',
+          institutionName: 'Deel',
+          type: 'wallet',
+          currency: 'USD',
+          balance: '720.00',
+          balanceConverted: '900000.00',
+        },
+      ],
+    }
+
+    test('shows Net of commitments + the installments breakdown when liabilities > 0', async () => {
+      renderCard({ netWorth: WITH_LIABILITIES, loading: false })
+
+      // Hero (assets) is unchanged.
+      expect(await screen.findByText('ARS 1.050.000')).toBeInTheDocument()
+      // Secondary layered line: headline − liability, in the display currency.
+      expect(
+        screen.getByText('Net of commitments: ARS 1.000.000'),
+      ).toBeInTheDocument()
+      // Small breakdown line naming the installment portion.
+      expect(
+        screen.getByText('− ARS 50.000 installments'),
+      ).toBeInTheDocument()
+    })
+
+    test('hides the net-of-commitments line entirely when the native tail is 0', async () => {
+      renderCard({ netWorth: CONVERTED, loading: false })
+
+      await screen.findByText('ARS 1.050.000')
+      expect(
+        screen.queryByText(/Net of commitments/),
+      ).not.toBeInTheDocument()
+      expect(screen.queryByText(/installments/)).not.toBeInTheDocument()
+    })
+
+    test('converts a USD installment tail at the SAME live rate as the assets — not the backend figure', async () => {
+      // Assets headline (ARS 150.000 + USD 720 × 1.250 = 900.000) = 1.050.000, at
+      // the LIVE MEP 1.250. The USD 40 tail converts at that SAME 1.250 → ARS
+      // 50.000, so net-of-commitments = 1.050.000 − 50.000 = 1.000.000. The
+      // backend's stale ARS 40.000 (rate 1.000) must NOT appear.
+      renderCard({ netWorth: WITH_USD_TAIL, loading: false })
+
+      expect(await screen.findByText('ARS 1.050.000')).toBeInTheDocument()
+      // Coherent: both sides at the live 1.250.
+      expect(
+        screen.getByText('Net of commitments: ARS 1.000.000'),
+      ).toBeInTheDocument()
+      // The installment breakdown shows the live-rate figure, not the backend one.
+      expect(
+        screen.getByText('− ARS 50.000 installments'),
+      ).toBeInTheDocument()
+      // The backend-rate figures (40.000 / net 1.010.000) are never displayed.
+      expect(
+        screen.queryByText('Net of commitments: ARS 1.010.000'),
+      ).not.toBeInTheDocument()
+      expect(
+        screen.queryByText('− ARS 40.000 installments'),
+      ).not.toBeInTheDocument()
+    })
+
+    test('a USD tail degrades without NaN when the live rate is unavailable', async () => {
+      // MEP null → the assets headline drops the unconvertible USD holdings and
+      // shows only the ARS-native 150.000; the USD-only installment tail likewise
+      // drops to 0, so net-of-commitments = 150.000 − 0 = 150.000 (never NaN). The
+      // line still shows because the NATIVE tail is > 0.
+      mockRates.mockResolvedValue({ mep: null, official: null })
+      renderCard({ netWorth: WITH_USD_TAIL, loading: false })
+
+      expect(await screen.findByText('ARS 150.000')).toBeInTheDocument()
+      expect(
+        screen.getByText('Net of commitments: ARS 150.000'),
+      ).toBeInTheDocument()
+      expect(screen.queryByText(/NaN/)).not.toBeInTheDocument()
+    })
+
+    test('masks the net-of-commitments amounts under the privacy toggle', async () => {
+      renderCard({ netWorth: WITH_LIABILITIES, loading: false, hidden: true })
+
+      // The line still renders (structure), but the amounts are masked.
+      expect(
+        await screen.findByText(`Net of commitments: ${maskAmount()}`),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByText(`− ${maskAmount()} installments`),
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByText('Net of commitments: ARS 1.000.000'),
+      ).not.toBeInTheDocument()
+    })
   })
 })

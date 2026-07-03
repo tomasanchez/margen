@@ -118,17 +118,61 @@ export interface NetWorthAccount {
 }
 
 /**
- * The net-worth read model (ADR-122/123/133/134): the user's total in their
- * display `currency` plus the per-account breakdown. Money fields are Decimal
- * strings.
+ * The installment tail as NATIVE ARS/USD sums, unconverted (ADR-183 amendment).
+ * The card converts these at the SAME live MEP rate it uses for the net-worth
+ * assets headline (ADR-133), so "Net of commitments" stays coherent when a USD
+ * installment tail exists and the live rate has drifted from any backend rate.
+ * Money fields are Decimal strings (ADR-025/034), parsed at the display edge.
+ */
+export interface InstallmentsNative {
+  /** Sum of remaining × cuota over ARS installment streams, native ARS. */
+  ars: string
+  /** Sum of remaining × cuota over USD installment streams, native USD. */
+  usd: string
+}
+
+/**
+ * The typed liabilities reservation carried alongside net worth (ADR-180/181/183).
+ * A layered, ADDITIVE breakdown of locked-in obligations. The DISPLAYED figures
+ * are derived by the card from {@link installmentsNative} converted at the LIVE
+ * MEP rate (ADR-183 amendment) — the same rate the assets headline uses (ADR-133)
+ * — so `net worth − liabilities` is coherent. The backend-converted
+ * `installments` / `total` (at a stored snapshot rate) stay on the type for
+ * API/test completeness but are NOT used for the card's displayed figures.
+ * `ccBalance` and `other` are typed placeholders (null now, ADR-180). Money
+ * fields are Decimal strings.
+ */
+export interface Liabilities {
+  /** Full remaining installment tail in the display currency at the BACKEND rate (not used for display). */
+  installments: string
+  /** The installment tail as native ARS/USD sums — the card converts these at the live rate (ADR-183). */
+  installmentsNative: InstallmentsNative
+  /** Unpaid credit-card balance liability; null in Slice 1 (typed placeholder, ADR-180). */
+  ccBalance: string | null
+  /** Catch-all for other debts; null in Slice 1 (typed placeholder, ADR-180). */
+  other: string | null
+  /** Sum of the present liability figures in the display currency at the BACKEND rate (not used for display). */
+  total: string
+}
+
+/**
+ * The net-worth read model (ADR-122/123/133/134, ADR-180): the user's total in
+ * their display `currency` plus the per-account breakdown, now LAYERED with a
+ * typed liabilities reservation and the derived `netAfterLiabilities` (ADR-180).
+ * The `total` (assets) stays UNCHANGED — `netAfterLiabilities` is an additive
+ * secondary view, never a redefinition. Money fields are Decimal strings.
  */
 export interface NetWorth {
-  /** Total net worth as a Decimal string, in the display `currency`. */
+  /** Total net worth (assets) as a Decimal string, in the display `currency`. */
   total: string
   /** Display currency the `total` (and each `balanceConverted`) is expressed in. */
   currency: string
   /** Per-account breakdown, native + converted balances. */
   accounts: NetWorthAccount[]
+  /** Typed liabilities reservation in the display currency (ADR-180); installments only in Slice 1. */
+  liabilities: Liabilities
+  /** `total − liabilities.total`, in the display currency — a derived view (ADR-180). */
+  netAfterLiabilities: string
 }
 
 /** An API error that carries the HTTP status so callers can branch on it. */
@@ -191,6 +235,55 @@ export function adaptAccount(dto: AccountDto): Account {
     type: asAccountType(dto.type),
     currency: asCurrency(dto.currency),
     openingBalance: dto.openingBalance,
+  }
+}
+
+/** Zero as a Decimal string — the safe default for an absent liability figure. */
+const ZERO_DECIMAL = '0'
+
+/** The zero native installment breakdown — the default when liabilities are absent. */
+const ZERO_INSTALLMENTS_NATIVE: InstallmentsNative = {
+  ars: ZERO_DECIMAL,
+  usd: ZERO_DECIMAL,
+}
+
+/**
+ * Adapt the backend net-worth payload, defaulting a missing `liabilities` /
+ * `netAfterLiabilities` (ADR-180) so a pre-liabilities or malformed response
+ * still renders: liabilities collapse to zero (which suppresses the "Net of
+ * commitments" line — nothing is committed) and `netAfterLiabilities` falls back
+ * to the assets `total`. Money stays a Decimal STRING end-to-end (ADR-025/034);
+ * the card parses at the display edge (ADR-102). No FX happens here — the card
+ * converts the NATIVE installment breakdown at the live MEP rate for display
+ * (ADR-183 amendment); a missing `installmentsNative` defaults to zero.
+ */
+export function adaptNetWorth(dto: NetWorth): NetWorth {
+  const liabilities: Liabilities = dto.liabilities
+    ? {
+        installments: dto.liabilities.installments ?? ZERO_DECIMAL,
+        installmentsNative: dto.liabilities.installmentsNative
+          ? {
+              ars: dto.liabilities.installmentsNative.ars ?? ZERO_DECIMAL,
+              usd: dto.liabilities.installmentsNative.usd ?? ZERO_DECIMAL,
+            }
+          : ZERO_INSTALLMENTS_NATIVE,
+        ccBalance: dto.liabilities.ccBalance ?? null,
+        other: dto.liabilities.other ?? null,
+        total: dto.liabilities.total ?? ZERO_DECIMAL,
+      }
+    : {
+        installments: ZERO_DECIMAL,
+        installmentsNative: ZERO_INSTALLMENTS_NATIVE,
+        ccBalance: null,
+        other: null,
+        total: ZERO_DECIMAL,
+      }
+  return {
+    total: dto.total,
+    currency: dto.currency,
+    accounts: dto.accounts ?? [],
+    liabilities,
+    netAfterLiabilities: dto.netAfterLiabilities ?? dto.total,
   }
 }
 
@@ -290,8 +383,11 @@ async function update(
 }
 
 /**
- * GET the net-worth read model (ADR-123/133). Unwraps the `{ data }` envelope;
- * the balances stay Decimal strings (the card parses them at the display edge).
+ * GET the net-worth read model (ADR-123/133/180). Unwraps the `{ data }` envelope
+ * and adapts it (defaulting the layered `liabilities` + `netAfterLiabilities`,
+ * ADR-180); the balances stay Decimal strings (the card parses at the display
+ * edge). The card converts the NATIVE installment breakdown at the live MEP rate
+ * for the displayed "Net of commitments" figures (ADR-183 amendment).
  */
 async function netWorth(): Promise<NetWorth> {
   const response = await authedFetch(apiUrl('/accounts/net-worth'), {
@@ -299,7 +395,7 @@ async function netWorth(): Promise<NetWorth> {
   })
   await ensureOk(response)
   const envelope = (await response.json()) as ResponseEnvelope<NetWorth>
-  return envelope.data
+  return adaptNetWorth(envelope.data)
 }
 
 /** The accounts + institutions API client, grouped for ergonomic import. */

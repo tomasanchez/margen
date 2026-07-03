@@ -72,7 +72,11 @@ import {
 } from '../accounts/grouping'
 import type { SuggestedRates } from '../../api/fxClient'
 import type { Currency } from '../../mock/types'
-import type { NetWorth, NetWorthAccount } from '../../api/accountsClient'
+import type {
+  InstallmentsNative,
+  NetWorth,
+  NetWorthAccount,
+} from '../../api/accountsClient'
 
 /**
  * Which live FX source the user chose to convert net worth with (ADR-044/133).
@@ -154,6 +158,40 @@ function decompose(
 }
 
 /**
+ * The native installment liability converted to the display currency at the LIVE
+ * MEP rate — the SAME rate the assets headline uses (ADR-133/183 amendment), so
+ * `netOfCommitments = assets@live − liability@live` is coherent when a USD tail
+ * exists and the backend snapshot rate has drifted.
+ *
+ * The `usd` leg is converted at `mep`; the `ars` leg is native. The result is
+ * denominated in `displayCurrency` exactly as {@link decompose} handles ARS + USD
+ * holdings: each leg already in the display currency contributes natively, and
+ * the other-currency leg converts at the rate.
+ *
+ * Degrade mirrors the assets headline: when the rate is unavailable we DROP the
+ * unconvertible other-currency leg and keep only the display-currency-native leg
+ * (never NaN, never a fabricated rate, ADR-133). When there is no other-currency
+ * leg there is nothing to convert, so the display-currency leg stands alone
+ * regardless of the rate.
+ */
+function liabilityInDisplayCurrency(
+  installmentsNative: InstallmentsNative,
+  displayCurrency: Currency,
+  mep: number | null,
+): number {
+  const ars = num(installmentsNative.ars)
+  const usd = num(installmentsNative.usd)
+  const displayNative = displayCurrency === 'USD' ? usd : ars
+  const otherAmount = displayCurrency === 'USD' ? ars : usd
+  const otherCurrency = otherCurrencyOf(displayCurrency)
+  // Convert the other-currency leg at the live rate; on degrade drop it (0), the
+  // same way the assets headline falls back to its display-native portion only.
+  const convertedOther =
+    convertAtMep(otherAmount, otherCurrency, displayCurrency, mep) ?? 0
+  return displayNative + convertedOther
+}
+
+/**
  * The headline + currency decomposition (ADR-133 amendment). The big total is in
  * the display currency; when both currencies are present a smaller secondary
  * line reads `<native> + ~ <converted> (<otherNative> at ARS <mep> / USD)` — the
@@ -167,6 +205,8 @@ function NetWorthHeadline({
   mep,
   source,
   hidden,
+  liability,
+  hasLiability,
 }: {
   decomp: Decomposition
   displayCurrency: Currency
@@ -174,11 +214,34 @@ function NetWorthHeadline({
   source: RateSource
   /** When true, mask the headline total + the ARS/USD breakdown amounts (ADR-157). */
   hidden: boolean
+  /**
+   * The locked-in installment obligation in the display currency, converted at
+   * the SAME LIVE MEP rate the assets headline uses (ADR-183 amendment/ADR-133),
+   * so `netOfCommitments = headlineValue − liability` is coherent — both sides at
+   * ONE rate. Degrades the same way the assets headline does (the unconvertible
+   * other-currency leg is dropped), never NaN. In Slice 1 the installment tail is
+   * the whole liability, so this doubles as the "− installments" breakdown amount.
+   */
+  liability: number
+  /**
+   * Whether any installment obligation exists (native totals > 0). Drives the
+   * LAYERED "Net of commitments" line — a clean assets-only view otherwise
+   * (ADR-180). Read from the NATIVE breakdown, so it stays true even while the
+   * rate is unavailable (the figure degrades, the line does not vanish).
+   */
+  hasLiability: boolean
 }) {
   const { t } = useTranslation('accounts')
   // Headline value: the converted total when a rate exists, else the native
   // display-currency portion (we never invent a rate, ADR-133).
   const headlineValue = decomp.total ?? decomp.nativeDisplay
+  // "Net of commitments" is layered on the SAME headline value the user sees, so
+  // the subtraction reads coherently (ADR-180). The `liability` was converted at
+  // the SAME live rate as `headlineValue` (ADR-183 amendment), so both sides use
+  // one rate. Only shown when something is committed — a clean assets-only view
+  // otherwise (ADR-180).
+  const showNetOfCommitments = hasLiability
+  const netOfCommitments = headlineValue - liability
 
   const showConverted =
     decomp.hasOther && decomp.convertedOther != null && mep != null
@@ -258,6 +321,33 @@ function NetWorthHeadline({
             {t('netWorth.mepUnavailable')}
           </Typography>
         </>
+      ) : null}
+
+      {showNetOfCommitments ? (
+        <Box sx={{ mt: 1 }}>
+          <Typography
+            sx={{ fontSize: 13, fontVariantNumeric: 'tabular-nums' }}
+            color="text.secondary"
+          >
+            {t('netWorth.netOfCommitments', {
+              amount: hidden
+                ? mask
+                : formatCurrency(netOfCommitments, displayCurrency),
+            })}
+          </Typography>
+          {hasLiability ? (
+            <Typography
+              sx={{ fontSize: 12, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}
+              color="text.secondary"
+            >
+              {t('netWorth.liabilityInstallments', {
+                amount: hidden
+                  ? mask
+                  : formatCurrency(liability, displayCurrency),
+              })}
+            </Typography>
+          ) : null}
+        </Box>
       ) : null}
     </Box>
   )
@@ -535,6 +625,21 @@ export function NetWorthCard({
   // The SELECTED source's usable live rate, or null on failure / unusable value
   // → degrade-to-native. Switching to the other source (if available) recovers.
   const mep = usableMep(rates[source])
+  // The installment liability is derived from its NATIVE ARS/USD breakdown and
+  // converted at the SAME live MEP rate as the assets headline (ADR-183
+  // amendment/ADR-133) — NOT the backend-converted `total`/`installments`, which
+  // used a stored snapshot rate and would make "Net of commitments" incoherent.
+  // Both sides of the subtraction therefore use one rate. Whether the line shows
+  // is read from the NATIVE totals, so it stays visible (with a degraded figure)
+  // even when the rate is unavailable.
+  const installmentsNative = netWorth.liabilities.installmentsNative
+  const hasLiability =
+    num(installmentsNative.ars) > 0 || num(installmentsNative.usd) > 0
+  const liability = liabilityInDisplayCurrency(
+    installmentsNative,
+    displayCurrency,
+    mep,
+  )
   // Decomposition + groups both convert at the SAME selected rate, so the
   // breakdown subtotals sum to the headline total (ADR-133 amendment).
   const decomp = decompose(netWorth.accounts, displayCurrency, mep)
@@ -563,6 +668,8 @@ export function NetWorthCard({
         mep={mep}
         source={source}
         hidden={hidden}
+        liability={liability}
+        hasLiability={hasLiability}
       />
 
       {netWorth.accounts.length === 0 ? (

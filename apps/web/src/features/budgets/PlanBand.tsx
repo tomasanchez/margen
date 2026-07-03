@@ -13,6 +13,7 @@
  * localized by the caller-supplied resolver so this stays i18n-free.
  */
 
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
@@ -22,6 +23,8 @@ import ReportProblemOutlinedIcon from '@mui/icons-material/ReportProblemOutlined
 import { SectionCard } from '../../components/SectionCard'
 import { formatCurrency } from '../../lib/format'
 import { categoryLabel } from '../transactions/presentation'
+import { CommittedAccent } from '../home/CommittedAccent'
+import type { CommittedSplit } from '../../api/committedClient'
 import type { BudgetTotals, PlanInsight } from './derive'
 import type { Currency } from '../../mock/types'
 
@@ -30,8 +33,16 @@ export interface PlanBandProps {
   totals: BudgetTotals
   /** The plain-language insight result (ADR-145). */
   insight: PlanInsight
-  /** Period currency (ARS for the MVP). */
+  /** Period currency (the budget currency, ADR-156). */
   currency: Currency
+  /**
+   * The committed-spend split for the SAME month + budget currency (ADR-179).
+   * When present, a quiet accent under the Spent figure shows the paid committed
+   * share (already inside the Spent total) + any pending committed outflows still
+   * expected this month. Undefined → no accent. Figures already arrive in the
+   * budget currency (ADR-168), so the accent never re-converts.
+   */
+  committed?: CommittedSplit
 }
 
 /** One labelled figure in the band header. */
@@ -39,10 +50,12 @@ function Figure({
   label,
   value,
   emphasis,
+  accent,
 }: {
   label: string
   value: string
   emphasis?: 'over' | 'safe'
+  accent?: ReactNode
 }) {
   return (
     <Box>
@@ -69,11 +82,12 @@ function Figure({
       >
         {value}
       </Typography>
+      {accent ? <Box sx={{ mt: 0.5 }}>{accent}</Box> : null}
     </Box>
   )
 }
 
-export function PlanBand({ totals, insight, currency }: PlanBandProps) {
+export function PlanBand({ totals, insight, currency, committed }: PlanBandProps) {
   const { t } = useTranslation('budgets')
   const over = totals.remaining < 0
 
@@ -128,7 +142,18 @@ export function PlanBand({ totals, insight, currency }: PlanBandProps) {
         }}
       >
         <Figure label={t('plan.budgeted')} value={formatCurrency(totals.budgeted, currency)} />
-        <Figure label={t('plan.spent')} value={formatCurrency(totals.spent, currency)} />
+        <Figure
+          label={t('plan.spent')}
+          value={formatCurrency(totals.spent, currency)}
+          // The committed split already arrives in the budget currency (ADR-168/179):
+          // format it with `formatCurrency` bound to that currency — no re-conversion.
+          accent={
+            <CommittedAccent
+              committed={committed}
+              formatMoney={(amount) => formatCurrency(amount, currency)}
+            />
+          }
+        />
         <Figure
           label={over ? t('plan.over') : t('plan.remaining')}
           value={formatCurrency(Math.abs(totals.remaining), currency)}

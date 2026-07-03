@@ -239,6 +239,14 @@ describe('accountsClient.netWorth', () => {
     const netWorth: NetWorth = {
       total: '1050000.00',
       currency: 'ARS',
+      liabilities: {
+        installments: '50000.00',
+        installmentsNative: { ars: '50000.00', usd: '0' },
+        ccBalance: null,
+        other: null,
+        total: '50000.00',
+      },
+      netAfterLiabilities: '1000000.00',
       accounts: [
         {
           id: 'a1',
@@ -273,12 +281,55 @@ describe('accountsClient.netWorth', () => {
     // The USD account's converted balance differs from its native balance.
     expect(result.accounts[1].balance).toBe('720.00')
     expect(result.accounts[1].balanceConverted).toBe('900000.00')
+    // The layered liabilities reservation + derived net-after (ADR-180) pass
+    // through as Decimal strings in the display currency (no re-conversion).
+    expect(result.liabilities.installments).toBe('50000.00')
+    expect(result.liabilities.total).toBe('50000.00')
+    expect(result.liabilities.ccBalance).toBeNull()
+    // The NATIVE installment breakdown (ADR-183 amendment) passes through so the
+    // card can convert it at the live rate.
+    expect(result.liabilities.installmentsNative).toEqual({
+      ars: '50000.00',
+      usd: '0',
+    })
+    expect(result.netAfterLiabilities).toBe('1000000.00')
+  })
+
+  test('defaults a missing liabilities tail to zero (pre-ADR-180 payload)', async () => {
+    // A backend response WITHOUT the liabilities fields (e.g. an older deploy)
+    // still adapts: liabilities collapse to 0 and netAfterLiabilities falls back
+    // to the assets total, so the card shows the assets figure alone (ADR-180).
+    const legacy = {
+      total: '150000.00',
+      currency: 'ARS',
+      accounts: [],
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: legacy }), { status: 200 }),
+    )
+    const result = await accountsClient.netWorth()
+    expect(result.liabilities).toEqual({
+      installments: '0',
+      installmentsNative: { ars: '0', usd: '0' },
+      ccBalance: null,
+      other: null,
+      total: '0',
+    })
+    expect(result.netAfterLiabilities).toBe('150000.00')
   })
 
   test('degrade case (ADR-133): balanceConverted equals native balance', async () => {
     const degraded: NetWorth = {
       total: '720.00',
       currency: 'ARS',
+      liabilities: {
+        installments: '0',
+        installmentsNative: { ars: '0', usd: '0' },
+        ccBalance: null,
+        other: null,
+        total: '0',
+      },
+      netAfterLiabilities: '720.00',
       accounts: [
         {
           id: 'a2',

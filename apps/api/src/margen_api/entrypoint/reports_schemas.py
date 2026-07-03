@@ -19,6 +19,7 @@ from decimal import Decimal
 from pydantic import Field
 
 from margen_api.entrypoint.schemas import CamelCaseModel
+from margen_api.service_layer.committed_read_models import CommittedBySource, CommittedSplit
 from margen_api.service_layer.forecast_read_models import (
     CommitmentLine,
     CommitmentSource,
@@ -272,5 +273,53 @@ class ForecastResponse(CamelCaseModel):
             currency=model.currency,
             months=[ForecastMonthResponse.from_read_model(month) for month in model.months],
             commitments=[CommitmentLineResponse.from_read_model(line) for line in model.commitments],
+            unconverted=model.unconverted,
+        )
+
+
+class CommittedBySourceResponse(CamelCaseModel):
+    """A committed figure broken out by source (subscription / installment / tax) (ADR-179)."""
+
+    subscription: Decimal = Field(description="The recurring-subscription portion in the requested currency.")
+    installment: Decimal = Field(description="The instalment-cuota portion in the requested currency.")
+    tax: Decimal = Field(
+        description="The monotributo-cuota portion; an AFIP-ARS figure summed only on an ARS request (ADR-177).",
+    )
+    total: Decimal = Field(description="The sum of subscription + installment + tax.")
+
+    @classmethod
+    def from_read_model(cls, model: CommittedBySource) -> CommittedBySourceResponse:
+        """Build the per-source response from a read model."""
+        return cls(
+            subscription=model.subscription,
+            installment=model.installment,
+            tax=model.tax,
+            total=model.total,
+        )
+
+
+class CommittedResponse(CamelCaseModel):
+    """The committed-spend paid/pending split payload for a month (ADR-179)."""
+
+    month: str = Field(description="The target month as 'YYYY-MM'.")
+    currency: str = Field(description="The denomination currency (ARS / USD), echoed back.")
+    paid: CommittedBySourceResponse = Field(
+        description="Committed rows already posted this month, already inside the month's Expenses total (ADR-179).",
+    )
+    pending: CommittedBySourceResponse = Field(
+        description="Expected-this-month committed outflows not yet posted (offset-0 no-double-count, ADR-176/179).",
+    )
+    unconverted: int = Field(
+        description="Count of committed streams excluded from a USD denomination for lacking a snapshot; 0 on ARS.",
+    )
+
+    @classmethod
+    def from_read_model(cls, model: CommittedSplit) -> CommittedResponse:
+        """Build the committed-split response from a read model (ADR-030)."""
+        return cls(
+            month=model.month,
+            currency=model.currency,
+            paid=CommittedBySourceResponse.from_read_model(model.paid),
+            pending=CommittedBySourceResponse.from_read_model(model.pending),
             unconverted=model.unconverted,
         )

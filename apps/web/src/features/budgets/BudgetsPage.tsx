@@ -76,6 +76,7 @@ import {
   useSetBudgetIncome,
   useSetBudgetTarget,
 } from './queries'
+import { useCommitted } from '../home/queries'
 import {
   budgetsClient,
   type SavingProfile,
@@ -129,6 +130,10 @@ export function BudgetsPage({ month: monthProp, onMonthChange }: BudgetsPageProp
 
   const budgetsQuery = useBudgets(yearMonth, budgetCurrency)
   const historyQuery = useBudgetHistory(yearMonth, budgetCurrency)
+  // Committed-spend accent for this month + budget currency (ADR-179): enriches
+  // the "this month vs plan" Spent figure with the obligated share already inside
+  // the total (+ pending). Fetched in the budget currency — never re-converted.
+  const committedQuery = useCommitted(yearMonth, budgetCurrency)
   const priorQuery = usePriorBudgets(priorYearMonth, budgetCurrency)
   const setTarget = useSetBudgetTarget()
   const clearTarget = useClearBudgetTarget()
@@ -584,7 +589,12 @@ export function BudgetsPage({ month: monthProp, onMonthChange }: BudgetsPageProp
           <Skeleton variant="rounded" height={10} sx={{ mt: 1.5, borderRadius: '6px' }} />
         </SectionCard>
       ) : (
-        <PlanBand totals={totals} insight={insight} currency={currency} />
+        <PlanBand
+          totals={totals}
+          insight={insight}
+          currency={currency}
+          committed={committedQuery.data}
+        />
       )}
 
       {/* CATEGORY GROUP CARDS: Needs, Wants, Savings. */}

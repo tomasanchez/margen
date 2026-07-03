@@ -109,6 +109,8 @@
       "official": "Official"
     },
     "empty": "Add an account to see your net worth here.",
+    "netOfCommitments": "Net of commitments: {{amount}}",
+    "liabilityInstallments": "− {{amount}} installments",
     "mepUnavailable": "Live rate unavailable — showing each currency natively.",
     "drilldownAria": "View {{institution}} {{currency}} transactions",
     "errorTitle": "Net worth unavailable",

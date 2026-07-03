@@ -29,6 +29,8 @@ from margen_api.entrypoint.schemas import CamelCaseModel
 from margen_api.service_layer.account_read_models import (
     AccountBalance,
     AccountReadModel,
+    InstallmentsNative,
+    Liabilities,
     NetWorth,
 )
 
@@ -151,12 +153,65 @@ class AccountBalanceResponse(CamelCaseModel):
         )
 
 
-class NetWorthResponse(CamelCaseModel):
-    """The net-worth surface returned to clients (ADR-122, ADR-123)."""
+class InstallmentsNativeResponse(CamelCaseModel):
+    """The instalment tail as native ARS/USD sums, unconverted (ADR-183 amendment).
 
-    total: Decimal = Field(description="The sum of every account's converted balance; a decimal string.")
+    The client converts these at the LIVE MEP rate it uses for the net-worth assets
+    headline (ADR-133), so "Net of commitments" stays coherent when a USD tail exists.
+    """
+
+    ars: Decimal = Field(description="Sum of remaining x cuota over ARS instalment streams, native ARS; a string.")
+    usd: Decimal = Field(description="Sum of remaining x cuota over USD instalment streams, native USD; a string.")
+
+    @classmethod
+    def from_read_model(cls, model: InstallmentsNative) -> InstallmentsNativeResponse:
+        """Build the response from a native-breakdown read model (ADR-030)."""
+        return cls(ars=model.ars, usd=model.usd)
+
+
+class LiabilitiesResponse(CamelCaseModel):
+    """The typed liabilities reservation returned to clients (ADR-180)."""
+
+    installments: Decimal = Field(
+        description="Full remaining instalment tail (sum of remaining x cuota) in the display currency; a string.",
+    )
+    installments_native: InstallmentsNativeResponse = Field(
+        description="The instalment tail as native ARS/USD sums the client converts at the live rate (ADR-183).",
+    )
+    cc_balance: Decimal | None = Field(
+        default=None,
+        description="Unpaid credit-card balance liability; null in Slice 1, a typed placeholder (ADR-180).",
+    )
+    other: Decimal | None = Field(
+        default=None,
+        description="Catch-all for other debts; null in Slice 1, a typed placeholder (ADR-180).",
+    )
+    total: Decimal = Field(description="The sum of the present liability figures; a decimal string.")
+
+    @classmethod
+    def from_read_model(cls, model: Liabilities) -> LiabilitiesResponse:
+        """Build the response from a liabilities read model (ADR-030)."""
+        return cls(
+            installments=model.installments,
+            installments_native=InstallmentsNativeResponse.from_read_model(model.installments_native),
+            cc_balance=model.cc_balance,
+            other=model.other,
+            total=model.total,
+        )
+
+
+class NetWorthResponse(CamelCaseModel):
+    """The net-worth surface returned to clients (ADR-122, ADR-123, ADR-180)."""
+
+    total: Decimal = Field(description="The sum of every account's converted balance (assets); a decimal string.")
     currency: Currency = Field(description="The display currency the total is expressed in (ADR-056).")
     accounts: list[AccountBalanceResponse] = Field(description="The per-account breakdown.")
+    liabilities: LiabilitiesResponse = Field(
+        description="The typed liabilities reservation in the display currency (ADR-180); Slice 1 fills installments.",
+    )
+    net_after_liabilities: Decimal = Field(
+        description="total minus liabilities.total, in the display currency; a derived view, not a redefinition.",
+    )
 
     @classmethod
     def from_read_model(cls, model: NetWorth) -> NetWorthResponse:
@@ -165,4 +220,6 @@ class NetWorthResponse(CamelCaseModel):
             total=model.total,
             currency=model.currency,
             accounts=[AccountBalanceResponse.from_read_model(item) for item in model.accounts],
+            liabilities=LiabilitiesResponse.from_read_model(model.liabilities),
+            net_after_liabilities=model.net_after_liabilities,
         )

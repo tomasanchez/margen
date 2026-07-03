@@ -26,10 +26,14 @@ from margen_api.adapters.models.institution import InstitutionRecord
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.adapters.models.transfer import TransferRecord
 from margen_api.adapters.settings_repository import DEFAULT_DISPLAY_CURRENCY
-from margen_api.domain.models.value_objects import Currency, InstitutionType, Kind
+from margen_api.domain.models.value_objects import Currency, InstitutionType, Kind, RecurringCadence
 from margen_api.service_layer.account_read_models import AccountReadModel, NetWorth
 from margen_api.service_layer.account_reader import AbstractAccountReader
-from margen_api.service_layer.net_worth import AccountBalanceInput, build_net_worth
+from margen_api.service_layer.net_worth import (
+    AccountBalanceInput,
+    InstallmentLiabilityInput,
+    build_net_worth,
+)
 
 _ZERO = Decimal(0)
 
@@ -137,12 +141,83 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
         ]
 
     async def net_worth(self, user_id: str) -> NetWorth:
-        """Compute the owner's net worth and per-account breakdown (ADR-122, ADR-123)."""
+        """Compute the owner's net worth, liabilities and per-account breakdown (ADR-122, ADR-123, ADR-180)."""
         owner = UUID(user_id)
         balances = await self._account_balances(owner)
         display_currency = await self._display_currency(owner)
         mep_rate = await self._latest_mep_rate(owner)
-        return build_net_worth(balances, display_currency=display_currency, mep_rate=mep_rate)
+        installment_liabilities = await self._installment_liabilities(owner)
+        return build_net_worth(
+            balances,
+            display_currency=display_currency,
+            mep_rate=mep_rate,
+            installment_liabilities=installment_liabilities,
+        )
+
+    async def _installment_liabilities(self, owner: UUID) -> list[InstallmentLiabilityInput]:
+        """Return the owner's active instalment tails for the liabilities reservation (ADR-181, ADR-182).
+
+        Fetches the owner's instalment-marked expense rows (``recurring_cadence=
+        'installment'``) newest-first and collapses them to one plan per ``(name,
+        category)`` keyed off each plan's LATEST posted cuota. Each plan yields its native
+        per-cuota amount, its native currency and its remaining count (``installments_total
+        - installments_index`` from the latest posted cuota, floored at ``0`` — so paid
+        cuotas are excluded by construction, the no-double-count property, ADR-181). A plan
+        with no structured total/index, or already fully paid, yields ``remaining_count=0``
+        and contributes nothing. Recurring subscriptions and the monotributo cuota are
+        NOT instalment streams and never enter this reservation (ADR-182). Owner-scoped
+        (ADR-108, ADR-130).
+        """
+        statement = (
+            select(TransactionRecord)
+            .where(
+                TransactionRecord.user_id == owner,
+                TransactionRecord.kind == Kind.EXPENSE.value,
+                TransactionRecord.recurring_cadence == RecurringCadence.INSTALLMENT.value,
+            )
+            .order_by(TransactionRecord.occurred_on.desc(), TransactionRecord.created_at.desc())
+        )
+        result = await self.session.execute(statement)
+        streams: list[InstallmentLiabilityInput] = []
+        seen: set[tuple[str, str | None]] = set()
+        for record in result.scalars().all():
+            key = (record.name, record.category)
+            if key in seen:
+                continue
+            seen.add(key)
+            streams.append(
+                InstallmentLiabilityInput(
+                    amount=self._native_cuota_amount(record),
+                    currency=Currency.parse(record.currency),
+                    remaining_count=self._remaining_count(record),
+                )
+            )
+        return streams
+
+    def _native_cuota_amount(self, record: TransactionRecord) -> Decimal:
+        """Return an instalment cuota's NATIVE per-cuota amount (ADR-123, ADR-181).
+
+        A USD cuota uses the USD-native ``usd_amount`` snapshot so the tail stays
+        USD-authoritative (ADR-123); when a USD row carries no snapshot the ARS-equivalent
+        ``amount`` is the only figure available, so it is the fallback (degrade to native,
+        consistent with net worth, ADR-132). An ARS cuota always uses ``amount`` (ADR-025).
+        """
+        if Currency.parse(record.currency) is Currency.USD and record.usd_amount is not None:
+            return record.usd_amount
+        return record.amount
+
+    def _remaining_count(self, record: TransactionRecord) -> int:
+        """Return an instalment plan's remaining cuotas from its latest posted row (ADR-181).
+
+        ``installments_total - installments_index``, floored at ``0``; ``0`` when either
+        figure is missing (no structured tail). Measured from the latest posted cuota so
+        paid cuotas are excluded by construction (the no-double-count property, ADR-181).
+        """
+        total = record.installments_total
+        index = record.installments_index
+        if total is None or index is None:
+            return 0
+        return max(0, total - index)
 
     async def _account_balances(self, owner: UUID) -> list[AccountBalanceInput]:
         """Return each of the owner's accounts with its native balance (ADR-122, ADR-134, ADR-135).

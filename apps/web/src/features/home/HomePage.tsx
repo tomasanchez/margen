@@ -38,7 +38,7 @@ import { ErrorState } from '../../components/ErrorState'
 import { useHomePrivacy } from './useHomePrivacy'
 import { useDisplayCurrency } from '../settings/displayCurrencyContext'
 import { useMonotributoEnabled } from '../settings/queries'
-import { useInsights, useMonotributo, useSummary } from './queries'
+import { useCommitted, useInsights, useMonotributo, useSummary } from './queries'
 import { useTransactions } from '../transactions/queries'
 import { useViewingMonth } from '../../components/monthContext'
 import {
@@ -86,8 +86,11 @@ export function HomePage() {
   const netWorthQuery = useNetWorth()
 
   // Calm note when USD is preferred but the live rate couldn't be fetched, so
-  // the cards + summaries fall back to ARS (ADR-056/037). Null otherwise.
-  const { fallbackNote, preferredCurrency } = useDisplayCurrency()
+  // the cards + summaries fall back to ARS (ADR-056/037). Null otherwise. The
+  // effective currency is what the figures actually render in — the committed
+  // accent is fetched in that SAME denomination so it never re-converts (ADR-179).
+  const { fallbackNote, preferredCurrency, effectiveCurrency } =
+    useDisplayCurrency()
 
   // The Monotributo Home card is part of the optional module (ADR-126): hide it
   // when the module is disabled. Treated as hidden until settings resolve so it
@@ -102,6 +105,14 @@ export function HomePage() {
   const summaryQuery = useSummary(viewingMonth)
   // Real, month-reactive insights for the selected month (ADR-061/062).
   const insightsQuery = useInsights(viewingMonth)
+  // Committed-spend accent for the selected month, in the EFFECTIVE display
+  // currency (ADR-179): enriches the Expenses metric card with the obligated
+  // share already inside the total (+ pending upcoming). Fetched in the same
+  // denomination the figures render in, so the accent never re-converts (ADR-168).
+  const committedQuery = useCommitted(
+    toYearMonth(viewingMonth),
+    effectiveCurrency,
+  )
   // Budget progress for the selected month (ADR-125/127): an incremental Home
   // card; month-keyed so it tracks the navigator. The budget is denominated in
   // the INCOME's currency (ADR-156): read the income first, take its currency as
@@ -248,6 +259,7 @@ export function HomePage() {
         previousMonthLabel={previousMonthLabel}
         loading={transactionsQuery.isPending || monotributoQuery.isPending}
         hidden={amountsHidden}
+        committed={committedQuery.data}
       />
 
       {fallbackNote ? (

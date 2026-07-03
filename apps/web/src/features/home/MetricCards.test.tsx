@@ -18,6 +18,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MetricCards, type MetricCardsProps } from './MetricCards'
 import { maskAmount } from '../../lib/format'
 import type { Settings } from '../../api/settingsClient'
+import type { CommittedSplit } from '../../api/committedClient'
 import type { MonthMetrics } from './homeMetrics'
 import type { MonotributoState } from '../../mock/types'
 
@@ -104,5 +105,61 @@ describe('MetricCards privacy masking', () => {
     expect(screen.getByText('−8% vs. May')).toBeInTheDocument()
     // The Monotributo margin figure is NOT masked (regulatory, always shown).
     expect(screen.getByText('ARS 8.400.001')).toBeInTheDocument()
+  })
+})
+
+describe('MetricCards committed-spend accent (ADR-179)', () => {
+  /** A split with both a paid share (already in Expenses) and pending outflows. */
+  const COMMITTED_WITH_PENDING: CommittedSplit = {
+    month: '2026-07',
+    currency: 'ARS',
+    paid: { subscription: 12_000, installment: 30_000, tax: 85_000, total: 127_000 },
+    pending: { subscription: 5_000, installment: 0, tax: 0, total: 5_000 },
+    unconverted: 0,
+  }
+
+  test('shows the paid committed share and the pending upcoming note under Expenses', () => {
+    renderCards({ committed: COMMITTED_WITH_PENDING })
+
+    // The obligated share already inside the Expenses total.
+    expect(screen.getByText(/ARS 127\.000 committed/)).toBeInTheDocument()
+    // The pending, clearly marked as still-committed this month (not in the total).
+    expect(
+      screen.getByText(/ARS 5\.000 still committed this month/),
+    ).toBeInTheDocument()
+  })
+
+  test('hides the pending note when there is no pending committed spend', () => {
+    renderCards({
+      committed: {
+        ...COMMITTED_WITH_PENDING,
+        pending: { subscription: 0, installment: 0, tax: 0, total: 0 },
+      },
+    })
+
+    expect(screen.getByText(/ARS 127\.000 committed/)).toBeInTheDocument()
+    expect(
+      screen.queryByText(/still committed this month/),
+    ).not.toBeInTheDocument()
+  })
+
+  test('renders no accent at all when nothing is committed this month', () => {
+    renderCards({
+      committed: {
+        ...COMMITTED_WITH_PENDING,
+        paid: { subscription: 0, installment: 0, tax: 0, total: 0 },
+        pending: { subscription: 0, installment: 0, tax: 0, total: 0 },
+      },
+    })
+
+    expect(screen.queryByText(/committed/)).not.toBeInTheDocument()
+  })
+
+  test('does not re-convert — formats the split figure in the display currency as-is', () => {
+    // The Expenses figure is ARS 400.000; the paid committed (127.000) is shown
+    // verbatim in ARS (the effective currency), never divided by a rate.
+    renderCards({ committed: COMMITTED_WITH_PENDING })
+    expect(screen.getByText('ARS 400.000')).toBeInTheDocument()
+    expect(screen.getByText(/ARS 127\.000 committed/)).toBeInTheDocument()
   })
 })
