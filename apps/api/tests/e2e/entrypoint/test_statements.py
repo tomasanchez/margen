@@ -31,9 +31,12 @@ from margen_api.asgi import get_application
 from margen_api.bootstrap import ApplicationContainer
 from margen_api.entrypoint.dependencies import AuthUserModel, require_auth_user
 from margen_api.service_layer import statement_parser
+from tests.conftest import STUB_AUTH_USER_B
 
 STATEMENTS = "/api/v1/statements"
 TRANSACTIONS = "/api/v1/transactions"
+INSTITUTIONS = "/api/v1/institutions"
+ACCOUNTS = "/api/v1/accounts"
 
 # A second authenticated identity used to prove cross-tenant isolation: it imports
 # nothing, so any document id it requests belongs to someone else (ADR-108, ADR-111).
@@ -1023,6 +1026,111 @@ class TestImportResolution:
         merged_row = next(row for row in listed if row["id"] == merge_id)
         assert merged_row["bank"] == "Galicia"  # normalized bank (ADR-117).
         assert merged_row["card"] == "VISA ·5771"  # card detail split out (ADR-117).
+
+
+async def _create_card_account(client: httpx.AsyncClient) -> str:
+    """Create a CARD institution + card account through the real endpoints, returning the account id."""
+    institution = (await client.post(INSTITUTIONS, json={"name": "Galicia VISA", "type": "card"})).json()["data"]
+    account = (
+        await client.post(
+            ACCOUNTS,
+            json={"institutionId": institution["id"], "currency": "ARS", "openingBalance": "0"},
+        )
+    ).json()["data"]
+    return account["id"]
+
+
+class TestImportAccountAttachment:
+    """POST /statements/import attaches each line to a confirmed card account (ADR-184, ADR-130)."""
+
+    async def test_line_with_account_id_creates_an_attached_expense(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an import line carrying an accountId the caller owns
+        WHEN the statement is imported
+        THEN the created expense is attached to that account (ADR-184)
+        """
+        # GIVEN — a card account and a line pointing at it.
+        account_id = await _create_card_account(test_client)
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        body = _import_body(
+            pdf_base64=encoded,
+            lines=[
+                {
+                    "occurredOn": "2026-06-19",
+                    "name": "MERPAGO*PASSLINE",
+                    "amount": "3641.66",
+                    "currency": "ARS",
+                    "accountId": account_id,
+                }
+            ],
+        )
+
+        # WHEN
+        response = await test_client.post(f"{STATEMENTS}/import", json=body)
+
+        # THEN — the created expense carries the account id.
+        assert response.status_code == status.HTTP_201_CREATED
+        listed = (await test_client.get(TRANSACTIONS)).json()["data"]
+        row = next(line for line in listed if line["name"] == "MERPAGO*PASSLINE")
+        assert row["accountId"] == account_id
+
+    async def test_line_without_account_id_stays_unattached(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an import line with no accountId (no matching card account)
+        WHEN the statement is imported
+        THEN the created expense is unattached — today's tolerant behavior (ADR-184)
+        """
+        # GIVEN
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        body = _import_body(
+            pdf_base64=encoded,
+            lines=[{"occurredOn": "2026-06-19", "name": "SUBE VIAJES - BUSES", "amount": "700.00", "currency": "ARS"}],
+        )
+
+        # WHEN
+        await test_client.post(f"{STATEMENTS}/import", json=body)
+
+        # THEN — the expense persisted with a null accountId.
+        listed = (await test_client.get(TRANSACTIONS)).json()["data"]
+        row = next(line for line in listed if line["name"] == "SUBE VIAJES - BUSES")
+        assert row["accountId"] is None
+
+    async def test_line_with_another_users_account_id_returns_404(
+        self,
+        test_client: httpx.AsyncClient,
+        container: ApplicationContainer,
+        client_for_user,
+    ):
+        """
+        GIVEN an import line referencing an account owned by a DIFFERENT user
+        WHEN the statement is imported
+        THEN the same-owner rule rejects it with 404 and nothing is created (ADR-184, ADR-130)
+        """
+        # GIVEN — user B creates a card account over the same container.
+        async with client_for_user(container, STUB_AUTH_USER_B) as other_client:
+            foreign_account_id = await _create_card_account(other_client)
+
+        encoded = base64.b64encode(_PDF_BYTES).decode("ascii")
+        body = _import_body(
+            pdf_base64=encoded,
+            lines=[
+                {
+                    "occurredOn": "2026-06-19",
+                    "name": "MERPAGO*PASSLINE",
+                    "amount": "3641.66",
+                    "currency": "ARS",
+                    "accountId": foreign_account_id,
+                }
+            ],
+        )
+
+        # WHEN — the stub user tries to attach a line to the other user's account.
+        response = await test_client.post(f"{STATEMENTS}/import", json=body)
+
+        # THEN — a cross-tenant account id is not found, and nothing was created (atomic).
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        listed = (await test_client.get(TRANSACTIONS)).json()["data"]
+        assert all(row["name"] != "MERPAGO*PASSLINE" for row in listed)
 
 
 class TestDownloadStatementDocument:

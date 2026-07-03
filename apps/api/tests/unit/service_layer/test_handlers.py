@@ -15,17 +15,24 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from margen_api.domain.commands.statement import (
+    ImportStatement,
+    StatementDocumentPayload,
+    StatementLineInput,
+)
 from margen_api.domain.commands.transaction import (
     CreateTransaction,
     DeleteTransaction,
     UpdateTransaction,
 )
-from margen_api.domain.models.exceptions import TransactionNotFoundError
+from margen_api.domain.models.account import build_account
+from margen_api.domain.models.exceptions import AccountNotFoundError, TransactionNotFoundError
 from margen_api.domain.models.transaction import build_transaction
 from margen_api.domain.models.value_objects import Currency, Kind, RecurringCadence
 from margen_api.service_layer.handlers import (
     create_transaction,
     delete_transaction,
+    import_statement,
     update_transaction,
 )
 from tests.fakes.persistence import FakeUnitOfWork
@@ -334,3 +341,84 @@ class TestDeleteHandler:
         with pytest.raises(TransactionNotFoundError):
             await delete_transaction(DeleteTransaction(id=transaction_id, user_id=A_USER), uow)
         assert transaction_id in uow.committed_aggregates
+
+
+def _seed_account(uow: FakeUnitOfWork, *, user_id: str = A_USER) -> UUID:
+    """Place a committed account directly in the unit of work's account store (ADR-130)."""
+    account = build_account(institution_id=uuid4(), currency=Currency.ARS, user_id=user_id)
+    uow.committed_accounts[account.id] = account
+    return account.id
+
+
+def _document() -> StatementDocumentPayload:
+    """Build a minimal statement document payload for an import command."""
+    return StatementDocumentPayload(pdf_bytes=b"%PDF-1.4", content_type="application/pdf", byte_size=8)
+
+
+def _import_line(**overrides: object) -> StatementLineInput:
+    """Build a single confirmed import line with sensible defaults."""
+    defaults: dict[str, object] = {
+        "occurred_on": A_DATE,
+        "name": "MERPAGO*PASSLINE",
+        "amount": Decimal("3641.66"),
+    }
+    defaults.update(overrides)
+    return StatementLineInput(**defaults)  # type: ignore[arg-type]
+
+
+class TestImportStatementAccountAttachment:
+    """The import handler attaches each line to a same-owner card account (ADR-184, ADR-130)."""
+
+    async def test_line_with_owned_account_id_attaches_the_expense(self):
+        """
+        GIVEN an import line carrying an accountId the caller owns
+        WHEN the import handler runs
+        THEN the created expense is attached to that account (ADR-184)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        account_id = _seed_account(uow)
+        command = ImportStatement(document=_document(), lines=[_import_line(account_id=account_id)], user_id=A_USER)
+
+        # WHEN
+        result = await import_statement(command, uow)
+
+        # THEN
+        created_id = result.created_transaction_ids[0]
+        assert uow.committed_aggregates[created_id].account_id == account_id
+        assert uow.committed is True
+
+    async def test_line_without_account_id_stays_unattached(self):
+        """
+        GIVEN an import line with no accountId
+        WHEN the import handler runs
+        THEN the created expense is unattached (today's tolerant behavior, ADR-184)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        command = ImportStatement(document=_document(), lines=[_import_line()], user_id=A_USER)
+
+        # WHEN
+        result = await import_statement(command, uow)
+
+        # THEN
+        created_id = result.created_transaction_ids[0]
+        assert uow.committed_aggregates[created_id].account_id is None
+
+    async def test_line_with_another_users_account_id_raises_not_found(self):
+        """
+        GIVEN an import line referencing an account owned by another user
+        WHEN the import handler runs
+        THEN the same-owner rule raises AccountNotFoundError and nothing commits (ADR-184, ADR-130)
+        """
+        # GIVEN — an account owned by a DIFFERENT user.
+        uow = FakeUnitOfWork()
+        foreign_account_id = _seed_account(uow, user_id="ffffffff-0000-4000-8000-000000000002")
+        command = ImportStatement(
+            document=_document(), lines=[_import_line(account_id=foreign_account_id)], user_id=A_USER
+        )
+
+        # WHEN / THEN
+        with pytest.raises(AccountNotFoundError):
+            await import_statement(command, uow)
+        assert uow.committed is False

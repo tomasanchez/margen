@@ -243,8 +243,10 @@ async def import_statement(command: ImportStatement, uow: AbstractUnitOfWork) ->
       document via ``statement_document_id`` through the domain factory so invariants
       run (ADR-031). The handler injects each transaction's UUID identity and
       ``created_at``/``updated_at`` timestamps so the domain stays clock- and
-      UUID-free (ADR-026). Every created line is an EXPENSE that never counts toward
-      Monotributo (ADR-079).
+      UUID-free (ADR-026). When the line carries a frontend-deduced ``account_id`` it is
+      first validated same-owner (ADR-184, ADR-130) then stamped onto the expense; a line
+      with no ``account_id`` stays unattached. Every created line is an EXPENSE that never
+      counts toward Monotributo (ADR-079).
     * ``MERGE`` — load the existing transaction named by ``match_transaction_id`` and
       enrich it in place (ADR-085), preserving the user's manual entry; no new row is
       created.
@@ -261,6 +263,8 @@ async def import_statement(command: ImportStatement, uow: AbstractUnitOfWork) ->
     Raises:
         MergeTargetNotFoundError: When a ``MERGE`` line's ``match_transaction_id``
             matches no stored transaction (ADR-085).
+        AccountNotFoundError: When a line's ``account_id`` is not an account owned by
+            the caller (ADR-184, ADR-130); the boundary maps it to 404 (ADR-111).
     """
     now = datetime.now(UTC)
     async with uow:
@@ -271,6 +275,10 @@ async def import_statement(command: ImportStatement, uow: AbstractUnitOfWork) ->
             if line.resolution is StatementLineResolution.MERGE:
                 merged.append(await _merge_statement_line(uow, line, document_id, now, command.user_id))
             else:
+                # A line the frontend attached to a card account must reference one the
+                # caller owns before the charge is persisted onto it (ADR-184, ADR-130); a
+                # line with no account_id stays unattached (today's tolerant behavior).
+                await _check_account_ownership(uow, line.account_id, command.user_id)
                 created.append(_create_statement_line(uow, line, document_id, now, command.user_id))
         await uow.commit()
     return StatementImportResult(
@@ -291,8 +299,11 @@ def _create_statement_line(
 
     Builds the aggregate through the domain factory so invariants run (ADR-031),
     injecting a generated identity and the shared ``now`` timestamps (ADR-026), and
-    links it to the saved statement document. The aggregate is stamped with
-    ``user_id`` so an imported row is owned exactly like a manual one (ADR-108). When
+    links it to the saved statement document. When the frontend deduced+confirmed a card
+    account (ADR-184), the created expense carries that ``account_id`` (ownership already
+    verified by the caller, ADR-130) so it feeds the card's balance and its ccBalance
+    liability (ADR-185); a line with no ``account_id`` stays unattached. The aggregate is
+    stamped with ``user_id`` so an imported row is owned exactly like a manual one (ADR-108). When
     the parser recovered a cuota ``N/M`` (ADR-175), the created expense is stamped with
     ``recurring_cadence='installment'`` plus the recovered total/index so the forecast
     can project the plan's remaining payments (ADR-176); a line without a recovered
@@ -333,6 +344,7 @@ def _create_statement_line(
         installments_total=line.installments_total,
         installments_index=line.installments_index,
         statement_document_id=document_id,
+        account_id=line.account_id,
         user_id=user_id,
     )
     uow.transactions.add(transaction)

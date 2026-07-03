@@ -13,6 +13,7 @@ on a separate app over the SAME container via the shared ``client_for_user`` fac
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import httpx
@@ -32,6 +33,13 @@ INSTITUTIONS = "/api/v1/institutions"
 NET_WORTH = "/api/v1/accounts/net-worth"
 TRANSACTIONS = "/api/v1/transactions"
 A_DATE = "2026-06-12"
+
+# Net worth is an as-of-today snapshot (ADR-186): a card charge dated in the future is not
+# yet due (ADR-089) and shows only as the ccBalance liability, while a past charge has
+# already left the account. Computed relative to "now" so the tests never time-bomb.
+_TODAY = datetime.now(UTC).date()
+_FUTURE_DATE = (_TODAY + timedelta(days=30)).isoformat()
+_PAST_DATE = (_TODAY - timedelta(days=30)).isoformat()
 
 
 async def _create_institution(client: httpx.AsyncClient, **body: object) -> dict:
@@ -327,7 +335,8 @@ class TestNetWorth:
         assert data["liabilities"] == {
             "installments": "0.00",
             "installmentsNative": {"ars": "0.00", "usd": "0.00"},
-            "ccBalance": None,
+            "ccBalance": "0.00",
+            "ccBalanceNative": {"ars": "0.00", "usd": "0.00"},
             "other": None,
             "total": "0.00",
         }
@@ -451,7 +460,9 @@ class TestNetWorthLiabilities:
         assert data["total"] == "99500.00"
         assert data["liabilities"]["installments"] == "2000.00"
         assert data["liabilities"]["total"] == "2000.00"
-        assert data["liabilities"]["ccBalance"] is None
+        # No CC balance for this owner: a computed zero, not a placeholder (ADR-185).
+        assert data["liabilities"]["ccBalance"] == "0.00"
+        assert data["liabilities"]["ccBalanceNative"] == {"ars": "0.00", "usd": "0.00"}
         assert data["liabilities"]["other"] is None
         # The native breakdown carries the UNCONVERTED ARS tail (no USD stream here), ADR-183.
         assert data["liabilities"]["installmentsNative"] == {"ars": "2000.00", "usd": "0.00"}
@@ -643,6 +654,195 @@ class TestNetWorthLiabilities:
 
         # THEN — A's reservation is zero; B's tail never leaks.
         assert data["liabilities"]["installments"] == "0.00"
+
+
+async def _create_card_account(client: httpx.AsyncClient, *, currency: str = "ARS", opening: str = "0") -> dict:
+    """Create a CARD-type institution and a card account under it, returning the account."""
+    institution = await _create_institution(client, name="Galicia VISA", type="card")
+    return await _create_account(client, institution_id=institution["id"], currency=currency, openingBalance=opening)
+
+
+class TestNetWorthCcBalance:
+    """The unpaid CC balance (future-dated card charges) is a liability, counted once (ADR-185, ADR-186)."""
+
+    async def test_future_dated_card_charge_is_the_cc_balance_not_an_asset(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a card account with a future-dated (not-yet-due) charge
+        WHEN net worth is read
+        THEN the charge is the ccBalance liability and does NOT reduce the assets total —
+             it is counted exactly ONCE in netAfterLiabilities (ADR-185, ADR-186)
+        """
+        # GIVEN — a card account opened at 0; a 3,641.66 ARS charge dated in the future.
+        account = await _create_card_account(test_client, opening="0")
+        await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": _FUTURE_DATE,
+                "name": "MERPAGO*PASSLINE",
+                "kind": "expense",
+                "amountNum": "3641.66",
+                "accountId": account["id"],
+            },
+        )
+
+        # WHEN
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN — the future charge does NOT reduce the as-of-today asset balance (still 0).
+        assert data["total"] == "0.00"
+        assert data["accounts"][0]["balance"] == "0.00"
+        # AND — it is reserved as the ccBalance liability, native and converted.
+        assert data["liabilities"]["ccBalance"] == "3641.66"
+        assert data["liabilities"]["ccBalanceNative"] == {"ars": "3641.66", "usd": "0.00"}
+        assert data["liabilities"]["total"] == "3641.66"
+        # AND — the peso is counted ONCE: net = 0 assets - 3641.66 liability.
+        assert data["netAfterLiabilities"] == "-3641.66"
+
+    async def test_past_dated_card_charge_is_a_paid_asset_reduction_not_a_liability(
+        self, test_client: httpx.AsyncClient
+    ):
+        """
+        GIVEN a card account with a PAST-dated (already-due) charge
+        WHEN net worth is read
+        THEN the charge has already reduced the asset balance and is NOT in ccBalance (ADR-089/185)
+        """
+        # GIVEN — a card account; a 1,000 ARS charge dated in the past (already due/paid).
+        account = await _create_card_account(test_client, opening="5000")
+        await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": _PAST_DATE,
+                "name": "Old charge",
+                "kind": "expense",
+                "amountNum": "1000",
+                "accountId": account["id"],
+            },
+        )
+
+        # WHEN
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN — the past charge reduced the balance (5000 - 1000 = 4000); no ccBalance.
+        assert data["accounts"][0]["balance"] == "4000.00"
+        assert data["liabilities"]["ccBalance"] == "0.00"
+        assert data["netAfterLiabilities"] == data["total"] == "4000.00"
+
+    async def test_installment_on_card_is_excluded_from_cc_balance(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a future-dated instalment charge on a card account
+        WHEN net worth is read
+        THEN it is counted only as the instalment tail, NOT the ccBalance (ADR-181/185)
+        """
+        # GIVEN — a card account; a future-dated instalment cuota (2 of 6, 4 remaining).
+        account = await _create_card_account(test_client, opening="0")
+        await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": _FUTURE_DATE,
+                "name": "Fridge",
+                "kind": "expense",
+                "amountNum": "500",
+                "category": "Home",
+                "recurringCadence": "installment",
+                "installmentsTotal": 6,
+                "installmentsIndex": 2,
+                "accountId": account["id"],
+            },
+        )
+
+        # WHEN
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN — the instalment enters the tail (4 x 500 = 2000), NOT the ccBalance.
+        assert data["liabilities"]["installments"] == "2000.00"
+        assert data["liabilities"]["ccBalance"] == "0.00"
+
+    async def test_non_card_account_future_charge_does_not_count_as_cc_balance(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a future-dated charge on a BANK (non-card) account
+        WHEN net worth is read
+        THEN it is not a CC balance (only CARD-type accounts carry an unpaid CC balance) (ADR-185)
+        """
+        # GIVEN — a bank account (default institution type) with a future-dated expense.
+        account = await _create_account(test_client, openingBalance="0")
+        await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": _FUTURE_DATE,
+                "name": "Future bank debit",
+                "kind": "expense",
+                "amountNum": "800",
+                "accountId": account["id"],
+            },
+        )
+
+        # WHEN
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN — no ccBalance (not a card account); the future charge is simply not-yet-counted.
+        assert data["liabilities"]["ccBalance"] == "0.00"
+        assert data["accounts"][0]["balance"] == "0.00"
+
+    async def test_usd_card_balance_converts_at_mep_and_keeps_native(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a USD card account with a future-dated USD charge carrying a MEP rate
+        WHEN net worth is read in ARS
+        THEN ccBalance converts at MEP while ccBalanceNative.usd stays unconverted (ADR-183/185)
+        """
+        # GIVEN — a USD card account; a future 100 USD charge with a 1000 ARS/USD rate.
+        account = await _create_card_account(test_client, currency="USD", opening="0")
+        await test_client.post(
+            TRANSACTIONS,
+            json={
+                "occurredOn": _FUTURE_DATE,
+                "name": "Apple Store",
+                "kind": "expense",
+                "amountNum": "100000",
+                "currency": "USD",
+                "usd": "100",
+                "rate": "1000",
+                "accountId": account["id"],
+            },
+        )
+
+        # WHEN
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN — 100 USD at 1000 ARS/USD = 100,000 ARS converted; native keeps the raw 100 USD.
+        assert data["currency"] == "ARS"
+        assert data["liabilities"]["ccBalance"] == "100000.00"
+        assert data["liabilities"]["ccBalanceNative"] == {"ars": "0.00", "usd": "100.00"}
+
+    async def test_cc_balance_is_owner_scoped(
+        self,
+        container: ApplicationContainer,
+        test_client: httpx.AsyncClient,
+        client_for_user,
+    ):
+        """
+        GIVEN user B has a future-dated card charge
+        WHEN user A reads net worth
+        THEN A's ccBalance is unaffected by B's card charges (ADR-108, ADR-130)
+        """
+        # GIVEN — user B creates a card account with a future-dated charge.
+        async with client_for_user(container, STUB_AUTH_USER_B) as client_b:
+            b_account = await _create_card_account(client_b, opening="0")
+            await client_b.post(
+                TRANSACTIONS,
+                json={
+                    "occurredOn": _FUTURE_DATE,
+                    "name": "B card charge",
+                    "kind": "expense",
+                    "amountNum": "9999",
+                    "accountId": b_account["id"],
+                },
+            )
+
+        # WHEN — user A (the default stub) reads net worth with no card charges of their own.
+        data = (await test_client.get(NET_WORTH)).json()["data"]
+
+        # THEN — A's ccBalance is zero; B's balance never leaks.
+        assert data["liabilities"]["ccBalance"] == "0.00"
 
 
 class TestDomainInvariantToHttp:

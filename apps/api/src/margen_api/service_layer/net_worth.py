@@ -29,6 +29,7 @@ from uuid import UUID
 from margen_api.domain.models.value_objects import Currency, InstitutionType
 from margen_api.service_layer.account_read_models import (
     AccountBalance,
+    CcBalanceNative,
     InstallmentsNative,
     Liabilities,
     NetWorth,
@@ -66,6 +67,30 @@ class InstallmentLiabilityInput:
     amount: Decimal
     currency: Currency
     remaining_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class CcBalanceInput:
+    """One native-currency subtotal of the owner's unpaid credit-card balance (ADR-185).
+
+    The adapter derives one of these per native currency (ARS, USD) by summing the
+    owner's future-dated CARD-account expense charges that are NOT part of an instalment
+    plan (instalments are counted only as the tail, ADR-181). "Future-dated"
+    (``occurred_on > today``) means the charge is not yet due under the pay-date
+    convention (ADR-089), so it is still outstanding. The pure assembly converts the
+    native subtotal to the display currency via the SAME MEP rate net worth uses
+    (ADR-123/183) and also keeps it unconverted in the native breakdown for live-rate
+    client conversion (ADR-133).
+
+    Attributes:
+        amount: The outstanding native balance in ``currency`` (signed: payments/refunds
+            posted before today already reduced the account balance, but future-dated
+            signed rows net here, so a credit note dated ahead reduces the balance).
+        currency: The subtotal's native currency (ADR-123).
+    """
+
+    amount: Decimal
+    currency: Currency
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,29 +148,34 @@ def build_liabilities(
     *,
     display_currency: Currency,
     mep_rate: Decimal | None,
+    cc_balances: Sequence[CcBalanceInput] = (),
 ) -> Liabilities:
-    """Assemble the typed liabilities reservation from the instalment tails (ADR-180, ADR-181).
+    """Assemble the typed liabilities reservation from the instalment tails and CC balance (ADR-180, ADR-181, ADR-185).
 
     The instalment liability is Σ over active streams of ``remaining_count * cuota`` -
-    the FULL remaining tail. Each stream's native tail is converted into
-    ``display_currency`` via the SAME MEP rate net worth uses (ADR-123/183); when the rate
-    is unavailable a cross-currency figure degrades to native, consistent with how net
-    worth already degrades (ADR-132). The SAME native tails are ALSO summed unconverted per
-    currency into ``installments_native`` (ADR-183 amendment) so the client can convert the
-    liability at the LIVE MEP rate it uses for the assets headline (ADR-133), keeping "Net
-    of commitments" coherent. A fully-paid plan (``remaining_count == 0``) contributes
-    nothing. Slice 1 populates only ``installments``; ``cc_balance`` and ``other`` are typed
-    ``None`` placeholders (ADR-180/182).
+    the FULL remaining tail. The credit-card liability is Σ over the owner's outstanding
+    future-dated CARD-account charges (not yet due/paid, instalments excluded — those are
+    the tail, ADR-181/185). Each native figure is converted into ``display_currency`` via
+    the SAME MEP rate net worth uses (ADR-123/183); when the rate is unavailable a
+    cross-currency figure degrades to native, consistent with how net worth already
+    degrades (ADR-132). The SAME native figures are ALSO summed unconverted per currency
+    into ``installments_native`` / ``cc_balance_native`` (ADR-183 amendment) so the client
+    can convert each liability at the LIVE MEP rate it uses for the assets headline
+    (ADR-133), keeping "Net of commitments" coherent. A fully-paid plan
+    (``remaining_count == 0``) contributes nothing. ``other`` stays a typed ``None``
+    placeholder (ADR-180); ``total`` sums the instalment tail and the CC balance.
 
     Args:
         installments: The active instalment streams' native tails from the adapter.
         display_currency: The user's display currency the reservation is expressed in.
         mep_rate: The ARS-per-USD MEP rate, or ``None`` when none is available.
+        cc_balances: The owner's outstanding CC-balance native subtotals per currency from
+            the adapter (ADR-185); empty by default (no CARD-account charges outstanding).
 
     Returns:
-        The assembled :class:`Liabilities` with the instalment tail summed and converted,
-        the native ARS/USD breakdown for live-rate client conversion (ADR-183), the future
-        obligation types left as ``None`` placeholders, and the total.
+        The assembled :class:`Liabilities` with the instalment tail and the CC balance
+        summed and converted, the native ARS/USD breakdowns for live-rate client conversion
+        (ADR-183), ``other`` left as a ``None`` placeholder, and the total.
     """
     installments_total = _ZERO
     native_ars = _ZERO
@@ -160,12 +190,25 @@ def build_liabilities(
         else:
             native_ars += native_tail
     installments_total = _money(installments_total)
+
+    cc_total = _ZERO
+    cc_native_ars = _ZERO
+    cc_native_usd = _ZERO
+    for subtotal in cc_balances:
+        cc_total += convert(subtotal.amount, subtotal.currency, display_currency, mep_rate)
+        if subtotal.currency is Currency.USD:
+            cc_native_usd += subtotal.amount
+        else:
+            cc_native_ars += subtotal.amount
+    cc_total = _money(cc_total)
+
     return Liabilities(
         installments=installments_total,
         installments_native=InstallmentsNative(ars=_money(native_ars), usd=_money(native_usd)),
-        cc_balance=None,
+        cc_balance=cc_total,
+        cc_balance_native=CcBalanceNative(ars=_money(cc_native_ars), usd=_money(cc_native_usd)),
         other=None,
-        total=installments_total,
+        total=_money(installments_total + cc_total),
     )
 
 
@@ -175,6 +218,7 @@ def build_net_worth(
     display_currency: Currency,
     mep_rate: Decimal | None,
     installment_liabilities: Sequence[InstallmentLiabilityInput] = (),
+    cc_balance_liabilities: Sequence[CcBalanceInput] = (),
 ) -> NetWorth:
     """Assemble the net-worth surface from raw per-account balances (ADR-122, ADR-123, ADR-180).
 
@@ -193,6 +237,10 @@ def build_net_worth(
         mep_rate: The ARS-per-USD MEP rate, or ``None`` when none is available.
         installment_liabilities: The active instalment streams' native tails feeding the
             liabilities reservation (ADR-181); empty by default (an assets-only surface).
+        cc_balance_liabilities: The owner's outstanding CC-balance native subtotals feeding
+            the liabilities reservation (ADR-185); empty by default. These are reserved as a
+            liability and are already EXCLUDED from ``balances`` (future-dated charges are
+            not in the as-of-today asset total, ADR-186), so each peso counts once.
 
     Returns:
         The assembled :class:`NetWorth` with the total, the per-account breakdown
@@ -220,6 +268,7 @@ def build_net_worth(
         installment_liabilities,
         display_currency=display_currency,
         mep_rate=mep_rate,
+        cc_balances=cc_balance_liabilities,
     )
     return NetWorth(
         total=total,

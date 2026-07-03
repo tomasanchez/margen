@@ -102,6 +102,11 @@ class StatementLineInput(Message):
             else ``None``; statement imports usually leave it null for the client
             rate-fill step (ADR-149).
         fx_rate_type: ``OFFICIAL`` when a rate is stated, else ``None``.
+        account_id: The card account the frontend deduced (issuer/last4 + currency)
+            and the user confirmed, or ``None`` when no matching card account exists so
+            the line imports unattached (ADR-184). Validated same-owner at the app layer
+            (ADR-130); a card account's outstanding future-dated charges become its
+            ccBalance liability (ADR-185).
         category: A category label, editable in review, or ``None``.
         payment_method: The normalized bank label, e.g. ``"Galicia"`` or
             ``"Santander"`` (ADR-117).
@@ -131,6 +136,7 @@ class StatementLineInput(Message):
     fx_source: str | None = None
     fx_rate_type: FxRateType | None = None
     fx_rate_as_of: datetime | None = None
+    account_id: UUID | None = None
     category: str | None = None
     payment_method: str | None = None
     card: str | None = None

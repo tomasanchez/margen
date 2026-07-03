@@ -13,6 +13,7 @@ query is owner-scoped (ADR-130). All I/O is awaited.
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -31,6 +32,7 @@ from margen_api.service_layer.account_read_models import AccountReadModel, NetWo
 from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.net_worth import (
     AccountBalanceInput,
+    CcBalanceInput,
     InstallmentLiabilityInput,
     build_net_worth,
 )
@@ -62,33 +64,35 @@ _SIGNED_DELTA = case(
 _DELTA_SUM = cast(func.coalesce(func.sum(_SIGNED_DELTA), _ZERO), Numeric(18, 2))
 
 
-def _transfer_delta(account_id_column: InstrumentedAttribute[UUID]) -> ColumnElement[Decimal]:
-    """Build the net transfer flow for an account as a correlated scalar (ADR-135).
+def _transfer_delta(account_id_column: InstrumentedAttribute[UUID], today: date) -> ColumnElement[Decimal]:
+    """Build the net transfer flow for an account as a correlated scalar (ADR-135, ADR-186).
 
     A transfer moves money in the accounts' native currencies (ADR-123), so no FX is
     applied here: the destination is credited ``amount_in`` and the source is debited
     ``amount_out``. The two sums are computed as separate correlated scalar subqueries
     (rather than extra joins) so they do not fan out the per-account transaction
-    aggregation. ``coalesce`` keeps an account with no transfers at zero, and the
-    result is cast back to ``NUMERIC(18, 2)`` so the driver returns a Decimal for
-    money (ADR-025).
+    aggregation. Only transfers dated on or before ``today`` count — net worth is an
+    as-of-today snapshot (ADR-186), so a future-dated transfer has not moved yet.
+    ``coalesce`` keeps an account with no transfers at zero, and the result is cast back
+    to ``NUMERIC(18, 2)`` so the driver returns a Decimal for money (ADR-025).
 
     Args:
         account_id_column: The outer ``AccountRecord.id`` column the subqueries
             correlate against.
+        today: The as-of reference date; only transfers dated on or before it count.
 
     Returns:
         A scalar SQL expression: ``Σ amount_in (to this account) - Σ amount_out
-        (from this account)``.
+        (from this account)``, restricted to transfers dated on or before ``today``.
     """
     credited = (
         select(func.coalesce(func.sum(TransferRecord.amount_in), _ZERO))
-        .where(TransferRecord.to_account_id == account_id_column)
+        .where(TransferRecord.to_account_id == account_id_column, TransferRecord.occurred_on <= today)
         .scalar_subquery()
     )
     debited = (
         select(func.coalesce(func.sum(TransferRecord.amount_out), _ZERO))
-        .where(TransferRecord.from_account_id == account_id_column)
+        .where(TransferRecord.from_account_id == account_id_column, TransferRecord.occurred_on <= today)
         .scalar_subquery()
     )
     return cast(credited - debited, Numeric(18, 2))
@@ -99,6 +103,17 @@ def _as_decimal(value: object) -> Decimal:
     if isinstance(value, Decimal):
         return value
     return Decimal(str(value))
+
+
+def _today() -> date:
+    """Return today's date (UTC) as the net-worth as-of reference (ADR-186).
+
+    Net worth is an as-of-today snapshot (ADR-122/186): a charge dated after today has
+    not left the account yet, so it is excluded from the asset balance and reserved as
+    the ccBalance liability instead — each peso counts once. Mirrors the forecast's
+    reference date (ADR-176) so both query sides agree on "now".
+    """
+    return datetime.now(UTC).date()
 
 
 class SqlAlchemyAccountReader(AbstractAccountReader):
@@ -141,17 +156,26 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
         ]
 
     async def net_worth(self, user_id: str) -> NetWorth:
-        """Compute the owner's net worth, liabilities and per-account breakdown (ADR-122, ADR-123, ADR-180)."""
+        """Compute the owner's net worth, liabilities and per-account breakdown (ADR-122, ADR-123, ADR-180, ADR-185).
+
+        Net worth is an as-of-today snapshot (ADR-186): the asset balances exclude
+        future-dated (not-yet-due) charges, and those same outstanding CARD-account
+        charges are reserved as the ccBalance liability instead, so each peso counts
+        exactly once and ``net_after_liabilities`` never double-counts (ADR-185/186).
+        """
         owner = UUID(user_id)
-        balances = await self._account_balances(owner)
+        today = _today()
+        balances = await self._account_balances(owner, today)
         display_currency = await self._display_currency(owner)
         mep_rate = await self._latest_mep_rate(owner)
         installment_liabilities = await self._installment_liabilities(owner)
+        cc_balance_liabilities = await self._cc_balance_liabilities(owner, today)
         return build_net_worth(
             balances,
             display_currency=display_currency,
             mep_rate=mep_rate,
             installment_liabilities=installment_liabilities,
+            cc_balance_liabilities=cc_balance_liabilities,
         )
 
     async def _installment_liabilities(self, owner: UUID) -> list[InstallmentLiabilityInput]:
@@ -219,19 +243,72 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
             return 0
         return max(0, total - index)
 
-    async def _account_balances(self, owner: UUID) -> list[AccountBalanceInput]:
+    async def _cc_balance_liabilities(self, owner: UUID, today: date) -> list[CcBalanceInput]:
+        """Return the owner's unpaid credit-card balance as native per-currency subtotals (ADR-185).
+
+        Sums the owner's CARD-institution account charges that are (a) EXPENSE rows on a
+        ``CARD``-type institution account, (b) FUTURE-dated (``occurred_on > today`` — not
+        yet due under the pay-date convention, so still outstanding, ADR-089), and (c) NOT
+        ``recurring_cadence='installment'`` (excluded — the instalment tail is counted
+        separately, ADR-181/185). The outstanding balance uses the NATIVE magnitude
+        (:data:`_NATIVE_MAGNITUDE`): a USD card row sums its USD-native figure so the balance
+        stays USD-authoritative (ADR-123), an ARS row its ARS amount. Each charge is a debt
+        owed, so it is a POSITIVE liability (unlike the asset side, where a card expense is a
+        ``-magnitude`` reduction). Grouped by the account currency so ARS and USD balances
+        stay separate for live-rate client conversion (ADR-183). These SAME charges are
+        excluded from :meth:`_account_balances` (as-of-today), so folding them here as a
+        liability counts each peso once (the no-double-count invariant, ADR-186).
+        Owner-scoped (ADR-108, ADR-130).
+
+        Args:
+            owner: The authenticated owner whose card balances are summed.
+            today: The as-of reference date; only charges dated strictly after it count.
+
+        Returns:
+            One :class:`CcBalanceInput` per native currency that has an outstanding
+            balance; an empty list when the owner has no outstanding card charges.
+        """
+        statement = (
+            select(
+                AccountRecord.currency,
+                cast(func.coalesce(func.sum(_NATIVE_MAGNITUDE), _ZERO), Numeric(18, 2)).label("balance"),
+            )
+            .select_from(TransactionRecord)
+            .join(AccountRecord, AccountRecord.id == TransactionRecord.account_id)
+            .join(InstitutionRecord, InstitutionRecord.id == AccountRecord.institution_id)
+            .where(
+                TransactionRecord.user_id == owner,
+                TransactionRecord.kind == Kind.EXPENSE.value,
+                TransactionRecord.occurred_on > today,
+                InstitutionRecord.type == InstitutionType.CARD.value,
+                TransactionRecord.recurring_cadence.is_distinct_from(RecurringCadence.INSTALLMENT.value),
+            )
+            .group_by(AccountRecord.currency)
+        )
+        result = await self.session.execute(statement)
+        return [
+            CcBalanceInput(amount=_as_decimal(row.balance), currency=Currency.parse(row.currency))
+            for row in result.all()
+        ]
+
+    async def _account_balances(self, owner: UUID, today: date) -> list[AccountBalanceInput]:
         """Return each of the owner's accounts with its native balance (ADR-122, ADR-134, ADR-135).
 
         Balance = ``opening_balance + Σ signed transaction deltas + net transfer
         flow``, where the net transfer flow is ``+Σ amount_in`` for transfers INTO the
-        account and ``-Σ amount_out`` for transfers OUT of it (ADR-135). A
-        ``LEFT OUTER JOIN`` keeps accounts with no transactions (their transaction
-        delta is zero); the transfer flow is two correlated scalar subqueries so it
-        does not fan out the transaction grouping. The institution join supplies the
-        denormalized ``name`` + ``type``. Ordered newest-first to match
-        :meth:`list_accounts`.
+        account and ``-Σ amount_out`` for transfers OUT of it (ADR-135). Net worth is an
+        as-of-today snapshot (ADR-186): only transactions/transfers dated on or before
+        ``today`` contribute, so a FUTURE-dated (not-yet-due) card charge does NOT reduce
+        the asset balance — it is reserved instead as the ccBalance liability
+        (:meth:`_cc_balance_liabilities`), so each peso counts exactly once and
+        ``net_after_liabilities`` never double-counts (ADR-185/186). The as-of filter is on
+        the ``LEFT OUTER JOIN`` condition (not the WHERE) so an account whose only movements
+        are future-dated still appears with a zero transaction delta rather than dropping
+        from the breakdown. The transfer flow is two correlated scalar subqueries so it does
+        not fan out the transaction grouping. The institution join supplies the denormalized
+        ``name`` + ``type``. Ordered newest-first to match :meth:`list_accounts`.
         """
-        transfer_delta = _transfer_delta(AccountRecord.id)
+        transfer_delta = _transfer_delta(AccountRecord.id, today)
         statement = (
             select(
                 AccountRecord.id,
@@ -245,7 +322,10 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
             )
             .select_from(AccountRecord)
             .join(InstitutionRecord, InstitutionRecord.id == AccountRecord.institution_id)
-            .outerjoin(TransactionRecord, TransactionRecord.account_id == AccountRecord.id)
+            .outerjoin(
+                TransactionRecord,
+                (TransactionRecord.account_id == AccountRecord.id) & (TransactionRecord.occurred_on <= today),
+            )
             .where(AccountRecord.user_id == owner)
             .group_by(
                 AccountRecord.id,
