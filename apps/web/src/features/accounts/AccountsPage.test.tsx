@@ -96,6 +96,7 @@ const NET_WORTH: NetWorth = {
   currency: 'ARS',
   liabilities: {
     installments: '0',
+    installmentsNative: { ars: '0', usd: '0' },
     ccBalance: null,
     other: null,
     total: '0',

@@ -241,6 +241,7 @@ describe('accountsClient.netWorth', () => {
       currency: 'ARS',
       liabilities: {
         installments: '50000.00',
+        installmentsNative: { ars: '50000.00', usd: '0' },
         ccBalance: null,
         other: null,
         total: '50000.00',
@@ -285,6 +286,12 @@ describe('accountsClient.netWorth', () => {
     expect(result.liabilities.installments).toBe('50000.00')
     expect(result.liabilities.total).toBe('50000.00')
     expect(result.liabilities.ccBalance).toBeNull()
+    // The NATIVE installment breakdown (ADR-183 amendment) passes through so the
+    // card can convert it at the live rate.
+    expect(result.liabilities.installmentsNative).toEqual({
+      ars: '50000.00',
+      usd: '0',
+    })
     expect(result.netAfterLiabilities).toBe('1000000.00')
   })
 
@@ -303,6 +310,7 @@ describe('accountsClient.netWorth', () => {
     const result = await accountsClient.netWorth()
     expect(result.liabilities).toEqual({
       installments: '0',
+      installmentsNative: { ars: '0', usd: '0' },
       ccBalance: null,
       other: null,
       total: '0',
@@ -316,6 +324,7 @@ describe('accountsClient.netWorth', () => {
       currency: 'ARS',
       liabilities: {
         installments: '0',
+        installmentsNative: { ars: '0', usd: '0' },
         ccBalance: null,
         other: null,
         total: '0',
