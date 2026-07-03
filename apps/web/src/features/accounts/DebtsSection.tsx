@@ -30,7 +30,7 @@ import Typography from '@mui/material/Typography'
 import AddIcon from '@mui/icons-material/Add'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlineOutlined'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
-import { SectionCard } from '../../components/SectionCard'
+import { CollapsibleSection } from '../../components/CollapsibleSection'
 import { ErrorState } from '../../components/ErrorState'
 import { ResponsiveModal } from '../../components/ResponsiveModal'
 import { formatCurrency } from '../../lib/format'
@@ -236,12 +236,19 @@ export function DebtsSection() {
   }
 
   return (
-    <SectionCard
-      title={t('debts.title')}
-      subtitle={t('debts.subtitle')}
-      action={addAction}
-    >
-      {body}
+    <>
+      {/* Collapsible debts section (ADR-019). The dialogs render OUTSIDE the
+          collapsible body so an open form/confirm is never unmounted when the
+          section is collapsed (Collapse uses unmountOnExit). */}
+      <CollapsibleSection
+        storageKey="debts"
+        sectionLabel={t('debts.title')}
+        title={t('debts.title')}
+        subtitle={t('debts.subtitle')}
+        action={addAction}
+      >
+        {body}
+      </CollapsibleSection>
 
       {formOpen ? (
         <DebtForm
@@ -292,7 +299,7 @@ export function DebtsSection() {
           </Button>
         </Box>
       </ResponsiveModal>
-    </SectionCard>
+    </>
   )
 }
 
