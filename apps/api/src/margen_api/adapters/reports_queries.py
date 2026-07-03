@@ -159,6 +159,12 @@ class SqlAlchemyReportsReader(AbstractReportsReader):
             TransactionRecord.occurred_on < upper,
         ]
         if is_usd:
+            # NOTE: snapshot-less ARS income is currently DROPPED from the USD income
+            # KPI (no usd_amount to sum) rather than converted at the live rate. Per
+            # ADR-156 income is never frozen with a backfilled snapshot, so it is not
+            # counted as "unconverted" (see _range_unconverted_count); whether to
+            # instead convert it dynamically for the USD KPI is a separate open item
+            # the owner is deciding — do not change income summation here.
             predicates.append(TransactionRecord.usd_amount.is_not(None))
         statement = (
             select(year.label("year"), month.label("month"), total_column.label("total"))
@@ -290,17 +296,23 @@ class SqlAlchemyReportsReader(AbstractReportsReader):
         return {f"{int(row.year):04d}-{int(row.month):02d}": _as_decimal(row.total) for row in result.all()}
 
     async def _range_unconverted_count(self, owner: UUID, oldest: date, upper: date) -> int:
-        """Count the window's income/expense rows lacking a USD snapshot (ADR-152, ADR-108).
+        """Count the window's EXPENSE rows lacking a USD snapshot (ADR-150, ADR-156, ADR-108).
 
         The unconverted-note figure for the USD Reports denomination: how many
-        ``income`` / ``invoice`` / ``expense`` rows over ``[oldest, upper)`` carry a
-        null ``usd_amount`` (pre-backfill rows, statement imports pending the client
-        rate-fill step, ADR-149), so a USD total is never silently understated.
-        Scoped to ``owner`` (ADR-108).
+        ``expense`` rows over ``[oldest, upper)`` carry a null ``usd_amount`` — the
+        pre-backfill rows and statement imports pending the client rate-fill step
+        (ADR-149) that CAN legitimately be backfilled at their ``occurred_on`` rate
+        (ADR-150), so the USD spend figure is not silently understated.
+
+        Income (``income`` / ``invoice``) is deliberately EXCLUDED: ARS income has no
+        FX snapshot by design (ADR-156) — it converts dynamically at the live rate and
+        must never be frozen with a backfilled snapshot. Counting snapshot-less income
+        here over-reported the figure and misleadingly nudged the user to backfill
+        income that should stay dynamic. Scoped to ``owner`` (ADR-108).
         """
         statement = select(func.count()).where(
             TransactionRecord.user_id == owner,
-            TransactionRecord.kind.in_((*_INFLOW_KINDS, Kind.EXPENSE.value)),
+            TransactionRecord.kind == Kind.EXPENSE.value,
             TransactionRecord.usd_amount.is_(None),
             TransactionRecord.occurred_on >= oldest,
             TransactionRecord.occurred_on < upper,

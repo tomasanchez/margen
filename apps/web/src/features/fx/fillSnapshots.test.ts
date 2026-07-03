@@ -35,8 +35,17 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-/** A minimal transaction with an optional snapshot tag. */
-function tx(id: string, occurredOn: string, fxSource?: string): Transaction {
+/** Overridable slice of a transaction the snapshot predicate reads. */
+type TxOverrides = Partial<
+  Pick<Transaction, 'fxSource' | 'type' | 'kind' | 'currency'>
+>
+
+/**
+ * A minimal transaction. Defaults to an ARS EXPENSE (the genuine backfill target);
+ * `overrides` shapes it into an ARS income, a reimbursement, a stamped row, etc.
+ */
+function tx(id: string, occurredOn: string, overrides: TxOverrides = {}): Transaction {
+  const { fxSource, type = 'expense', kind = type, currency = 'ARS' } = overrides
   return {
     id,
     occurredOn,
@@ -45,27 +54,61 @@ function tx(id: string, occurredOn: string, fxSource?: string): Transaction {
     name: id,
     category: 'Food',
     bank: 'Galicia',
-    currency: 'ARS',
-    type: 'expense',
-    kind: 'expense',
+    currency,
+    type,
+    kind,
     amountNum: 1000,
     ...(fxSource ? { fxSource } : {}),
   }
 }
 
+/** An ARS inflow that must stay dynamic/inherited (ADR-156/161). */
+function arsIncome(id: string, occurredOn: string): Transaction {
+  return tx(id, occurredOn, { type: 'income', kind: 'income', currency: 'ARS' })
+}
+
+/** A reimbursement: serializes as `type: 'income'`, ARS, no snapshot (ADR-161). */
+function reimbursement(id: string, occurredOn: string): Transaction {
+  return tx(id, occurredOn, {
+    type: 'income',
+    kind: 'reimbursement',
+    currency: 'ARS',
+  })
+}
+
 describe('needsSnapshot / countUnconverted', () => {
-  test('a row with no fxSource needs a snapshot; one with a source does not', () => {
+  test('an ARS expense with no fxSource is a candidate; one with a source is not', () => {
     expect(needsSnapshot(tx('a', '2025-01-01'))).toBe(true)
-    expect(needsSnapshot(tx('b', '2025-01-01', 'bolsa'))).toBe(false)
-    expect(needsSnapshot(tx('c', '2025-01-01', ''))).toBe(true)
+    expect(needsSnapshot(tx('b', '2025-01-01', { fxSource: 'bolsa' }))).toBe(false)
+    expect(needsSnapshot(tx('c', '2025-01-01', { fxSource: '' }))).toBe(true)
   })
 
-  test('counts only the rows lacking a snapshot', () => {
+  test('an ARS income is never a candidate — it converts dynamically (ADR-156)', () => {
+    expect(needsSnapshot(arsIncome('inc', '2025-01-01'))).toBe(false)
+  })
+
+  test('a reimbursement (ARS, type income) is never a candidate — it inherits the linked expense rate (ADR-161)', () => {
+    expect(needsSnapshot(reimbursement('reimb', '2025-01-01'))).toBe(false)
+  })
+
+  test('an already-stamped ARS income stays a non-candidate (idempotent, unchanged)', () => {
+    const stamped = tx('inc', '2025-01-01', {
+      type: 'income',
+      kind: 'income',
+      currency: 'ARS',
+      fxSource: 'bolsa',
+    })
+    expect(needsSnapshot(stamped)).toBe(false)
+  })
+
+  test('counts only the backfillable expenses, excluding ARS inflows', () => {
     expect(
       countUnconverted([
-        tx('a', '2025-01-01'),
-        tx('b', '2025-01-02', 'bolsa'),
-        tx('c', '2025-01-03'),
+        tx('a', '2025-01-01'), // ARS expense, no snapshot → candidate
+        tx('b', '2025-01-02', { fxSource: 'bolsa' }), // stamped → skip
+        tx('c', '2025-01-03'), // ARS expense, no snapshot → candidate
+        arsIncome('inc', '2025-01-04'), // ARS income → skip (ADR-156)
+        reimbursement('reimb', '2025-01-05'), // reimbursement → skip (ADR-161)
       ]),
     ).toBe(2)
   })
@@ -75,7 +118,7 @@ describe('fillSnapshots', () => {
   test('stamps each unconverted row at its occurred_on rate and skips stamped rows', async () => {
     const rows = [
       tx('a', '2025-02-09'),
-      tx('b', '2025-03-15', 'bolsa'), // already stamped — skipped
+      tx('b', '2025-03-15', { fxSource: 'bolsa' }), // already stamped — skipped
       tx('c', '2025-04-20'),
     ]
     const result = await fillSnapshots(rows, { casa: 'bolsa' })
@@ -90,6 +133,27 @@ describe('fillSnapshots', () => {
     expect(mockRate).toHaveBeenCalledWith('bolsa', '2025-02-09', undefined)
     expect(mockRate).toHaveBeenCalledWith('bolsa', '2025-04-20', undefined)
     expect(mockRate).not.toHaveBeenCalledWith('bolsa', '2025-03-15', undefined)
+  })
+
+  test('skips ARS income + reimbursements, stamping only the backfillable expenses', async () => {
+    const rows = [
+      tx('exp', '2025-02-09'), // ARS expense → stamped
+      arsIncome('inc', '2025-03-10'), // ARS income → skipped (ADR-156)
+      reimbursement('reimb', '2025-03-11'), // reimbursement → skipped (ADR-161)
+    ]
+    const result = await fillSnapshots(rows, { casa: 'bolsa' })
+
+    expect(result).toEqual({ total: 1, done: 1, failed: 0 })
+    expect(mockSnapshot).toHaveBeenCalledTimes(1)
+    expect(mockSnapshot).toHaveBeenCalledWith('exp', {
+      fxRate: '1200',
+      fxSource: 'backfill',
+    })
+    // The ARS inflows are never priced nor PUT.
+    expect(mockRate).not.toHaveBeenCalledWith('bolsa', '2025-03-10', undefined)
+    expect(mockRate).not.toHaveBeenCalledWith('bolsa', '2025-03-11', undefined)
+    expect(mockSnapshot).not.toHaveBeenCalledWith('inc', expect.anything())
+    expect(mockSnapshot).not.toHaveBeenCalledWith('reimb', expect.anything())
   })
 
   test('reports progress after each row, including the initial 0 / total', async () => {

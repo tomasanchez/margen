@@ -191,11 +191,14 @@ class TestOverviewSql:
     async def test_ars_and_usd_denomination_with_unconverted(self, session_factory: async_sessionmaker[AsyncSession]):
         """
         GIVEN a USD invoice with a snapshot, a USD expense with a snapshot in a
-              category, and an ARS expense WITHOUT a snapshot, all this month
+              category, an ARS expense WITHOUT a snapshot, and an ARS income WITHOUT a
+              snapshot, all this month
         WHEN the ARS and USD overviews are read from PostgreSQL
         THEN the ARS path sums amount with unconverted 0, the USD path sums the
-             snapshot column, excludes and counts the snapshotless row, and the FX
-             summary carries the averaged captured rate (ADR-152, ADR-168)
+             snapshot column, excludes and counts ONLY the snapshotless expense (the
+             snapshotless ARS income is excluded from the unconverted note by design,
+             ADR-156), and the FX summary carries the averaged captured rate
+             (ADR-150, ADR-152, ADR-156, ADR-168)
         """
         # GIVEN — anchor to the current month so the window includes these rows.
         this_month = _first_of_current_month()
@@ -228,6 +231,9 @@ class TestOverviewSql:
                 category="Food",
             ),
             _tx(Kind.EXPENSE, "400", category="Transport"),
+            # A snapshot-less ARS income: it must NOT inflate the unconverted count —
+            # ARS income has no FX snapshot by design and is never backfilled (ADR-156).
+            _tx(Kind.INCOME, "500000"),
         ]
         async with session_factory() as session:
             repo = SqlAlchemyTransactionRepository(session)
@@ -238,17 +244,19 @@ class TestOverviewSql:
         # WHEN — ARS denomination.
         async with session_factory() as session:
             ars = await SqlAlchemyReportsReader(session).overview(OWNER, range_key="3M", currency=Currency.ARS)
-        # ARS: income 1_000_000, expenses 200_000 + 400, unconverted 0.
+        # ARS: income 1_000_000 (invoice) + 500_000 (ARS income), expenses 200_000 + 400, unconverted 0.
         assert ars.currency == "ARS"
         assert ars.unconverted == 0
-        assert ars.kpis.current.income == Decimal("1000000.00")
+        assert ars.kpis.current.income == Decimal("1500000.00")
         assert ars.kpis.current.expenses == Decimal("200400.00")
 
         # WHEN — USD denomination.
         async with session_factory() as session:
             usd = await SqlAlchemyReportsReader(session).overview(OWNER, range_key="3M", currency=Currency.USD)
-        # USD: income sums the 1000 snapshot; the ARS Transport expense has no snapshot
-        # -> excluded from USD expenses and counted as unconverted.
+        # USD: income sums the 1000 snapshot (the snapshotless ARS income is dropped
+        # from the USD income KPI); the ARS Transport expense has no snapshot -> excluded
+        # from USD expenses and counted as unconverted. The snapshotless ARS income is
+        # NOT counted as unconverted (ADR-156), so the count stays 1, not 2.
         assert usd.currency == "USD"
         assert usd.kpis.current.income == Decimal("1000.00")
         assert usd.kpis.current.expenses == Decimal("200.00")
