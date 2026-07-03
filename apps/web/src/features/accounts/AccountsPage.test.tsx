@@ -94,6 +94,13 @@ const ACCOUNTS: Account[] = [
 const NET_WORTH: NetWorth = {
   total: '2265000.00',
   currency: 'ARS',
+  liabilities: {
+    installments: '0',
+    ccBalance: null,
+    other: null,
+    total: '0',
+  },
+  netAfterLiabilities: '2265000.00',
   accounts: [
     {
       id: 'a1',

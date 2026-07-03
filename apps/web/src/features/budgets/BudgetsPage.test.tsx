@@ -42,6 +42,7 @@ import {
 } from '../settings/displayCurrencyContext'
 import { BudgetsPage } from './BudgetsPage'
 import { budgetsClient, type BudgetPeriod } from '../../api/budgetsClient'
+import { committedClient } from '../../api/committedClient'
 
 vi.mock('../../api/budgetsClient', async (importOriginal) => {
   const actual =
@@ -59,6 +60,18 @@ vi.mock('../../api/budgetsClient', async (importOriginal) => {
       applyProfile: vi.fn(),
       reprice: vi.fn(),
     },
+  }
+})
+
+// Mock the committed-spend accent client (ADR-179) so the page's `useCommitted`
+// hook never hits the network in jsdom; the accent itself is covered in
+// MetricCards.test / committedClient.test.
+vi.mock('../../api/committedClient', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../api/committedClient')>()
+  return {
+    ...actual,
+    committedClient: { fetchCommitted: vi.fn() },
   }
 })
 
@@ -156,6 +169,15 @@ describe('BudgetsPage', () => {
       currency: 'ARS',
       source: 'manual',
       floor: null,
+    })
+    // No committed accent by default (empty split): keeps the existing plan-band
+    // assertions unaffected. Specific accent behavior is covered elsewhere.
+    vi.mocked(committedClient.fetchCommitted).mockResolvedValue({
+      month: '2026-06',
+      currency: 'ARS',
+      paid: { subscription: 0, installment: 0, tax: 0, total: 0 },
+      pending: { subscription: 0, installment: 0, tax: 0, total: 0 },
+      unconverted: 0,
     })
   })
   afterEach(() => {

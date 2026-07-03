@@ -167,6 +167,8 @@ function NetWorthHeadline({
   mep,
   source,
   hidden,
+  liabilitiesTotal,
+  installments,
 }: {
   decomp: Decomposition
   displayCurrency: Currency
@@ -174,11 +176,26 @@ function NetWorthHeadline({
   source: RateSource
   /** When true, mask the headline total + the ARS/USD breakdown amounts (ADR-157). */
   hidden: boolean
+  /**
+   * Total locked-in obligations in the display currency (ADR-180/183), or 0 when
+   * nothing is committed. Drives the LAYERED "Net of commitments" line: it is
+   * subtracted from the visible headline value so the two figures stay coherent.
+   * The net-worth `total` (assets) stays the hero — this is additive, ADR-180.
+   */
+  liabilitiesTotal: number
+  /** The installment portion of the liabilities, for the small breakdown line (ADR-181). */
+  installments: number
 }) {
   const { t } = useTranslation('accounts')
   // Headline value: the converted total when a rate exists, else the native
   // display-currency portion (we never invent a rate, ADR-133).
   const headlineValue = decomp.total ?? decomp.nativeDisplay
+  // "Net of commitments" is layered on the SAME headline value the user sees, so
+  // the subtraction reads coherently (ADR-180). Liabilities already arrive in the
+  // display currency (ADR-183), so no conversion here. Only shown when something
+  // is committed (total > 0) — a clean assets-only view otherwise (ADR-180).
+  const showNetOfCommitments = liabilitiesTotal > 0
+  const netOfCommitments = headlineValue - liabilitiesTotal
 
   const showConverted =
     decomp.hasOther && decomp.convertedOther != null && mep != null
@@ -258,6 +275,33 @@ function NetWorthHeadline({
             {t('netWorth.mepUnavailable')}
           </Typography>
         </>
+      ) : null}
+
+      {showNetOfCommitments ? (
+        <Box sx={{ mt: 1 }}>
+          <Typography
+            sx={{ fontSize: 13, fontVariantNumeric: 'tabular-nums' }}
+            color="text.secondary"
+          >
+            {t('netWorth.netOfCommitments', {
+              amount: hidden
+                ? mask
+                : formatCurrency(netOfCommitments, displayCurrency),
+            })}
+          </Typography>
+          {installments > 0 ? (
+            <Typography
+              sx={{ fontSize: 12, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}
+              color="text.secondary"
+            >
+              {t('netWorth.liabilityInstallments', {
+                amount: hidden
+                  ? mask
+                  : formatCurrency(installments, displayCurrency),
+              })}
+            </Typography>
+          ) : null}
+        </Box>
       ) : null}
     </Box>
   )
@@ -531,6 +575,12 @@ export function NetWorthCard({
   }
 
   const displayCurrency = asCurrency(netWorth.currency)
+  // Liabilities arrive ALREADY in the display currency at the MEP rate net worth
+  // uses (ADR-183); the card subtracts them from the visible headline for the
+  // layered "Net of commitments" line (ADR-180). Parsed here at the display edge
+  // (ADR-102). Absent/degraded → 0, which suppresses the secondary line entirely.
+  const liabilitiesTotal = num(netWorth.liabilities.total)
+  const installments = num(netWorth.liabilities.installments)
   const rates = ratesQuery.data ?? { mep: null, official: null }
   // The SELECTED source's usable live rate, or null on failure / unusable value
   // → degrade-to-native. Switching to the other source (if available) recovers.
@@ -563,6 +613,8 @@ export function NetWorthCard({
         mep={mep}
         source={source}
         hidden={hidden}
+        liabilitiesTotal={liabilitiesTotal}
+        installments={installments}
       />
 
       {netWorth.accounts.length === 0 ? (

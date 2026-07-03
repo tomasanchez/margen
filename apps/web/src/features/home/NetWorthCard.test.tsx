@@ -96,9 +96,25 @@ async function expandDetails() {
  * At MEP 1.250 the USD converts to ARS 900.000, so total = 1.050.000. The
  * backend's stale `balanceConverted`/`total` are IGNORED for display (ADR-133).
  */
+/**
+ * The zero-liability net-worth tail (ADR-180): no committed obligations, so the
+ * "Net of commitments" line is suppressed. Spread into fixtures that only exercise
+ * the assets headline; a dedicated fixture below overrides it to prove the line.
+ */
+const NO_LIABILITIES = {
+  liabilities: {
+    installments: '0',
+    ccBalance: null,
+    other: null,
+    total: '0',
+  },
+  netAfterLiabilities: '1050000.00',
+} satisfies Pick<NetWorth, 'liabilities' | 'netAfterLiabilities'>
+
 const CONVERTED: NetWorth = {
   total: '1050000.00',
   currency: 'ARS',
+  ...NO_LIABILITIES,
   accounts: [
     {
       id: 'a1',
@@ -130,6 +146,7 @@ const CONVERTED: NetWorth = {
 const MULTI_ACCOUNT: NetWorth = {
   total: '1100000.00',
   currency: 'ARS',
+  ...NO_LIABILITIES,
   accounts: [
     {
       id: 'b-usd',
@@ -208,6 +225,13 @@ describe('NetWorthCard', () => {
     const usdDisplay: NetWorth = {
       total: '10000.00',
       currency: 'USD',
+      liabilities: {
+        installments: '0',
+        ccBalance: null,
+        other: null,
+        total: '0',
+      },
+      netAfterLiabilities: '10000.00',
       accounts: [
         {
           id: 'u1',
@@ -417,6 +441,13 @@ describe('NetWorthCard', () => {
     const arsOnly: NetWorth = {
       total: '150000.00',
       currency: 'ARS',
+      liabilities: {
+        installments: '0',
+        ccBalance: null,
+        other: null,
+        total: '0',
+      },
+      netAfterLiabilities: '150000.00',
       accounts: [
         {
           id: 'a1',
@@ -473,7 +504,18 @@ describe('NetWorthCard', () => {
   })
 
   test('shows the empty state when there are no accounts', async () => {
-    const empty: NetWorth = { total: '0.00', currency: 'ARS', accounts: [] }
+    const empty: NetWorth = {
+      total: '0.00',
+      currency: 'ARS',
+      accounts: [],
+      liabilities: {
+        installments: '0',
+        ccBalance: null,
+        other: null,
+        total: '0',
+      },
+      netAfterLiabilities: '0.00',
+    }
     renderCard({ netWorth: empty, loading: false })
     expect(
       await screen.findByText('Add an account to see your net worth here.'),
@@ -491,5 +533,70 @@ describe('NetWorthCard', () => {
     expect(
       await screen.findByText('Net worth unavailable'),
     ).toBeInTheDocument()
+  })
+
+  describe('net-of-commitments layered line (ADR-180)', () => {
+    /**
+     * ARS-only assets of 1.050.000 with an installment liability of 50.000
+     * (already in the display currency, ADR-183). The hero "Net worth" stays the
+     * assets total; a secondary "Net of commitments" reads 1.050.000 − 50.000 =
+     * 1.000.000, with a small "− installments" breakdown line.
+     */
+    const WITH_LIABILITIES: NetWorth = {
+      total: '1050000.00',
+      currency: 'ARS',
+      liabilities: {
+        installments: '50000.00',
+        ccBalance: null,
+        other: null,
+        total: '50000.00',
+      },
+      netAfterLiabilities: '1000000.00',
+      accounts: [
+        {
+          id: 'a1',
+          institutionId: 'inst-1',
+          institutionName: 'Galicia',
+          type: 'bank',
+          currency: 'ARS',
+          balance: '1050000.00',
+          balanceConverted: '1050000.00',
+        },
+      ],
+    }
+
+    test('shows Net of commitments + the installments breakdown when liabilities > 0', async () => {
+      renderCard({ netWorth: WITH_LIABILITIES, loading: false })
+
+      // Hero (assets) is unchanged.
+      expect(await screen.findByText('ARS 1.050.000')).toBeInTheDocument()
+      // Secondary layered line: headline − liabilities, in the display currency.
+      expect(
+        screen.getByText('Net of commitments: ARS 1.000.000'),
+      ).toBeInTheDocument()
+      // Small breakdown line naming the installment portion.
+      expect(
+        screen.getByText('− ARS 50.000 installments'),
+      ).toBeInTheDocument()
+    })
+
+    test('hides the net-of-commitments line entirely when liabilities are 0', async () => {
+      renderCard({ netWorth: CONVERTED, loading: false })
+
+      await screen.findByText('ARS 1.050.000')
+      expect(
+        screen.queryByText(/Net of commitments/),
+      ).not.toBeInTheDocument()
+      expect(screen.queryByText(/installments/)).not.toBeInTheDocument()
+    })
+
+    test('does not re-convert liabilities — subtracts the display-currency figure as-is', async () => {
+      // The 50.000 liability is ALREADY in ARS (the display currency): the line
+      // reads exactly 1.050.000 − 50.000, never divided/multiplied by any rate.
+      renderCard({ netWorth: WITH_LIABILITIES, loading: false })
+      expect(
+        await screen.findByText('Net of commitments: ARS 1.000.000'),
+      ).toBeInTheDocument()
+    })
   })
 })

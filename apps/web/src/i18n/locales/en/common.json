@@ -61,6 +61,10 @@
   "privacy": {
     "hidden": "hidden"
   },
+  "committed": {
+    "paid": "{{amount}} committed",
+    "pending": "· {{amount}} still committed this month"
+  },
   "categories": {
     "Income": "Income",
     "Food": "Food",

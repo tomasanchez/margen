@@ -15,8 +15,16 @@ import { fetchSummary, type Summary } from '../../api/summariesClient'
 import { fetchInsights, type MonthlyInsights } from '../../api/insightsClient'
 import { fetchMonotributo } from '../../api/monotributoClient'
 import { fetchSuggestedRates, type SuggestedRates } from '../../api/fxClient'
+import {
+  committedClient,
+  type CommittedSplit,
+} from '../../api/committedClient'
 import { standingToState } from '../monotributo/derive'
-import type { MonotributoSnapshot, MonotributoState } from '../../mock/types'
+import type {
+  Currency,
+  MonotributoSnapshot,
+  MonotributoState,
+} from '../../mock/types'
 import type { ViewingMonth } from '../../components/months'
 
 /** Stable query-key factory for the Home domain. */
@@ -28,6 +36,13 @@ export const homeQueryKeys = {
   /** Insights are per-month too, so the `YYYY-MM` is part of the key. */
   insights: (month: string) =>
     [...homeQueryKeys.all, 'insights', month] as const,
+  /**
+   * The committed-spend accent is per-(month, currency) (ADR-179): the currency
+   * changes the figures (USD sums the FX snapshot, excludes the AFIP-ARS tax),
+   * and the month scopes the paid/pending split — so both are part of the key.
+   */
+  committed: (month: string, currency: Currency) =>
+    [...homeQueryKeys.all, 'committed', month, currency] as const,
 }
 
 /**
@@ -107,5 +122,26 @@ export function useInsights(viewingMonth: ViewingMonth) {
   return useQuery<MonthlyInsights>({
     queryKey: homeQueryKeys.insights(month),
     queryFn: () => fetchInsights(month),
+  })
+}
+
+/**
+ * The committed-spend accent for a month + currency (ADR-179): the paid share
+ * already inside the month's Expenses total + the expected-but-not-yet-posted
+ * pending committed outflows. Consumed by the Home Expense card and the Budget
+ * page to enrich their EXISTING spend figures — never as a standalone card.
+ *
+ * The `month` is a `YYYY-MM` string (Home passes its viewing month, the Budget
+ * page its own month) and `currency` the display/budget denomination — the query
+ * key includes both so switching either refetches the right split. Figures arrive
+ * ALREADY denominated (ADR-168): the accent shows them as-is, never re-converting.
+ * Cached briefly (the split is derived, not edited directly); a failure leaves the
+ * accent hidden so the base Expenses figure never regresses (ADR-037).
+ */
+export function useCommitted(month: string, currency: Currency) {
+  return useQuery<CommittedSplit>({
+    queryKey: homeQueryKeys.committed(month, currency),
+    queryFn: () => committedClient.fetchCommitted(month, currency),
+    staleTime: 5 * 60 * 1000,
   })
 }

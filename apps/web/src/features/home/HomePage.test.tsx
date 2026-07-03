@@ -169,6 +169,19 @@ function renderHome(initialMonth: ViewingMonth) {
   for (const [month, summary] of Object.entries(SUMMARIES)) {
     queryClient.setQueryData(homeQueryKeys.summary(month), summary)
   }
+  // Seed an empty committed split per month + the ARS effective currency
+  // (ADR-179) so the Expenses accent's `useCommitted` resolves without a fetch;
+  // empty means no accent renders, keeping these month-navigator assertions
+  // unaffected. The accent's own behavior is covered in MetricCards.test.
+  for (const month of Object.keys(SUMMARIES)) {
+    queryClient.setQueryData(homeQueryKeys.committed(month, 'ARS'), {
+      month,
+      currency: 'ARS',
+      paid: { subscription: 0, installment: 0, tax: 0, total: 0 },
+      pending: { subscription: 0, installment: 0, tax: 0, total: 0 },
+      unconverted: 0,
+    })
+  }
 
   const rootRoute = createRootRoute({
     component: () => (
