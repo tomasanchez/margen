@@ -278,6 +278,9 @@ class SqlAlchemyAccountReader(AbstractAccountReader):
             .join(InstitutionRecord, InstitutionRecord.id == AccountRecord.institution_id)
             .where(
                 TransactionRecord.user_id == owner,
+                # EXPENSE only: credits/payments (income / reimbursement rows) are
+                # intentionally NOT netted against the balance in this slice — netting
+                # credits is deferred (ADR-185).
                 TransactionRecord.kind == Kind.EXPENSE.value,
                 TransactionRecord.occurred_on > today,
                 InstitutionRecord.type == InstitutionType.CARD.value,

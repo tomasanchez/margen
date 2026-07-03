@@ -83,9 +83,10 @@ class CcBalanceInput:
     client conversion (ADR-133).
 
     Attributes:
-        amount: The outstanding native balance in ``currency`` (signed: payments/refunds
-            posted before today already reduced the account balance, but future-dated
-            signed rows net here, so a credit note dated ahead reduces the balance).
+        amount: The outstanding native balance in ``currency`` — an EXPENSE-magnitude sum
+            only, so it is always positive. Future-dated credits or payments (income /
+            reimbursement rows) do NOT offset it in this slice; netting credits against the
+            balance is deferred (ADR-185).
         currency: The subtotal's native currency (ADR-123).
     """
 

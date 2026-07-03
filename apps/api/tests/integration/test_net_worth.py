@@ -334,6 +334,42 @@ class TestCcBalanceLiabilitySql:
         assert net_worth.liabilities.installments == Decimal("2000.00")
         assert net_worth.liabilities.cc_balance == Decimal("0.00")
 
+    async def test_future_inflow_on_card_does_not_offset_the_cc_balance(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a CARD account with a future-dated EXPENSE charge AND a future-dated INFLOW
+              (a reimbursement) on the same card in the same future window
+        WHEN net worth is read from PostgreSQL
+        THEN ccBalance reflects ONLY the expense — the inflow does NOT reduce it, because
+             credits/payments are intentionally not netted in this slice (ADR-185 deferred)
+        """
+        # GIVEN — a card account; a future 5000 ARS charge AND a future 2000 ARS reimbursement.
+        account_id = await _seed_account(
+            session_factory, owner=OWNER, opening_balance=Decimal("0"), institution_type=InstitutionType.CARD
+        )
+        await _seed_transactions(
+            session_factory,
+            [
+                _tx(name="MERPAGO*PASSLINE", amount=Decimal("5000"), occurred_on=_FUTURE, account_id=account_id),
+                _tx(
+                    name="Refund from a friend",
+                    kind=Kind.REIMBURSEMENT,
+                    amount=Decimal("2000"),
+                    occurred_on=_FUTURE,
+                    account_id=account_id,
+                ),
+            ],
+        )
+
+        # WHEN
+        async with session_factory() as session:
+            net_worth = await SqlAlchemyAccountReader(session).net_worth(OWNER)
+
+        # THEN — the ccBalance is the expense alone (5000); the 2000 inflow does NOT net it down.
+        assert net_worth.liabilities.cc_balance == Decimal("5000.00")
+        assert net_worth.liabilities.cc_balance_native.ars == Decimal("5000.00")
+
     async def test_future_charge_on_bank_account_is_not_a_cc_balance(
         self, session_factory: async_sessionmaker[AsyncSession]
     ):
