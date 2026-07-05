@@ -41,6 +41,7 @@ import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import { SectionCard } from '../../components/SectionCard'
+import { CollapsibleSection } from '../../components/CollapsibleSection'
 import { ErrorState } from '../../components/ErrorState'
 import { formatCurrency } from '../../lib/format'
 import type {
@@ -68,6 +69,7 @@ import {
 } from './grouping'
 import { accountTypeLabel } from './presentation'
 import { AccountForm } from './AccountForm'
+import { DebtsSection } from './DebtsSection'
 import { InstitutionForm } from './InstitutionForm'
 import {
   InstitutionWizard,
@@ -521,22 +523,29 @@ export function AccountsPage() {
     <Box>
       {heading}
 
-      {isPending ? (
-        <SectionCard title={t('list.title')}>
-          <Skeleton
-            variant="rounded"
-            height={56}
-            sx={{ mb: 1.25, borderRadius: '10px' }}
-          />
-          <Skeleton
-            variant="rounded"
-            height={56}
-            sx={{ mb: 1.25, borderRadius: '10px' }}
-          />
-          <Skeleton variant="rounded" height={56} sx={{ borderRadius: '10px' }} />
-        </SectionCard>
-      ) : institutions.length === 0 ? (
-        <SectionCard title={t('list.title')}>
+      {/* The whole accounts listing is ONE collapsible section (ADR-019). The
+          per-institution cards are the body; institutions themselves don't
+          collapse, so the "Accounts" section is the collapsible unit. */}
+      <CollapsibleSection storageKey="institutions" title={t('list.title')}>
+        {isPending ? (
+          <>
+            <Skeleton
+              variant="rounded"
+              height={56}
+              sx={{ mb: 1.25, borderRadius: '10px' }}
+            />
+            <Skeleton
+              variant="rounded"
+              height={56}
+              sx={{ mb: 1.25, borderRadius: '10px' }}
+            />
+            <Skeleton
+              variant="rounded"
+              height={56}
+              sx={{ borderRadius: '10px' }}
+            />
+          </>
+        ) : institutions.length === 0 ? (
           <Typography
             sx={{ fontSize: 14, py: 2 }}
             color="text.secondary"
@@ -544,22 +553,30 @@ export function AccountsPage() {
           >
             {t('list.empty')}
           </Typography>
-        </SectionCard>
-      ) : (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {institutions.map((institution) => (
-            <InstitutionSection
-              key={institution.id}
-              institution={institution}
-              accounts={accountsByInstitution.get(institution.id) ?? []}
-              balanceOf={balanceOf}
-              onEditInstitution={() => openEditInstitution(institution)}
-              onAddAccount={() => openAddAccount(institution)}
-              onEditAccount={(account) => openEditAccount(institution, account)}
-            />
-          ))}
-        </Box>
-      )}
+        ) : (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {institutions.map((institution) => (
+              <InstitutionSection
+                key={institution.id}
+                institution={institution}
+                accounts={accountsByInstitution.get(institution.id) ?? []}
+                balanceOf={balanceOf}
+                onEditInstitution={() => openEditInstitution(institution)}
+                onAddAccount={() => openAddAccount(institution)}
+                onEditAccount={(account) =>
+                  openEditAccount(institution, account)
+                }
+              />
+            ))}
+          </Box>
+        )}
+      </CollapsibleSection>
+
+      {/* Manual debts — a peer section on this page, no new nav (ADR-127/172/187).
+          Its balances feed the net-worth "other debts" leg (ADR-187/183). */}
+      <Box sx={{ mt: 2 }}>
+        <DebtsSection />
+      </Box>
 
       {/* Onboarding wizard for a NEW institution (+ optional accounts).
           Remounted per open so its internal step/queue state starts fresh. */}

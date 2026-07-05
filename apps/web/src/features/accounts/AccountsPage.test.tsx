@@ -35,6 +35,7 @@ import {
   type NetWorth,
 } from '../../api/accountsClient'
 import { fetchSuggestedRates } from '../../api/fxClient'
+import { debtsClient } from '../../api/debtsClient'
 import type { Account, Institution } from '../../mock/types'
 
 vi.mock('../../api/accountsClient', async (importOriginal) => {
@@ -59,6 +60,22 @@ vi.mock('../../api/accountsClient', async (importOriginal) => {
 vi.mock('../../api/fxClient', () => ({
   fetchSuggestedRates: vi.fn(),
 }))
+
+// The page now embeds the Debts section (ADR-187), which lists debts via its own
+// client. Mock it so these institution/account tests don't hit the debts network;
+// the debts flows are covered in DebtsSection.test.tsx.
+vi.mock('../../api/debtsClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api/debtsClient')>()
+  return {
+    ...actual,
+    debtsClient: {
+      list: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      remove: vi.fn(),
+    },
+  }
+})
 
 const INSTITUTIONS: Institution[] = [
   { id: 'inst-1', name: 'Galicia', type: 'bank' },
@@ -100,6 +117,7 @@ const NET_WORTH: NetWorth = {
     ccBalance: null,
     ccBalanceNative: { ars: '0', usd: '0' },
     other: null,
+    otherNative: { ars: '0', usd: '0' },
     total: '0',
   },
   netAfterLiabilities: '2265000.00',
@@ -132,6 +150,7 @@ const mockCreateInstitution = vi.mocked(accountsClient.createInstitution)
 const mockCreateAccount = vi.mocked(accountsClient.create)
 const mockUpdateAccount = vi.mocked(accountsClient.update)
 const mockRates = vi.mocked(fetchSuggestedRates)
+const mockListDebts = vi.mocked(debtsClient.list)
 
 /** Render the page behind a memory router so its drilldown <Link>s resolve. */
 function renderAccountsPage() {
@@ -166,6 +185,7 @@ describe('AccountsPage', () => {
     mockCreateInstitution.mockResolvedValue(INSTITUTIONS[0])
     mockCreateAccount.mockResolvedValue(ACCOUNTS[0])
     mockUpdateAccount.mockResolvedValue(ACCOUNTS[0])
+    mockListDebts.mockResolvedValue([])
   })
   afterEach(() => vi.clearAllMocks())
 

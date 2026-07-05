@@ -61,6 +61,10 @@
   "privacy": {
     "hidden": "oculto"
   },
+  "collapsible": {
+    "collapse": "Contraer {{section}}",
+    "expand": "Expandir {{section}}"
+  },
   "committed": {
     "paid": "{{amount}} comprometido",
     "pending": "· {{amount}} aún por comprometer este mes"

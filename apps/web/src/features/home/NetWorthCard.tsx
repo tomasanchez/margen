@@ -77,6 +77,7 @@ import type {
   InstallmentsNative,
   NetWorth,
   NetWorthAccount,
+  OtherNative,
 } from '../../api/accountsClient'
 
 /**
@@ -169,7 +170,8 @@ function decompose(
  * The `usd` leg is converted at `mep`; the `ars` leg is native. The result is
  * denominated in `displayCurrency` exactly as {@link decompose} handles ARS + USD
  * holdings: each leg already in the display currency contributes natively, and
- * the other-currency leg converts at the rate.
+ * the other-currency leg converts at the rate. Also used for the manual "other
+ * debts" leg (ADR-187), whose native `{ars, usd}` breakdown converts identically.
  *
  * Degrade mirrors the assets headline: when the rate is unavailable we DROP the
  * unconvertible other-currency leg and keep only the display-currency-native leg
@@ -178,7 +180,7 @@ function decompose(
  * regardless of the rate.
  */
 function nativeInDisplayCurrency(
-  native: InstallmentsNative | CcBalanceNative,
+  native: InstallmentsNative | CcBalanceNative | OtherNative,
   displayCurrency: Currency,
   mep: number | null,
 ): number {
@@ -195,7 +197,9 @@ function nativeInDisplayCurrency(
 }
 
 /** True when a native ARS/USD breakdown carries any positive amount. */
-function hasNativeLiability(native: InstallmentsNative | CcBalanceNative): boolean {
+function hasNativeLiability(
+  native: InstallmentsNative | CcBalanceNative | OtherNative,
+): boolean {
   return num(native.ars) > 0 || num(native.usd) > 0
 }
 
@@ -217,6 +221,8 @@ function NetWorthHeadline({
   hasInstallments,
   ccBalance,
   hasCcBalance,
+  other,
+  hasOther,
 }: {
   decomp: Decomposition
   displayCurrency: Currency
@@ -245,6 +251,15 @@ function NetWorthHeadline({
   ccBalance: number
   /** Whether any unpaid CC balance exists (native totals > 0). */
   hasCcBalance: boolean
+  /**
+   * The manual "other debts" obligation in the display currency, converted at the
+   * SAME live MEP rate (ADR-187/183) — standalone manual debts, disjoint from
+   * installments and card charges (ADR-186 no double-count). Drives the "− other
+   * debts" line.
+   */
+  other: number
+  /** Whether any manual "other debts" balance exists (native totals > 0). */
+  hasOther: boolean
 }) {
   const { t } = useTranslation('accounts')
   // Headline value: the converted total when a rate exists, else the native
@@ -255,8 +270,8 @@ function NetWorthHeadline({
   // SAME live rate as `headlineValue` (ADR-183 amendment), so every side uses one
   // rate. The line shows whenever ANY commitment exists (installments or CC
   // balance) — a clean assets-only view otherwise (ADR-180/185).
-  const liability = installments + ccBalance
-  const showNetOfCommitments = hasInstallments || hasCcBalance
+  const liability = installments + ccBalance + other
+  const showNetOfCommitments = hasInstallments || hasCcBalance || hasOther
   const netOfCommitments = headlineValue - liability
 
   const showConverted =
@@ -372,6 +387,16 @@ function NetWorthHeadline({
                 amount: hidden
                   ? mask
                   : formatCurrency(ccBalance, displayCurrency),
+              })}
+            </Typography>
+          ) : null}
+          {hasOther ? (
+            <Typography
+              sx={{ fontSize: 12, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}
+              color="text.secondary"
+            >
+              {t('netWorth.liabilityOther', {
+                amount: hidden ? mask : formatCurrency(other, displayCurrency),
               })}
             </Typography>
           ) : null}
@@ -679,6 +704,13 @@ export function NetWorthCard({
     displayCurrency,
     mep,
   )
+  // Manual "other debts" are their OWN native ARS/USD leg (ADR-187) — standalone
+  // records disjoint from installments + card charges (ADR-186), converted at the
+  // SAME live rate as every other leg. Whether the line shows is read from the
+  // NATIVE totals so it stays visible (degraded) even when the rate is missing.
+  const otherNative = netWorth.liabilities.otherNative
+  const hasOther = hasNativeLiability(otherNative)
+  const other = nativeInDisplayCurrency(otherNative, displayCurrency, mep)
   // Decomposition + groups both convert at the SAME selected rate, so the
   // breakdown subtotals sum to the headline total (ADR-133 amendment).
   const decomp = decompose(netWorth.accounts, displayCurrency, mep)
@@ -711,6 +743,8 @@ export function NetWorthCard({
         hasInstallments={hasInstallments}
         ccBalance={ccBalance}
         hasCcBalance={hasCcBalance}
+        other={other}
+        hasOther={hasOther}
       />
 
       {netWorth.accounts.length === 0 ? (

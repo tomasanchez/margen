@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 from margen_api.domain.models.account import Account
 from margen_api.domain.models.budget import Budget
 from margen_api.domain.models.budget_income import BudgetIncome
+from margen_api.domain.models.debt import Debt
 from margen_api.domain.models.institution import Institution
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.transfer import Transfer
@@ -27,6 +28,7 @@ from margen_api.service_layer.account_read_models import (
     InstallmentsNative,
     Liabilities,
     NetWorth,
+    OtherNative,
 )
 from margen_api.service_layer.account_reader import AbstractAccountReader
 from margen_api.service_layer.account_repository import AbstractAccountRepository
@@ -36,6 +38,9 @@ from margen_api.service_layer.budget_reader import AbstractBudgetReader
 from margen_api.service_layer.budget_repository import AbstractBudgetRepository
 from margen_api.service_layer.committed_read_models import CommittedSplit
 from margen_api.service_layer.committed_reader import AbstractCommittedReader
+from margen_api.service_layer.debt_read_models import DebtReadModel
+from margen_api.service_layer.debt_reader import AbstractDebtReader
+from margen_api.service_layer.debt_repository import AbstractDebtRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore, InvoiceDocument
 from margen_api.service_layer.forecast_read_models import ForecastSeries
 from margen_api.service_layer.forecast_reader import AbstractForecastReader
@@ -233,6 +238,50 @@ class FakeTransferRepository(AbstractTransferRepository):
             return False
         self._staged.pop(transfer_id, None)
         self._committed.pop(transfer_id, None)
+        return True
+
+
+class FakeDebtRepository(AbstractDebtRepository):
+    """In-memory debt repository over a committed store and a staging buffer.
+
+    Mirrors :class:`FakeTransferRepository`: ``add``/``persist`` write to the staging
+    buffer, ``commit`` promotes it, ``rollback`` clears it, and ``delete`` is an
+    owner-scoped hard delete across both stores (ADR-187, ADR-130).
+    """
+
+    def __init__(self, committed: dict[UUID, Debt], staged: dict[UUID, Debt]) -> None:
+        """Initialize the repository over the unit of work's stores."""
+        self._committed = committed
+        self._staged = staged
+
+    def add(self, debt: Debt) -> None:
+        """Stage a new aggregate until the unit of work commits (ADR-130)."""
+        self._staged[debt.id] = debt
+
+    async def get(self, debt_id: UUID, user_id: str) -> Debt | None:
+        """Return the owner's staged/committed aggregate, or ``None`` (ADR-130, ADR-111)."""
+        debt = self._staged.get(debt_id) or self._committed.get(debt_id)
+        if debt is None or debt.user_id != user_id:
+            return None
+        return debt
+
+    async def persist(self, debt: Debt) -> None:
+        """Stage a mutated aggregate for the next commit."""
+        self._staged[debt.id] = debt
+
+    async def delete(self, debt_id: UUID, user_id: str) -> bool:
+        """Hard-delete the owner's aggregate from staged and committed stores (ADR-130).
+
+        A row owned by another user is not removed and reports a miss, so a cross-tenant
+        delete surfaces 404 (ADR-111).
+        """
+        staged = self._staged.get(debt_id)
+        committed = self._committed.get(debt_id)
+        target = staged or committed
+        if target is None or target.user_id != user_id:
+            return False
+        self._staged.pop(debt_id, None)
+        self._committed.pop(debt_id, None)
         return True
 
 
@@ -648,6 +697,8 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_budgets: dict[UUID, Budget] = {}
         self.committed_budget_income: dict[UUID, BudgetIncome] = {}
         self._staged_budget_income: dict[UUID, BudgetIncome] = {}
+        self.committed_debts: dict[UUID, Debt] = {}
+        self._staged_debts: dict[UUID, Debt] = {}
         self.snapshots: dict[tuple[str, date], MonotributoStanding] = {}
         self.config: dict[str, str | bool] = {}
         self.used_by_window: dict[tuple[str, date, date], Decimal] = {}
@@ -665,6 +716,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.transfers = FakeTransferRepository(self.committed_transfers, self._staged_transfers)
         self.budgets = FakeBudgetRepository(self.committed_budgets, self._staged_budgets)
         self.budget_income = FakeBudgetIncomeRepository(self.committed_budget_income, self._staged_budget_income)
+        self.debts = FakeDebtRepository(self.committed_debts, self._staged_debts)
         self.committed = False
 
     async def __aenter__(self) -> FakeUnitOfWork:
@@ -676,6 +728,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_transfers = {}
         self._staged_budgets = {}
         self._staged_budget_income = {}
+        self._staged_debts = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
         self.settings = FakeSettingsRepository(self.config)
@@ -686,6 +739,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.transfers = FakeTransferRepository(self.committed_transfers, self._staged_transfers)
         self.budgets = FakeBudgetRepository(self.committed_budgets, self._staged_budgets)
         self.budget_income = FakeBudgetIncomeRepository(self.committed_budget_income, self._staged_budget_income)
+        self.debts = FakeDebtRepository(self.committed_debts, self._staged_debts)
         return self
 
     async def __aexit__(
@@ -705,12 +759,14 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.committed_transfers.update(self._staged_transfers)
         self.committed_budgets.update(self._staged_budgets)
         self.committed_budget_income.update(self._staged_budget_income)
+        self.committed_debts.update(self._staged_debts)
         self._staged.clear()
         self._staged_accounts.clear()
         self._staged_institutions.clear()
         self._staged_transfers.clear()
         self._staged_budgets.clear()
         self._staged_budget_income.clear()
+        self._staged_debts.clear()
         self.committed = True
 
     async def flush(self) -> None:
@@ -723,6 +779,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.committed_transfers.update(self._staged_transfers)
         self.committed_budgets.update(self._staged_budgets)
         self.committed_budget_income.update(self._staged_budget_income)
+        self.committed_debts.update(self._staged_debts)
 
     async def rollback(self) -> None:
         """Discard staged aggregates."""
@@ -732,6 +789,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_transfers.clear()
         self._staged_budgets.clear()
         self._staged_budget_income.clear()
+        self._staged_debts.clear()
 
 
 class FakeTransactionReader(AbstractTransactionReader):
@@ -775,7 +833,8 @@ def _empty_net_worth() -> NetWorth:
             installments_native=InstallmentsNative(ars=Decimal(0), usd=Decimal(0)),
             cc_balance=Decimal(0),
             cc_balance_native=CcBalanceNative(ars=Decimal(0), usd=Decimal(0)),
-            other=None,
+            other=Decimal(0),
+            other_native=OtherNative(ars=Decimal(0), usd=Decimal(0)),
             total=Decimal(0),
         ),
         net_after_liabilities=Decimal(0),
@@ -863,6 +922,39 @@ class FakeInstitutionReader(AbstractInstitutionReader):
         return [
             InstitutionReadModel(id=institution.id, name=institution.name, type=institution.type)
             for institution in ordered
+        ]
+
+
+class FakeDebtReader(AbstractDebtReader):
+    """In-memory debt reader projecting committed debts (ADR-187, ADR-130).
+
+    Mirrors :class:`FakeInstitutionReader` for the debts list (owner-scoped, newest-first
+    by creation).
+    """
+
+    def __init__(self, committed: dict[UUID, Debt]) -> None:
+        """Initialize over a committed debt store.
+
+        Args:
+            committed: The debts to project, keyed by id. Pass a unit of work's
+                ``committed_debts`` to share state.
+        """
+        self._committed = committed
+
+    async def list_debts(self, user_id: str) -> list[DebtReadModel]:
+        """List the owner's debts newest-first by creation (ADR-130)."""
+        owned = [debt for debt in self._committed.values() if debt.user_id == user_id]
+        ordered = sorted(owned, key=lambda debt: (debt.created_at, debt.id), reverse=True)
+        return [
+            DebtReadModel(
+                id=debt.id,
+                name=debt.name,
+                currency=debt.currency,
+                current_balance=debt.current_balance,
+                monthly_minimum=debt.monthly_minimum,
+                rate=debt.rate,
+            )
+            for debt in ordered
         ]
 
 

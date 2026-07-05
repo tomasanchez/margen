@@ -245,6 +245,7 @@ describe('accountsClient.netWorth', () => {
         ccBalance: null,
         ccBalanceNative: { ars: '0', usd: '0' },
         other: null,
+        otherNative: { ars: '0', usd: '0' },
         total: '50000.00',
       },
       netAfterLiabilities: '1000000.00',
@@ -315,6 +316,7 @@ describe('accountsClient.netWorth', () => {
       ccBalance: null,
       ccBalanceNative: { ars: '0', usd: '0' },
       other: null,
+      otherNative: { ars: '0', usd: '0' },
       total: '0',
     })
     expect(result.netAfterLiabilities).toBe('150000.00')
@@ -330,6 +332,7 @@ describe('accountsClient.netWorth', () => {
         ccBalance: null,
         ccBalanceNative: { ars: '0', usd: '0' },
         other: null,
+        otherNative: { ars: '0', usd: '0' },
         total: '0',
       },
       netAfterLiabilities: '720.00',

@@ -215,6 +215,33 @@ class OffsetTargetNotExpenseError(TransactionError):
         )
 
 
+class InvalidBalanceError(TransactionError):
+    """Raised when a debt is built with a negative current balance (ADR-187).
+
+    A :class:`~margen_api.domain.models.debt.Debt` tracks an outstanding amount the
+    user owes; that balance is a non-negative magnitude (``>= 0``). A negative value
+    is a true invariant violation the boundary maps to ``422`` (ADR-031). The carried
+    ``balance`` lets the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, balance: object) -> None:
+        self.balance = balance
+        super().__init__(f"current balance must be a non-negative magnitude, got {balance!r}")
+
+
+class DebtNotFoundError(TransactionError):
+    """Raised when no debt matches a referenced identity (ADR-187, ADR-130).
+
+    Update and delete handlers raise this when the debt they target does not exist
+    for the owner, so the boundary can translate it into a 404 (ADR-111). The carried
+    ``debt_id`` lets the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, debt_id: object) -> None:
+        self.debt_id = debt_id
+        super().__init__(f"debt not found: {debt_id!r}")
+
+
 class MergeTargetNotFoundError(TransactionError):
     """Raised when a ``MERGE`` import line points at a missing transaction (ADR-085).
 

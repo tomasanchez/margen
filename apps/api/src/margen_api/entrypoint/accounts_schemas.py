@@ -33,6 +33,7 @@ from margen_api.service_layer.account_read_models import (
     InstallmentsNative,
     Liabilities,
     NetWorth,
+    OtherNative,
 )
 
 
@@ -186,8 +187,24 @@ class CcBalanceNativeResponse(CamelCaseModel):
         return cls(ars=model.ars, usd=model.usd)
 
 
+class OtherNativeResponse(CamelCaseModel):
+    """The "other debts" balance as native ARS/USD sums, unconverted (ADR-187, ADR-183).
+
+    The client converts these at the LIVE MEP rate it uses for the net-worth assets
+    headline (ADR-133), so "Net of commitments" stays coherent when a USD debt exists.
+    """
+
+    ars: Decimal = Field(description="Sum of the owner's ARS debt balances, native ARS; a string.")
+    usd: Decimal = Field(description="Sum of the owner's USD debt balances, native USD; a string.")
+
+    @classmethod
+    def from_read_model(cls, model: OtherNative) -> OtherNativeResponse:
+        """Build the response from a native-breakdown read model (ADR-030)."""
+        return cls(ars=model.ars, usd=model.usd)
+
+
 class LiabilitiesResponse(CamelCaseModel):
-    """The typed liabilities reservation returned to clients (ADR-180, ADR-185)."""
+    """The typed liabilities reservation returned to clients (ADR-180, ADR-185, ADR-187)."""
 
     installments: Decimal = Field(
         description="Full remaining instalment tail (sum of remaining x cuota) in the display currency; a string.",
@@ -204,7 +221,10 @@ class LiabilitiesResponse(CamelCaseModel):
     )
     other: Decimal | None = Field(
         default=None,
-        description="Catch-all for other debts; null in Slice 1, a typed placeholder (ADR-180).",
+        description="Manual 'other debts' balance in the display currency; a computed 0 when none (ADR-187).",
+    )
+    other_native: OtherNativeResponse = Field(
+        description="The 'other debts' balance as native ARS/USD sums the client converts at the live rate (ADR-187).",
     )
     total: Decimal = Field(description="The sum of the present liability figures; a decimal string.")
 
@@ -217,6 +237,7 @@ class LiabilitiesResponse(CamelCaseModel):
             cc_balance=model.cc_balance,
             cc_balance_native=CcBalanceNativeResponse.from_read_model(model.cc_balance_native),
             other=model.other,
+            other_native=OtherNativeResponse.from_read_model(model.other_native),
             total=model.total,
         )
 

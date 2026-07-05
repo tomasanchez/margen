@@ -16,6 +16,7 @@ from margen_api.domain.commands.budget import (
     UpsertBudget,
     UpsertBudgetIncome,
 )
+from margen_api.domain.commands.debt import CreateDebt, DeleteDebt, UpdateDebt
 from margen_api.domain.commands.institution import CreateInstitution, UpdateInstitution
 from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
 from margen_api.domain.commands.settings import UpdateSettings
@@ -35,6 +36,7 @@ from margen_api.service_layer.budget_handlers import (
     upsert_budget,
     upsert_budget_income,
 )
+from margen_api.service_layer.debt_handlers import create_debt, delete_debt, update_debt
 from margen_api.service_layer.handlers import (
     create_transaction,
     delete_transaction,
@@ -67,6 +69,9 @@ COMMAND_HANDLERS: dict[type, CommandHandler] = {
     UpsertBudgetIncome: upsert_budget_income,
     ApplySavingProfile: apply_saving_profile,
     RepriceMonth: reprice_month,
+    CreateDebt: create_debt,
+    UpdateDebt: update_debt,
+    DeleteDebt: delete_debt,
 }
 
 EVENT_HANDLERS: dict[type, list[EventHandler]] = {}

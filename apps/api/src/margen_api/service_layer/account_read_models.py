@@ -109,6 +109,26 @@ class CcBalanceNative:
 
 
 @dataclass(frozen=True, slots=True)
+class OtherNative:
+    """The "other debts" balance as NATIVE per-currency sums, unconverted (ADR-187, ADR-183).
+
+    The owner's manual :class:`~margen_api.domain.models.debt.Debt` balances summed by
+    native currency with NO MEP rate applied. Mirrors :class:`InstallmentsNative` /
+    :class:`CcBalanceNative`: net-worth ASSETS are displayed at the LIVE MEP rate on the
+    client (ADR-133), so exposing the liability's native breakdown lets the client convert
+    it at the SAME live rate, keeping "Net of commitments" coherent when a USD debt exists
+    and the live rate has drifted from the backend snapshot (ADR-183/187).
+
+    Attributes:
+        ars: Σ over the owner's ARS debts of ``current_balance``, in native ARS.
+        usd: Σ over the owner's USD debts of ``current_balance``, in native USD.
+    """
+
+    ars: Decimal
+    usd: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class Liabilities:
     """A typed breakdown of locked-in obligations, in the display currency (ADR-180).
 
@@ -139,8 +159,15 @@ class Liabilities:
         cc_balance_native: The same unpaid CC balance as NATIVE ARS/USD sums, unconverted,
             so the client can convert it at the SAME live MEP rate it uses for the assets
             headline (ADR-133) — keeping "Net of commitments" coherent (ADR-185/183).
-        other: A catch-all for other debts; ``None`` in Slice 1, a typed placeholder for a
-            later slice (ADR-180).
+        other: The manual "other debts" liability — Σ ``current_balance`` across the
+            owner's :class:`~margen_api.domain.models.debt.Debt` records, converted to the
+            display currency via the net-worth MEP rate (ADR-187/183). A computed ``0``
+            (not ``None``) when the owner has no debts, mirroring ``cc_balance``; kept for
+            API completeness, while the client's displayed card derives its figure from
+            ``other_native`` at the LIVE rate instead (ADR-183 amendment).
+        other_native: The same "other debts" balance as NATIVE ARS/USD sums, unconverted,
+            so the client can convert it at the SAME live MEP rate it uses for the assets
+            headline (ADR-133) — keeping "Net of commitments" coherent (ADR-187/183).
         total: The sum of the present liability figures, in the display currency.
     """
 
@@ -149,6 +176,7 @@ class Liabilities:
     cc_balance: Decimal | None
     cc_balance_native: CcBalanceNative
     other: Decimal | None
+    other_native: OtherNative
     total: Decimal
 
 
