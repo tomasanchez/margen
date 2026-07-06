@@ -12,7 +12,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from margen_api.domain.models.exceptions import EmptyNameError, UnknownInstitutionTypeError
+from margen_api.domain.models.exceptions import (
+    EmptyCardBrandError,
+    EmptyNameError,
+    InvalidCardLast4Error,
+    UnknownInstitutionTypeError,
+)
 from margen_api.domain.models.institution import Institution, build_institution
 from margen_api.domain.models.value_objects import InstitutionType
 
@@ -102,6 +107,71 @@ class TestTypeParsing:
         """
         # WHEN / THEN
         assert InstitutionType.parse(InstitutionType.WALLET) is InstitutionType.WALLET
+
+
+class TestCardIdentity:
+    """The optional card identity (brand + last4) is validated when present (ADR-190)."""
+
+    async def test_non_card_institution_carries_no_card_identity(self):
+        """
+        GIVEN a bank institution built without brand/last4
+        WHEN the institution is built
+        THEN both brand and last4 are None (non-card kinds are unaffected)
+        """
+        # WHEN
+        institution = _build(type="bank")
+
+        # THEN
+        assert institution.brand is None
+        assert institution.last4 is None
+
+    async def test_card_identity_is_preserved_and_trimmed(self):
+        """
+        GIVEN a card with a padded brand and a valid four-digit last4
+        WHEN the institution is built
+        THEN the brand is trimmed and last4 is preserved verbatim
+        """
+        # WHEN
+        institution = _build(name="Galicia", type="card", brand="  VISA  ", last4="5771")
+
+        # THEN
+        assert institution.brand == "VISA"
+        assert institution.last4 == "5771"
+
+    async def test_blank_brand_is_rejected(self):
+        """
+        GIVEN a card with a whitespace-only brand
+        WHEN the institution is built
+        THEN an EmptyCardBrandError is raised (a present brand must carry identity)
+        """
+        # WHEN / THEN
+        with pytest.raises(EmptyCardBrandError):
+            _build(type="card", brand="   ", last4="5771")
+
+    @pytest.mark.parametrize("bad_last4", ["123", "12345", "12a4", "abcd", "  "])
+    async def test_non_four_digit_last4_is_rejected(self, bad_last4: str):
+        """
+        GIVEN a card whose last4 is not exactly four digits
+        WHEN the institution is built
+        THEN an InvalidCardLast4Error carrying the value is raised
+        """
+        # WHEN / THEN
+        with pytest.raises(InvalidCardLast4Error) as exc_info:
+            _build(type="card", brand="VISA", last4=bad_last4)
+        assert exc_info.value.last4 == bad_last4.strip()
+
+    async def test_last4_may_be_present_without_brand(self):
+        """
+        GIVEN only a valid last4 (brand omitted)
+        WHEN the institution is built
+        THEN it is accepted — the two fields are independently optional
+        """
+        # WHEN
+        institution = _build(type="card", last4="0001")
+
+        # THEN
+        assert institution.last4 == "0001"
+        assert institution.brand is None
 
 
 class TestIdentityAndTimestamps:

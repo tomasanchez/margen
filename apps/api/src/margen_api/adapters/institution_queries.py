@@ -46,4 +46,6 @@ def _to_read_model(record: InstitutionRecord) -> InstitutionReadModel:
         id=record.id,
         name=record.name,
         type=InstitutionType.parse(record.type),
+        brand=record.card_brand,
+        last4=record.card_last4,
     )

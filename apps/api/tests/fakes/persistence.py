@@ -920,7 +920,13 @@ class FakeInstitutionReader(AbstractInstitutionReader):
         owned = [institution for institution in self._committed.values() if institution.user_id == user_id]
         ordered = sorted(owned, key=lambda institution: (institution.created_at, institution.id), reverse=True)
         return [
-            InstitutionReadModel(id=institution.id, name=institution.name, type=institution.type)
+            InstitutionReadModel(
+                id=institution.id,
+                name=institution.name,
+                type=institution.type,
+                brand=institution.brand,
+                last4=institution.last4,
+            )
             for institution in ordered
         ]
 

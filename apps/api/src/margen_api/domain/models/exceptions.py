@@ -157,6 +157,34 @@ class InstitutionNotFoundError(TransactionError):
         super().__init__(f"institution not found: {institution_id!r}")
 
 
+class InvalidCardLast4Error(TransactionError):
+    """Raised when a card's ``last4`` is present but not exactly four digits (ADR-190).
+
+    ``last4`` identifies a physical card together with ``brand`` (ADR-190). It is
+    optional — only card institutions carry it — but when present it must be exactly
+    four decimal digits (the printed suffix). Any other value is a true invariant
+    violation the boundary maps to ``422`` (ADR-031). The carried ``last4`` lets the
+    entrypoint build a meaningful message.
+    """
+
+    def __init__(self, last4: object) -> None:
+        self.last4 = last4
+        super().__init__(f"card last4 must be exactly four digits when present, got {last4!r}")
+
+
+class EmptyCardBrandError(TransactionError):
+    """Raised when a card's ``brand`` is present but blank (ADR-190).
+
+    ``brand`` is the free-text card network label (e.g. "VISA", "Mastercard",
+    "AMEX") that identifies a card together with ``last4`` (ADR-190). It is optional,
+    but a whitespace-only value carries no identity and is a true invariant violation
+    the boundary maps to ``422`` (ADR-031).
+    """
+
+    def __init__(self) -> None:
+        super().__init__("card brand must be a non-empty label when present")
+
+
 class SameAccountTransferError(TransactionError):
     """Raised when a transfer's source and destination accounts are the same (ADR-135).
 

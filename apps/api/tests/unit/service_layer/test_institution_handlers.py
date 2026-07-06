@@ -62,6 +62,34 @@ class TestCreateInstitutionHandler:
         assert stored.user_id == A_USER
         assert stored.name == "Deel"
         assert stored.type is InstitutionType.WALLET
+        # A non-card institution carries no card identity (ADR-190).
+        assert stored.brand is None
+        assert stored.last4 is None
+
+    async def test_persists_card_identity(self):
+        """
+        GIVEN a create command for a CARD with brand + last4 (ADR-190)
+        WHEN the create handler runs
+        THEN the card identity is persisted on the institution
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        command = CreateInstitution(
+            user_id=A_USER,
+            name="Galicia",
+            type=InstitutionType.CARD,
+            brand="VISA",
+            last4="5771",
+        )
+
+        # WHEN
+        institution_id = await create_institution(command, uow)
+
+        # THEN
+        stored = uow.committed_institutions[institution_id]
+        assert stored.type is InstitutionType.CARD
+        assert stored.brand == "VISA"
+        assert stored.last4 == "5771"
 
 
 class TestUpdateInstitutionHandler:

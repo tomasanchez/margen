@@ -22,12 +22,16 @@ class CreateInstitution(Command):
     """Request to create a new institution (ADR-130, ADR-134).
 
     The handler generates ``id``, ``created_at`` and ``updated_at`` and applies
-    domain invariants via the aggregate (non-empty name, known type).
+    domain invariants via the aggregate (non-empty name, known type). ``brand`` and
+    ``last4`` are the optional card identity a statement registration supplies for a
+    CARD institution (ADR-190); both are ``None`` for bank / cash / wallet.
     """
 
     user_id: str
     name: str = Field(min_length=1)
     type: InstitutionType = InstitutionType.BANK
+    brand: str | None = None
+    last4: str | None = None
 
 
 class UpdateInstitution(Command):
@@ -44,3 +48,5 @@ class UpdateInstitution(Command):
     user_id: str
     name: str | None = Field(default=None, min_length=1)
     type: InstitutionType | None = None
+    brand: str | None = None
+    last4: str | None = None

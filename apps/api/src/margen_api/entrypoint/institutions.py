@@ -18,8 +18,10 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 
 from margen_api.domain.models.exceptions import (
+    EmptyCardBrandError,
     EmptyNameError,
     InstitutionNotFoundError,
+    InvalidCardLast4Error,
     UnknownInstitutionTypeError,
 )
 from margen_api.entrypoint.dependencies import AuthUser, Bus, InstitutionReader
@@ -32,8 +34,14 @@ from margen_api.entrypoint.schemas import ResponseModel
 
 router = APIRouter(prefix="/institutions", tags=["Institutions"])
 
-# Invariant violations the domain raises that map to HTTP 422 (ADR-031).
-_INVARIANT_VIOLATIONS = (UnknownInstitutionTypeError, EmptyNameError)
+# Invariant violations the domain raises that map to HTTP 422 (ADR-031). The card
+# identity invariants (ADR-190) join the name/type ones.
+_INVARIANT_VIOLATIONS = (
+    UnknownInstitutionTypeError,
+    EmptyNameError,
+    InvalidCardLast4Error,
+    EmptyCardBrandError,
+)
 
 
 def _not_found(institution_id: UUID) -> HTTPException:

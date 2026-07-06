@@ -31,6 +31,8 @@ def to_domain(record: InstitutionRecord) -> Institution:
         id=record.id,
         name=record.name,
         type=InstitutionType.parse(record.type),
+        brand=record.card_brand,
+        last4=record.card_last4,
         user_id=str(record.user_id) if record.user_id is not None else None,
         created_at=record.created_at,
         updated_at=record.updated_at,
@@ -73,6 +75,10 @@ def update_record(record: InstitutionRecord, institution: Institution) -> None:
     record.id = institution.id
     record.name = institution.name
     record.type = institution.type.value
+    # Card identity persists to the ``card_brand`` / ``card_last4`` columns; the domain
+    # field names are ``brand`` / ``last4`` (ADR-190). Both ``None`` for non-card kinds.
+    record.card_brand = institution.brand
+    record.card_last4 = institution.last4
     if institution.user_id is None:
         msg = "Cannot persist an institution without an owning user_id (ADR-130)."
         raise ValueError(msg)
