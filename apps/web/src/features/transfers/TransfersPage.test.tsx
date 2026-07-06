@@ -321,6 +321,37 @@ describe('TransfersPage', () => {
     expect(invalidatedKeys).toContain('transactions')
   })
 
+  test('marks a future-dated transfer as Pending and a past one as not (ADR-186/191)', async () => {
+    // A far-future transfer (pending until it takes effect) alongside the past
+    // one from TRANSFERS (2026-06-20, already effective).
+    const future = new Date()
+    future.setFullYear(future.getFullYear() + 1)
+    const futureIso = future.toISOString().slice(0, 10)
+    mockList.mockResolvedValue([
+      {
+        id: 'tr-future',
+        fromAccountId: 'acc-usd',
+        toAccountId: 'acc-ars',
+        amountOut: '2000.00',
+        amountIn: '2000.00',
+        occurredOn: futureIso,
+        note: 'Statement payment top-up',
+      },
+      ...TRANSFERS,
+    ])
+    renderTransfersPage()
+
+    // The pending chip appears exactly once — on the future-dated transfer only.
+    const pendingChips = await screen.findAllByText('Pending')
+    expect(pendingChips).toHaveLength(1)
+    // Its accessible name carries the effective date (non-color cue, ADR-019).
+    expect(
+      screen.getByLabelText(/Pending — takes effect/),
+    ).toBeInTheDocument()
+    // The past transfer (rent move) is present but not marked pending.
+    expect(screen.getByText(/rent move/)).toBeInTheDocument()
+  })
+
   test('deleting a transfer confirms (fees survive) and calls remove', async () => {
     const user = userEvent.setup()
     renderTransfersPage()

@@ -28,13 +28,32 @@ const {
   netWorthMock,
   createInstitutionMock,
   createAccountMock,
+  createTransferMock,
 } = vi.hoisted(() => ({
   accountsListMock: vi.fn(),
   institutionsListMock: vi.fn(),
   netWorthMock: vi.fn(),
   createInstitutionMock: vi.fn(),
   createAccountMock: vi.fn(),
+  createTransferMock: vi.fn(),
 }))
+
+// The Schedule action (ADR-191) fires one own-account transfer per suggested leg.
+vi.mock('../../api/transfersClient', async () => {
+  const actual =
+    await vi.importActual<typeof import('../../api/transfersClient')>(
+      '../../api/transfersClient',
+    )
+  return {
+    ...actual,
+    transfersClient: {
+      ...actual.transfersClient,
+      list: vi.fn().mockResolvedValue([]),
+      create: createTransferMock,
+      remove: vi.fn(),
+    },
+  }
+})
 
 vi.mock('../../api/accountsClient', async () => {
   const actual =
@@ -167,6 +186,17 @@ beforeEach(() => {
     currency: 'USD',
     openingBalance: '0',
   })
+  createTransferMock.mockResolvedValue({
+    transfer: {
+      id: 'tr-new',
+      fromAccountId: 'deel',
+      toAccountId: 'gal',
+      amountOut: '2000.00',
+      amountIn: '2000.00',
+      occurredOn: '2999-12-31',
+    },
+    feeTransactionIds: [],
+  })
 })
 
 afterEach(() => {
@@ -267,6 +297,132 @@ describe('PaymentPlanPanel (ADR-188/189)', () => {
         within(region).getByText('Move USD 3.000 from Galicia → Deel'),
       ).toBeInTheDocument(),
     )
+  })
+})
+
+/** A USD statement with a PAST due date (statement already due). */
+function pastDueParse(): StatementParse {
+  return { ...usdParse(), periodClose: '2020-01-01', periodDue: '2020-01-10' }
+}
+
+describe('Schedule transfers (ADR-191)', () => {
+  test('schedules the exact suggested leg as a future-dated transfer (occurredOn = due date)', async () => {
+    // Galicia 4,000 (main default) + Deel 3,000. Need 6,000 → pull 2,000 from Deel.
+    const funding = [
+      nwAccount('gal', 'Galicia', 'bank', 'USD', '4000'),
+      nwAccount('deel', 'Deel', 'wallet', 'USD', '3000'),
+    ]
+    accountsListMock.mockResolvedValue([
+      acctLeaf('gal', 'Galicia', 'bank', 'USD', '4000'),
+      acctLeaf('deel', 'Deel', 'wallet', 'USD', '3000'),
+    ])
+    netWorthMock.mockResolvedValue(netWorthWith(funding))
+    const user = userEvent.setup()
+
+    const { queryClient } = renderWithProviders(
+      <StatementReviewTable parse={usdParse()} onImport={noop} isImporting={false} />,
+    )
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+
+    const region = await screen.findByRole('region', { name: 'Card payment plan' })
+    // Wait for the coverable plan to resolve so the Schedule button appears.
+    const scheduleButton = await within(region).findByRole('button', {
+      name: 'Schedule these transfers',
+    })
+    await user.click(scheduleButton)
+
+    await waitFor(() => expect(createTransferMock).toHaveBeenCalledTimes(1))
+    const body = createTransferMock.mock.calls[0][0]
+    // The exact greedy leg: 2,000 from Deel → the main Galicia, same currency.
+    expect(body.fromAccountId).toBe('deel')
+    expect(body.toAccountId).toBe('gal')
+    expect(body.amountOut).toBe('2000.00')
+    expect(body.amountIn).toBe('2000.00')
+    // today (2026) < the far-future due date (2999) → dated on the due date so it
+    // stays pending until then (ADR-191/186).
+    expect(body.occurredOn).toBe('2999-12-31')
+    expect(body.note).toBe('Statement payment top-up')
+
+    // The pending reservation must refresh: transfers + accounts (net-worth) keys.
+    const invalidatedKeys = invalidateSpy.mock.calls.map(
+      (call) => (call[0] as { queryKey: unknown[] }).queryKey[0],
+    )
+    expect(invalidatedKeys).toContain('transfers')
+    expect(invalidatedKeys).toContain('accounts')
+
+    // The panel reflects the completed schedule (calm confirmation).
+    expect(await within(region).findByText('Transfers scheduled')).toBeInTheDocument()
+  })
+
+  test('dates the transfer TODAY when the statement is already past due', async () => {
+    const funding = [
+      nwAccount('gal', 'Galicia', 'bank', 'USD', '4000'),
+      nwAccount('deel', 'Deel', 'wallet', 'USD', '3000'),
+    ]
+    accountsListMock.mockResolvedValue([
+      acctLeaf('gal', 'Galicia', 'bank', 'USD', '4000'),
+      acctLeaf('deel', 'Deel', 'wallet', 'USD', '3000'),
+    ])
+    netWorthMock.mockResolvedValue(netWorthWith(funding))
+    const user = userEvent.setup()
+
+    renderWithProviders(
+      <StatementReviewTable parse={pastDueParse()} onImport={noop} isImporting={false} />,
+    )
+
+    const region = await screen.findByRole('region', { name: 'Card payment plan' })
+    await user.click(
+      await within(region).findByRole('button', { name: 'Schedule these transfers' }),
+    )
+
+    await waitFor(() => expect(createTransferMock).toHaveBeenCalledTimes(1))
+    const today = new Date()
+    const y = today.getFullYear()
+    const m = String(today.getMonth() + 1).padStart(2, '0')
+    const d = String(today.getDate()).padStart(2, '0')
+    // Past due → dated today (nothing to defer, ADR-191).
+    expect(createTransferMock.mock.calls[0][0].occurredOn).toBe(`${y}-${m}-${d}`)
+  })
+
+  test('no Schedule button when the main account already covers the balance', async () => {
+    // Galicia alone (10,000) covers the 6,000 need → sufficient, nothing to schedule.
+    const funding = [nwAccount('gal', 'Galicia', 'bank', 'USD', '10000')]
+    accountsListMock.mockResolvedValue([
+      acctLeaf('gal', 'Galicia', 'bank', 'USD', '10000'),
+    ])
+    netWorthMock.mockResolvedValue(netWorthWith(funding))
+
+    renderWithProviders(
+      <StatementReviewTable parse={usdParse()} onImport={noop} isImporting={false} />,
+    )
+
+    const region = await screen.findByRole('region', { name: 'Card payment plan' })
+    // The Sufficient badge resolves; the Schedule button never appears.
+    await within(region).findByText('Sufficient')
+    expect(
+      within(region).queryByRole('button', { name: 'Schedule these transfers' }),
+    ).toBeNull()
+  })
+
+  test('no Schedule button when a residual gap remains (suggest-only)', async () => {
+    // Need 6,000 but only 4,000 total across USD accounts → residual gap 2,000.
+    const funding = [nwAccount('gal', 'Galicia', 'bank', 'USD', '4000')]
+    accountsListMock.mockResolvedValue([
+      acctLeaf('gal', 'Galicia', 'bank', 'USD', '4000'),
+    ])
+    netWorthMock.mockResolvedValue(netWorthWith(funding))
+
+    renderWithProviders(
+      <StatementReviewTable parse={usdParse()} onImport={noop} isImporting={false} />,
+    )
+
+    const region = await screen.findByRole('region', { name: 'Card payment plan' })
+    // The residual note appears; the Schedule button is withheld.
+    await within(region).findByText(/Still short by/)
+    expect(
+      within(region).queryByRole('button', { name: 'Schedule these transfers' }),
+    ).toBeNull()
+    expect(createTransferMock).not.toHaveBeenCalled()
   })
 })
 

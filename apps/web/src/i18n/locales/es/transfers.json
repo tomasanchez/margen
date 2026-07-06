@@ -12,7 +12,9 @@
     "received": "se recibieron {{amount}}",
     "toAria": "a",
     "unknownAccount": "Cuenta desconocida",
-    "deleteAria": "Eliminar transferencia de {{from}} a {{to}}"
+    "deleteAria": "Eliminar transferencia de {{from}} a {{to}}",
+    "pending": "Pendiente",
+    "pendingAria": "Pendiente — se aplica el {{date}}"
   },
   "form": {
     "title": "Nueva transferencia",

@@ -16,7 +16,9 @@
 import { describe, expect, test } from 'vitest'
 import {
   computePaymentPlan,
+  isPlanSchedulable,
   pendingDueDate,
+  scheduleOccurredOn,
   type FundingAccount,
   type PlanLine,
 } from './paymentPlan'
@@ -259,5 +261,76 @@ describe('pendingDueDate (ADR-188)', () => {
   test('null when neither date is present or the format is bad', () => {
     expect(pendingDueDate(undefined, undefined, today)).toBeNull()
     expect(pendingDueDate('not-a-date', undefined, today)).toBeNull()
+  })
+})
+
+describe('scheduleOccurredOn (ADR-191)', () => {
+  const today = new Date('2026-07-06T12:00:00')
+
+  test('future due date → the transfer is dated on the due date (pending until then)', () => {
+    expect(scheduleOccurredOn('2026-07-20', undefined, today)).toBe('2026-07-20')
+  })
+
+  test('on the due date → dated today (nothing to defer)', () => {
+    expect(scheduleOccurredOn('2026-07-06', undefined, today)).toBe('2026-07-06')
+  })
+
+  test('past due date → dated today (move the funds now)', () => {
+    expect(scheduleOccurredOn('2026-06-30', undefined, today)).toBe('2026-07-06')
+  })
+
+  test('falls back to periodClose when no due date', () => {
+    expect(scheduleOccurredOn(undefined, '2026-07-15', today)).toBe('2026-07-15')
+  })
+
+  test('no parseable date → dated today', () => {
+    expect(scheduleOccurredOn(undefined, undefined, today)).toBe('2026-07-06')
+    expect(scheduleOccurredOn('not-a-date', undefined, today)).toBe('2026-07-06')
+  })
+})
+
+describe('isPlanSchedulable (ADR-191)', () => {
+  test('true when a shortfall is fully covered by suggested legs (no residual gap)', () => {
+    const plan = computePaymentPlan(
+      [usdLine(6_000)],
+      [
+        acct({ id: 'gal', institutionName: 'Galicia', currency: 'USD', balance: 4_000 }),
+        acct({ id: 'deel', institutionName: 'Deel', currency: 'USD', balance: 3_000 }),
+      ],
+    )
+    expect(isPlanSchedulable(plan)).toBe(true)
+  })
+
+  test('false when a currency still has a residual gap (suggest-only)', () => {
+    const plan = computePaymentPlan(
+      [usdLine(10_000)],
+      [
+        acct({ id: 'gal', institutionName: 'Galicia', currency: 'USD', balance: 4_000 }),
+        acct({ id: 'deel', institutionName: 'Deel', currency: 'USD', balance: 3_000 }),
+      ],
+    )
+    expect(plan.currencies[0]?.residualGap).toBeGreaterThan(0)
+    expect(isPlanSchedulable(plan)).toBe(false)
+  })
+
+  test('false when every currency is already sufficient (nothing to schedule)', () => {
+    const plan = computePaymentPlan(
+      [arsLine(50_000)],
+      [acct({ id: 'gal', institutionName: 'Galicia', balance: 100_000 })],
+    )
+    expect(isPlanSchedulable(plan)).toBe(false)
+  })
+
+  test('false when ANY currency has a residual gap even if another is coverable', () => {
+    const plan = computePaymentPlan(
+      [arsLine(80_000), usdLine(10_000)],
+      [
+        // ARS: 100k covers 80k (sufficient).
+        acct({ id: 'ars', institutionName: 'Galicia', currency: 'ARS', balance: 100_000 }),
+        // USD: only 3k against a 10k need → residual gap.
+        acct({ id: 'usd', institutionName: 'Deel', currency: 'USD', balance: 3_000 }),
+      ],
+    )
+    expect(isPlanSchedulable(plan)).toBe(false)
   })
 })

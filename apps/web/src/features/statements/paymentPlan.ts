@@ -135,6 +135,62 @@ export function pendingDueDate(
   return todayIso <= due ? due : null
 }
 
+/**
+ * The `occurred_on` date the scheduled top-up transfers should carry (ADR-191).
+ *
+ * A statement is reviewed BEFORE the due date, so a transfer created today would
+ * immediately reduce the as-of-today balance (ADR-186) even though the bank
+ * payment has not happened. To defer it, the transfer is dated on the statement
+ * due date so it stays PENDING (excluded from the balance) until then:
+ *
+ *  - `today < due` → the transfer is dated on the due date (`periodDue`, or
+ *    `periodClose` as a fallback) — it activates on that day.
+ *  - `today >= due` (or no due date parsed) → the transfer is dated TODAY — the
+ *    due date has passed, so there's nothing to defer; move the funds now.
+ *
+ * Dates are ISO `YYYY-MM-DD`; the comparison is date-only in the LOCAL calendar
+ * (mirrors {@link pendingDueDate} / `todayIsoDate`, no time-zone drift). Pure —
+ * the caller stamps the returned date on each `POST /transfers`.
+ *
+ * @param periodDue The statement due date (ISO `YYYY-MM-DD`), if parsed.
+ * @param periodClose The statement close date (ISO), used when no due date exists.
+ * @param today The reference date; defaults to now (injectable for tests).
+ * @returns The `occurred_on` ISO date to stamp on the scheduled transfers.
+ */
+export function scheduleOccurredOn(
+  periodDue: string | undefined,
+  periodClose: string | undefined,
+  today: Date = new Date(),
+): string {
+  const y = today.getFullYear()
+  const m = String(today.getMonth() + 1).padStart(2, '0')
+  const d = String(today.getDate()).padStart(2, '0')
+  const todayIso = `${y}-${m}-${d}`
+  const due = (periodDue ?? periodClose)?.slice(0, 10)
+  // Use the due date only when it is a valid ISO date STRICTLY in the future
+  // (today < due). On/after the due date, or no due parsed, date it today.
+  if (due && /^\d{4}-\d{2}-\d{2}$/.test(due) && todayIso < due) return due
+  return todayIso
+}
+
+/**
+ * Whether the whole plan can be executed as scheduled transfers (ADR-191): at
+ * least one currency needs a top-up that is fully coverable by suggested legs,
+ * and NO currency has a residual gap. When any currency is still short after all
+ * its accounts, execution is withheld (suggest-only) so the user is never left
+ * with a half-scheduled, still-incomplete plan — the residual note guides them.
+ */
+export function isPlanSchedulable(plan: PaymentPlan): boolean {
+  let hasLegs = false
+  for (const currencyPlan of plan.currencies) {
+    if (currencyPlan.residualGap > 0) return false
+    if (!currencyPlan.sufficient && currencyPlan.transfers.length > 0) {
+      hasLegs = true
+    }
+  }
+  return hasLegs
+}
+
 /** A same-currency NON-card funding account (card excluded — it's the obligation). */
 function isFunding(account: FundingAccount, currency: Currency): boolean {
   return account.type !== 'card' && account.currency === currency

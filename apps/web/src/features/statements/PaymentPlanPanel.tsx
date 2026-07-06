@@ -25,7 +25,9 @@
 import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
+import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
+import CircularProgress from '@mui/material/CircularProgress'
 import FormControl from '@mui/material/FormControl'
 import InputLabel from '@mui/material/InputLabel'
 import MenuItem from '@mui/material/MenuItem'
@@ -33,6 +35,7 @@ import Select from '@mui/material/Select'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import CheckCircleOutlineRoundedIcon from '@mui/icons-material/CheckCircleOutlineRounded'
+import EventAvailableRoundedIcon from '@mui/icons-material/EventAvailableRounded'
 import SwapHorizRoundedIcon from '@mui/icons-material/SwapHorizRounded'
 import { formatCurrency, isoToDispDateLike } from './format'
 import type { Currency } from '../../mock/types'
@@ -248,6 +251,87 @@ function CurrencyPlanBlock({
   )
 }
 
+/**
+ * The one-click scheduling lifecycle (ADR-191). `idle` before the user acts,
+ * `scheduling` while the legs are being POSTed, `done` after every leg landed,
+ * `error` when a leg failed (the user can retry — the mutation is idempotent
+ * enough that a re-run just creates the remaining/duplicate legs; we surface the
+ * calm error rather than silently half-applying).
+ */
+export type ScheduleState = 'idle' | 'scheduling' | 'done' | 'error'
+
+/** The footer that executes the plan as future-dated transfers (ADR-191). */
+function ScheduleFooter({
+  state,
+  onSchedule,
+}: {
+  state: ScheduleState
+  onSchedule: () => void
+}) {
+  const { t } = useTranslation('statements')
+  if (state === 'done') {
+    return (
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{ mt: 1.5, alignItems: 'center' }}
+        role="status"
+      >
+        <CheckCircleOutlineRoundedIcon
+          aria-hidden
+          sx={{ fontSize: 18, color: 'success.main', flex: 'none' }}
+        />
+        <Typography sx={{ fontSize: 13, color: 'text.primary' }}>
+          <Box
+            component="span"
+            sx={{ fontWeight: 600, color: 'success.main', mr: 0.75 }}
+          >
+            {t('review.plan.scheduled')}
+          </Box>
+          {t('review.plan.scheduledDetail')}
+        </Typography>
+      </Stack>
+    )
+  }
+  const busy = state === 'scheduling'
+  return (
+    <Box sx={{ mt: 1.5 }}>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={1.5}
+        sx={{ alignItems: { xs: 'stretch', sm: 'center' } }}
+        useFlexGap
+      >
+        <Button
+          type="button"
+          variant="contained"
+          color="primary"
+          onClick={onSchedule}
+          disabled={busy}
+          startIcon={
+            busy ? (
+              <CircularProgress size={15} thickness={5} color="inherit" />
+            ) : (
+              <EventAvailableRoundedIcon fontSize="small" />
+            )
+          }
+          sx={{ textTransform: 'none', fontWeight: 600, flex: 'none' }}
+        >
+          {busy ? t('review.plan.scheduling') : t('review.plan.schedule')}
+        </Button>
+        <Typography sx={{ fontSize: 12, color: 'text.secondary' }}>
+          {t('review.plan.scheduleHint')}
+        </Typography>
+      </Stack>
+      {state === 'error' ? (
+        <Typography role="alert" sx={{ mt: 1, fontSize: 12.5, color: 'error.main' }}>
+          {t('review.plan.scheduleError')}
+        </Typography>
+      ) : null}
+    </Box>
+  )
+}
+
 export interface PaymentPlanPanelProps {
   /** The computed per-currency plan (ADR-188/189). */
   plan: PaymentPlan
@@ -262,6 +346,16 @@ export interface PaymentPlanPanelProps {
   disabled: boolean
   /** Change the main / pay-from account for a currency (ADR-189). */
   onMainChange: (currency: Currency, accountId: string) => void
+  /**
+   * Whether the whole plan can be executed as scheduled transfers (ADR-191) — a
+   * fully-coverable shortfall with no residual gap. When false the panel stays
+   * suggest-only (no Schedule button); the residual note guides the user instead.
+   */
+  canSchedule?: boolean
+  /** The one-click scheduling lifecycle state (ADR-191). Defaults to `idle`. */
+  scheduleState?: ScheduleState
+  /** Execute the suggested legs as future-dated transfers (ADR-191). */
+  onSchedule?: () => void
 }
 
 export function PaymentPlanPanel({
@@ -270,11 +364,21 @@ export function PaymentPlanPanel({
   pendingDue,
   disabled,
   onMainChange,
+  canSchedule = false,
+  scheduleState = 'idle',
+  onSchedule,
 }: PaymentPlanPanelProps) {
   const { t } = useTranslation('statements')
   const headingId = useId()
   // Nothing to plan (no kept lines of any currency) → render nothing.
   if (plan.currencies.length === 0) return null
+
+  // The Schedule affordance shows only when the plan is fully coverable (no
+  // residual gap) and there is at least one leg to move (ADR-191). Once done it
+  // stays visible as a calm "scheduled" confirmation.
+  const showSchedule =
+    onSchedule !== undefined &&
+    (scheduleState === 'done' || (canSchedule && !disabled))
 
   return (
     <Box
@@ -342,6 +446,14 @@ export function PaymentPlanPanel({
           />
         ))}
       </Stack>
+
+      {/* One-click execution (ADR-191): schedule the suggested legs as
+          future-dated (pending-until-due) transfers. Suggest-then-execute — the
+          user clicks to confirm; shown only when the plan fully covers the
+          shortfall (no residual gap). */}
+      {showSchedule && onSchedule ? (
+        <ScheduleFooter state={scheduleState} onSchedule={onSchedule} />
+      ) : null}
     </Box>
   )
 }
