@@ -43,6 +43,12 @@ class InstitutionRecord(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     type: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Card identity (ADR-190): a physical card is a CARD institution identified by its
+    # network brand + printed last-4. Nullable so bank / cash / wallet institutions are
+    # unaffected (no backfill). Stored as ``card_brand`` / ``card_last4`` columns; the
+    # domain field names are ``brand`` / ``last4`` (mapper translates).
+    card_brand: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    card_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

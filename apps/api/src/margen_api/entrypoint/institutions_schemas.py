@@ -6,7 +6,9 @@ domain value object so the contract stays aligned with the aggregate.
 
 Pinned JSON contract:
 
-* Institution = ``{ id, name, type: 'bank'|'card'|'cash'|'wallet' }``
+* Institution = ``{ id, name, type: 'bank'|'card'|'cash'|'wallet', brand, last4 }``
+  where ``brand`` (card network, e.g. "VISA") and ``last4`` (four-digit suffix) are
+  the optional card identity — ``null`` for non-card institutions (ADR-190).
 """
 
 from __future__ import annotations
@@ -27,11 +29,19 @@ class InstitutionResponse(CamelCaseModel):
     id: UUID = Field(description="Stable UUID identity, safe to expose in URLs.")
     name: str = Field(description="Required human display label for the institution.")
     type: InstitutionType = Field(description="Institution kind: bank / card / cash / wallet.")
+    brand: str | None = Field(
+        default=None,
+        description="Card network label (e.g. 'VISA'); null for non-card institutions (ADR-190).",
+    )
+    last4: str | None = Field(
+        default=None,
+        description="Four-digit card suffix; null for non-card institutions (ADR-190).",
+    )
 
     @classmethod
     def from_read_model(cls, model: InstitutionReadModel) -> InstitutionResponse:
         """Build the response from a query-side read model (ADR-030)."""
-        return cls(id=model.id, name=model.name, type=model.type)
+        return cls(id=model.id, name=model.name, type=model.type, brand=model.brand, last4=model.last4)
 
 
 class InstitutionCreateRequest(CamelCaseModel):
@@ -43,6 +53,14 @@ class InstitutionCreateRequest(CamelCaseModel):
 
     name: str = Field(min_length=1, description="Required human display label.")
     type: InstitutionType = Field(default=InstitutionType.BANK, description="Institution kind.")
+    brand: str | None = Field(
+        default=None,
+        description="Card network label (parser 'network', e.g. 'VISA'); omit for non-card kinds (ADR-190).",
+    )
+    last4: str | None = Field(
+        default=None,
+        description="Four-digit card suffix (parser 'cardLast4'); omit for non-card kinds (ADR-190).",
+    )
 
     def to_command(self, user_id: str) -> CreateInstitution:
         """Translate the request into a :class:`CreateInstitution` command.
@@ -54,7 +72,13 @@ class InstitutionCreateRequest(CamelCaseModel):
         Returns:
             The boundary-agnostic command the message bus dispatches.
         """
-        return CreateInstitution(user_id=user_id, name=self.name, type=self.type)
+        return CreateInstitution(
+            user_id=user_id,
+            name=self.name,
+            type=self.type,
+            brand=self.brand,
+            last4=self.last4,
+        )
 
 
 class InstitutionPatchRequest(CamelCaseModel):
@@ -66,6 +90,8 @@ class InstitutionPatchRequest(CamelCaseModel):
 
     name: str | None = Field(default=None, min_length=1, description="New display label.")
     type: InstitutionType | None = Field(default=None, description="New institution kind.")
+    brand: str | None = Field(default=None, description="New card network label (ADR-190).")
+    last4: str | None = Field(default=None, description="New four-digit card suffix (ADR-190).")
 
     def to_command(self, institution_id: UUID, user_id: str) -> UpdateInstitution:
         """Translate the patch into an :class:`UpdateInstitution` command.
@@ -83,4 +109,6 @@ class InstitutionPatchRequest(CamelCaseModel):
             user_id=user_id,
             name=self.name,
             type=self.type,
+            brand=self.brand,
+            last4=self.last4,
         )

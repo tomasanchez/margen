@@ -20,7 +20,8 @@ from margen_api.service_layer.unit_of_work import AbstractUnitOfWork
 
 # Mutable fields a patch may carry; ``None`` in the command means "leave
 # unchanged" (ADR-028). Identity, ownership and ``created_at`` are never patched.
-_PATCHABLE_FIELDS = ("name", "type")
+# ``brand`` / ``last4`` are the optional card identity (ADR-190).
+_PATCHABLE_FIELDS = ("name", "type", "brand", "last4")
 
 
 async def create_institution(command: CreateInstitution, uow: AbstractUnitOfWork) -> UUID:
@@ -46,6 +47,8 @@ async def create_institution(command: CreateInstitution, uow: AbstractUnitOfWork
         updated_at=now,
         name=command.name,
         type=command.type,
+        brand=command.brand,
+        last4=command.last4,
         user_id=command.user_id,
     )
     async with uow:

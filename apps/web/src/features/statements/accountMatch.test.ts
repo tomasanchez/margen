@@ -12,7 +12,7 @@
 
 import { describe, expect, test } from 'vitest'
 import { currenciesInParse, matchCardAccounts } from './accountMatch'
-import type { Account } from '../../mock/types'
+import type { Account, Institution } from '../../mock/types'
 import type { StatementParse } from '../../api/statementsClient'
 
 /** A minimal account leaf for the matcher. */
@@ -119,6 +119,118 @@ describe('matchCardAccounts', () => {
       type: 'card',
     })
     const matches = matchCardAccounts(parseWith(['ARS'], 'Galicia'), [other])
+    expect(matches.has('ARS')).toBe(false)
+  })
+})
+
+describe('matchCardAccounts — brand + last4 identity (ADR-190)', () => {
+  /** A card institution carrying the ADR-190 brand + last4 identity. */
+  function cardInstitution(overrides: Partial<Institution>): Institution {
+    return {
+      id: 'inst-1',
+      name: 'Galicia',
+      type: 'card',
+      brand: 'VISA',
+      last4: '5771',
+      ...overrides,
+    }
+  }
+
+  /** A parse carrying the card identity (network + cardLast4) + a bank name. */
+  function parseWithIdentity(
+    network: string | undefined,
+    cardLast4: string | undefined,
+    bankName: string | undefined = 'Galicia',
+  ): StatementParse {
+    return {
+      ...parseWith(['ARS']),
+      ...(bankName !== undefined ? { bankName } : {}),
+      ...(network !== undefined ? { network } : {}),
+      ...(cardLast4 !== undefined ? { cardLast4 } : {}),
+    }
+  }
+
+  test('matches by (brand + last4) across two same-issuer cards', () => {
+    // Two Galicia cards; name alone cannot tell them apart, brand+last4 can.
+    const cardA = cardInstitution({ id: 'inst-a', brand: 'VISA', last4: '5771' })
+    const cardB = cardInstitution({ id: 'inst-b', brand: 'AMEX', last4: '1234' })
+    const acctA = account({ id: 'acc-a', institutionId: 'inst-a', currency: 'ARS' })
+    const acctB = account({ id: 'acc-b', institutionId: 'inst-b', currency: 'ARS' })
+    const matches = matchCardAccounts(
+      parseWithIdentity('AMEX', '1234'),
+      [acctA, acctB],
+      [cardA, cardB],
+    )
+    expect(matches.get('ARS')?.id).toBe('acc-b')
+  })
+
+  test('falls back to name-only match when brand/last4 are absent (ADR-184)', () => {
+    const card = cardInstitution({ id: 'inst-1', brand: null, last4: null })
+    const acct = account({ id: 'acc-1', institutionId: 'inst-1', currency: 'ARS' })
+    // The parse also lacks a network/last4, so only the name resolves it.
+    const matches = matchCardAccounts(
+      parseWithIdentity(undefined, undefined, 'Galicia'),
+      [acct],
+      [card],
+    )
+    expect(matches.get('ARS')?.id).toBe('acc-1')
+  })
+
+  test('is tolerant of brand case/spacing and non-digit last4 noise', () => {
+    const card = cardInstitution({ id: 'inst-1', brand: 'visa', last4: '5771' })
+    const acct = account({ id: 'acc-1', institutionId: 'inst-1', currency: 'ARS' })
+    const matches = matchCardAccounts(
+      parseWithIdentity('VISA', '·5771'),
+      [acct],
+      [card],
+    )
+    expect(matches.get('ARS')?.id).toBe('acc-1')
+  })
+
+  test('does not match on brand alone when last4 differs', () => {
+    const card = cardInstitution({ id: 'inst-1', brand: 'VISA', last4: '0000' })
+    const acct = account({ id: 'acc-1', institutionId: 'inst-1', currency: 'ARS' })
+    // Different last4 and a different name → no match by identity or fallback.
+    const matches = matchCardAccounts(
+      parseWithIdentity('VISA', '5771', 'Santander'),
+      [acct],
+      [card],
+    )
+    expect(matches.has('ARS')).toBe(false)
+  })
+
+  test('does NOT fall back to a same-name card when a precise identity was present but unmatched', () => {
+    // The statement is Galicia VISA ···5771. The user holds a Galicia VISA ···1234
+    // and an older null-identity Galicia card — both share the "Galicia" name. The
+    // precise (brand + last4) match finds nothing; the name-only fallback MUST NOT
+    // fire (it would seed a confident-but-wrong same-issuer card). Left unmatched.
+    const preciseCard = cardInstitution({
+      id: 'inst-precise',
+      name: 'Galicia',
+      brand: 'VISA',
+      last4: '1234',
+    })
+    const legacyCard = cardInstitution({
+      id: 'inst-legacy',
+      name: 'Galicia',
+      brand: null,
+      last4: null,
+    })
+    const acctPrecise = account({
+      id: 'acc-precise',
+      institutionId: 'inst-precise',
+      currency: 'ARS',
+    })
+    const acctLegacy = account({
+      id: 'acc-legacy',
+      institutionId: 'inst-legacy',
+      currency: 'ARS',
+    })
+    const matches = matchCardAccounts(
+      parseWithIdentity('VISA', '5771', 'Galicia'),
+      [acctPrecise, acctLegacy],
+      [preciseCard, legacyCard],
+    )
     expect(matches.has('ARS')).toBe(false)
   })
 })

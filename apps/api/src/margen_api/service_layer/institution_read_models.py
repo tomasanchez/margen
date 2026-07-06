@@ -21,8 +21,15 @@ class InstitutionReadModel:
         id: Stable UUID identity.
         name: Required human display label.
         type: Institution kind — bank / card / cash / wallet.
+        brand: Optional card network label (e.g. "VISA"); ``None`` for non-card
+            institutions. Lets the client display "Galicia VISA ···5771" and match a
+            parsed statement to a registered card (ADR-190).
+        last4: Optional four-digit card suffix; ``None`` for non-card institutions
+            (ADR-190).
     """
 
     id: UUID
     name: str
     type: InstitutionType
+    brand: str | None = None
+    last4: str | None = None

@@ -27,7 +27,7 @@
  * Select / ToggleButtonGroup / disclosure Button) with descriptive labels.
  */
 
-import { useId, useState } from 'react'
+import { useCallback, useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
@@ -59,8 +59,15 @@ import { CATEGORIES } from '../../mock/seed'
 import { formatCurrency, isoToDispDateLike } from './format'
 import { categoryLabel } from '../transactions/presentation'
 import { monoFontFamily } from '../../theme'
-import { useAccounts } from '../accounts/queries'
-import type { Account } from '../../mock/types'
+import {
+  useAccounts,
+  useCreateAccount,
+  useCreateInstitution,
+  useInstitutions,
+  useNetWorth,
+} from '../accounts/queries'
+import { buildNetWorthBalanceIndex } from '../accounts/grouping'
+import type { Account, Currency } from '../../mock/types'
 import type { StatementMatch, StatementParse } from '../../api/statementsClient'
 import {
   parseCuota,
@@ -69,6 +76,13 @@ import {
   type ReviewLine,
   type ReviewResolution,
 } from './useStatementReviewState'
+import {
+  computePaymentPlan,
+  pendingDueDate,
+  type FundingAccount,
+} from './paymentPlan'
+import { PaymentPlanPanel } from './PaymentPlanPanel'
+import { RegisterCardForm, type RegisterCardSubmit } from './RegisterCardForm'
 
 /** Expense categories offered in the per-line editor (statements are expenses). */
 const STATEMENT_CATEGORIES = CATEGORIES.filter((c) => c !== 'Income')
@@ -665,11 +679,17 @@ function AccountAttachSection({
   choices,
   accounts,
   onChange,
+  onRegister,
+  canRegister,
   disabled,
 }: {
   choices: readonly CurrencyAccountChoice[]
   accounts: readonly Account[]
   onChange: (currency: CurrencyAccountChoice['currency'], accountId: string | null) => void
+  /** Open the prefilled register-card wizard (ADR-190). */
+  onRegister: () => void
+  /** Whether a register-card action is offered (the parse carries a card identity). */
+  canRegister: boolean
   disabled: boolean
 }) {
   const { t } = useTranslation('statements')
@@ -717,6 +737,8 @@ function AccountAttachSection({
               value={value}
               options={options}
               noMatch={noMatch}
+              canRegister={canRegister}
+              onRegister={onRegister}
               disabled={disabled}
               onChange={(id) => onChange(choice.currency, id === '' ? null : id)}
             />
@@ -733,6 +755,8 @@ function CurrencyAccountSelect({
   value,
   options,
   noMatch,
+  canRegister,
+  onRegister,
   disabled,
   onChange,
 }: {
@@ -740,6 +764,10 @@ function CurrencyAccountSelect({
   value: string
   options: readonly Account[]
   noMatch: boolean
+  /** Whether the register-card action is offered (parse carries a card identity). */
+  canRegister: boolean
+  /** Open the prefilled register-card wizard (ADR-190). */
+  onRegister: () => void
   disabled: boolean
   onChange: (accountId: string) => void
 }) {
@@ -748,6 +776,8 @@ function CurrencyAccountSelect({
   const label = t('review.account.currencyLabel', { currency })
   // No card account of this currency exists — the lines import unattached; show a
   // calm caption instead of an empty picker so the state is clear (ADR-184/037).
+  // When the parse carries a card identity, also offer a "Register this card"
+  // action that opens the prefilled registration wizard (ADR-190).
   if (noMatch) {
     return (
       <Box sx={{ minWidth: 200 }}>
@@ -755,6 +785,24 @@ function CurrencyAccountSelect({
         <Typography sx={{ fontSize: 13, color: 'text.secondary' }} role="note">
           {t('review.account.noMatch', { currency })}
         </Typography>
+        {canRegister ? (
+          <Button
+            type="button"
+            size="small"
+            variant="text"
+            onClick={onRegister}
+            disabled={disabled}
+            sx={{
+              mt: 0.25,
+              px: 0,
+              fontSize: 12.5,
+              fontWeight: 600,
+              textTransform: 'none',
+            }}
+          >
+            {t('review.account.register')}
+          </Button>
+        ) : null}
       </Box>
     )
   }
@@ -787,13 +835,132 @@ export function StatementReviewTable({
   isImporting,
 }: StatementReviewTableProps) {
   const { t } = useTranslation('statements')
-  // The user's accounts drive the (institution, currency) auto-match for the
-  // per-currency card-account attachment (ADR-184). While loading, the accounts
-  // list is empty and no attachment defaults are seeded (lines would import
-  // unattached); the selection re-seeds to the auto-match once accounts resolve.
+  // The user's accounts + institutions drive the card match (ADR-184/190): the
+  // institution is resolved by (brand + last4) when present, else by name, then
+  // its per-currency card accounts seed the attachment defaults. While loading,
+  // the lists are empty and no defaults are seeded; the selection re-seeds to the
+  // auto-match once they resolve.
   const accountsQuery = useAccounts()
-  const accounts = accountsQuery.data ?? []
-  const review = useStatementReviewState(parse, accounts)
+  const institutionsQuery = useInstitutions()
+  const netWorthQuery = useNetWorth()
+  const accounts = useMemo(
+    () => accountsQuery.data ?? [],
+    [accountsQuery.data],
+  )
+  const institutions = useMemo(
+    () => institutionsQuery.data ?? [],
+    [institutionsQuery.data],
+  )
+  const review = useStatementReviewState(parse, accounts, institutions)
+
+  // AVAILABLE per currency uses each account's as-of-today NATIVE balance (opening
+  // + transaction deltas, ADR-186) from the net-worth read model, falling back to
+  // the account's opening balance when the read hasn't resolved yet (ADR-188).
+  const balanceIndex = useMemo(
+    () => buildNetWorthBalanceIndex(netWorthQuery.data?.accounts ?? []),
+    [netWorthQuery.data?.accounts],
+  )
+  // The user's NON-card funding accounts (bank / cash / wallet) with native
+  // balances — the AVAILABLE pool + the greedy transfer sources (ADR-188/189).
+  const fundingAccounts = useMemo<FundingAccount[]>(
+    () =>
+      accounts
+        .filter((account) => account.type !== 'card')
+        .map((account) => {
+          const fromNetWorth = balanceIndex.get(account.id)
+          const opening = Number.parseFloat(account.openingBalance)
+          const balance =
+            fromNetWorth != null
+              ? fromNetWorth
+              : Number.isFinite(opening)
+                ? opening
+                : 0
+          return {
+            id: account.id,
+            institutionName: account.institutionName,
+            type: account.type,
+            currency: account.currency,
+            balance,
+          }
+        }),
+    [accounts, balanceIndex],
+  )
+
+  // The per-currency main / pay-from account selection (ADR-189). Absent entries
+  // fall back to the largest-balance default inside computePaymentPlan.
+  const [mainByCurrency, setMainByCurrency] = useState<
+    Partial<Record<Currency, string>>
+  >({})
+  const setMainAccount = useCallback((currency: Currency, accountId: string) => {
+    setMainByCurrency((current) => ({ ...current, [currency]: accountId }))
+  }, [])
+
+  // The kept lines drive NEED; recomputed live as the user toggles keep/exclude or
+  // changes a main account (ADR-188). Native amounts only — never cross-summed.
+  const paymentPlan = useMemo(
+    () =>
+      computePaymentPlan(
+        review.lines
+          .filter((line) => line.keep)
+          .map((line) => ({
+            currency: line.currency,
+            amount: line.amount,
+            ...(line.usdAmount !== undefined ? { usdAmount: line.usdAmount } : {}),
+          })),
+        fundingAccounts,
+        mainByCurrency,
+      ),
+    [review.lines, fundingAccounts, mainByCurrency],
+  )
+  const pendingDue = useMemo(
+    () => pendingDueDate(parse.periodDue, parse.periodClose),
+    [parse.periodDue, parse.periodClose],
+  )
+
+  // In-flow card registration (ADR-190): opened from the "Register this card"
+  // action when a currency has no matching card account. Prefilled from the parse;
+  // creates the institution (type=card, brand+last4) then its per-currency accounts.
+  const [registerOpen, setRegisterOpen] = useState(false)
+  const createInstitution = useCreateInstitution()
+  const createAccount = useCreateAccount()
+  const [registerError, setRegisterError] = useState(false)
+  const registerSaving = createInstitution.isPending || createAccount.isPending
+  // The currencies the statement carries — queued as the new card's accounts.
+  const statementCurrencies = useMemo<Currency[]>(() => {
+    const seen = new Set<Currency>()
+    for (const line of parse.lines) seen.add(line.currency)
+    return (['ARS', 'USD'] as const).filter((c) => seen.has(c))
+  }, [parse.lines])
+  // The register action is offered only when the parse carries a card identity.
+  const canRegisterCard =
+    Boolean(parse.bankName) || Boolean(parse.cardLast4) || Boolean(parse.network)
+
+  const openRegister = () => {
+    createInstitution.reset()
+    createAccount.reset()
+    setRegisterError(false)
+    setRegisterOpen(true)
+  }
+  const closeRegister = () => setRegisterOpen(false)
+
+  const handleRegisterSubmit = async (submit: RegisterCardSubmit) => {
+    setRegisterError(false)
+    try {
+      const created = await createInstitution.mutateAsync(submit.institution)
+      for (const account of submit.accounts) {
+        await createAccount.mutateAsync({
+          institutionId: created.id,
+          currency: account.currency,
+          openingBalance: account.openingBalance,
+        })
+      }
+      // The accounts/institutions queries are invalidated by the mutations, so the
+      // auto-match re-runs and finds the new card by (brand + last4, currency).
+      setRegisterOpen(false)
+    } catch {
+      setRegisterError(true)
+    }
+  }
 
   // The detected card identity as "Galicia · VISA ·5771" — the normalized bank
   // joined with the card detail (ADR-117). Falls back gracefully when a part is
@@ -888,12 +1055,28 @@ export function StatementReviewTable({
         </Alert>
       ) : null}
 
+      {/* Per-currency card-payment plan (ADR-188/189): NEED vs AVAILABLE in native
+          units + a Sufficient badge or a concrete greedy transfer list. Sits
+          between the header strip and the account-attach section; recomputes live
+          as lines toggle or the main account changes. Suggest-only (no execute). */}
+      <PaymentPlanPanel
+        plan={paymentPlan}
+        fundingAccounts={fundingAccounts}
+        pendingDue={pendingDue}
+        disabled={isImporting}
+        onMainChange={setMainAccount}
+      />
+
       {/* Per-currency card-account attachment (ADR-184): confirm the auto-matched
-          (institution, currency) card account for this statement's lines. */}
+          (institution, currency) card account for this statement's lines. When a
+          currency has no matching card account, a "Register this card" action opens
+          the prefilled registration wizard (ADR-190). */}
       <AccountAttachSection
         choices={review.accountChoices}
         accounts={accounts}
         onChange={review.setAccountForCurrency}
+        onRegister={openRegister}
+        canRegister={canRegisterCard}
         disabled={isImporting}
       />
 
@@ -1003,6 +1186,24 @@ export function StatementReviewTable({
           {ctaText}
         </Button>
       </Stack>
+
+      {/* In-flow card registration (ADR-190): prefilled from the parse; keyed on
+          open so its seeded state starts fresh each time. */}
+      {registerOpen ? (
+        <RegisterCardForm
+          open
+          bankName={parse.bankName}
+          network={parse.network}
+          cardLast4={parse.cardLast4}
+          currencies={statementCurrencies}
+          isSaving={registerSaving}
+          saveError={registerError}
+          onSubmit={(submit) => {
+            void handleRegisterSubmit(submit)
+          }}
+          onClose={closeRegister}
+        />
+      ) : null}
     </Box>
   )
 }

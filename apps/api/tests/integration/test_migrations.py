@@ -72,6 +72,10 @@ _FORECAST_FIELDS = "d5e6f7a8b9c0"
 # NULLABLE extension-point columns. No data migration is involved.
 _DEBTS = "e6f7a8b9c0d1"
 
+# The card-identity migration (ADR-190): chains after the debts table. It adds the two
+# NULLABLE ``institutions.card_brand`` / ``card_last4`` columns. No data migration.
+_CARD_IDENTITY = "f8a9b0c1d2e3"
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
 # A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
@@ -534,6 +538,47 @@ class TestMigrations:
         finally:
             asyncio.run(_drop_everything(integration_database_url))
 
+    def test_card_identity_migration_adds_nullable_brand_and_last4(self, integration_database_url: str):
+        """
+        GIVEN a database at the debts revision (institutions without card identity)
+        WHEN Alembic upgrades through the card-identity migration (ADR-190)
+        THEN institutions gains NULLABLE card_brand + card_last4, a card institution
+             round-trips its identity, a non-card institution keeps them NULL, and the
+             downgrade cleanly drops both columns
+
+        Proves the additive, non-destructive column adds on the production PostgreSQL
+        dialect: both columns are nullable (no backfill — bank / cash / wallet
+        institutions are unaffected, ADR-190) and a CARD institution persists its
+        brand + last4.
+        """
+        # GIVEN — upgrade to the debts revision (the head before ADR-190).
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _DEBTS)
+        try:
+            # WHEN
+            command.upgrade(config, _CARD_IDENTITY)
+
+            # THEN — the new columns exist and are nullable.
+            columns = asyncio.run(_column_map(integration_database_url, "institutions"))
+            assert "card_brand" in columns
+            assert "card_last4" in columns
+            assert columns["card_brand"] is True  # nullable
+            assert columns["card_last4"] is True  # nullable
+
+            # THEN — a CARD institution round-trips its identity, a non-card keeps NULL.
+            card, bank = asyncio.run(_card_identity_round_trips(integration_database_url))
+            assert card == ("VISA", "5771")
+            assert bank == (None, None)
+
+            # THEN — the downgrade cleanly drops both columns.
+            command.downgrade(config, _DEBTS)
+            institution_columns = asyncio.run(_columns(integration_database_url, "institutions"))
+            assert "card_brand" not in institution_columns
+            assert "card_last4" not in institution_columns
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
     def test_head_matches_orm_metadata_no_drift(self, integration_database_url: str):
         """
         GIVEN a database migrated to head
@@ -555,6 +600,47 @@ class TestMigrations:
             assert diffs == [], f"Schema drift between ORM models and migrations: {diffs}"
         finally:
             asyncio.run(_drop_everything(integration_database_url))
+
+
+async def _card_identity_round_trips(
+    url: str,
+) -> tuple[tuple[str | None, str | None], tuple[str | None, str | None]]:
+    """Insert a CARD and a non-card institution; return each row's ``(card_brand, card_last4)``.
+
+    Proves the card identity persists on a CARD institution while a bank institution
+    leaves both columns NULL (ADR-190).
+    """
+    engine = create_async_engine(url)
+    card_id = uuid.uuid4()
+    bank_id = uuid.uuid4()
+    insert_card = text(
+        "INSERT INTO institutions (id, user_id, name, type, card_brand, card_last4) "
+        "VALUES (:id, :user_id, :name, :type, :brand, :last4)"
+    )
+    insert_bank = text("INSERT INTO institutions (id, user_id, name, type) VALUES (:id, :user_id, :name, :type)")
+    async with engine.begin() as connection:
+        await connection.execute(
+            insert_card,
+            {
+                "id": card_id,
+                "user_id": uuid.UUID(_OWNER),
+                "name": "Galicia",
+                "type": "card",
+                "brand": "VISA",
+                "last4": "5771",
+            },
+        )
+        await connection.execute(
+            insert_bank,
+            {"id": bank_id, "user_id": uuid.UUID(_OWNER), "name": "Cash", "type": "cash"},
+        )
+        result = await connection.execute(
+            text("SELECT id, card_brand, card_last4 FROM institutions WHERE id = ANY(:ids)"),
+            {"ids": [card_id, bank_id]},
+        )
+        rows = {row.id: (row.card_brand, row.card_last4) for row in result}
+    await engine.dispose()
+    return rows[card_id], rows[bank_id]
 
 
 async def _owned_debt_persists(url: str) -> bool:

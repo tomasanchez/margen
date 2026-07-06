@@ -48,6 +48,8 @@ const {
   setFxSnapshotMock,
   historicalRateMock,
   accountsListMock,
+  institutionsListMock,
+  netWorthMock,
 } = vi.hoisted(() => ({
   parseStatementMock: vi.fn(),
   importStatementMock: vi.fn(),
@@ -55,11 +57,14 @@ const {
   setFxSnapshotMock: vi.fn(),
   historicalRateMock: vi.fn(),
   accountsListMock: vi.fn(),
+  institutionsListMock: vi.fn(),
+  netWorthMock: vi.fn(),
 }))
 
 // The review table auto-matches statement lines to the user's card accounts by
-// (institution, currency) (ADR-184). Mock the accounts list so the match is
-// deterministic and no real network is hit.
+// (institution, currency) (ADR-184/190) and computes the per-currency payment plan
+// (ADR-188/189) from the institutions + net-worth balances. Mock all three reads
+// so the match + plan are deterministic and no real network is hit.
 vi.mock('../../api/accountsClient', async () => {
   const actual =
     await vi.importActual<typeof import('../../api/accountsClient')>(
@@ -67,7 +72,12 @@ vi.mock('../../api/accountsClient', async () => {
     )
   return {
     ...actual,
-    accountsClient: { ...actual.accountsClient, list: accountsListMock },
+    accountsClient: {
+      ...actual.accountsClient,
+      list: accountsListMock,
+      listInstitutions: institutionsListMock,
+      netWorth: netWorthMock,
+    },
   }
 })
 
@@ -142,6 +152,33 @@ beforeEach(() => {
       openingBalance: '0',
     },
   ])
+  // The institutions read backs the (brand + last4) match (ADR-190); the net-worth
+  // read backs the payment plan's AVAILABLE balances (ADR-188). Default to a lone
+  // Galicia card institution + an empty net worth; tests override as needed.
+  institutionsListMock.mockResolvedValue([
+    {
+      id: 'inst-galicia',
+      name: 'Galicia',
+      type: 'card',
+      brand: 'VISA',
+      last4: '5771',
+    },
+  ])
+  netWorthMock.mockResolvedValue({
+    total: '0',
+    currency: 'ARS',
+    accounts: [],
+    liabilities: {
+      installments: '0',
+      installmentsNative: { ars: '0', usd: '0' },
+      ccBalance: null,
+      ccBalanceNative: { ars: '0', usd: '0' },
+      other: null,
+      otherNative: { ars: '0', usd: '0' },
+      total: '0',
+    },
+    netAfterLiabilities: '0',
+  })
 })
 
 afterEach(() => {

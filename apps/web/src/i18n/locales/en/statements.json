@@ -38,7 +38,46 @@
       "subtitle": "We matched these charges to your card. Confirm or pick another.",
       "currencyLabel": "{{currency}} account",
       "dontAttach": "Don't attach",
-      "noMatch": "No {{currency}} card account — these lines import without one."
+      "noMatch": "No {{currency}} card account — these lines import without one.",
+      "register": "Register this card"
+    },
+    "registerCard": {
+      "title": "Register this card",
+      "subtitle": "We read this card from the statement. Confirm the details and we'll add it with its accounts.",
+      "name": {
+        "label": "Name"
+      },
+      "brand": {
+        "label": "Brand / network"
+      },
+      "last4": {
+        "label": "Last 4 digits",
+        "error": "Enter the 4 digits, or leave this blank."
+      },
+      "accountsHeading": "Accounts to create",
+      "accountsSubheading": "One per currency in this statement. Edit the opening balance if you know it.",
+      "openingBalance": {
+        "label": "{{currency}} opening balance"
+      },
+      "error": "We couldn't register this card. Check your connection and try again.",
+      "cancel": "Cancel",
+      "confirm": "Register card"
+    },
+    "plan": {
+      "title": "Payment plan",
+      "subtitle": "Whether your accounts cover this statement, per currency.",
+      "pending": "Pending — due {{date}}",
+      "need": "Need",
+      "available": "Available",
+      "sufficient": "Sufficient",
+      "sufficientDetail": "{{account}} covers the {{currency}} balance.",
+      "shortfall": "Shortfall {{amount}}",
+      "mainLabel": "{{currency}} pay from",
+      "transfersHeading": "Suggested transfers",
+      "transferLeg": "Move {{amount}} from {{from}} → {{main}}",
+      "residual": "Still short by {{amount}} after all your {{currency}} accounts.",
+      "noAccounts": "No {{currency}} account to pay from — add one to plan this.",
+      "regionAria": "Card payment plan"
     },
     "tableAriaLabel": "Statement line items",
     "columns": {

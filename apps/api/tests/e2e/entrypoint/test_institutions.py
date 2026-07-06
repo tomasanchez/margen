@@ -17,7 +17,12 @@ from fastapi import status
 
 from margen_api.asgi import get_application
 from margen_api.bootstrap import ApplicationContainer, bootstrap
-from margen_api.domain.models.exceptions import EmptyNameError, UnknownInstitutionTypeError
+from margen_api.domain.models.exceptions import (
+    EmptyCardBrandError,
+    EmptyNameError,
+    InvalidCardLast4Error,
+    UnknownInstitutionTypeError,
+)
 from margen_api.entrypoint.dependencies import get_bus, get_institution_reader
 from margen_api.settings.database_settings import DatabaseSettings
 from tests.conftest import STUB_AUTH_USER_B
@@ -51,6 +56,53 @@ class TestInstitutionCrud:
         assert created["name"] == "Deel"
         assert created["type"] == "wallet"
         assert "id" in created
+
+    async def test_create_card_persists_and_returns_brand_and_last4(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a valid create body for a CARD carrying brand + last4 (ADR-190)
+        WHEN the institution is created and then listed
+        THEN the card identity is persisted and returned in camelCase JSON
+        """
+        # WHEN
+        created = await _create_institution(test_client, name="Galicia", type="card", brand="VISA", last4="5771")
+
+        # THEN — the create response carries the card identity.
+        assert created["type"] == "card"
+        assert created["brand"] == "VISA"
+        assert created["last4"] == "5771"
+
+        # THEN — it round-trips through the list read model too.
+        listed = (await test_client.get(INSTITUTIONS)).json()["data"]
+        card = next(item for item in listed if item["id"] == created["id"])
+        assert card["brand"] == "VISA"
+        assert card["last4"] == "5771"
+
+    async def test_non_card_institution_returns_null_brand_and_last4(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a create body for a bank that omits brand + last4
+        WHEN the institution is created
+        THEN both brand and last4 are null (non-card kinds are unaffected, ADR-190)
+        """
+        # WHEN
+        created = await _create_institution(test_client, name="Galicia", type="bank")
+
+        # THEN
+        assert created["brand"] is None
+        assert created["last4"] is None
+
+    async def test_invalid_last4_returns_422(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a create body whose last4 is not four digits
+        WHEN the institution is created
+        THEN it returns 422 (the card-identity invariant is enforced, ADR-190/031)
+        """
+        # WHEN
+        response = await test_client.post(
+            INSTITUTIONS, json={"name": "Galicia", "type": "card", "brand": "VISA", "last4": "57"}
+        )
+
+        # THEN
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     async def test_list_returns_owned_institutions_newest_first(self, test_client: httpx.AsyncClient):
         """
@@ -174,7 +226,12 @@ class TestDomainInvariantToHttp:
 
     @pytest.mark.parametrize(
         "raising_client",
-        [UnknownInstitutionTypeError("crypto"), EmptyNameError()],
+        [
+            UnknownInstitutionTypeError("crypto"),
+            EmptyNameError(),
+            InvalidCardLast4Error("57"),
+            EmptyCardBrandError(),
+        ],
         indirect=True,
     )
     async def test_create_maps_invariant_to_422(self, raising_client: httpx.AsyncClient):
@@ -191,7 +248,12 @@ class TestDomainInvariantToHttp:
 
     @pytest.mark.parametrize(
         "raising_client",
-        [UnknownInstitutionTypeError("crypto"), EmptyNameError()],
+        [
+            UnknownInstitutionTypeError("crypto"),
+            EmptyNameError(),
+            InvalidCardLast4Error("57"),
+            EmptyCardBrandError(),
+        ],
         indirect=True,
     )
     async def test_update_maps_invariant_to_422(self, raising_client: httpx.AsyncClient):
