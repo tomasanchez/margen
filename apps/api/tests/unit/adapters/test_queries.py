@@ -7,7 +7,7 @@ rows into read models.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -34,6 +34,10 @@ from margen_api.adapters.settings_repository import (
     DEFAULT_MONOTRIBUTO_ENABLED,
 )
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
+
+# The card-due window looks 3 days ahead inclusive of today; a fixed "today" keeps
+# the window deterministic and clock-independent in these mocked-session tests.
+_TODAY = date(2026, 6, 12)
 
 A_DATE = date(2026, 6, 12)
 A_TIME = datetime(2026, 6, 12, tzinfo=UTC)
@@ -524,6 +528,11 @@ def _usd_record(
     return record
 
 
+def _card_due_row(due_date: date, currency: str, total: object) -> SimpleNamespace:
+    """Build a fake upcoming-card-due aggregation row (due_date, currency, total)."""
+    return SimpleNamespace(due_date=due_date, currency=currency, total=total)
+
+
 class TestInsightsReader:
     """``monthly_insights`` runs six aggregations and assembles the facts (ADR-061)."""
 
@@ -554,14 +563,15 @@ class TestInsightsReader:
             _result([_category_row("Food", Decimal("300.00")), _category_row("Rent", Decimal("100.00"))]),
             _result([]),  # expense-total net: reimbursement reductions (none)
             _scalar_result(_usd_record(date(2026, 6, 20), "100.00", "1200.00")),
+            _result([]),  # upcoming card due (none)
         ]
         reader = SqlAlchemyInsightsReader(session)
 
         # WHEN — reference in July makes June a past month: actual savings.
         insights = await reader.monthly_insights(date(2026, 6, 1), date(2026, 7, 1), A_USER)
 
-        # THEN — eleven aggregation queries ran as Selects, each scoped to the owner (ADR-108).
-        assert session.execute.await_count == 11
+        # THEN — twelve aggregation queries ran as Selects, each scoped to the owner (ADR-108).
+        assert session.execute.await_count == 12
         for call in session.execute.await_args_list:
             (statement,) = call.args
             assert isinstance(statement, Select)
@@ -606,6 +616,7 @@ class TestInsightsReader:
             _result([_category_row("Social", Decimal("5000.00"))]),  # expense-total net: gross
             _result([_reduction_row("Social", Decimal("8000.00"))]),  # expense-total net: reductions
             _scalar_result(None),  # latest USD
+            _result([]),  # upcoming card due (none)
         ]
         reader = SqlAlchemyInsightsReader(session)
 
@@ -638,6 +649,7 @@ class TestInsightsReader:
             _result([_category_row("Social", Decimal("10000.00"))]),  # expense-total net: gross
             _result([_reduction_row("Social", Decimal("3000.00"))]),  # expense-total net: reductions
             _scalar_result(None),  # latest USD
+            _result([]),  # upcoming card due (none)
         ]
         reader = SqlAlchemyInsightsReader(session)
 
@@ -668,6 +680,7 @@ class TestInsightsReader:
             _result([]),  # expense-total net: gross expense
             _result([]),  # expense-total net: reimbursement reductions
             _scalar_result(None),  # no latest USD invoice
+            _result([]),  # upcoming card due (none)
         ]
         reader = SqlAlchemyInsightsReader(session)
 
@@ -678,6 +691,7 @@ class TestInsightsReader:
         assert insights.top_category_mover is None
         assert insights.recurring is None
         assert insights.latest_usd_invoice is None
+        assert insights.upcoming_card_due is None
         assert insights.savings.amount == Decimal("0")
 
     async def test_latest_usd_invoice_defaults_rate_type_when_missing(self):
@@ -700,6 +714,7 @@ class TestInsightsReader:
             _result([]),  # expense-total net: gross
             _result([]),  # expense-total net: reductions
             _scalar_result(_usd_record(date(2026, 6, 9), "50.00", "1100.00", fx_rate_type=None)),
+            _result([]),  # upcoming card due (none)
         ]
         reader = SqlAlchemyInsightsReader(session)
 
@@ -730,6 +745,7 @@ class TestInsightsReader:
             _result([]),  # expense-total net: gross
             _result([]),  # expense-total net: reductions
             _scalar_result(None),  # latest USD
+            _result([]),  # upcoming card due (none)
         ]
         reader = SqlAlchemyInsightsReader(session)
 
@@ -738,7 +754,7 @@ class TestInsightsReader:
 
         # THEN — no crash on the year rollover and the requested month is January.
         assert insights.month == "2026-01"
-        assert session.execute.await_count == 11
+        assert session.execute.await_count == 12
 
     async def test_coerces_float_sums_to_decimal(self):
         """
@@ -760,6 +776,7 @@ class TestInsightsReader:
             _result([_category_row("Food", 250.25)]),  # expense-total net gross (float)
             _result([]),  # expense-total net: reductions
             _scalar_result(None),
+            _result([]),  # upcoming card due (none)
         ]
         reader = SqlAlchemyInsightsReader(session)
 
@@ -770,6 +787,173 @@ class TestInsightsReader:
         assert insights.recurring is not None
         assert insights.recurring.total == Decimal("250.5")
         assert insights.savings.amount == Decimal("1000.5") - Decimal("250.25")
+
+
+class TestUpcomingCardDue:
+    """``_upcoming_card_due`` groups near-term CARD-account charges by date + currency (ADR-089)."""
+
+    async def test_builds_windowed_card_type_expense_select(self):
+        """
+        GIVEN a session whose card-due query returns no rows
+        WHEN _upcoming_card_due runs
+        THEN it builds a Select joined to CARD-type institutions, filtered to expenses in
+             the inclusive [today, today+3] window, grouped by date + currency and scoped
+             to the owner (ADR-089, ADR-108)
+        """
+        # GIVEN
+        session = AsyncMock()
+        session.execute.return_value = _result([])
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN — a fixed today keeps the window deterministic.
+        dues = await reader._upcoming_card_due(UUID(A_USER), _TODAY)
+
+        # THEN — no rows -> empty list; and the SQL carries the full derivation contract.
+        assert dues == []
+        (statement,) = session.execute.await_args.args
+        assert isinstance(statement, Select)
+        compiled = str(statement).lower()
+        assert "sum" in compiled
+        assert "group by" in compiled
+        assert "order by" in compiled
+        # CARD-type join + expense filter + owner scope (ADR-089, ADR-108).
+        assert "institution" in compiled
+        assert "user_id" in compiled
+
+    async def test_charge_due_today_is_included(self):
+        """
+        GIVEN a card charge dated exactly today
+        WHEN _upcoming_card_due runs
+        THEN it is in the window (the window includes today) and surfaces as a due
+        """
+        # GIVEN — one ARS charge dated today.
+        session = AsyncMock()
+        session.execute.return_value = _result([_card_due_row(_TODAY, "ARS", Decimal("50000.00"))])
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN
+        dues = await reader._upcoming_card_due(UUID(A_USER), _TODAY)
+
+        # THEN
+        assert len(dues) == 1
+        assert dues[0].due_date == _TODAY
+        assert dues[0].ars == Decimal("50000.00")
+        assert dues[0].usd == Decimal("0")
+
+    async def test_charge_due_in_two_days_is_included(self):
+        """
+        GIVEN a card charge dated two days ahead (inside the 3-day window)
+        WHEN _upcoming_card_due runs
+        THEN it surfaces as a due
+        """
+        # GIVEN
+        due = _TODAY + timedelta(days=2)
+        session = AsyncMock()
+        session.execute.return_value = _result([_card_due_row(due, "ARS", Decimal("12000.00"))])
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN
+        dues = await reader._upcoming_card_due(UUID(A_USER), _TODAY)
+
+        # THEN
+        assert [d.due_date for d in dues] == [due]
+
+    async def test_window_upper_bound_is_today_plus_horizon_inclusive(self):
+        """
+        GIVEN the default 3-day horizon
+        WHEN _upcoming_card_due runs
+        THEN the query's upper bound is today+3 inclusive, so a charge 5 days out (which the
+             DB would filter) is excluded by the window — proven via the bound the reader binds
+        """
+        # GIVEN
+        session = AsyncMock()
+        session.execute.return_value = _result([])
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN
+        await reader._upcoming_card_due(UUID(A_USER), _TODAY)
+
+        # THEN — the compiled SQL binds today and today+3 (the inclusive window; a 5-day-out
+        # charge falls outside it and never returns).
+        compiled = str(session.execute.await_args.args[0].compile(compile_kwargs={"literal_binds": True}))
+        assert str(_TODAY) in compiled
+        assert str(_TODAY + timedelta(days=3)) in compiled
+        assert str(_TODAY + timedelta(days=5)) not in compiled
+
+    async def test_ars_and_usd_on_same_date_fold_into_one_due(self):
+        """
+        GIVEN ARS and USD card charges dated on the SAME due date
+        WHEN _upcoming_card_due runs
+        THEN the two per-currency groups fold into one due carrying both native totals,
+             never summed across currencies (ADR-183)
+        """
+        # GIVEN — same date, one ARS group and one USD group.
+        due = _TODAY + timedelta(days=1)
+        session = AsyncMock()
+        session.execute.return_value = _result(
+            [
+                _card_due_row(due, "ARS", Decimal("80000.00")),
+                _card_due_row(due, "USD", Decimal("150.00")),
+            ]
+        )
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN
+        dues = await reader._upcoming_card_due(UUID(A_USER), _TODAY)
+
+        # THEN — one entry for the date, both native amounts present.
+        assert len(dues) == 1
+        assert dues[0].due_date == due
+        assert dues[0].ars == Decimal("80000.00")
+        assert dues[0].usd == Decimal("150.00")
+
+    async def test_multiple_due_dates_are_ordered_ascending(self):
+        """
+        GIVEN card charges on several distinct due dates returned out of order
+        WHEN _upcoming_card_due runs
+        THEN the dues come back ordered by date ascending
+        """
+        # GIVEN — three dates, deliberately unsorted in the result rows.
+        d1 = _TODAY
+        d2 = _TODAY + timedelta(days=1)
+        d3 = _TODAY + timedelta(days=3)
+        session = AsyncMock()
+        session.execute.return_value = _result(
+            [
+                _card_due_row(d3, "ARS", Decimal("300.00")),
+                _card_due_row(d1, "ARS", Decimal("100.00")),
+                _card_due_row(d2, "ARS", Decimal("200.00")),
+            ]
+        )
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN
+        dues = await reader._upcoming_card_due(UUID(A_USER), _TODAY)
+
+        # THEN
+        assert [d.due_date for d in dues] == [d1, d2, d3]
+
+    async def test_usd_charge_sums_native_usd_amount(self):
+        """
+        GIVEN a USD card charge
+        WHEN _upcoming_card_due runs
+        THEN the USD total is the native usd_amount magnitude, kept USD-authoritative (ADR-123)
+             and the query coalesces usd_amount over amount
+        """
+        # GIVEN
+        session = AsyncMock()
+        session.execute.return_value = _result([_card_due_row(_TODAY, "USD", 99.5)])  # float from SQLite
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN
+        dues = await reader._upcoming_card_due(UUID(A_USER), _TODAY)
+
+        # THEN — coerced to Decimal money (ADR-025) and carried on the usd leg.
+        assert dues[0].usd == Decimal("99.5")
+        assert dues[0].ars == Decimal("0")
+        compiled = str(session.execute.await_args.args[0]).lower()
+        assert "coalesce" in compiled
+        assert "usd_amount" in compiled
 
 
 def _config_row(category: str = "A", activity: str = "services") -> SimpleNamespace:

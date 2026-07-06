@@ -10,7 +10,7 @@ to unit test (ADR-032) and keeps SQLAlchemy in the adapter (AGENTS.md).
 from __future__ import annotations
 
 from calendar import monthrange
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date
 from decimal import Decimal
 
@@ -20,6 +20,7 @@ from margen_api.service_layer.insights_read_models import (
     RecurringExpenses,
     Savings,
     TopCategoryMover,
+    UpcomingCardDue,
 )
 from margen_api.service_layer.summaries import month_key
 
@@ -64,6 +65,25 @@ def build_recurring(count: int, total: Decimal) -> RecurringExpenses | None:
     if count <= 0:
         return None
     return RecurringExpenses(count=count, total=total)
+
+
+def build_upcoming_card_due(dues: Sequence[UpcomingCardDue]) -> list[UpcomingCardDue] | None:
+    """Return the near-term card dues as an ordered list, or ``None`` when empty (ADR-089).
+
+    The reader already grouped and summed the owner's CARD-account charges falling due
+    within the window and ordered them by date; this pure step only collapses an empty
+    result to ``None`` so the fact renders exactly like the other optional insights (the
+    card shows the alert only when a payment is actually due, ADR-060).
+
+    Args:
+        dues: The per-due-date native totals the reader derived, ordered ascending.
+
+    Returns:
+        The dues as a list, or ``None`` when there are none in the window.
+    """
+    if not dues:
+        return None
+    return list(dues)
 
 
 def elapsed_fraction(month: date, reference: date) -> Decimal:
@@ -131,8 +151,9 @@ def build_monthly_insights(
     income_total: Decimal,
     expense_total: Decimal,
     latest_usd_invoice: LatestUsdInvoice | None,
+    upcoming_card_due: Sequence[UpcomingCardDue],
 ) -> MonthlyInsights:
-    """Assemble the full monthly insights from the raw aggregates (ADR-060, ADR-061).
+    """Assemble the full monthly insights from the raw aggregates (ADR-060, ADR-061, ADR-089).
 
     Args:
         month: The requested month.
@@ -145,6 +166,9 @@ def build_monthly_insights(
         expense_total: SUM of the month's ARS-equivalent expense amounts.
         latest_usd_invoice: The latest USD transaction with an applied rate, or
             ``None`` when the month has none.
+        upcoming_card_due: The owner's card payments falling due within the near-term
+            window (as-of "today"), grouped per due date and ordered ascending; empty
+            when nothing is due (collapses to ``None`` on the fact, ADR-089).
 
     Returns:
         The assembled :class:`MonthlyInsights`.
@@ -155,4 +179,5 @@ def build_monthly_insights(
         recurring=build_recurring(recurring_count, recurring_total),
         savings=build_savings(income_total, expense_total, month, reference),
         latest_usd_invoice=latest_usd_invoice,
+        upcoming_card_due=build_upcoming_card_due(upcoming_card_due),
     )
