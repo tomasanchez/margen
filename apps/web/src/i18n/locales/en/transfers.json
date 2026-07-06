@@ -12,7 +12,9 @@
     "received": "received {{amount}}",
     "toAria": "to",
     "unknownAccount": "Unknown account",
-    "deleteAria": "Delete transfer from {{from}} to {{to}}"
+    "deleteAria": "Delete transfer from {{from}} to {{to}}",
+    "pending": "Pending",
+    "pendingAria": "Pending — takes effect {{date}}"
   },
   "form": {
     "title": "New transfer",

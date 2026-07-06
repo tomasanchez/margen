@@ -77,7 +77,14 @@
       "transferLeg": "Mover {{amount}} de {{from}} → {{main}}",
       "residual": "Todavía faltan {{amount}} después de todas tus cuentas en {{currency}}.",
       "noAccounts": "No tenés cuenta en {{currency}} para pagar — agregá una para planificar.",
-      "regionAria": "Plan de pago de la tarjeta"
+      "regionAria": "Plan de pago de la tarjeta",
+      "schedule": "Programar estas transferencias",
+      "scheduling": "Programando…",
+      "scheduled": "Transferencias programadas",
+      "scheduledDetail": "Tus transferencias de refuerzo quedan programadas para la fecha de vencimiento. Quedan pendientes hasta entonces.",
+      "scheduleError": "No pudimos programar estas transferencias. Probá de nuevo.",
+      "scheduleHint": "Mové los fondos ahora como transferencias con fecha del vencimiento — quedan pendientes hasta entonces.",
+      "scheduleNote": "Refuerzo de pago de resumen"
     },
     "tableAriaLabel": "Líneas del resumen",
     "columns": {

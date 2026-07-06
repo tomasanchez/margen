@@ -77,7 +77,14 @@
       "transferLeg": "Move {{amount}} from {{from}} → {{main}}",
       "residual": "Still short by {{amount}} after all your {{currency}} accounts.",
       "noAccounts": "No {{currency}} account to pay from — add one to plan this.",
-      "regionAria": "Card payment plan"
+      "regionAria": "Card payment plan",
+      "schedule": "Schedule these transfers",
+      "scheduling": "Scheduling…",
+      "scheduled": "Transfers scheduled",
+      "scheduledDetail": "Your top-up transfers are scheduled for the due date. They stay pending until then.",
+      "scheduleError": "We couldn't schedule these transfers. Please try again.",
+      "scheduleHint": "Move the funds now as transfers dated for the due date — they stay pending until then.",
+      "scheduleNote": "Statement payment top-up"
     },
     "tableAriaLabel": "Statement line items",
     "columns": {

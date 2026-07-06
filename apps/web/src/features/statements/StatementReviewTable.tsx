@@ -27,7 +27,7 @@
  * Select / ToggleButtonGroup / disclosure Button) with descriptive labels.
  */
 
-import { useCallback, useId, useMemo, useState } from 'react'
+import { useCallback, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
@@ -78,10 +78,14 @@ import {
 } from './useStatementReviewState'
 import {
   computePaymentPlan,
+  isPlanSchedulable,
   pendingDueDate,
+  scheduleOccurredOn,
   type FundingAccount,
 } from './paymentPlan'
-import { PaymentPlanPanel } from './PaymentPlanPanel'
+import { PaymentPlanPanel, type ScheduleState } from './PaymentPlanPanel'
+import { toDecimalString } from '../accounts/balance'
+import { useCreateTransfer } from '../transfers/queries'
 import { RegisterCardForm, type RegisterCardSubmit } from './RegisterCardForm'
 
 /** Expense categories offered in the per-line editor (statements are expenses). */
@@ -917,6 +921,122 @@ export function StatementReviewTable({
     [parse.periodDue, parse.periodClose],
   )
 
+  // One-click execution of the suggested legs as future-dated transfers (ADR-191).
+  // The plan is executable only when it fully covers every currency's shortfall
+  // (no residual gap) with at least one leg to move — otherwise it stays
+  // suggest-only and the residual note guides the user (never half-scheduled).
+  const canSchedule = useMemo(() => isPlanSchedulable(paymentPlan), [paymentPlan])
+  const createTransfer = useCreateTransfer()
+  const [scheduleState, setScheduleState] = useState<ScheduleState>('idle')
+  // Resume cursor for a partially-sent batch (money-correctness): how many legs of
+  // a given plan signature's flat leg list have already been POSTed successfully,
+  // keyed to that signature. A retry after a mid-batch failure starts from `count`
+  // so the already-created legs are never re-fired (which would duplicate and
+  // over-top the balance). Keyed to the signature so a plan change (toggled line /
+  // new main account) is detected inside the handler and the cursor resets to 0 (a
+  // genuinely new batch). A ref (not state) because it is a within-a-run cursor
+  // read/written across the sequential loop's awaits — not render-driving UI.
+  const sentCursorRef = useRef<{ signature: string; count: number }>({
+    signature: '',
+    count: 0,
+  })
+  // A stable signature of the schedulable legs (source, amount, destination per
+  // currency). Used to re-arm the button when the plan changes after a run.
+  const legSignature = useMemo(
+    () =>
+      paymentPlan.currencies
+        .filter((c) => !c.sufficient && c.residualGap === 0)
+        .map(
+          (c) =>
+            `${c.currency}:${c.main?.id ?? ''}:${c.transfers
+              .map((leg) => `${leg.from.id}@${leg.amount}`)
+              .join(',')}`,
+        )
+        .join('|'),
+    [paymentPlan],
+  )
+  // Re-arm the button if the plan changes after a completed/errored run (e.g. the
+  // user toggles a line): a stale "scheduled" state shouldn't outlive the plan it
+  // described. This is the sanctioned "adjust state while rendering" pattern
+  // (React docs) — compare the signature the run was fired for against the live
+  // one, using state (not a ref) so the lint rule is satisfied.
+  const [runSignature, setRunSignature] = useState<string | null>(null)
+  if (
+    (scheduleState === 'done' || scheduleState === 'error') &&
+    runSignature !== null &&
+    runSignature !== legSignature
+  ) {
+    setRunSignature(null)
+    setScheduleState('idle')
+    // The resume cursor is keyed to the plan signature and reset inside
+    // handleSchedule when the signature changes, so no ref write is needed here.
+  }
+
+  const handleSchedule = useCallback(async () => {
+    if (!canSchedule) return
+    // Re-entry guard: two clicks in the same tick (or a click while a batch is
+    // still firing) must not double-fire the legs (money-correctness).
+    if (scheduleState === 'scheduling') return
+    // ADR-191 dating: future due date → pending until then; else today.
+    const occurredOn = scheduleOccurredOn(parse.periodDue, parse.periodClose)
+    // Flatten the coverable legs across currencies into own-account transfers:
+    // from = the suggested source, to = that currency's main/pay-from account,
+    // same-currency (net-zero, no FX) with the exact greedy amount (ADR-135/189).
+    const inputs = paymentPlan.currencies.flatMap((currencyPlan) => {
+      const main = currencyPlan.main
+      if (main === null || currencyPlan.sufficient) return []
+      return currencyPlan.transfers.map((leg) => {
+        const amount = toDecimalString(leg.amount)
+        return {
+          fromAccountId: leg.from.id,
+          toAccountId: main.id,
+          amountOut: amount,
+          amountIn: amount,
+          occurredOn,
+          note: t('review.plan.scheduleNote'),
+        }
+      })
+    })
+    if (inputs.length === 0) return
+    // Resume from the first un-sent leg. When the plan signature differs from the
+    // cursor's, this is a genuinely new batch — reset the cursor to 0 and fire
+    // every leg. When it matches (a retry after a mid-batch failure of the SAME
+    // plan), start from the succeeded count so the already-created legs are never
+    // re-POSTed (which would duplicate and over-top the balance — the bug this
+    // guards). Clamp defensively in case the leg list shrank.
+    if (sentCursorRef.current.signature !== legSignature) {
+      sentCursorRef.current = { signature: legSignature, count: 0 }
+    }
+    const startFrom = Math.min(sentCursorRef.current.count, inputs.length)
+    setScheduleState('scheduling')
+    setRunSignature(legSignature)
+    try {
+      // Sequential so a mid-run failure stops cleanly and we report it (rather
+      // than firing the rest); the mutation invalidates balances/net-worth +
+      // transfers on each success so the pending reservation refreshes. Advance
+      // the resume cursor after each success so a retry continues from here.
+      for (let i = startFrom; i < inputs.length; i += 1) {
+        await createTransfer.mutateAsync(inputs[i])
+        sentCursorRef.current = { signature: legSignature, count: i + 1 }
+      }
+      setScheduleState('done')
+    } catch {
+      // A leg failed — surface a calm error; the ones already created remain
+      // (partial cancellation is supported via the Transfers UI, ADR-191). The
+      // resume cursor holds the succeeded count so a retry fires only the rest.
+      setScheduleState('error')
+    }
+  }, [
+    canSchedule,
+    createTransfer,
+    legSignature,
+    parse.periodClose,
+    parse.periodDue,
+    paymentPlan.currencies,
+    scheduleState,
+    t,
+  ])
+
   // In-flow card registration (ADR-190): opened from the "Register this card"
   // action when a currency has no matching card account. Prefilled from the parse;
   // creates the institution (type=card, brand+last4) then its per-currency accounts.
@@ -1065,6 +1185,11 @@ export function StatementReviewTable({
         pendingDue={pendingDue}
         disabled={isImporting}
         onMainChange={setMainAccount}
+        canSchedule={canSchedule}
+        scheduleState={scheduleState}
+        onSchedule={() => {
+          void handleSchedule()
+        }}
       />
 
       {/* Per-currency card-account attachment (ADR-184): confirm the auto-matched

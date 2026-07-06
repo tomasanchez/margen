@@ -33,6 +33,7 @@ import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
 import { formatCurrency } from '../../lib/format'
 import { activeIntlLocale } from '../../i18n/locale'
+import { todayIsoDate } from '../transactions/useAddEditFormState'
 import type { Account, Currency, Transfer } from '../../mock/types'
 import { useAccounts } from '../accounts/queries'
 import {
@@ -63,10 +64,17 @@ function formatIsoDate(iso: string): string {
 function TransferRow({
   transfer,
   accountsById,
+  pending,
   onDelete,
 }: {
   transfer: Transfer
   accountsById: Map<string, Account>
+  /**
+   * Whether this transfer is scheduled for a future date (`occurredOn > today`)
+   * and so has not taken effect yet (ADR-186/191). Derived purely from the date —
+   * no backend field. Surfaced as a calm "Pending" chip + its effective date.
+   */
+  pending: boolean
   onDelete: (transfer: Transfer) => void
 }) {
   const { t } = useTranslation('transfers')
@@ -127,6 +135,27 @@ function TransferRow({
             variant="outlined"
             sx={{ borderRadius: '8px', fontSize: 11.5, height: 20, flex: 'none' }}
           />
+          {/* Pending = a future-dated transfer that hasn't taken effect yet
+              (ADR-186/191). A real word (not color alone) + an accessible name
+              carrying the effective date (ADR-019). */}
+          {pending ? (
+            <Chip
+              label={t('row.pending')}
+              size="small"
+              aria-label={t('row.pendingAria', {
+                date: formatIsoDate(transfer.occurredOn),
+              })}
+              sx={{
+                height: 20,
+                fontSize: 11,
+                fontWeight: 600,
+                flex: 'none',
+                color: 'var(--mg-gold)',
+                bgcolor: 'color-mix(in srgb, var(--mg-gold) 14%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--mg-gold) 30%, transparent)',
+              }}
+            />
+          ) : null}
         </Box>
 
         <Typography sx={{ fontSize: 12.5, mt: 0.5 }} color="text.secondary">
@@ -182,6 +211,11 @@ export function TransfersPage() {
     for (const account of accounts) map.set(account.id, account)
     return map
   }, [accounts])
+
+  // Today as a local ISO date (ADR-041) so a scheduled transfer dated in the
+  // future (ADR-191) reads as "Pending" until it takes effect (ADR-186). Pure
+  // string comparison — ISO dates sort chronologically.
+  const todayIso = todayIsoDate()
 
   const isPending = transfersQuery.isPending || accountsQuery.isPending
   const isError = transfersQuery.isError || accountsQuery.isError
@@ -276,6 +310,7 @@ export function TransfersPage() {
               key={transfer.id}
               transfer={transfer}
               accountsById={accountsById}
+              pending={transfer.occurredOn.slice(0, 10) > todayIso}
               onDelete={setPendingDelete}
             />
           ))}
