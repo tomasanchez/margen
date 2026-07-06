@@ -31,6 +31,10 @@ const fullDto: MonthlyInsightsDto = {
     rateType: 'MEP',
     occurredOn: '2026-06-10',
   },
+  upcomingCardDue: [
+    { dueDate: '2026-06-12', ars: '12450.00', usd: '0' },
+    { dueDate: '2026-06-14', ars: '0', usd: '230.00' },
+  ],
 }
 
 describe('adaptInsights', () => {
@@ -51,6 +55,12 @@ describe('adaptInsights', () => {
       rateType: 'MEP',
       occurredOn: '2026-06-10',
     })
+    // The upcoming-card-due list keeps its order and native per-currency amounts,
+    // with every Decimal string parsed to a number (ADR-192).
+    expect(insights.upcomingCardDue).toEqual([
+      { dueDate: '2026-06-12', ars: 12_450, usd: 0 },
+      { dueDate: '2026-06-14', ars: 0, usd: 230 },
+    ])
   })
 
   test('passes optional facts through as null while savings stays present', () => {
@@ -60,6 +70,7 @@ describe('adaptInsights', () => {
       recurring: null,
       savings: { amount: '0', isProjected: false, elapsedFraction: '1' },
       latestUsdInvoice: null,
+      upcomingCardDue: null,
     }
 
     const insights = adaptInsights(sparse)
@@ -67,6 +78,7 @@ describe('adaptInsights', () => {
     expect(insights.topCategoryMover).toBeNull()
     expect(insights.recurring).toBeNull()
     expect(insights.latestUsdInvoice).toBeNull()
+    expect(insights.upcomingCardDue).toBeNull()
     // Savings is never optional — a past month with nothing saved is 0, actual.
     expect(insights.savings).toEqual({
       amount: 0,

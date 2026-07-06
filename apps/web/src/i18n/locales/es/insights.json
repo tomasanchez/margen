@@ -6,7 +6,8 @@
     "recurring": "Recurrentes",
     "projection": "Proyección",
     "savings": "Ahorro",
-    "fx": "Cambio"
+    "fx": "Cambio",
+    "cardDue": "Pago de tarjeta"
   },
   "spending": {
     "up": "{{category}} subió {{delta}} respecto del mes pasado"
@@ -19,5 +20,9 @@
   },
   "fx": {
     "latest": "Última factura · USD {{usd}} a {{source}} {{rate}} · {{date}}"
+  },
+  "cardDue": {
+    "today": "Pago de tarjeta vence hoy — {{amounts}} — revisá tu saldo",
+    "upcoming": "Pago de tarjeta de {{amounts}} vence el {{date}}"
   }
 }

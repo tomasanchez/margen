@@ -8,7 +8,7 @@ never mutates state, so it can be wired independently of the unit of work
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -16,7 +16,9 @@ from sqlalchemy import Numeric, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from margen_api.adapters.models.account import AccountRecord
 from margen_api.adapters.models.app_settings import AppSettingsRecord
+from margen_api.adapters.models.institution import InstitutionRecord
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.adapters.settings_repository import (
@@ -27,9 +29,16 @@ from margen_api.adapters.settings_repository import (
     DEFAULT_MONOTRIBUTO_ENABLED,
     DEFAULT_PREFERRED_RATE_SOURCE,
 )
-from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, RecurringCadence, TxType
+from margen_api.domain.models.value_objects import (
+    Currency,
+    FxRateType,
+    InstitutionType,
+    Kind,
+    RecurringCadence,
+    TxType,
+)
 from margen_api.service_layer.insights import build_monthly_insights
-from margen_api.service_layer.insights_read_models import LatestUsdInvoice, MonthlyInsights
+from margen_api.service_layer.insights_read_models import LatestUsdInvoice, MonthlyInsights, UpcomingCardDue
 from margen_api.service_layer.insights_reader import AbstractInsightsReader
 from margen_api.service_layer.monotributo import (
     build_snapshot,
@@ -541,6 +550,18 @@ def _month_upper_bound(month: date) -> date:
     return date(month.year + (month.month // 12), (month.month % 12) + 1, 1)
 
 
+# How many days ahead (inclusive of today) the card-due alert looks. A statement's
+# charges are dated on its pay date (ADR-089), so a charge landing today or within the
+# next few days is money about to auto-debit — worth surfacing on the Home card.
+_CARD_DUE_HORIZON_DAYS = 3
+# The native magnitude a card charge contributes to its due-date total, by currency: a
+# USD card row sums its USD-native usd_amount so the total stays USD-authoritative
+# (ADR-123), falling back to the ARS-equivalent amount when a USD row carries no snapshot
+# (incomplete FX, ADR-031); an ARS row always sums amount (ADR-025). Mirrors the ccBalance
+# liability's native magnitude (account_queries._NATIVE_MAGNITUDE, ADR-185).
+_CARD_DUE_MAGNITUDE = func.coalesce(TransactionRecord.usd_amount, TransactionRecord.amount)
+
+
 class SqlAlchemyInsightsReader(AbstractInsightsReader):
     """Serve the monthly insight facts from server-side SQL aggregation (ADR-060, ADR-061).
 
@@ -570,6 +591,7 @@ class SqlAlchemyInsightsReader(AbstractInsightsReader):
         income_total = await self._inflow_total(month, owner)
         expense_total = await self._expense_total(month, owner)
         latest_usd_invoice = await self._latest_usd_invoice(month, owner)
+        upcoming_card_due = await self._upcoming_card_due(owner, reference)
 
         return build_monthly_insights(
             month,
@@ -581,7 +603,74 @@ class SqlAlchemyInsightsReader(AbstractInsightsReader):
             income_total=income_total,
             expense_total=expense_total,
             latest_usd_invoice=latest_usd_invoice,
+            upcoming_card_due=upcoming_card_due,
         )
+
+    async def _upcoming_card_due(
+        self,
+        owner: UUID,
+        today: date,
+        horizon_days: int = _CARD_DUE_HORIZON_DAYS,
+    ) -> list[UpcomingCardDue]:
+        """Return the owner's card payments falling due within the near-term window (ADR-089, ADR-108).
+
+        Sums the owner's CARD-institution account charges that are (a) EXPENSE rows on a
+        ``CARD``-type institution account and (b) dated in the inclusive window
+        ``[today, today + horizon_days]`` — ``occurred_on`` is the statement pay date
+        (ADR-089), so a charge dated today or in the next few days is money about to
+        auto-debit. Rows are grouped by ``(occurred_on, account currency)`` and summed on
+        the native magnitude (:data:`_CARD_DUE_MAGNITUDE`): a USD card row sums its
+        USD-native figure so the total stays USD-authoritative (ADR-123), an ARS row its
+        ARS amount. The per-currency groups for one date are folded into a single
+        :class:`UpcomingCardDue` carrying both native totals (``0`` for a currency with no
+        charge that day) so the client converts each at the live rate (ADR-183). Ordered by
+        due date ascending. Nothing special is excluded beyond the CARD-type + expense +
+        window filter (unlike the ccBalance liability, an instalment cuota IS a real payment
+        due that day, so it is included). Owner-scoped (ADR-108, ADR-130).
+
+        Args:
+            owner: The authenticated owner whose card dues are summed.
+            today: The as-of reference date; the window starts here (inclusive).
+            horizon_days: How many days ahead of ``today`` the window extends (inclusive);
+                defaults to :data:`_CARD_DUE_HORIZON_DAYS`.
+
+        Returns:
+            One :class:`UpcomingCardDue` per due date that has an upcoming card charge,
+            ordered ascending; an empty list when nothing is due in the window.
+        """
+        horizon = today + timedelta(days=horizon_days)
+        statement = (
+            select(
+                TransactionRecord.occurred_on.label("due_date"),
+                AccountRecord.currency.label("currency"),
+                cast(func.sum(_CARD_DUE_MAGNITUDE), Numeric(18, 2)).label("total"),
+            )
+            .select_from(TransactionRecord)
+            .join(AccountRecord, AccountRecord.id == TransactionRecord.account_id)
+            .join(InstitutionRecord, InstitutionRecord.id == AccountRecord.institution_id)
+            .where(
+                TransactionRecord.user_id == owner,
+                TransactionRecord.kind == Kind.EXPENSE.value,
+                InstitutionRecord.type == InstitutionType.CARD.value,
+                TransactionRecord.occurred_on >= today,
+                TransactionRecord.occurred_on <= horizon,
+            )
+            .group_by(TransactionRecord.occurred_on, AccountRecord.currency)
+            .order_by(TransactionRecord.occurred_on.asc())
+        )
+        result = await self.session.execute(statement)
+        by_date: dict[date, dict[Currency, Decimal]] = {}
+        for row in result.all():
+            currency = Currency.parse(row.currency)
+            by_date.setdefault(row.due_date, {})[currency] = _as_decimal(row.total)
+        return [
+            UpcomingCardDue(
+                due_date=due_date,
+                ars=totals.get(Currency.ARS, _ZERO),
+                usd=totals.get(Currency.USD, _ZERO),
+            )
+            for due_date, totals in sorted(by_date.items())
+        ]
 
     async def _expense_category_totals(self, month: date, owner: UUID) -> dict[str, Decimal]:
         """Return the owner's NET expense totals for the month keyed by category (mover input, ADR-108, ADR-160).

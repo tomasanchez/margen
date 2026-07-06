@@ -27,8 +27,10 @@ from margen_api.service_layer.insights_read_models import (
     RecurringExpenses,
     Savings,
     TopCategoryMover,
+    UpcomingCardDue,
 )
 from margen_api.settings.database_settings import DatabaseSettings
+from tests.conftest import STUB_USER_ID
 from tests.fakes.persistence import FakeInsightsReader
 
 INSIGHTS = "/api/v1/insights"
@@ -51,6 +53,10 @@ def _insights() -> MonthlyInsights:
             rate_type="MEP",
             occurred_on=date(2026, 6, 10),
         ),
+        upcoming_card_due=[
+            UpcomingCardDue(due_date=date(2026, 6, 15), ars=Decimal("50000.00"), usd=Decimal("0")),
+            UpcomingCardDue(due_date=date(2026, 6, 17), ars=Decimal("0"), usd=Decimal("120.00")),
+        ],
     )
 
 
@@ -62,6 +68,7 @@ def _empty_insights() -> MonthlyInsights:
         recurring=None,
         savings=Savings(amount=Decimal("0"), is_projected=False, elapsed_fraction=Decimal("1")),
         latest_usd_invoice=None,
+        upcoming_card_due=None,
     )
 
 
@@ -117,6 +124,12 @@ class TestMonthlyInsights:
             "rateType": "MEP",
             "occurredOn": "2026-06-10",
         }
+        # Upcoming card dues: one entry per due date ascending, camelCase dueDate and
+        # native per-currency Decimal-string totals (0 for the currency with no charge).
+        assert data["upcomingCardDue"] == [
+            {"dueDate": "2026-06-15", "ars": "50000.00", "usd": "0"},
+            {"dueDate": "2026-06-17", "ars": "0", "usd": "120.00"},
+        ]
         # The router parsed the param to the first of the requested month.
         assert reader.requested_month == date(2026, 6, 1)
 
@@ -143,6 +156,7 @@ class TestMonthlyInsights:
         assert data["topCategoryMover"] is None
         assert data["recurring"] is None
         assert data["latestUsdInvoice"] is None
+        assert data["upcomingCardDue"] is None
         assert data["savings"]["amount"] == "0"
         assert data["savings"]["isProjected"] is False
 
@@ -161,6 +175,22 @@ class TestMonthlyInsights:
         today = datetime.now(UTC).date()
         assert reader.requested_month == date(today.year, today.month, 1)
         assert reader.requested_reference == today
+
+    async def test_scopes_the_read_to_the_authenticated_owner(
+        self, client: httpx.AsyncClient, reader: FakeInsightsReader
+    ):
+        """
+        GIVEN an authenticated caller
+        WHEN the insights endpoint is requested
+        THEN the reader is asked for that caller's id, so the card dues (and every other
+             fact) can only ever be the caller's own — never a foreign owner's (ADR-108)
+        """
+        # WHEN
+        response = await client.get(INSIGHTS, params={"month": "2026-06"})
+
+        # THEN — the boundary threads the authenticated owner into the owner-scoped read.
+        assert response.status_code == status.HTTP_200_OK
+        assert reader.requested_user_id == STUB_USER_ID
 
     @pytest.mark.parametrize("bad_month", ["2026-13", "2026-6", "june", "2026/06", "2026-00"])
     async def test_malformed_month_returns_422(self, client: httpx.AsyncClient, bad_month: str):

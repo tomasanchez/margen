@@ -15,10 +15,11 @@ from margen_api.service_layer.insights import (
     build_monthly_insights,
     build_recurring,
     build_savings,
+    build_upcoming_card_due,
     elapsed_fraction,
     select_top_mover,
 )
-from margen_api.service_layer.insights_read_models import LatestUsdInvoice
+from margen_api.service_layer.insights_read_models import LatestUsdInvoice, UpcomingCardDue
 
 JUNE = date(2026, 6, 1)
 
@@ -133,6 +134,40 @@ class TestBuildRecurring:
 
         # THEN
         assert recurring is None
+
+
+class TestBuildUpcomingCardDue:
+    """``build_upcoming_card_due`` passes the ordered dues through, or returns None."""
+
+    def test_passes_dues_through(self):
+        """
+        GIVEN one or more upcoming card dues from the reader
+        WHEN the fact is built
+        THEN the dues come through as a list, verbatim and in order
+        """
+        # GIVEN
+        dues = [
+            UpcomingCardDue(due_date=date(2026, 6, 12), ars=Decimal("50000"), usd=Decimal("0")),
+            UpcomingCardDue(due_date=date(2026, 6, 14), ars=Decimal("0"), usd=Decimal("120")),
+        ]
+
+        # WHEN
+        fact = build_upcoming_card_due(dues)
+
+        # THEN
+        assert fact == dues
+
+    def test_none_when_empty(self):
+        """
+        GIVEN no upcoming card dues in the window
+        WHEN the fact is built
+        THEN there is nothing to alert on, so None
+        """
+        # WHEN
+        fact = build_upcoming_card_due([])
+
+        # THEN
+        assert fact is None
 
 
 class TestElapsedFraction:
@@ -264,6 +299,7 @@ class TestBuildMonthlyInsights:
             income_total=Decimal("3000"),
             expense_total=Decimal("1500"),
             latest_usd_invoice=latest,
+            upcoming_card_due=[UpcomingCardDue(due_date=date(2026, 6, 15), ars=Decimal("500"), usd=Decimal("0"))],
         )
 
         # THEN
@@ -275,6 +311,9 @@ class TestBuildMonthlyInsights:
         assert insights.savings.amount == Decimal("1500")
         assert insights.savings.is_projected is False
         assert insights.latest_usd_invoice is latest
+        assert insights.upcoming_card_due is not None
+        assert insights.upcoming_card_due[0].due_date == date(2026, 6, 15)
+        assert insights.upcoming_card_due[0].ars == Decimal("500")
 
     def test_empty_month_has_none_facts_and_zero_savings(self):
         """
@@ -293,10 +332,12 @@ class TestBuildMonthlyInsights:
             income_total=Decimal("0"),
             expense_total=Decimal("0"),
             latest_usd_invoice=None,
+            upcoming_card_due=[],
         )
 
         # THEN
         assert insights.top_category_mover is None
         assert insights.recurring is None
         assert insights.latest_usd_invoice is None
+        assert insights.upcoming_card_due is None
         assert insights.savings.amount == Decimal("0")

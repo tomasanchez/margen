@@ -82,6 +82,28 @@ class LatestUsdInvoice:
 
 
 @dataclass(frozen=True, slots=True)
+class UpcomingCardDue:
+    """A near-term credit-card payment due date and its native per-currency total (ADR-089).
+
+    Groups the owner's CARD-account EXPENSE charges dated on a single upcoming
+    ``due_date`` -- ``occurred_on`` is the statement pay date (ADR-089), so a charge
+    dated today or in the next few days is money about to auto-debit. ARS and USD are
+    kept separate as native magnitudes (never summed across currencies) so the client
+    converts each at the live rate (ADR-183); a date with only one currency carries ``0``
+    for the other.
+
+    Attributes:
+        due_date: The upcoming statement pay date the charges fall on.
+        ars: SUM of that date's ARS card charges (``amount``); ``0`` when none.
+        usd: SUM of that date's USD card charges (``usd_amount``); ``0`` when none.
+    """
+
+    due_date: date
+    ars: Decimal
+    usd: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class MonthlyInsights:
     """The structured insight facts for the requested month (ADR-060, ADR-061).
 
@@ -97,6 +119,10 @@ class MonthlyInsights:
         savings: Actual or projected savings for the month.
         latest_usd_invoice: The latest USD transaction with an applied rate, or
             ``None`` when the month has none.
+        upcoming_card_due: The owner's card payments falling due within the next few
+            days (as-of "today", independent of the requested month), one entry per
+            due date ordered ascending with native per-currency totals, or ``None``
+            when nothing is due in the window (ADR-089).
     """
 
     month: str
@@ -104,3 +130,4 @@ class MonthlyInsights:
     recurring: RecurringExpenses | None
     savings: Savings
     latest_usd_invoice: LatestUsdInvoice | None
+    upcoming_card_due: list[UpcomingCardDue] | None

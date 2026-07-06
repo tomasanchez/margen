@@ -23,6 +23,7 @@ from margen_api.service_layer.insights_read_models import (
     RecurringExpenses,
     Savings,
     TopCategoryMover,
+    UpcomingCardDue,
 )
 
 
@@ -86,6 +87,19 @@ class LatestUsdInvoiceResponse(CamelCaseModel):
         )
 
 
+class UpcomingCardDueResponse(CamelCaseModel):
+    """A near-term credit-card payment due date and its native per-currency total (ADR-089)."""
+
+    due_date: date = Field(description="The upcoming statement pay date the charges fall on.")
+    ars: Decimal = Field(description="Total ARS card charges due on that date; 0 when none.")
+    usd: Decimal = Field(description="Total USD card charges due on that date; 0 when none.")
+
+    @classmethod
+    def from_read_model(cls, model: UpcomingCardDue) -> UpcomingCardDueResponse:
+        """Build the response fact from an upcoming-card-due read model."""
+        return cls(due_date=model.due_date, ars=model.ars, usd=model.usd)
+
+
 class MonthlyInsightsResponse(CamelCaseModel):
     """The Home Insights card facts for the requested month (ADR-060, ADR-061)."""
 
@@ -103,6 +117,10 @@ class MonthlyInsightsResponse(CamelCaseModel):
         default=None,
         description="The latest USD transaction with an applied rate; null when the month has none.",
     )
+    upcoming_card_due: list[UpcomingCardDueResponse] | None = Field(
+        default=None,
+        description="Card payments falling due within the next few days, one per date ascending; null when none.",
+    )
 
     @classmethod
     def from_read_model(cls, model: MonthlyInsights) -> MonthlyInsightsResponse:
@@ -110,10 +128,14 @@ class MonthlyInsightsResponse(CamelCaseModel):
         mover = model.top_category_mover
         recurring = model.recurring
         latest = model.latest_usd_invoice
+        dues = model.upcoming_card_due
         return cls(
             month=model.month,
             top_category_mover=TopCategoryMoverResponse.from_read_model(mover) if mover is not None else None,
             recurring=RecurringExpensesResponse.from_read_model(recurring) if recurring is not None else None,
             savings=SavingsResponse.from_read_model(model.savings),
             latest_usd_invoice=LatestUsdInvoiceResponse.from_read_model(latest) if latest is not None else None,
+            upcoming_card_due=[UpcomingCardDueResponse.from_read_model(due) for due in dues]
+            if dues is not None
+            else None,
         )

@@ -34,7 +34,9 @@ class AbstractInsightsReader(ABC):
         Returns:
             The :class:`MonthlyInsights` facts: the biggest positive category
             mover versus the prior month, the recurring-expense footprint, the
-            actual-or-projected savings, and the latest USD transaction with an
-            applied rate -- each ``None`` when its data does not exist (savings
-            excepted). The frontend formats these facts itself.
+            actual-or-projected savings, the latest USD transaction with an
+            applied rate, and the card payments falling due within the near-term
+            window as-of ``reference`` (ADR-089) -- each ``None`` when its data
+            does not exist (savings excepted). The frontend formats these facts
+            itself.
         """

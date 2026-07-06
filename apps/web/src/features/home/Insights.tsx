@@ -22,18 +22,24 @@ import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import {
   formatARS,
+  formatCurrency,
   formatDelta,
   formatDispDate,
   formatUSD,
   fxSourceLabel,
 } from '../../lib/format'
+import { localizedIsoDate } from '../../i18n/locale'
+import { todayIsoDate } from '../transactions/useAddEditFormState'
 import { useDisplayMoney } from '../settings/displayCurrencyContext'
 import { categoryLabel } from '../transactions/presentation'
-import type { MonthlyInsights } from '../../api/insightsClient'
+import type {
+  MonthlyInsights,
+  UpcomingCardDueFact,
+} from '../../api/insightsClient'
 import { SectionCard } from '../../components/SectionCard'
 
 /** Insight kinds, used to key the redundant dot color beside each label. */
-type InsightKind = 'spending' | 'recurring' | 'projection' | 'fx'
+type InsightKind = 'spending' | 'recurring' | 'projection' | 'fx' | 'cardDue'
 
 /** Dot token per insight kind — a redundant cue beside the text label. */
 const KIND_DOT: Record<InsightKind, string> = {
@@ -41,6 +47,7 @@ const KIND_DOT: Record<InsightKind, string> = {
   recurring: 'var(--mg-text-2)',
   projection: 'var(--mg-safe)',
   fx: 'var(--mg-gold)',
+  cardDue: 'var(--mg-gold)',
 }
 
 /** One composed insight row: a stable key, its kind, eyebrow label, and text. */
@@ -67,14 +74,35 @@ export interface InsightsProps {
  * display preference. The FX invoice keeps its literal USD + ARS rate (it states
  * the original figures, not a display-converted amount).
  */
+/**
+ * The native amounts segment for a card-due row, e.g. "ARS 12.450 / USD 230".
+ * Each currency is shown in its NATIVE figure via {@link formatCurrency} — never
+ * summed or converted (ADR-133/192). Only a non-zero currency contributes, so an
+ * ARS-only due shows just the ARS part and a USD-only due just the USD part; a
+ * mixed due shows both, ARS first (matching the app's "USD in / ARS out" split).
+ */
+function cardDueAmounts(entry: UpcomingCardDueFact): string {
+  const parts: string[] = []
+  if (entry.ars !== 0) parts.push(formatCurrency(entry.ars, 'ARS'))
+  if (entry.usd !== 0) parts.push(formatCurrency(entry.usd, 'USD'))
+  return parts.join(' / ')
+}
+
 function composeInsightRows(
   insights: MonthlyInsights,
   formatMoney: (ars: number | null | undefined) => string,
   t: TFunction<'insights'>,
+  today: string,
 ): InsightRowData[] {
   const rows: InsightRowData[] = []
 
-  const { topCategoryMover, recurring, savings, latestUsdInvoice } = insights
+  const {
+    topCategoryMover,
+    recurring,
+    savings,
+    latestUsdInvoice,
+    upcomingCardDue,
+  } = insights
 
   if (topCategoryMover) {
     rows.push({
@@ -136,6 +164,30 @@ function composeInsightRows(
     })
   }
 
+  // Upcoming card payments (ADR-192): one calm reminder row per due date, in
+  // ascending order (as delivered). A due-today entry emphasizes "today"; a
+  // future entry states the localized date (ADR-102). Amounts stay NATIVE per
+  // currency (no cross-currency sum); an all-zero entry carries no signal and
+  // is skipped. Reuses the same row pattern — a reminder, not an error banner.
+  if (upcomingCardDue) {
+    for (const entry of upcomingCardDue) {
+      const amounts = cardDueAmounts(entry)
+      if (amounts.length === 0) continue
+      const isToday = entry.dueDate === today
+      rows.push({
+        id: `card-due-${entry.dueDate}`,
+        kind: 'cardDue',
+        label: t('labels.cardDue'),
+        text: isToday
+          ? t('cardDue.today', { amounts })
+          : t('cardDue.upcoming', {
+              amounts,
+              date: localizedIsoDate(entry.dueDate),
+            }),
+      })
+    }
+  }
+
   return rows
 }
 
@@ -187,7 +239,7 @@ export function Insights({ insights, loading = false }: InsightsProps) {
     )
   }
 
-  const rows = composeInsightRows(insights, formatMoney, t)
+  const rows = composeInsightRows(insights, formatMoney, t, todayIsoDate())
 
   if (rows.length === 0) {
     return (

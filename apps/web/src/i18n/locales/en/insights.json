@@ -6,7 +6,8 @@
     "recurring": "Recurring",
     "projection": "Projection",
     "savings": "Savings",
-    "fx": "FX"
+    "fx": "FX",
+    "cardDue": "Card payment"
   },
   "spending": {
     "up": "{{category}} is up {{delta}} vs last month"
@@ -19,5 +20,9 @@
   },
   "fx": {
     "latest": "Latest invoice · USD {{usd}} at {{source}} {{rate}} · {{date}}"
+  },
+  "cardDue": {
+    "today": "Card payment due today — {{amounts}} — check your balance",
+    "upcoming": "Card payment of {{amounts}} due {{date}}"
   }
 }
