@@ -38,7 +38,45 @@
       "subtitle": "Asociamos estos consumos a tu tarjeta. Confirmá o elegí otra.",
       "currencyLabel": "Cuenta {{currency}}",
       "dontAttach": "No asociar",
-      "noMatch": "No tenés cuenta de tarjeta {{currency}} — estas líneas se importan sin una."
+      "noMatch": "No tenés cuenta de tarjeta {{currency}} — estas líneas se importan sin una.",
+      "register": "Registrar esta tarjeta"
+    },
+    "registerCard": {
+      "title": "Registrar esta tarjeta",
+      "subtitle": "Leímos esta tarjeta del resumen. Confirmá los datos y la agregamos con sus cuentas.",
+      "name": {
+        "label": "Nombre"
+      },
+      "brand": {
+        "label": "Marca / red"
+      },
+      "last4": {
+        "label": "Últimos 4 dígitos"
+      },
+      "accountsHeading": "Cuentas a crear",
+      "accountsSubheading": "Una por cada moneda de este resumen. Editá el saldo inicial si lo sabés.",
+      "openingBalance": {
+        "label": "Saldo inicial {{currency}}"
+      },
+      "error": "No pudimos registrar esta tarjeta. Revisá tu conexión y probá de nuevo.",
+      "cancel": "Cancelar",
+      "confirm": "Registrar tarjeta"
+    },
+    "plan": {
+      "title": "Plan de pago",
+      "subtitle": "Si tus cuentas cubren este resumen, por moneda.",
+      "pending": "Pendiente — vence {{date}}",
+      "need": "Necesitás",
+      "available": "Disponible",
+      "sufficient": "Suficiente",
+      "sufficientDetail": "{{account}} cubre el saldo en {{currency}}.",
+      "shortfall": "Falta {{amount}}",
+      "mainLabel": "Pagar {{currency}} desde",
+      "transfersHeading": "Transferencias sugeridas",
+      "transferLeg": "Mover {{amount}} de {{from}} → {{main}}",
+      "residual": "Todavía faltan {{amount}} después de todas tus cuentas en {{currency}}.",
+      "noAccounts": "No tenés cuenta en {{currency}} para pagar — agregá una para planificar.",
+      "regionAria": "Plan de pago de la tarjeta"
     },
     "tableAriaLabel": "Líneas del resumen",
     "columns": {

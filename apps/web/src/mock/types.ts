@@ -116,12 +116,35 @@ export interface Institution {
   name: string
   /** Provider kind (ADR-134): bank / cash / card / wallet. */
   type: AccountType
+  /**
+   * Card network label for a card institution (ADR-190), e.g. "VISA" / "AMEX" /
+   * "Mastercard". `null`/absent for non-card institutions. Persisted from the
+   * statement parser's `network` on in-flow card registration; used together with
+   * {@link Institution.last4} to match a parsed statement to its card precisely
+   * (superseding name-only matching, ADR-190).
+   */
+  brand?: string | null
+  /**
+   * Four-digit card suffix for a card institution (ADR-190), e.g. "5771".
+   * `null`/absent for non-card institutions. Persisted from the parser's
+   * `cardLast4` on registration; pairs with {@link Institution.brand} for the
+   * precise card match.
+   */
+  last4?: string | null
 }
 
-/** Input the Add-institution flow produces for a create/update (ADR-134). */
+/**
+ * Input the Add-institution flow produces for a create/update (ADR-134/190).
+ * `brand`/`last4` are the optional card identity (ADR-190) — sent only for a card
+ * registration, omitted for bank / cash / wallet.
+ */
 export interface InstitutionWriteBody {
   name: string
   type: AccountType
+  /** Card network label (ADR-190); omit for non-card kinds. */
+  brand?: string | null
+  /** Four-digit card suffix (ADR-190); omit for non-card kinds. */
+  last4?: string | null
 }
 
 /**

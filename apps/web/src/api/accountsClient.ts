@@ -44,17 +44,25 @@ interface ResponseEnvelope<T> {
   data: T
 }
 
-/** The institution DTO as serialized by the backend (ADR-134). */
+/** The institution DTO as serialized by the backend (ADR-134/190). */
 export interface InstitutionDto {
   id: string
   name: string
   type: string
+  /** Card network label; null for non-card institutions (ADR-190). */
+  brand?: string | null
+  /** Four-digit card suffix; null for non-card institutions (ADR-190). */
+  last4?: string | null
 }
 
-/** Request body accepted by `POST` / `PUT /institutions` (camelCase, ADR-134). */
+/** Request body accepted by `POST` / `PUT /institutions` (camelCase, ADR-134/190). */
 export interface InstitutionWriteDto {
   name: string
   type: AccountType
+  /** Card network label (ADR-190); omitted for non-card kinds. */
+  brand?: string | null
+  /** Four-digit card suffix (ADR-190); omitted for non-card kinds. */
+  last4?: string | null
 }
 
 /** Input the Add-institution flow produces. Mirrors {@link InstitutionWriteBody}. */
@@ -257,9 +265,20 @@ function asCurrency(value: string): Currency {
   return value === 'USD' ? 'USD' : 'ARS'
 }
 
-/** Adapt a backend {@link InstitutionDto} to the frontend {@link Institution}. */
+/**
+ * Adapt a backend {@link InstitutionDto} to the frontend {@link Institution}.
+ * Carries the optional card identity (`brand`/`last4`, ADR-190) through when
+ * present so the statement matcher can key on (brand + last4, currency); a
+ * non-card institution simply has both `null`.
+ */
 export function adaptInstitution(dto: InstitutionDto): Institution {
-  return { id: dto.id, name: dto.name, type: asAccountType(dto.type) }
+  return {
+    id: dto.id,
+    name: dto.name,
+    type: asAccountType(dto.type),
+    ...(dto.brand !== undefined ? { brand: dto.brand } : {}),
+    ...(dto.last4 !== undefined ? { last4: dto.last4 } : {}),
+  }
 }
 
 /**
@@ -355,11 +374,21 @@ export function adaptNetWorth(dto: NetWorth): NetWorth {
   }
 }
 
-/** Build the institution create/update body from a form input. */
+/**
+ * Build the institution create/update body from a form input (ADR-134/190).
+ * `brand`/`last4` are sent ONLY when present (a card registration) so a normal
+ * bank/cash/wallet create/patch stays a two-field body — the backend leaves the
+ * card identity null for non-card kinds.
+ */
 export function toInstitutionWriteBody(
   input: InstitutionWriteBody,
 ): InstitutionWriteDto {
-  return { name: input.name, type: input.type }
+  return {
+    name: input.name,
+    type: input.type,
+    ...(input.brand != null ? { brand: input.brand } : {}),
+    ...(input.last4 != null ? { last4: input.last4 } : {}),
+  }
 }
 
 /** Build the account create/update body from a form input. */

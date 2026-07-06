@@ -30,7 +30,7 @@ import type {
   StatementLineResolution,
   StatementParse,
 } from '../../api/statementsClient'
-import type { Account, Currency } from '../../mock/types'
+import type { Account, Currency, Institution } from '../../mock/types'
 import {
   currenciesInParse,
   matchCardAccounts,
@@ -214,6 +214,7 @@ function toLineRequest(
 export function useStatementReviewState(
   parse: StatementParse,
   accounts: readonly Account[] = [],
+  institutions: readonly Institution[] = [],
 ): StatementReviewState {
   const [lines, setLines] = useState<ReviewLine[]>(() =>
     parse.lines.map((line) => ({
@@ -230,8 +231,8 @@ export function useStatementReviewState(
   // selection is (re)seeded to the match ONLY while the user hasn't chosen — a
   // user override (tracked in `accountOverrides`) always wins.
   const matches = useMemo(
-    () => matchCardAccounts(parse, accounts),
-    [parse, accounts],
+    () => matchCardAccounts(parse, accounts, institutions),
+    [parse, accounts, institutions],
   )
   const currencies = useMemo(() => currenciesInParse(parse), [parse])
   // Per-currency user overrides: absent = follow the auto-match; present (id or
