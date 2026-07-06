@@ -60,6 +60,20 @@ interface LatestUsdInvoiceDto {
   occurredOn: string
 }
 
+/**
+ * One near-term card-payment due date, in a single native currency (ADR-192).
+ * The backend groups per (due date, currency) and never sums across currencies
+ * (ADR-133), so a due date with both ARS and USD charges yields two entries.
+ */
+interface UpcomingCardDueDto {
+  /** ISO calendar date the payment is due on (`YYYY-MM-DD`). */
+  dueDate: string
+  /** Native ARS amount due on this date, as a Decimal string (may be "0"). */
+  ars: string
+  /** Native USD amount due on this date, as a Decimal string (may be "0"). */
+  usd: string
+}
+
 /** The `data` payload of `GET /insights`. */
 export interface MonthlyInsightsDto {
   /** Requested calendar month as `YYYY-MM`. */
@@ -68,6 +82,11 @@ export interface MonthlyInsightsDto {
   recurring: RecurringDto | null
   savings: SavingsDto
   latestUsdInvoice: LatestUsdInvoiceDto | null
+  /**
+   * Card payments due within the next 3 days (ADR-192), one entry per due date,
+   * ordered ascending; `null` when nothing is due in the window.
+   */
+  upcomingCardDue: UpcomingCardDueDto[] | null
 }
 
 /** Biggest positive expense category mover, parsed to numbers. */
@@ -106,6 +125,16 @@ export interface LatestUsdInvoiceFact {
   occurredOn: string
 }
 
+/** One near-term card-payment due date, parsed to numbers (ADR-192). */
+export interface UpcomingCardDueFact {
+  /** ISO calendar date the payment is due on (`YYYY-MM-DD`). */
+  dueDate: string
+  /** Native ARS amount due on this date (may be 0). */
+  ars: number
+  /** Native USD amount due on this date (may be 0). */
+  usd: number
+}
+
 /**
  * The adapted monthly insights the Home card consumes directly (ADR-061/062).
  * Optional facts are `null` when their underlying data is absent; the card
@@ -120,6 +149,11 @@ export interface MonthlyInsights {
   /** Always present — projected for the current month, actual for a past one. */
   savings: SavingsFact
   latestUsdInvoice: LatestUsdInvoiceFact | null
+  /**
+   * Card payments due within the next 3 days (ADR-192), each in native ARS +
+   * USD (never a cross-currency total); `null` when nothing is due soon.
+   */
+  upcomingCardDue: UpcomingCardDueFact[] | null
 }
 
 /** An API error that carries the HTTP status so callers can branch on it. */
@@ -194,6 +228,15 @@ export function adaptInsights(dto: MonthlyInsightsDto): MonthlyInsights {
           rateType: asFxRateType(dto.latestUsdInvoice.rateType),
           occurredOn: dto.latestUsdInvoice.occurredOn,
         }
+      : null,
+    // Preserve order (ascending due date) and keep each currency native — the
+    // Decimal strings are parsed here so downstream rendering never re-parses.
+    upcomingCardDue: dto.upcomingCardDue
+      ? dto.upcomingCardDue.map((entry) => ({
+          dueDate: entry.dueDate,
+          ars: parseDecimal(entry.ars),
+          usd: parseDecimal(entry.usd),
+        }))
       : null,
   }
 }

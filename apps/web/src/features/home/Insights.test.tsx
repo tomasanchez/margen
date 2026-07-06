@@ -75,6 +75,7 @@ const FULL: MonthlyInsights = {
     rateType: 'MEP',
     occurredOn: '2026-06-10',
   },
+  upcomingCardDue: null,
 }
 
 function renderInsights(insights: MonthlyInsights | undefined) {
@@ -162,6 +163,7 @@ describe('sparse and empty months', () => {
       recurring: null,
       savings: { amount: 100_000, isProjected: true, elapsedFraction: 0.5 },
       latestUsdInvoice: null,
+      upcomingCardDue: null,
     })
 
     expect(
@@ -180,6 +182,7 @@ describe('sparse and empty months', () => {
       recurring: null,
       savings: { amount: 0, isProjected: false, elapsedFraction: 0 },
       latestUsdInvoice: null,
+      upcomingCardDue: null,
     })
 
     // A zero-savings month with no other facts carries no signal, so the savings
@@ -203,6 +206,7 @@ describe('sparse and empty months', () => {
       recurring: null,
       savings: { amount: 0, isProjected: false, elapsedFraction: 0 },
       latestUsdInvoice: null,
+      upcomingCardDue: null,
     })
 
     expect(screen.getByText('Food is up +10% vs last month')).toBeInTheDocument()
@@ -219,6 +223,94 @@ describe('sparse and empty months', () => {
     renderInsights(undefined)
     expect(screen.queryByText(/vs last month/)).not.toBeInTheDocument()
     expect(screen.queryByText(/projected savings/)).not.toBeInTheDocument()
+  })
+})
+
+describe('upcoming card payment due (ADR-192)', () => {
+  // The row's today-vs-upcoming emphasis compares against the client clock
+  // (todayIsoDate), so pin the system time for deterministic copy.
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 6, 6, 12, 0, 0)) // 2026-07-06, local noon
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  test('emphasizes "today" with the native ARS + USD amounts for a due-today entry', () => {
+    renderInsights({
+      ...FULL,
+      upcomingCardDue: [{ dueDate: '2026-07-06', ars: 12_450, usd: 230 }],
+    })
+
+    // Native amounts side by side (ARS first), never summed or converted.
+    expect(
+      screen.getByText(
+        'Card payment due today — ARS 12.450 / USD 230 — check your balance',
+      ),
+    ).toBeInTheDocument()
+    // The eyebrow label carries the meaning (never color alone, ADR-019).
+    expect(screen.getByText('Card payment')).toBeInTheDocument()
+  })
+
+  test('states the localized date for a future entry', () => {
+    renderInsights({
+      ...FULL,
+      upcomingCardDue: [{ dueDate: '2026-07-09', ars: 0, usd: 230 }],
+    })
+
+    expect(
+      screen.getByText('Card payment of USD 230 due Jul 9, 2026'),
+    ).toBeInTheDocument()
+  })
+
+  test('shows only the ARS part for an ARS-only entry', () => {
+    renderInsights({
+      ...FULL,
+      upcomingCardDue: [{ dueDate: '2026-07-06', ars: 12_450, usd: 0 }],
+    })
+
+    expect(
+      screen.getByText(
+        'Card payment due today — ARS 12.450 — check your balance',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  test('shows only the USD part for a USD-only entry', () => {
+    renderInsights({
+      ...FULL,
+      upcomingCardDue: [{ dueDate: '2026-07-06', ars: 0, usd: 230 }],
+    })
+
+    expect(
+      screen.getByText('Card payment due today — USD 230 — check your balance'),
+    ).toBeInTheDocument()
+  })
+
+  test('renders one row per due date, in the delivered order', () => {
+    renderInsights({
+      ...FULL,
+      upcomingCardDue: [
+        { dueDate: '2026-07-06', ars: 12_450, usd: 0 },
+        { dueDate: '2026-07-09', ars: 0, usd: 230 },
+      ],
+    })
+
+    expect(
+      screen.getByText(
+        'Card payment due today — ARS 12.450 — check your balance',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('Card payment of USD 230 due Jul 9, 2026'),
+    ).toBeInTheDocument()
+  })
+
+  test('renders no card-due row when the fact is null', () => {
+    renderInsights({ ...FULL, upcomingCardDue: null })
+    expect(screen.queryByText('Card payment')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Card payment/)).not.toBeInTheDocument()
   })
 })
 

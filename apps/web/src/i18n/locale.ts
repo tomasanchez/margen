@@ -89,6 +89,25 @@ export function localizedMonth(
 }
 
 /**
+ * Format an ISO `YYYY-MM-DD` calendar date to a readable, locale-aware date in
+ * the ACTIVE UI language (ADR-102), e.g. `"2026-07-09"` → "Jul 9, 2026" (en) /
+ * "9 jul 2026" (es). Reads the active `Intl` locale at call time so it reacts to
+ * a language switch. The ISO string is anchored to local midnight so the day
+ * field never rolls over; a malformed input passes through verbatim so the
+ * helper is a safe no-op on non-conforming values. This is the shared home for
+ * formatting a bare ISO date (previously inlined per call site).
+ */
+export function localizedIsoDate(iso: string): string {
+  const date = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return iso
+  return new Intl.DateTimeFormat(activeIntlLocale(), {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(date)
+}
+
+/**
  * English short month tokens by 0-based index, the canonical form the backend
  * adapters bake into pre-formatted labels (e.g. `TrendPoint.month` = "Jun",
  * `Transaction.dispDate` = "Jun 12"). Used to recover the month index so a
