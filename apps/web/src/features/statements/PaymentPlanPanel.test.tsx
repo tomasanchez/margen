@@ -205,6 +205,14 @@ afterEach(() => {
 
 const noop = () => {}
 
+/** Render the review host for a USD statement and resolve the plan region. */
+async function renderAndFindPlan() {
+  renderWithProviders(
+    <StatementReviewTable parse={usdParse()} onImport={noop} isImporting={false} />,
+  )
+  return screen.findByRole('region', { name: 'Card payment plan' })
+}
+
 describe('PaymentPlanPanel (ADR-188/189)', () => {
   test('shows per-currency need / available + a greedy transfer list and a pending label', async () => {
     // Two USD funding accounts: Galicia 4,000 (main default) + Deel 3,000.
@@ -423,6 +431,193 @@ describe('Schedule transfers (ADR-191)', () => {
       within(region).queryByRole('button', { name: 'Schedule these transfers' }),
     ).toBeNull()
     expect(createTransferMock).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * A two-leg USD funding set: Galicia 4,000 (main default) + Deel 1,200 +
+ * Payoneer 900. Need 6,000 → shortfall 2,000. Greedy (largest balance first):
+ * leg 1 = 1,200 from Deel, leg 2 = 800 from Payoneer. Exactly two legs, no
+ * residual — so the batch has a distinct "first leg" and "second leg" for the
+ * resume-on-retry assertions.
+ */
+function twoLegFunding() {
+  return [
+    nwAccount('gal', 'Galicia', 'bank', 'USD', '4000'),
+    nwAccount('deel', 'Deel', 'wallet', 'USD', '1200'),
+    nwAccount('payo', 'Payoneer', 'wallet', 'USD', '900'),
+  ]
+}
+
+function twoLegAccounts() {
+  return [
+    acctLeaf('gal', 'Galicia', 'bank', 'USD', '4000'),
+    acctLeaf('deel', 'Deel', 'wallet', 'USD', '1200'),
+    acctLeaf('payo', 'Payoneer', 'wallet', 'USD', '900'),
+  ]
+}
+
+describe('Schedule resume-on-retry (money-correctness, ADR-191)', () => {
+  test('a mid-batch failure POSTs only the legs before it, then leaves state error', async () => {
+    accountsListMock.mockResolvedValue(twoLegAccounts())
+    netWorthMock.mockResolvedValue(netWorthWith(twoLegFunding()))
+    // Leg 1 (Deel 1,200) succeeds; leg 2 (Payoneer 800) fails.
+    createTransferMock
+      .mockResolvedValueOnce({
+        transfer: {
+          id: 'tr-1',
+          fromAccountId: 'deel',
+          toAccountId: 'gal',
+          amountOut: '1200.00',
+          amountIn: '1200.00',
+          occurredOn: '2999-12-31',
+        },
+        feeTransactionIds: [],
+      })
+      .mockRejectedValueOnce(new Error('server 500'))
+    const user = userEvent.setup()
+
+    const region = await renderAndFindPlan()
+    await user.click(
+      await within(region).findByRole('button', { name: 'Schedule these transfers' }),
+    )
+
+    // Both legs were attempted (1 success + 1 failure) — no more.
+    await waitFor(() => expect(createTransferMock).toHaveBeenCalledTimes(2))
+    expect(createTransferMock.mock.calls[0][0].fromAccountId).toBe('deel')
+    expect(createTransferMock.mock.calls[0][0].amountOut).toBe('1200.00')
+    expect(createTransferMock.mock.calls[1][0].fromAccountId).toBe('payo')
+    expect(createTransferMock.mock.calls[1][0].amountOut).toBe('800.00')
+
+    // The calm error surfaces; the confirmation does NOT appear.
+    expect(await within(region).findByRole('alert')).toBeInTheDocument()
+    expect(within(region).queryByText('Transfers scheduled')).toBeNull()
+  })
+
+  test('retry after a mid-batch failure fires ONLY the remaining leg (no duplicate of the succeeded one)', async () => {
+    accountsListMock.mockResolvedValue(twoLegAccounts())
+    netWorthMock.mockResolvedValue(netWorthWith(twoLegFunding()))
+    // Attempt 1: leg 1 succeeds, leg 2 fails. Attempt 2: leg 2 succeeds.
+    createTransferMock
+      .mockResolvedValueOnce({
+        transfer: {
+          id: 'tr-1',
+          fromAccountId: 'deel',
+          toAccountId: 'gal',
+          amountOut: '1200.00',
+          amountIn: '1200.00',
+          occurredOn: '2999-12-31',
+        },
+        feeTransactionIds: [],
+      })
+      .mockRejectedValueOnce(new Error('server 500'))
+      .mockResolvedValueOnce({
+        transfer: {
+          id: 'tr-2',
+          fromAccountId: 'payo',
+          toAccountId: 'gal',
+          amountOut: '800.00',
+          amountIn: '800.00',
+          occurredOn: '2999-12-31',
+        },
+        feeTransactionIds: [],
+      })
+    const user = userEvent.setup()
+
+    const region = await renderAndFindPlan()
+    const scheduleButton = await within(region).findByRole('button', {
+      name: 'Schedule these transfers',
+    })
+    await user.click(scheduleButton)
+    // First attempt: two POSTs (success + failure) then error.
+    await waitFor(() => expect(createTransferMock).toHaveBeenCalledTimes(2))
+    await within(region).findByRole('alert')
+
+    // Retry (same plan/signature): resume from the un-sent leg only.
+    await user.click(
+      within(region).getByRole('button', { name: 'Schedule these transfers' }),
+    )
+    // Exactly ONE more POST (the third mock call): the Payoneer 800 leg. The
+    // succeeded Deel 1,200 leg is NOT re-fired — no duplicate, no over-top.
+    await waitFor(() => expect(createTransferMock).toHaveBeenCalledTimes(3))
+    expect(createTransferMock.mock.calls[2][0].fromAccountId).toBe('payo')
+    expect(createTransferMock.mock.calls[2][0].amountOut).toBe('800.00')
+    // No third call re-POSTed Deel.
+    const deelCalls = createTransferMock.mock.calls.filter(
+      (call) => call[0].fromAccountId === 'deel',
+    )
+    expect(deelCalls).toHaveLength(1)
+
+    // The batch is now complete → the calm confirmation replaces the button.
+    expect(await within(region).findByText('Transfers scheduled')).toBeInTheDocument()
+  })
+
+  test('changing the plan between attempts resets the cursor and re-fires from the start', async () => {
+    accountsListMock.mockResolvedValue(twoLegAccounts())
+    netWorthMock.mockResolvedValue(netWorthWith(twoLegFunding()))
+    // Attempt 1: leg 1 (Deel) succeeds, leg 2 (Payoneer) fails.
+    createTransferMock
+      .mockResolvedValueOnce({
+        transfer: {
+          id: 'tr-1',
+          fromAccountId: 'deel',
+          toAccountId: 'gal',
+          amountOut: '1200.00',
+          amountIn: '1200.00',
+          occurredOn: '2999-12-31',
+        },
+        feeTransactionIds: [],
+      })
+      .mockRejectedValueOnce(new Error('server 500'))
+      // Attempt 2 (new plan): all subsequent legs succeed.
+      .mockResolvedValue({
+        transfer: {
+          id: 'tr-x',
+          fromAccountId: 'deel',
+          toAccountId: 'gal',
+          amountOut: '3000.00',
+          amountIn: '3000.00',
+          occurredOn: '2999-12-31',
+        },
+        feeTransactionIds: [],
+      })
+    const user = userEvent.setup()
+
+    const region = await renderAndFindPlan()
+    await user.click(
+      await within(region).findByRole('button', { name: 'Schedule these transfers' }),
+    )
+    await waitFor(() => expect(createTransferMock).toHaveBeenCalledTimes(2))
+    await within(region).findByRole('alert')
+
+    // Change the plan: switch the main pay-from account to Deel (1,200). Now the
+    // shortfall is need 6,000 − Deel 1,200 = 4,800, pulled from Galicia (4,000)
+    // + Payoneer (800) → a genuinely new batch (new signature) → cursor resets.
+    await user.click(within(region).getByRole('combobox', { name: /USD pay from/ }))
+    await user.click(await screen.findByRole('option', { name: /Deel · USD 1\.200/ }))
+    await waitFor(() =>
+      expect(
+        within(region).getByText('Move USD 4.000 from Galicia → Deel'),
+      ).toBeInTheDocument(),
+    )
+
+    const callsBeforeRetry = createTransferMock.mock.calls.length
+    // Fire the new plan: it must start from leg 1 (Galicia 4,000), NOT skip ahead.
+    await user.click(
+      await within(region).findByRole('button', { name: 'Schedule these transfers' }),
+    )
+    await waitFor(() =>
+      expect(createTransferMock.mock.calls.length).toBe(callsBeforeRetry + 2),
+    )
+    // The first POST of the new batch is the new leg 1 from Galicia (4,000),
+    // proving the cursor reset (a stale cursor of 1 would have skipped it).
+    const newBatch = createTransferMock.mock.calls.slice(callsBeforeRetry)
+    expect(newBatch[0][0].fromAccountId).toBe('gal')
+    expect(newBatch[0][0].amountOut).toBe('4000.00')
+    expect(newBatch[1][0].fromAccountId).toBe('payo')
+    expect(newBatch[1][0].amountOut).toBe('800.00')
+
+    expect(await within(region).findByText('Transfers scheduled')).toBeInTheDocument()
   })
 })
 

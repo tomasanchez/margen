@@ -254,9 +254,9 @@ function CurrencyPlanBlock({
 /**
  * The one-click scheduling lifecycle (ADR-191). `idle` before the user acts,
  * `scheduling` while the legs are being POSTed, `done` after every leg landed,
- * `error` when a leg failed (the user can retry — the mutation is idempotent
- * enough that a re-run just creates the remaining/duplicate legs; we surface the
- * calm error rather than silently half-applying).
+ * `error` when a leg failed. On retry from `error` the host resumes from the
+ * first un-sent leg (tracked against the plan signature) so the already-created
+ * legs are never re-POSTed — a retry completes the batch without duplicating.
  */
 export type ScheduleState = 'idle' | 'scheduling' | 'done' | 'error'
 
