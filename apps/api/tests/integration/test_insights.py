@@ -323,9 +323,16 @@ def _card_charge(
     *,
     currency: Currency = Currency.ARS,
     usd: str | None = None,
+    recurring_cadence: str | None = None,
     user_id: str = OWNER,
 ):
-    """Build an EXPENSE charge posted to a (card) account, dated on its due date (ADR-089)."""
+    """Build an EXPENSE charge posted to a (card) account, dated on its due date (ADR-089).
+
+    ``recurring_cadence`` marks the charge's cadence: ``None`` for a one-off, or
+    ``'installment'`` for a cuota. A due cuota is real cash about to auto-debit, so the
+    card-due alert INCLUDES it — unlike the ccBalance liability, which excludes the
+    instalment tail (ADR-192).
+    """
     return build_transaction(
         transaction_id=uuid4(),
         occurred_on=occurred_on,
@@ -336,6 +343,7 @@ def _card_charge(
         usd_amount=Decimal(usd) if usd is not None else None,
         category="Shopping",
         account_id=account_id,
+        recurring_cadence=recurring_cadence,
         user_id=user_id,
         created_at=_MOMENT,
         updated_at=_MOMENT,
@@ -390,6 +398,41 @@ class TestUpcomingCardDueAggregation:
         assert today_due.usd == Decimal("0")
         assert soon_due.ars == Decimal("80000.00")
         assert soon_due.usd == Decimal("150.00")
+
+    async def test_installment_cuota_is_included_in_the_due_total(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a CARD-account one-off charge and an INSTALLMENT-cadence cuota, both EXPENSE
+              rows on the same currency and due date inside the window
+        WHEN the June insights are read with a reference of the 12th
+        THEN the upcoming-card-due total for that (date, currency) INCLUDES the cuota
+             (one-off + cuota) — a due instalment IS real cash about to auto-debit, so the
+             alert never excludes the instalment cadence, UNLIKE the ccBalance liability
+             (ADR-089, ADR-192)
+        """
+        # GIVEN — one CARD account; a one-off charge and an instalment cuota both due today.
+        card_account = await _seed_account(session_factory, owner=OWNER, institution_type=InstitutionType.CARD)
+        await _seed(
+            session_factory,
+            [
+                _card_charge(_REF, "50000.00", card_account),  # one-off due today
+                # A cuota due the same day: excluded from ccBalance, INCLUDED here (ADR-192).
+                _card_charge(_REF, "30000.00", card_account, recurring_cadence="installment"),
+            ],
+        )
+
+        # WHEN — reference (today) is the 12th.
+        async with session_factory() as session:
+            reader = SqlAlchemyInsightsReader(session)
+            insights = await reader.monthly_insights(date(2026, 6, 1), _REF, OWNER)
+
+        # THEN — a single due for the 12th folding BOTH rows: 50000 one-off + 30000 cuota.
+        assert insights.upcoming_card_due is not None
+        assert [due.due_date for due in insights.upcoming_card_due] == [_REF]
+        (today_due,) = insights.upcoming_card_due
+        assert today_due.ars == Decimal("80000.00")
+        assert today_due.usd == Decimal("0")
 
     async def test_no_upcoming_dues_yields_none(self, session_factory: async_sessionmaker[AsyncSession]):
         """

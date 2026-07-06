@@ -820,6 +820,30 @@ class TestUpcomingCardDue:
         assert "institution" in compiled
         assert "user_id" in compiled
 
+    async def test_query_carries_no_installment_exclusion(self):
+        """
+        GIVEN the compiled card-due query
+        WHEN its predicate set is inspected
+        THEN it carries NO instalment-cadence filter — no ``is_distinct_from`` and no
+             ``'installment'`` literal — so a due cuota is counted, keeping the alert
+             INCLUSIVE of instalments UNLIKE the ccBalance liability (ADR-192). Re-adding
+             the exclusion (understating the alert) fails this lock.
+        """
+        # GIVEN — a query that returns no rows; only the SQL text matters here.
+        session = AsyncMock()
+        session.execute.return_value = _result([])
+        reader = SqlAlchemyInsightsReader(session)
+
+        # WHEN — a fixed today keeps the compiled bounds deterministic.
+        await reader._upcoming_card_due(UUID(A_USER), _TODAY)
+
+        # THEN — the compiled predicate excludes no instalment cadence (ADR-192).
+        (statement,) = session.execute.await_args.args
+        compiled = str(statement.compile(compile_kwargs={"literal_binds": True})).lower()
+        assert "is_distinct_from" not in compiled
+        assert "installment" not in compiled
+        assert "recurring_cadence" not in compiled
+
     async def test_charge_due_today_is_included(self):
         """
         GIVEN a card charge dated exactly today
