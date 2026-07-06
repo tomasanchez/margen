@@ -98,12 +98,17 @@ export function RegisterCardForm({
   )
 
   const nameValid = name.trim().length > 0
+  // last4 is optional (older/identity-less cards), but when present it must be
+  // exactly 4 digits — the backend rejects 1–3 digits with a 422 (ADR-190). Gate
+  // it client-side so we never POST a value the server will reject.
+  const trimmedLast4 = last4.trim()
+  const last4Valid = trimmedLast4 === '' || /^\d{4}$/.test(trimmedLast4)
   // Blank balances default to 0 (a card typically starts at 0); a typed balance
   // must parse to a finite number to confirm (ADR-025/034).
   const balancesValid = queued.every(
     (a) => a.balanceText.trim() === '' || Number.isFinite(parseBalance(a.balanceText)),
   )
-  const canConfirm = nameValid && balancesValid && !isSaving
+  const canConfirm = nameValid && last4Valid && balancesValid && !isSaving
 
   const setBalance = (currency: Currency, balanceText: string) => {
     setQueued((prev) =>
@@ -114,7 +119,6 @@ export function RegisterCardForm({
   const handleConfirm = () => {
     if (!canConfirm) return
     const trimmedBrand = brand.trim()
-    const trimmedLast4 = last4.trim()
     onSubmit({
       institution: {
         name: name.trim(),
@@ -187,6 +191,8 @@ export function RegisterCardForm({
             }
             size="small"
             disabled={isSaving}
+            error={!last4Valid}
+            helperText={!last4Valid ? t('review.registerCard.last4.error') : undefined}
             slotProps={{
               htmlInput: { inputMode: 'numeric', maxLength: 4, style: { width: 72 } },
             }}

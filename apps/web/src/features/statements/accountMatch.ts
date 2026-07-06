@@ -13,8 +13,11 @@
  * the card {@link Institution}, so the PRIMARY match is now by **(brand + last4)**:
  * the card institution whose brand + last4 equal the parse's `network` +
  * `cardLast4`. This is precise — it distinguishes two cards from the same issuer.
- * When the parse or the institution lacks brand/last4 (older institutions), it
- * FALLS BACK to name-only matching by `bankName` ↔ `institutionName` (ADR-184).
+ * When the parse LACKS a usable identity (no brand OR no last4 — older/identity-
+ * less statements), it FALLS BACK to name-only matching by `bankName` ↔
+ * `institutionName` (ADR-184). When the parse HAS a full brand + last4 that
+ * matched no registered card, it returns NO match rather than misattribute a
+ * same-issuer card by name.
  *
  * Once a card institution is resolved, its per-currency card accounts are indexed
  * by currency. When the parse carries no identity, or the user has no card
@@ -74,7 +77,14 @@ function normalizeBrand(value: string | null | undefined): string {
  * the parse and a candidate carry a brand + last4.
  *
  * FALLBACK: match by name — the FIRST card institution whose `name` equals the
- * parse's `bankName` (ADR-184; used for older institutions without brand/last4).
+ * parse's `bankName` (ADR-184; used for older/identity-less statements without a
+ * usable brand + last4). The name-only fallback is attempted ONLY when the parse
+ * LACKS a usable identity (brand empty OR last4 empty). When the parse carries a
+ * full precise identity (brand AND last4) that matched no registered card, we
+ * return NO match rather than guess a same-issuer card by name — a confident-but-
+ * wrong attribution (e.g. a Galicia VISA ···5771 statement seeding a Galicia VISA
+ * ···1234 or an older null-identity Galicia card) is worse than leaving it
+ * unmatched for the user to resolve.
  *
  * Returns the institution id, or `null` when nothing matches. Deterministic:
  * first-in-list wins on a (shouldn't-happen) tie.
@@ -85,8 +95,9 @@ function resolveCardInstitutionId(
 ): string | null {
   const parseBrand = normalizeBrand(parse.network)
   const parseLast4 = normalizeLast4(parse.cardLast4)
+  const hasPreciseIdentity = parseBrand !== '' && parseLast4 !== ''
   // Primary: precise (brand + last4) match when the parse carries both.
-  if (parseBrand !== '' && parseLast4 !== '') {
+  if (hasPreciseIdentity) {
     for (const inst of institutions) {
       if (inst.type !== 'card') continue
       if (
@@ -96,8 +107,10 @@ function resolveCardInstitutionId(
         return inst.id
       }
     }
+    // The parse had a full identity but nothing matched: refuse to guess by name.
+    return null
   }
-  // Fallback: name-only match (ADR-184) for institutions without brand/last4.
+  // Fallback: name-only match (ADR-184), only for identity-less statements.
   const parseName = normalizeName(parse.bankName)
   if (parseName === '') return null
   for (const inst of institutions) {

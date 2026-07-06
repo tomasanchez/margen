@@ -310,4 +310,67 @@ describe('Register this card (ADR-190)', () => {
       expect.objectContaining({ institutionId: 'new-inst', currency: 'USD' }),
     )
   })
+
+  test('blocks confirm and does not POST when last4 has fewer than 4 digits', async () => {
+    accountsListMock.mockResolvedValue([])
+    institutionsListMock.mockResolvedValue([])
+    netWorthMock.mockResolvedValue(netWorthWith([]))
+    const user = userEvent.setup()
+
+    renderWithProviders(
+      <StatementReviewTable parse={usdParse()} onImport={noop} isImporting={false} />,
+    )
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Register this card' }),
+    )
+    const dialog = await screen.findByRole('dialog', { name: 'Register this card' })
+
+    // Reduce the prefilled 5771 to a 2-digit value → invalid.
+    const last4 = within(dialog).getByLabelText('Last 4 digits')
+    await user.clear(last4)
+    await user.type(last4, '57')
+
+    // The field shows a calm inline error and the confirm is disabled.
+    expect(
+      within(dialog).getByText('Enter the 4 digits, or leave this blank.'),
+    ).toBeInTheDocument()
+    const confirm = within(dialog).getByRole('button', { name: 'Register card' })
+    // The disabled confirm cannot be activated → nothing is posted (the server
+    // 422 stays the backstop, but we never reach it with a client-invalid last4).
+    expect(confirm).toBeDisabled()
+    expect(createInstitutionMock).not.toHaveBeenCalled()
+    expect(createAccountMock).not.toHaveBeenCalled()
+  })
+
+  test('confirms when last4 is corrected back to 4 digits', async () => {
+    accountsListMock.mockResolvedValue([])
+    institutionsListMock.mockResolvedValue([])
+    netWorthMock.mockResolvedValue(netWorthWith([]))
+    const user = userEvent.setup()
+
+    renderWithProviders(
+      <StatementReviewTable parse={usdParse()} onImport={noop} isImporting={false} />,
+    )
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Register this card' }),
+    )
+    const dialog = await screen.findByRole('dialog', { name: 'Register this card' })
+
+    const last4 = within(dialog).getByLabelText('Last 4 digits')
+    await user.clear(last4)
+    await user.type(last4, '57')
+    await user.type(last4, '71')
+
+    // No error once it is 4 digits again; the confirm posts the identity.
+    expect(
+      within(dialog).queryByText('Enter the 4 digits, or leave this blank.'),
+    ).not.toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Register card' }))
+    await waitFor(() => expect(createInstitutionMock).toHaveBeenCalledTimes(1))
+    expect(createInstitutionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ last4: '5771' }),
+    )
+  })
 })

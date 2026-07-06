@@ -198,4 +198,39 @@ describe('matchCardAccounts — brand + last4 identity (ADR-190)', () => {
     )
     expect(matches.has('ARS')).toBe(false)
   })
+
+  test('does NOT fall back to a same-name card when a precise identity was present but unmatched', () => {
+    // The statement is Galicia VISA ···5771. The user holds a Galicia VISA ···1234
+    // and an older null-identity Galicia card — both share the "Galicia" name. The
+    // precise (brand + last4) match finds nothing; the name-only fallback MUST NOT
+    // fire (it would seed a confident-but-wrong same-issuer card). Left unmatched.
+    const preciseCard = cardInstitution({
+      id: 'inst-precise',
+      name: 'Galicia',
+      brand: 'VISA',
+      last4: '1234',
+    })
+    const legacyCard = cardInstitution({
+      id: 'inst-legacy',
+      name: 'Galicia',
+      brand: null,
+      last4: null,
+    })
+    const acctPrecise = account({
+      id: 'acc-precise',
+      institutionId: 'inst-precise',
+      currency: 'ARS',
+    })
+    const acctLegacy = account({
+      id: 'acc-legacy',
+      institutionId: 'inst-legacy',
+      currency: 'ARS',
+    })
+    const matches = matchCardAccounts(
+      parseWithIdentity('VISA', '5771', 'Galicia'),
+      [acctPrecise, acctLegacy],
+      [preciseCard, legacyCard],
+    )
+    expect(matches.has('ARS')).toBe(false)
+  })
 })

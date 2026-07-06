@@ -51,7 +51,8 @@
         "label": "Brand / network"
       },
       "last4": {
-        "label": "Last 4 digits"
+        "label": "Last 4 digits",
+        "error": "Enter the 4 digits, or leave this blank."
       },
       "accountsHeading": "Accounts to create",
       "accountsSubheading": "One per currency in this statement. Edit the opening balance if you know it.",

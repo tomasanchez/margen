@@ -51,7 +51,8 @@
         "label": "Marca / red"
       },
       "last4": {
-        "label": "Últimos 4 dígitos"
+        "label": "Últimos 4 dígitos",
+        "error": "Ingresá los 4 dígitos, o dejalo en blanco."
       },
       "accountsHeading": "Cuentas a crear",
       "accountsSubheading": "Una por cada moneda de este resumen. Editá el saldo inicial si lo sabés.",

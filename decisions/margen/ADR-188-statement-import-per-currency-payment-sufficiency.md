@@ -56,6 +56,10 @@ This uses the native per-currency amounts — NOT the pesos-only `total_amount` 
 - Deferred to later slices with their own ADRs: one-click **execution** of suggested transfers as future-dated transfers (reusing ADR-135 + the date convention, ADR-089/186), and a **Home "card payment due" alert** (due-today + N-day heads-up as a calm Insights fact).
 - Relates to ADR-089 (due-date posting — defines when charges are due), ADR-133 (per-currency client-side native units — governs the computation model), ADR-135 (transfers — referenced for deferred execution slice), ADR-184 (account attachment — identifies which accounts are card accounts and which are funding sources), ADR-185 (cc-balance derivation — complementary view of the same obligation), ADR-186 (as-of-today native balances — the AVAILABLE input), ADR-189 (greedy transfer suggestion — triggered when a shortfall is detected here).
 
+## Note (refinement by ADR-189)
+
+The displayed "Sufficient" verdict is refined by ADR-189 to be **main-account-based** (`main balance ≥ need`), not pool-based (`AVAILABLE ≥ need`). When the main/pay-from account alone is short but the same-currency pool covers it, the panel shows a shortfall **plus** the greedy transfers that zero it (residual 0) — the intended "you have the money, just move it to the pay-from account" UX. AVAILABLE is still shown as the per-currency pool total.
+
 ## Status History
 
 - 2026-07-06: accepted
