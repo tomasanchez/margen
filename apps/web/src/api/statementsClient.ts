@@ -184,6 +184,13 @@ export interface StatementLine {
   usdAmount?: number
   fxRate?: number
   fxRateType?: FxRateType
+  /**
+   * The FX snapshot provenance (ADR-148), the persisted preferred rate SOURCE
+   * ('oficial'/'bolsa'), stamped at review when a USD-only line is materialized
+   * (alongside `fxRate`/`fxRateType`). Carried to import so the row's snapshot is
+   * complete; absent for lines with no materialized FX.
+   */
+  fxSource?: string
   category?: string
   /** Installment label (e.g. "3/12"), shown read-only; carried to import. */
   cuota?: string
@@ -254,6 +261,15 @@ export interface StatementLineRequest {
   usdAmount?: string
   fxRate?: string
   fxRateType?: FxRateType
+  /**
+   * The FX snapshot's provenance (ADR-148), the persisted preferred rate SOURCE
+   * (e.g. `'mep'`/`'bolsa'`/`'oficial'`) — NOT hardcoded `'manual'`. Sent alongside
+   * `fxRate`/`fxRateType` for a materialized USD line so the imported row carries a
+   * COMPLETE snapshot; the backend re-materializes `usd_amount = round(amount ÷
+   * fx_rate)` only when `fx_source` is set, so omitting it would leave `fx_source`
+   * NULL (unauditable) and skip that authoritative re-derivation.
+   */
+  fxSource?: string
   category?: string
   /** The normalized issuing bank stored as the transaction's `bank` (e.g. "Galicia" — ADR-117). */
   bank?: string

@@ -4,7 +4,7 @@ adr: 190
 title: Register a card from the parsed statement persisting brand and last-4 on the institution
 category: data
 date: 2026-07-06
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -66,3 +66,4 @@ Persisting name-only was evaluated as a simpler first step. Rejected because: (a
 ## Status History
 
 - 2026-07-06: accepted
+- 2026-07-07: superseded by ADR-197 (institution-name match promoted to primary resolution step; strict brand+last4-primary rule revoked)

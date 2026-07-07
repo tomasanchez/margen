@@ -657,47 +657,94 @@ class _SantanderBaseParser(StatementParser, ABC):
     """Shared parsing logic for all Santander Río credit-card statement variants.
 
     Both AMEX and VISA statements from Santander Río use the same fixed-width
-    columnar text layout: a ``DD MonthName`` purchase date, a two-part comprobante,
-    a ``*`` or ``K`` marker, a free-text description, an optional cuota tag, and
-    trailing ARS (and optionally USD) amounts. The ``___`` separator marks the start
-    of real purchases; ``Tarjeta NNNN Total Consumos`` ends them. Fee rows (e.g.
-    IMPUESTO DE SELLOS) appear after that marker with a ``DD MonthName DD`` date
-    prefix and a ``$`` separator.
+    columnar text layout that PyMuPDF's ``get_text()`` reconstructs as flat rows
+    (unlike Galicia's vertical token stream): a ``DD MonthName`` purchase date, a
+    two-part comprobante, an OPTIONAL ``*``/``K`` marker (international rows omit
+    it), a free-text description, an optional cuota tag, and trailing amounts in a
+    ``$`` (pesos) and a ``U$S`` (dollars) column. The ``___`` separator opens the
+    purchases; ``Tarjeta NNNN Total Consumos`` closes them. Fee rows (IMPUESTO DE
+    SELLOS, the RG 5617 dollar-consumption perception, …) follow that marker.
 
-    Concrete subclasses supply :meth:`fingerprint`, :meth:`_network`, and
-    :meth:`_payment_prefix` only; all parsing logic lives here (ADR-076).
+    Column model (ADR-076, this fix). On the REAL statement PyMuPDF emits a flat text
+    stream that PRESERVES the fixed-width layout with space padding: money is
+    right-aligned to stable CHARACTER END columns — the peso column ends at one
+    position, the ``U$S`` column at a larger one — regardless of magnitude. Pages are
+    joined by ``\n`` so each purchase stays its own line (a word/coordinate approach
+    fails here because ``get_text("words")`` repeats y per page and merges rows). The
+    parser DETECTS the peso/USD end columns from an anchor line that carries BOTH
+    amounts (``Tarjeta NNNN Total Consumos``, else ``SALDO ANTERIOR``) and classifies
+    each money token by the proximity of its END position to those columns. A token
+    near NEITHER column is a description decoy (or a financing/disclosure number) and
+    is dropped and stripped from the name; an empty peso column with a ``U$S`` amount
+    is a USD-only line (``amount=0``, ``usd_amount`` set). When no both-column anchor
+    exists (minimal AMEX unit fixtures), it falls back to the legacy positional rule
+    (first money = pesos, second = USD). The ``*``/``K`` marker is optional — the
+    comprobante pair anchors a row.
+
+    Concrete subclasses supply :meth:`fingerprint` and :meth:`_network` only; all
+    parsing logic lives here (ADR-076).
     """
 
-    # Argentine money: thousands dots + decimal comma, optional leading sign.
-    _MONEY_RE = re.compile(r"-?\d{1,3}(?:\.\d{3})*,\d{2}")
-    # Purchase row: optional "DD MonthName" purchase date, 1-2-digit + 4-6-digit
-    # comprobante pair, * or K marker, description (non-greedy), optional cuota,
-    # ARS amount (trailing "-" = negative), optional USD amount.
-    _TX_LINE = re.compile(
-        r"^"
+    # Tolerance (in characters) for matching a money token's END position to a column.
+    _COLUMN_TOLERANCE = 5
+
+    # Argentine money: thousands groups (dot separator optional — some Santander
+    # cells print no separator, e.g. "297800,00" or "8500,00") + decimal comma,
+    # optional leading sign. The optional dot keeps a separator-less integer part
+    # whole instead of matching only its trailing three digits.
+    _MONEY_RE = re.compile(r"-?\d{1,3}(?:\.?\d{3})*,\d{2}")
+    # A purchase row opener: optional "DD MonthName" date, then the "N NNNNNN"
+    # comprobante pair, then an OPTIONAL "*"/"K" marker (international rows omit it),
+    # then the description. The marker is intentionally optional (bug fix) — the
+    # comprobante pair is the reliable structural anchor.
+    _TX_HEAD_RE = re.compile(
+        r"^\s*"  # leading padding (continuation rows are indented)
         r"(?:(\d{2})\s+([A-Za-z]{3,})\s+)?"  # optional purchase date: day monthname
-        r"\s*\d{1,2}\s+\d{4,6}\s+[*K]\s+"  # comprobante pair + * or K marker
-        r"(.+?)"  # raw description (non-greedy)
-        r"(?:\s+C\.(\d{2}/\d{2}))?"  # optional cuota "C.03/06"
-        r"\s+(\d{1,3}(?:\.\d{3})*,\d{2})-?"  # ARS amount
-        r"(?:\s+(\d{1,3}(?:\.\d{3})*,\d{2}))?"  # optional USD amount
-        r"\s*$",
+        r"\d{1,2}\s+\d{4,6}\s+"  # comprobante pair
+        r"(?:[*K]\s+)?"  # OPTIONAL "*"/"K" consumption marker
+        r"(\S.*?)\s*$",  # raw description (kept whole; amounts stripped by column)
+        re.IGNORECASE,
     )
-    # Fee row: "DD MonthName   DD   FEE NAME   $   amount". The required date prefix
-    # prevents false matches from the financial-disclosure text on later pages.
-    _FEE_LINE = re.compile(
-        r"^\s*\d{2}\s+[A-Za-z]{3,}\s+\d{2}\s+"  # date prefix: DD MonthName DD
-        r"([^$\d]+?)"  # fee name (no $ or digits)
-        r"\$\s+"  # dollar-sign separator
-        r"(\d{1,3}(?:\.\d{3})*,\d{2})\s*$",  # ARS amount
+    # A cuota tag embedded in the description, e.g. "C.02/06".
+    _CUOTA_RE = re.compile(r"\bC\.(\d{2}/\d{2})\b")
+    # Fee-vocabulary keywords that open a real fee/charge/tax label (ADR-079). A fee
+    # row's label MUST start with one of these — this admits the RG 5617 perception
+    # ("DB.RG …"), the SELLOS taxes and their day-only continuation, while rejecting
+    # the post-total financing block ("N cuotas de …", "Plan V …") whose rows also
+    # start with a digit but are NOT charges.
+    _FEE_KEYWORD = r"(?:IMPUESTO|IVA|PERCEP|RG\s+\d|DB\.|SELLOS|COM\s|INT\s|SEGURO)"
+    # A fee row opener: a leading 1-2 digit day, optionally "DD MonthName DD" — the
+    # continuation rows print the day alone — then a label that MUST start with a fee
+    # keyword. The peso-column amount (found in :meth:`_build_fee`) is the charge.
+    _FEE_HEAD_RE = re.compile(
+        r"^\s*\d{1,2}\s+"  # leading day
+        r"(?:[A-Za-z]{3,}\s+\d{1,2}\s+)?"  # optional "MonthName DD"
+        rf"({_FEE_KEYWORD}.*\S)\s*$",  # label starting with a fee keyword
+        re.IGNORECASE,
     )
+    # A carryover-balance line that also carries BOTH a peso and a USD amount; used as
+    # a fallback anchor to detect the column END positions when the total line lacks
+    # its own dual amounts.
+    _SALDO_ANTERIOR_RE = re.compile(r"SALDO\s+ANTERIOR", re.IGNORECASE)
+    # Disclosure / financing headers that close the fee section (a lower bound so the
+    # post-total block is not read to EOF and captured as phantom fees).
+    _FEE_SECTION_END_RE = re.compile(
+        r"(PLAN\s+V|CUOTAS\s+A\s+VENCER|\bCFT\b|\bTNA\b|\bTEA\b)",
+        re.IGNORECASE,
+    )
+    # A trailing parenthetical such as "( 297800,00 )" carried by the RG 5617 label.
+    _PARENS_RE = re.compile(r"\([^)]*\)")
     # Header metadata regexes.
     _CIERRE_RE = re.compile(r"CIERRE\s+(\d+)\s+([A-Za-z]{3})\s+(\d{2})", re.IGNORECASE)
     _VENC_RE = re.compile(r"VENCIMIENTO\s+(\d+)\s+([A-Za-z]{3})\s+(\d{2})", re.IGNORECASE)
     # Section boundary markers.
     _SEP_RE = re.compile(r"_{20,}")  # long underscore separator before real transactions.
     _TOTAL_MARKER = re.compile(r"Tarjeta\s+\d{4}\s+Total\s+Consumos", re.IGNORECASE)
-    # Rows that must never become transactions.
+    # Rows that must never become transactions (payments and carryover / running
+    # balances). EXACT phrases only — a bare "SALDO"/"TOTAL" substring would wrongly
+    # drop real merchants ("ESTACION TOTAL", "MERPAGO*SALDO"). Statement totals are
+    # already handled structurally (the ``Total Consumos`` marker breaks the purchase
+    # loop). Applied to BOTH the purchase and the fee path.
     _SKIP_MARKERS = ("SU PAGO", "SALDO ANTERIOR", "SALDO ACTUAL")
 
     @property
@@ -706,43 +753,60 @@ class _SantanderBaseParser(StatementParser, ABC):
         """Network brand returned in ParsedStatement (e.g. 'VISA', 'AMEX')."""
 
     def parse(self, text: str) -> ParsedStatement:
-        """Extract statement metadata and line drafts (ADR-079)."""
-        statement_number = self._extract_statement_no(text)
-        card_last4 = self._extract_card_last4(text)
+        """Extract statement metadata and line drafts from the flat text (ADR-076).
+
+        The flat ``get_text()`` stream preserves the fixed-width column layout; the
+        parser detects the peso/USD end columns from a dual-amount anchor line and
+        classifies each row's money tokens by their END position.
+        """
         period_close = self._extract_period_date(self._CIERRE_RE, text)
         period_due = self._extract_period_date(self._VENC_RE, text)
-        total_amount = self._extract_total(text)
+        period_year = period_close.year if period_close is not None else 2000
+        lines_text = text.splitlines()
+        columns = self._column_ends(lines_text)
+        total_amount = self._extract_total(lines_text, columns)
+        purchases = self._parse_purchases(lines_text, period_year, period_due, columns)
+        # Fees date on the pay/due date (ADR-089); when the statement carries no
+        # parseable VENCIMIENTO, fall back to the closing date rather than dropping
+        # every tax silently.
+        fee_date = period_due if period_due is not None else period_close
+        fees = self._parse_fees(lines_text, fee_date, columns)
+        return self._result(text, period_close, period_due, total_amount, purchases + fees)
+
+    def _result(
+        self,
+        text: str,
+        period_close: date | None,
+        period_due: date | None,
+        total_amount: Decimal | None,
+        lines: list[StatementLineDraft],
+    ) -> ParsedStatement:
+        """Assemble the :class:`ParsedStatement` shared by both parse paths."""
+        statement_number = self._extract_statement_no(text)
+        card_last4 = self._extract_card_last4(text)
         # The bank ("Santander") is reported separately as ``bank_name``; the card
         # carries only the network and last-4, never the bank (ADR-117).
         suffix = f" {_MIDDOT}{card_last4}" if card_last4 else ""
-        card = f"{self._network}{suffix}"
-
-        period_year = period_close.year if period_close is not None else 2000
-        lines_text = text.splitlines()
-        purchases = self._parse_purchases(lines_text, period_year, period_due)
-        fees = self._parse_fees(lines_text, period_due)
-
         natural_key = StatementNaturalKey(
             issuer_cuit=_SANTANDER_CUIT,
             card_last4=card_last4,
             statement_number=statement_number,
         )
-        all_lines = purchases + fees
-        status = ParseStatus.OK if all_lines else ParseStatus.UNPARSEABLE
+        status = ParseStatus.OK if lines else ParseStatus.UNPARSEABLE
         return ParsedStatement(
             status=status,
             extracted_text=text,
             bank_name="Santander",
             network=self._network,
             card_last4=card_last4,
-            card=card,
+            card=f"{self._network}{suffix}",
             statement_number=statement_number,
             issuer_cuit=_SANTANDER_CUIT,
             period_close=period_close,
             period_due=period_due,
             total_amount=total_amount,
             natural_key=natural_key,
-            lines=all_lines,
+            lines=lines,
         )
 
     @staticmethod
@@ -772,20 +836,85 @@ class _SantanderBaseParser(StatementParser, ABC):
         except ValueError:
             return None
 
-    @staticmethod
-    def _extract_total(text: str) -> Decimal | None:
-        m = re.search(
-            r"Tarjeta\s+\d{4}\s+Total\s+Consumos[^\n]*?(\d{1,3}(?:\.\d{3})*,\d{2})",
-            text,
-            re.IGNORECASE,
-        )
-        return _parse_ar_decimal(m.group(1)) if m else None
+    def _extract_total(self, lines: list[str], columns: tuple[int, int] | None) -> Decimal | None:
+        """Read the pesos ``Tarjeta NNNN Total Consumos`` figure (peso-column amount).
 
-    def _parse_purchases(  # noqa: C901
+        With detected columns the peso-column token is taken (its USD-column sibling
+        is ignored); header-less, the first money token is used. Tolerates the
+        missing-leading-dot format (``9064.321,50`` → 9064321.50).
+        """
+        for line in lines:
+            if self._TOTAL_MARKER.search(line) is None:
+                continue
+            if columns is not None:
+                pesos, _ = self._classify_amounts(line, columns)
+                return pesos
+            money = list(self._MONEY_RE.finditer(line))
+            return _parse_ar_decimal(money[0].group()) if money else None
+        return None
+
+    def _column_ends(self, lines: list[str]) -> tuple[int, int] | None:
+        """Detect the peso/USD END char columns from a dual-amount anchor line.
+
+        The statement is fixed-width and PyMuPDF preserves it with space padding, so
+        money right-aligns to stable END positions. An anchor line that carries BOTH
+        a peso and a USD amount (the ``Tarjeta … Total Consumos`` line, else the
+        ``SALDO ANTERIOR`` carryover) pins them: its TWO RIGHTMOST money tokens are
+        the peso (smaller end) and USD (larger end) columns. Taking the two rightmost
+        (not the leftmost-of-all) means a stray money-shaped number in the anchor's
+        description text does not corrupt the peso column. Returns ``(peso_end,
+        usd_end)``, or ``None`` when no dual-amount anchor exists (the minimal AMEX
+        unit fixtures) so the caller uses the positional fallback.
+        """
+        for matcher in (self._TOTAL_MARKER, self._SALDO_ANTERIOR_RE):
+            for line in lines:
+                if matcher.search(line) is None:
+                    continue
+                ends = sorted(m.end() for m in self._MONEY_RE.finditer(line))
+                if len(ends) >= 2:
+                    return ends[-2], ends[-1]
+        return None
+
+    def _classify_amounts(
+        self,
+        line: str,
+        columns: tuple[int, int] | None,
+    ) -> tuple[Decimal | None, Decimal | None]:
+        """Split a line's money tokens into ``(pesos, usd)`` by their END column.
+
+        With detected columns each money token is assigned to the peso or USD column
+        when its END position is within :data:`_COLUMN_TOLERANCE` characters of that
+        column; a token near NEITHER column is a description decoy (or a
+        financing/disclosure number) and is dropped — so an international row billed
+        only in dollars yields no fabricated peso amount, and a decoy never becomes a
+        charge. Without detected columns, falls back to positional order — first money
+        token is pesos, an optional second is USD (the minimal AMEX layout).
+        """
+        tokens = list(self._MONEY_RE.finditer(line))
+        if not tokens:
+            return None, None
+        if columns is None:
+            pesos = _parse_ar_decimal(tokens[0].group())
+            usd = _parse_ar_decimal(tokens[1].group()) if len(tokens) >= 2 else None
+            return pesos, usd
+
+        peso_end, usd_end = columns
+        pesos = usd = None
+        for token in tokens:
+            end = token.end()
+            if abs(end - peso_end) <= self._COLUMN_TOLERANCE:
+                pesos = _parse_ar_decimal(token.group())
+            elif abs(end - usd_end) <= self._COLUMN_TOLERANCE:
+                usd = _parse_ar_decimal(token.group())
+            # else: a decoy / financing number outside both columns → dropped.
+        return pesos, usd
+
+    def _parse_purchases(
         self,
         lines: list[str],
         period_year: int,
         pay_date: date | None,
+        columns: tuple[int, int] | None,
     ) -> list[StatementLineDraft]:
         """Parse purchase rows from the ``___``-delimited transaction section."""
         in_tx = False
@@ -800,69 +929,121 @@ class _SantanderBaseParser(StatementParser, ABC):
                 continue
             if self._TOTAL_MARKER.search(stripped):
                 break
-            m = self._TX_LINE.match(line)
-            if m is None:
-                continue
-            day_s, month_s, raw_desc, cuota, pesos_s, usd_s = m.groups()
-
-            if day_s and month_s:
-                mn = _MONTHS_ES_FULL.get(month_s.lower())
-                if mn:
-                    current_month = mn
-                try:
-                    purchase_date: date | None = date(period_year, current_month or 1, int(day_s))
-                except (ValueError, TypeError):
-                    purchase_date = pay_date
-            else:
-                purchase_date = pay_date
-
-            occurred_on = pay_date if pay_date is not None else purchase_date
-            if occurred_on is None or purchase_date is None:
-                continue
-
-            pesos = _parse_ar_decimal(pesos_s)
-            if pesos is None:  # pragma: no cover - _TX_LINE pre-filter guarantees a parseable amount
-                continue
-
-            name = self._clean_description(raw_desc or "")
-            if not name or any(skip in name.upper() for skip in self._SKIP_MARKERS):
-                continue
-
-            if usd_s:
-                usd = _parse_ar_decimal(usd_s)
-                draft = StatementLineDraft(
-                    occurred_on=occurred_on,
-                    purchase_date=purchase_date,
-                    name=name,
-                    amount=abs(pesos),
-                    currency=Currency.USD,
-                    line_kind=LineKind.PURCHASE,
-                    usd_amount=abs(usd) if usd is not None else None,
-                    fx_rate=None,
-                    fx_rate_type=None,
-                    category=guess_category(name),
-                    cuota=cuota,
-                )
-            else:
-                draft = StatementLineDraft(
-                    occurred_on=occurred_on,
-                    purchase_date=purchase_date,
-                    name=name,
-                    amount=abs(pesos),
-                    currency=Currency.ARS,
-                    line_kind=LineKind.PURCHASE,
-                    category=guess_category(name),
-                    cuota=cuota,
-                )
-            drafts.append(draft)
+            draft, current_month = self._build_purchase(line, period_year, pay_date, columns, current_month)
+            if draft is not None:
+                drafts.append(draft)
         return drafts
+
+    def _build_purchase(
+        self,
+        line: str,
+        period_year: int,
+        pay_date: date | None,
+        columns: tuple[int, int] | None,
+        current_month: int | None,
+    ) -> tuple[StatementLineDraft | None, int | None]:
+        """Build one purchase draft from a flat row, or ``None`` when it is not one.
+
+        Returns the draft (or ``None``) and the possibly-updated ``current_month``:
+        a row prints its month name only when it changes, so it carries across rows.
+        """
+        head = self._TX_HEAD_RE.match(line)
+        if head is None:
+            return None, current_month
+        day_s, month_s, raw_desc = head.groups()
+
+        purchase_date, current_month = self._purchase_date(day_s, month_s, period_year, pay_date, current_month)
+        occurred_on = pay_date if pay_date is not None else purchase_date
+        if occurred_on is None or purchase_date is None:
+            return None, current_month
+
+        pesos, usd = self._classify_amounts(line, columns)
+        cuota_match = self._CUOTA_RE.search(raw_desc)
+        cuota = cuota_match.group(1) if cuota_match is not None else None
+        name = self._clean_description(raw_desc)
+        if not name or any(skip in name.upper() for skip in self._SKIP_MARKERS):
+            return None, current_month
+        if pesos is None and usd is None:
+            return None, current_month
+
+        # A dollar amount → a USD line. When the "$" column is empty (an
+        # international charge billed only in dollars) do NOT fabricate a peso
+        # amount: carry amount=0 and leave FX for the review UI (ADR-079).
+        if usd is not None:
+            draft = StatementLineDraft(
+                occurred_on=occurred_on,
+                purchase_date=purchase_date,
+                name=name,
+                amount=abs(pesos) if pesos is not None else Decimal("0"),
+                currency=Currency.USD,
+                line_kind=LineKind.PURCHASE,
+                usd_amount=abs(usd),
+                fx_rate=None,
+                fx_rate_type=None,
+                category=guess_category(name),
+                cuota=cuota,
+            )
+            return draft, current_month
+
+        draft = StatementLineDraft(
+            occurred_on=occurred_on,
+            purchase_date=purchase_date,
+            name=name,
+            amount=abs(pesos) if pesos is not None else Decimal("0"),
+            currency=Currency.ARS,
+            line_kind=LineKind.PURCHASE,
+            category=guess_category(name),
+            cuota=cuota,
+        )
+        return draft, current_month
+
+    @staticmethod
+    def _purchase_date(
+        day_s: str | None,
+        month_s: str | None,
+        period_year: int,
+        pay_date: date | None,
+        current_month: int | None,
+    ) -> tuple[date | None, int | None]:
+        """Resolve a row's purchase date, carrying the last-seen month across rows."""
+        if not (day_s and month_s):
+            return pay_date, current_month
+        month = _MONTHS_ES_FULL.get(month_s.lower())
+        if month is not None:
+            current_month = month
+        try:
+            return date(period_year, current_month or 1, int(day_s)), current_month
+        except (ValueError, TypeError):
+            return pay_date, current_month
 
     def _parse_fees(
         self,
         lines: list[str],
         pay_date: date | None,
+        columns: tuple[int, int] | None,
     ) -> list[StatementLineDraft]:
-        """Parse fee rows (e.g. IMPUESTO DE SELLOS) from the post-total section."""
+        """Parse fee rows from the bounded post-total section (ADR-079).
+
+        A fee row opens with a 1-2 digit day (optionally ``DD MonthName DD``) — the
+        continuation rows print the day alone — a label that MUST start with a fee
+        keyword (:data:`_FEE_HEAD_RE`), possibly a ``$`` separator, a ``%`` and a
+        parenthetical (the RG 5617 dollar-consumption perception), and its charge in
+        the PESO column. The amount is the peso-column token, so a number embedded in
+        a ``( … )`` clause (the RG-5617 decoy, outside the column) never masks it.
+
+        The section is BOUNDED, not read to EOF: it opens at ``Total Consumos`` and
+        closes ONLY at the ``___`` separator or a financing / disclosure header
+        (``Plan V``, ``Cuotas a vencer``, CFT/TNA/TEA). Blank / whitespace-only lines
+        (the real statement prints one between the total and the first tax, and
+        before the disclosure block) are SKIPPED, not treated as the boundary.
+        Together with the fee-keyword opener and the peso-column requirement this
+        double-guards the post-total financing block from leaking in as phantom
+        AR$ expenses.
+
+        ``pay_date`` is the statement due date, falling back to the closing date when
+        no due date parsed (mirroring the purchase path) so the taxes are not dropped;
+        only a wholly date-less statement (``pay_date`` still ``None``) skips fees.
+        """
         in_fee = False
         drafts: list[StatementLineDraft] = []
 
@@ -873,33 +1054,86 @@ class _SantanderBaseParser(StatementParser, ABC):
                 continue
             if not in_fee or pay_date is None:
                 continue
-            m = self._FEE_LINE.match(line)
-            if m is None:
-                continue
-            name = " ".join(m.group(1).split())
-            amount = _parse_ar_decimal(m.group(2))
-            if not name or amount is None or amount <= Decimal("0"):
-                continue
-            drafts.append(
-                StatementLineDraft(
-                    occurred_on=pay_date,
-                    purchase_date=pay_date,
-                    name=name,
-                    amount=abs(amount),
-                    currency=Currency.ARS,
-                    line_kind=LineKind.FEE,
-                    category=None,
-                    cuota=None,
-                )
-            )
+            if not stripped:
+                continue  # blank line between the total and the fees, or between fees.
+            if self._SEP_RE.search(stripped) or self._FEE_SECTION_END_RE.search(stripped):
+                break  # lower bound: the fee block ends here (ADR-079).
+            fee = self._build_fee(line, pay_date, columns)
+            if fee is not None:
+                drafts.append(fee)
         return drafts
+
+    def _build_fee(
+        self,
+        line: str,
+        pay_date: date,
+        columns: tuple[int, int] | None,
+    ) -> StatementLineDraft | None:
+        """Build one FEE draft from a post-total row, or ``None`` when it is not one."""
+        head = self._FEE_HEAD_RE.match(line)
+        if head is None:
+            return None
+        amount = self._fee_amount(line, head.group(1), columns)
+        if amount is None or amount <= Decimal("0"):
+            return None
+        # The label is the text before the first money token (peso, decoy, or "%").
+        first_money = self._MONEY_RE.search(head.group(1))
+        label = head.group(1)[: first_money.start()] if first_money is not None else head.group(1)
+        name = self._clean_fee_label(label)
+        # A payment / carryover row must never become a fee (ADR-079). EXACT phrases
+        # only — a bare "SALDO"/"TOTAL" substring would wrongly drop a real merchant.
+        # Balance/total lines are already excluded structurally by the fee-keyword
+        # opener (:data:`_FEE_HEAD_RE`), which "SALDO …"/"Total …" never satisfy.
+        if not name or any(skip in name.upper() for skip in self._SKIP_MARKERS):
+            return None
+        return StatementLineDraft(
+            occurred_on=pay_date,
+            purchase_date=pay_date,
+            name=name,
+            amount=abs(amount),
+            currency=Currency.ARS,
+            line_kind=LineKind.FEE,
+            category=None,
+            cuota=None,
+        )
+
+    def _fee_amount(self, line: str, label: str, columns: tuple[int, int] | None) -> Decimal | None:
+        """Return a fee row's charged AR$ amount — its PESO-column token.
+
+        With detected columns the peso-column value is taken (the RG-5617
+        parenthetical decoy and a "%" token, outside the column, are ignored).
+        Header-less (minimal AMEX fixtures), the rightmost token of the label is used
+        so a stray number never masks the trailing amount.
+        """
+        if columns is not None:
+            pesos, _ = self._classify_amounts(line, columns)
+            return pesos
+        tokens = list(self._MONEY_RE.finditer(label))
+        return _parse_ar_decimal(tokens[-1].group()) if tokens else None
+
+    @classmethod
+    def _clean_fee_label(cls, label: str) -> str:
+        """Strip the ``$`` separator and any parenthetical from a fee label.
+
+        Drops a complete ``( … )`` clause and also a dangling ``(`` and everything
+        after it (the RG-5617 label slice ends at ``… 30% (`` before its decoy).
+        """
+        cleaned = cls._PARENS_RE.sub(" ", label)
+        cleaned = cleaned.split("(")[0]
+        cleaned = cleaned.replace("$", " ")
+        return " ".join(cleaned.split())
 
     @staticmethod
     def _clean_description(raw: str) -> str:
-        """Strip leading reference codes and trailing reference numbers from a description."""
+        """Strip reference codes, the cuota tag and trailing amounts from a description."""
+        cleaned = raw.strip()
         # "648640*DF FESTIVAL" → "DF FESTIVAL"
-        cleaned = re.sub(r"^\d+\*", "", raw.strip())
-        # Trailing long digit runs (reference/invoice numbers ≥7 digits)
+        cleaned = re.sub(r"^\d+\*", "", cleaned)
+        # Drop the embedded cuota tag "C.02/06" (captured separately).
+        cleaned = re.sub(r"\bC\.\d{2}/\d{2}\b", "", cleaned)
+        # Drop any money tokens the description carries (trailing amounts + decoys).
+        cleaned = _SantanderBaseParser._MONEY_RE.sub("", cleaned)
+        # Trailing long digit runs (reference/invoice numbers ≥7 digits).
         cleaned = re.sub(r"\s+\d{7,}\s*$", "", cleaned.strip())
         return " ".join(cleaned.split())
 

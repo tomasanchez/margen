@@ -33,6 +33,7 @@
     "statementTotal": "Total del resumen",
     "duplicate": "Parece que ya importaste este resumen. Igual podés importarlo si es intencional.",
     "dateNote": "Las líneas se fechan cuando se paga la tarjeta; la fecha de compra original se muestra en cada fila.",
+    "usdRateUnavailable": "No pudimos obtener la cotización de hoy, así que el monto en pesos de los consumos en USD quedó vacío. Ingresá el monto en pesos de cada uno para importarlo.",
     "account": {
       "title": "Cuenta de tarjeta",
       "subtitle": "Asociamos estos consumos a tu tarjeta. Confirmá o elegí otra.",
@@ -117,6 +118,10 @@
       "compare": "Comparar",
       "hideCompare": "Ocultar comparación",
       "categoryFor": "Categoría de {{name}}",
+      "arsAmountFor": "Monto en pesos de {{name}}",
+      "arsAmountPlaceholder": "Monto en ARS",
+      "appliedRate": "a {{rate}}",
+      "enterArsAmount": "Ingresá el monto en pesos",
       "uncategorized": "Sin categoría",
       "willImport": "Se importa",
       "skipped": "Omitido",

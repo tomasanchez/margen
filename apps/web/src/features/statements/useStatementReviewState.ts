@@ -31,6 +31,8 @@ import type {
   StatementParse,
 } from '../../api/statementsClient'
 import type { Account, Currency, Institution } from '../../mock/types'
+import type { PreferredRateSource } from '../../api/settingsClient'
+import { materializeUsdLineFx } from '../transactions/captureFx'
 import {
   currenciesInParse,
   matchCardAccounts,
@@ -133,8 +135,32 @@ export interface StatementReviewState {
   readonly newCount: number
   /** Count of kept lines merging into an existing transaction. */
   readonly mergeCount: number
+  /**
+   * True when a USD line needs an ARS `amount` but the live preferred-source rate
+   * is unavailable (query errored/empty), so no line could be auto-materialized
+   * (ADR-079/149/150). The review surfaces a calm inline hint that the user must
+   * enter the ARS amount to import; a rate is NEVER fabricated. False when there
+   * is no such USD line, or the rate resolved and the lines were materialized.
+   */
+  readonly usdRateUnavailable: boolean
+  /**
+   * True when at least one KEPT line still has a non-positive `amount` (ADR-079).
+   * This happens for a USD-only line whose ARS-equivalent could not be materialized
+   * (rate unavailable) and which the user hasn't hand-entered — submitting it would
+   * 422 the WHOLE import at the backend's `amount > 0` guard. The review disables
+   * the Import action while this holds so the failure surfaces as the calm inline
+   * "enter the ARS amount" hint rather than a blanket server error.
+   */
+  readonly hasBlockingZeroAmount: boolean
   /** Toggle a single line's keep/exclude state by id. */
   toggleKeep: (id: string, keep: boolean) => void
+  /**
+   * Edit a line's ARS-equivalent `amount` by id (ADR-079). Used for the USD-line
+   * materialization affordance: the user can confirm or adjust the computed ARS
+   * amount before import. A hand-edit is remembered so the async rate-materialize
+   * never clobbers it. A blank/invalid value resets the amount to 0.
+   */
+  setAmount: (id: string, amount: number) => void
   /** Edit a single line's category by id (empty string clears it). */
   setCategory: (id: string, category: string) => void
   /** Set a flagged line's Merge / Keep both resolution by id. */
@@ -190,6 +216,11 @@ function toLineRequest(
       ? { fxRate: toDecimalString(line.fxRate) }
       : {}),
     ...(line.fxRateType !== undefined ? { fxRateType: line.fxRateType } : {}),
+    // The FX provenance travels WITH the rate (ADR-148) so the imported USD row
+    // lands with a complete, auditable snapshot and the backend runs its
+    // authoritative usd_amount = round(amount ÷ fx_rate) re-materialization (which
+    // only fires when fx_source is set). Never hardcoded 'manual'.
+    ...(line.fxSource !== undefined ? { fxSource: line.fxSource } : {}),
     ...(line.category ? { category: line.category } : {}),
     // The normalized bank + card detail are statement-level (ADR-117).
     ...(bank ? { bank } : {}),
@@ -215,6 +246,16 @@ export function useStatementReviewState(
   parse: StatementParse,
   accounts: readonly Account[] = [],
   institutions: readonly Institution[] = [],
+  /**
+   * The live preferred-source rate (ARS per 1 USD, ADR-149/151) the review uses
+   * to materialize a USD-only line's ARS-equivalent + FX snapshot (ADR-079). The
+   * SAME cached rate the Add-transaction flow uses (`usePreferredRate`). `null`/
+   * `undefined` = unavailable → USD-only lines are left at `amount` 0 with a calm
+   * "enter the ARS amount" hint; a rate is never fabricated.
+   */
+  preferredRate: number | null | undefined = null,
+  /** The persisted preferred rate source (ADR-151) tagging the snapshot's `fxRateType`. */
+  preferredRateSource: PreferredRateSource | undefined = undefined,
 ): StatementReviewState {
   const [lines, setLines] = useState<ReviewLine[]>(() =>
     parse.lines.map((line) => ({
@@ -224,6 +265,65 @@ export function useStatementReviewState(
       resolution: 'merge' as ReviewResolution,
     })),
   )
+
+  // The ids of lines whose ARS `amount` the user has hand-edited (ADR-079). A
+  // hand-edit is authoritative — the async rate-materialize below MUST NOT clobber
+  // it, so it is skipped for any id in this set.
+  const [editedAmounts, setEditedAmounts] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  )
+
+  // Materialize USD-only lines once the live rate resolves (ADR-079/148/149).
+  // The lines are seeded once from the parse (a USD-only card charge arrives with
+  // `usdAmount` set but `amount` 0 and no FX — FX is left for review, ADR-079).
+  // When the preferred-source rate becomes available we compute
+  // `amount = usdAmount × rate` and stamp `fxRate` + `fxRateType`, mirroring the
+  // Add-transaction USD path (`materializeUsdLineFx`), so `usd_amount` + the FX
+  // snapshot are complete and the import passes the `amount > 0` contract.
+  //
+  // This uses the sanctioned "adjust state while rendering" pattern (React docs)
+  // rather than an effect: it is a pure derivation of local state from a resolved
+  // query value, applied exactly once per line (guarded by the already-filled
+  // check) and only to a still-zero, un-hand-edited USD line — so a user's edits
+  // (amount, currency, or a line that already carried a peso `amount`) are never
+  // clobbered. A USD line with an existing positive `amount` (e.g. a Santander
+  // AMEX line that carried a peso column) is left AS-IS; ARS lines are untouched.
+  const pending = lines
+    .filter(
+      (line) =>
+        line.currency === 'USD' &&
+        line.amount === 0 &&
+        !editedAmounts.has(line.id) &&
+        line.fxRate === undefined,
+    )
+    .map((line) => ({
+      id: line.id,
+      fx: materializeUsdLineFx(line.usdAmount, preferredRate, preferredRateSource),
+    }))
+    .filter(
+      (entry): entry is { id: string; fx: NonNullable<typeof entry.fx> } =>
+        entry.fx !== null,
+    )
+  if (pending.length > 0) {
+    const byId = new Map(pending.map((entry) => [entry.id, entry.fx]))
+    setLines((current) =>
+      current.map((line) => {
+        const fx = byId.get(line.id)
+        return fx
+          ? {
+              ...line,
+              amount: fx.amount,
+              fxRate: fx.fxRate,
+              fxRateType: fx.fxRateType,
+              // The provenance travels with the rate so the row's snapshot is
+              // complete on import (ADR-148); the backend re-materializes usd_amount
+              // only when fx_source is set.
+              fxSource: fx.fxSource,
+            }
+          : line
+      }),
+    )
+  }
 
   // Auto-match the (institution, currency) card account per line-currency and
   // seed each currency's selected account id from it (ADR-184). Recomputed when
@@ -267,6 +367,20 @@ export function useStatementReviewState(
     )
   }, [])
 
+  const setAmount = useCallback((id: string, amount: number) => {
+    const next = Number.isFinite(amount) && amount > 0 ? amount : 0
+    // Remember the hand-edit so the async rate-materialize never overwrites it.
+    setEditedAmounts((current) => {
+      if (current.has(id)) return current
+      const updated = new Set(current)
+      updated.add(id)
+      return updated
+    })
+    setLines((current) =>
+      current.map((line) => (line.id === id ? { ...line, amount: next } : line)),
+    )
+  }, [])
+
   const setCategory = useCallback((id: string, category: string) => {
     setLines((current) =>
       current.map((line) =>
@@ -295,8 +409,41 @@ export function useStatementReviewState(
     [],
   )
 
+  // A USD line still awaiting an ARS amount: a USD-only line (usdAmount > 0) whose
+  // `amount` is 0 and which the user hasn't hand-edited (ADR-079). When the live
+  // rate is unavailable NONE of these can be auto-materialized, so the review must
+  // surface a calm "enter the ARS amount" hint (a rate is never fabricated,
+  // ADR-149/150). Derived from the CURRENT lines so it clears the moment the rate
+  // lands and the amounts materialize, or the user types an amount.
+  const rateAvailable =
+    typeof preferredRate === 'number' &&
+    Number.isFinite(preferredRate) &&
+    preferredRate > 0
+  const usdRateUnavailable = useMemo(
+    () =>
+      !rateAvailable &&
+      lines.some(
+        (line) =>
+          line.currency === 'USD' &&
+          typeof line.usdAmount === 'number' &&
+          line.usdAmount > 0 &&
+          line.amount === 0,
+      ),
+    [rateAvailable, lines],
+  )
+
   const includedCount = useMemo(
     () => lines.filter((line) => line.keep).length,
+    [lines],
+  )
+
+  // A kept line with a non-positive ARS `amount` (ADR-079): the backend rejects the
+  // WHOLE import at its `amount > 0` guard (422), so the Import action is blocked
+  // while any exists — the review shows the calm inline "enter the ARS amount" hint
+  // instead of a blanket server error. Clears the instant the rate materializes the
+  // amount or the user hand-enters a positive value.
+  const hasBlockingZeroAmount = useMemo(
+    () => lines.some((line) => line.keep && !(line.amount > 0)),
     [lines],
   )
 
@@ -353,11 +500,14 @@ export function useStatementReviewState(
     lines,
     accountChoices,
     setAccountForCurrency,
+    usdRateUnavailable,
+    hasBlockingZeroAmount,
     includedCount,
     includedTotal,
     newCount,
     mergeCount,
     toggleKeep,
+    setAmount,
     setCategory,
     setResolution,
     setCuota,

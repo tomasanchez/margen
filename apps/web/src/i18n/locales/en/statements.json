@@ -33,6 +33,7 @@
     "statementTotal": "Statement total",
     "duplicate": "Looks like you already imported this statement. You can still import it if this is intentional.",
     "dateNote": "Lines are dated when the card is paid; the original purchase date is shown per row.",
+    "usdRateUnavailable": "We couldn't get today's exchange rate, so the peso amount for USD charges is blank. Enter each one's peso amount to import it.",
     "account": {
       "title": "Card account",
       "subtitle": "We matched these charges to your card. Confirm or pick another.",
@@ -117,6 +118,10 @@
       "compare": "Compare",
       "hideCompare": "Hide compare",
       "categoryFor": "Category for {{name}}",
+      "arsAmountFor": "Peso amount for {{name}}",
+      "arsAmountPlaceholder": "ARS amount",
+      "appliedRate": "at {{rate}}",
+      "enterArsAmount": "Enter peso amount",
       "uncategorized": "Uncategorized",
       "willImport": "Will import",
       "skipped": "Skipped",

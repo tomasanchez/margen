@@ -146,6 +146,163 @@ function dualCurrencyParse(): StatementParse {
   }
 }
 
+/** A parse with a USD-only line (no peso amount) + an ARS line (ADR-079). */
+function usdOnlyParse(): StatementParse {
+  return {
+    status: 'ok',
+    duplicate: false,
+    bankName: 'Santander',
+    card: 'AMEX ·1234',
+    naturalKey: null,
+    document: { pdfBase64: 'AAA', contentType: 'application/pdf' },
+    lines: [
+      {
+        id: '0',
+        occurredOn: '2026-06-10',
+        name: 'Coto',
+        amount: 45000,
+        currency: 'ARS',
+        lineKind: 'purchase',
+        include: true,
+      },
+      {
+        // A USD-only card charge: usdAmount set, amount 0, no FX (left for review).
+        id: '1',
+        occurredOn: '2026-06-10',
+        name: 'AWS',
+        amount: 0,
+        currency: 'USD',
+        usdAmount: 200,
+        lineKind: 'purchase',
+        include: true,
+      },
+    ],
+  }
+}
+
+describe('useStatementReviewState — USD-only line materialization (ADR-079/148/149)', () => {
+  test('materializes amount = usdAmount × rate + fxRate/fxRateType, imports amount > 0', () => {
+    const { result } = renderHook(() =>
+      // rate 1245 (ARS per USD), preferred source 'bolsa' → fxRateType 'MEP'.
+      useStatementReviewState(usdOnlyParse(), [], [], 1245, 'bolsa'),
+    )
+
+    const usd = result.current.lines.find((l) => l.name === 'AWS')
+    expect(usd?.amount).toBe(200 * 1245)
+    expect(usd?.fxRate).toBe(1245)
+    expect(usd?.fxRateType).toBe('MEP')
+    // The rate resolved, so no unavailable hint.
+    expect(result.current.usdRateUnavailable).toBe(false)
+
+    const request = result.current.buildImportRequest()
+    const awsLine = request.lines.find((l) => l.name === 'AWS')
+    expect(awsLine?.amount).toBe(String(200 * 1245))
+    expect(awsLine?.usdAmount).toBe('200')
+    expect(awsLine?.fxRate).toBe('1245')
+    expect(awsLine?.fxRateType).toBe('MEP')
+    // The FX provenance travels WITH the rate so the row's snapshot is complete
+    // (ADR-148) and the backend re-materializes usd_amount (only fires when
+    // fx_source is set). 'bolsa' preferred source → 'bolsa' provenance; NEVER hardcoded
+    // 'manual'.
+    expect(awsLine?.fxSource).toBe('bolsa')
+  })
+
+  test('a materialized USD line sends fxSource = the preferred source (oficial), never manual', () => {
+    const { result } = renderHook(() =>
+      useStatementReviewState(usdOnlyParse(), [], [], 1050, 'oficial'),
+    )
+    const request = result.current.buildImportRequest()
+    const awsLine = request.lines.find((l) => l.name === 'AWS')
+    // The line's ARS-equivalent materialized, so the FX snapshot is complete: the
+    // rate, family AND provenance all travel to the backend.
+    expect(awsLine?.fxRate).toBe('1050')
+    expect(awsLine?.fxRateType).toBe('official')
+    expect(awsLine?.fxSource).toBe('oficial')
+    expect(awsLine?.fxSource).not.toBe('manual')
+  })
+
+  test('tags fxRateType official when the preferred source is oficial', () => {
+    const { result } = renderHook(() =>
+      useStatementReviewState(usdOnlyParse(), [], [], 1050, 'oficial'),
+    )
+    const usd = result.current.lines.find((l) => l.name === 'AWS')
+    expect(usd?.amount).toBe(200 * 1050)
+    expect(usd?.fxRateType).toBe('official')
+  })
+
+  test('materializes once the rate resolves (was null on first render) without a re-seed clobber', () => {
+    const { result, rerender } = renderHook(
+      ({ rate }: { rate: number | null }) =>
+        useStatementReviewState(usdOnlyParse(), [], [], rate, 'bolsa'),
+      { initialProps: { rate: null as number | null } },
+    )
+
+    // Rate not yet available: the USD line stays at amount 0 and the hint shows.
+    expect(result.current.lines.find((l) => l.name === 'AWS')?.amount).toBe(0)
+    expect(result.current.usdRateUnavailable).toBe(true)
+
+    // The rate lands — the USD line materializes.
+    rerender({ rate: 1245 })
+    const usd = result.current.lines.find((l) => l.name === 'AWS')
+    expect(usd?.amount).toBe(200 * 1245)
+    expect(usd?.fxRate).toBe(1245)
+    expect(result.current.usdRateUnavailable).toBe(false)
+  })
+
+  test('does NOT overwrite a USD line that already carries a positive peso amount', () => {
+    const parseWithPeso = usdOnlyParse()
+    // A Santander AMEX line that DID carry a peso column: amount already set.
+    parseWithPeso.lines[1] = {
+      ...parseWithPeso.lines[1],
+      amount: 260000,
+    }
+    const { result } = renderHook(() =>
+      useStatementReviewState(parseWithPeso, [], [], 1245, 'bolsa'),
+    )
+    const usd = result.current.lines.find((l) => l.name === 'AWS')
+    // Left as-is — not recomputed to 200 × 1245.
+    expect(usd?.amount).toBe(260000)
+    expect(usd?.fxRate).toBeUndefined()
+  })
+
+  test('leaves ARS lines untouched by the USD materialization', () => {
+    const { result } = renderHook(() =>
+      useStatementReviewState(usdOnlyParse(), [], [], 1245, 'bolsa'),
+    )
+    const ars = result.current.lines.find((l) => l.name === 'Coto')
+    expect(ars?.amount).toBe(45000)
+    expect(ars?.fxRate).toBeUndefined()
+    expect(ars?.fxRateType).toBeUndefined()
+  })
+
+  test('rate unavailable: leaves amount 0, no fabricated rate, sets the hint', () => {
+    const { result } = renderHook(() =>
+      useStatementReviewState(usdOnlyParse(), [], [], null, 'bolsa'),
+    )
+    const usd = result.current.lines.find((l) => l.name === 'AWS')
+    expect(usd?.amount).toBe(0)
+    expect(usd?.fxRate).toBeUndefined()
+    expect(usd?.fxRateType).toBeUndefined()
+    expect(result.current.usdRateUnavailable).toBe(true)
+  })
+
+  test('a user-entered ARS amount is not clobbered when the rate later lands', () => {
+    const { result, rerender } = renderHook(
+      ({ rate }: { rate: number | null }) =>
+        useStatementReviewState(usdOnlyParse(), [], [], rate, 'bolsa'),
+      { initialProps: { rate: null as number | null } },
+    )
+
+    // The user hand-enters an ARS amount while the rate is unavailable.
+    act(() => result.current.setAmount('1', 300000))
+    expect(result.current.lines.find((l) => l.name === 'AWS')?.amount).toBe(300000)
+
+    // The rate lands — the hand-edit wins; materialization does NOT overwrite it.
+    rerender({ rate: 1245 })
+    expect(result.current.lines.find((l) => l.name === 'AWS')?.amount).toBe(300000)
+  })
+})
+
 describe('useStatementReviewState — card-account attachment (ADR-184)', () => {
   const arsCard = cardAccount({ id: 'ars-card', currency: 'ARS' })
   const usdCard = cardAccount({ id: 'usd-card', currency: 'USD' })
@@ -226,5 +383,47 @@ describe('useStatementReviewState — card-account attachment (ADR-184)', () => 
     rerender({ accounts: [arsCard, usdCard] })
     expect(result.current.accountChoices[0].selectedAccountId).toBe('ars-card')
     expect(result.current.accountChoices[1].selectedAccountId).toBe('usd-card')
+  })
+})
+
+describe('useStatementReviewState — blocking zero amount (ADR-079)', () => {
+  test('a kept USD line at amount 0 (rate unavailable) blocks import until an amount is entered', () => {
+    const { result, rerender } = renderHook(
+      ({ rate }: { rate: number | null }) =>
+        useStatementReviewState(usdOnlyParse(), [], [], rate, 'bolsa'),
+      { initialProps: { rate: null as number | null } },
+    )
+
+    // Rate unavailable: the kept USD line stays at amount 0 → import is blocked so
+    // the calm inline hint (not a 422) surfaces.
+    expect(result.current.usdRateUnavailable).toBe(true)
+    expect(result.current.hasBlockingZeroAmount).toBe(true)
+
+    // Hand-entering a positive ARS amount clears the block → import re-enabled.
+    act(() => result.current.setAmount('1', 260000))
+    expect(result.current.hasBlockingZeroAmount).toBe(false)
+
+    // Re-checking after the rate later lands keeps it enabled (hand-edit wins).
+    rerender({ rate: 1245 })
+    expect(result.current.hasBlockingZeroAmount).toBe(false)
+  })
+
+  test('excluding the zero-amount line also clears the block', () => {
+    const { result } = renderHook(() =>
+      useStatementReviewState(usdOnlyParse(), [], [], null, 'bolsa'),
+    )
+    expect(result.current.hasBlockingZeroAmount).toBe(true)
+
+    // Skipping the problematic USD line removes it from the kept set → not blocking.
+    act(() => result.current.toggleKeep('1', false))
+    expect(result.current.hasBlockingZeroAmount).toBe(false)
+  })
+
+  test('no block when the rate materializes every kept line to a positive amount', () => {
+    const { result } = renderHook(() =>
+      useStatementReviewState(usdOnlyParse(), [], [], 1245, 'bolsa'),
+    )
+    // Both lines carry positive amounts (ARS parsed, USD materialized).
+    expect(result.current.hasBlockingZeroAmount).toBe(false)
   })
 })
