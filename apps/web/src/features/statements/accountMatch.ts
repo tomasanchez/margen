@@ -1,5 +1,5 @@
 /**
- * Statement-import card-account matching (ADR-184, upgraded by ADR-190).
+ * Statement-import card-account matching (ADR-184, upgraded by ADR-190/196).
  *
  * Pure, React-free deduction of which of the user's CARD accounts an imported
  * statement's lines attach to. Argentine credit cards carry SEPARATE peso and
@@ -8,21 +8,34 @@
  * match is keyed by **(institution, currency)**: an ARS line attaches to the
  * issuer's ARS card account, a USD line to its USD card account (ADR-184).
  *
+ * Matching is INSTITUTION-FIRST. A credit card belongs to an issuer, and one
+ * card institution's per-currency accounts serve BOTH the ARS and USD lines of a
+ * statement. The user should not have to have "registered" a brand + last4 for an
+ * existing card to be recognized — a card added through the accounts UI (no
+ * brand/last4) still auto-matches by issuer name. So the PRIMARY key is the issuer
+ * NAME (`bankName` ↔ `institutionName`, accent/case tolerant). brand + last4
+ * (ADR-190) are a DISAMBIGUATOR, used only when the user holds TWO+ card
+ * institutions at the SAME issuer — the one case where name alone is ambiguous.
+ *
  * The statement parse exposes `bankName` (normalized issuer), `network`
  * (VISA/AMEX), and `cardLast4`. ADR-190 persists `brand` (network) + `last4` on
- * the card {@link Institution}, so the PRIMARY match is now by **(brand + last4)**:
- * the card institution whose brand + last4 equal the parse's `network` +
- * `cardLast4`. This is precise — it distinguishes two cards from the same issuer.
- * When the parse LACKS a usable identity (no brand OR no last4 — older/identity-
- * less statements), it FALLS BACK to name-only matching by `bankName` ↔
- * `institutionName` (ADR-184). When the parse HAS a full brand + last4 that
- * matched no registered card, it returns NO match rather than misattribute a
- * same-issuer card by name.
+ * the card {@link Institution}. The resolution order is:
+ *   1. Gather all card institutions whose name matches the parse's issuer.
+ *   2. Exactly one → return it, whether or not it carries a brand/last4.
+ *   3. Multiple → disambiguate by (brand + last4); one survivor → it, else null.
+ *   4. Zero → null (issuer genuinely absent → register prompt). NO cross-issuer
+ *      (brand + last4) fallback: that key is not unique across banks and could
+ *      misroute the statement to the wrong institution's accounts.
  *
  * Once a card institution is resolved, its per-currency card accounts are indexed
- * by currency. When the parse carries no identity, or the user has no card
- * account for that institution + currency, the currency is left UNMATCHED (the
- * line imports unattached — backend-tolerant, ADR-184).
+ * by currency. When the parse carries no issuer name and no precise identity, or
+ * the user has no card account for that institution + currency, the currency is
+ * left UNMATCHED (the line imports unattached — backend-tolerant, ADR-184).
+ *
+ * A `null` resolution (issuer genuinely absent) is what drives the in-flow
+ * "Register this card" prompt (ADR-190). A matched-but-brand/last4-less card is
+ * NOT null, so registration does NOT fire for it — avoiding the duplicate-
+ * institution bug the old brand+last4 gate caused.
  *
  * Money/identity strings only; no UI, no i18n. The review UI seeds its per-
  * currency default selection from {@link matchCardAccounts} and lets the user
@@ -69,54 +82,76 @@ function normalizeBrand(value: string | null | undefined): string {
 }
 
 /**
- * Resolve the id of the card {@link Institution} a parse belongs to (ADR-190).
+ * Resolve the id of the card {@link Institution} a parse belongs to.
  *
- * PRIMARY: match by (brand + last4) — the card institution whose normalized
- * `brand` equals the parse's `network` AND whose `last4` equals the parse's
- * `cardLast4`. This is precise across same-issuer cards. Only attempted when BOTH
- * the parse and a candidate carry a brand + last4.
+ * INSTITUTION-FIRST (a card belongs to an issuer; the user should not have to have
+ * registered a brand/last4 for their existing card to be recognized):
  *
- * FALLBACK: match by name — the FIRST card institution whose `name` equals the
- * parse's `bankName` (ADR-184; used for older/identity-less statements without a
- * usable brand + last4). The name-only fallback is attempted ONLY when the parse
- * LACKS a usable identity (brand empty OR last4 empty). When the parse carries a
- * full precise identity (brand AND last4) that matched no registered card, we
- * return NO match rather than guess a same-issuer card by name — a confident-but-
- * wrong attribution (e.g. a Galicia VISA ···5771 statement seeding a Galicia VISA
- * ···1234 or an older null-identity Galicia card) is worse than leaving it
- * unmatched for the user to resolve.
+ *   1. Gather all `type === 'card'` institutions whose normalized `name` equals the
+ *      parse's normalized `bankName`.
+ *   2. Exactly ONE name match → return it, REGARDLESS of whether it carries a
+ *      brand/last4. This is the common case: one card per issuer. Its ARS + USD
+ *      card accounts already serve the ARS + USD lines via
+ *      {@link cardAccountsByCurrency}.
+ *   3. MULTIPLE name matches (the user holds 2+ cards at the same issuer) →
+ *      disambiguate by (brand + last4): keep those whose normalized `brand` + `last4`
+ *      equal the parse's `network` + `cardLast4`. Exactly one survivor → it; none or
+ *      ambiguous → `null` (the review UI / RegisterCardForm / manual selection
+ *      resolves it — better than a confident-but-wrong same-issuer attribution).
+ *   4. ZERO name matches → `null` (issuer genuinely absent → RegisterCardForm
+ *      creates it, ADR-190). We deliberately do NOT fall back to a cross-issuer
+ *      (brand + last4) match: `(network, last4)` is NOT unique across issuers, so a
+ *      missed issuer-name normalization for the user's card combined with another
+ *      bank's card sharing the same network + last4 would silently attach the
+ *      statement to the WRONG institution's accounts (wrong ccBalance liability +
+ *      wrong ADR-196 payment leg). A safe "register this card" prompt beats a silent
+ *      wrong-bank attribution. brand + last4 disambiguate ONLY WITHIN a matched
+ *      issuer name (step 3), never as a standalone cross-issuer key.
  *
- * Returns the institution id, or `null` when nothing matches. Deterministic:
- * first-in-list wins on a (shouldn't-happen) tie.
+ * Returns the institution id, or `null` when nothing resolves. Deterministic:
+ * first-in-list wins on a (shouldn't-happen) tie within a disambiguated set.
  */
 function resolveCardInstitutionId(
   parse: StatementParse,
   institutions: readonly Institution[],
 ): string | null {
+  const parseName = normalizeName(parse.bankName)
   const parseBrand = normalizeBrand(parse.network)
   const parseLast4 = normalizeLast4(parse.cardLast4)
-  const hasPreciseIdentity = parseBrand !== '' && parseLast4 !== ''
-  // Primary: precise (brand + last4) match when the parse carries both.
-  if (hasPreciseIdentity) {
-    for (const inst of institutions) {
-      if (inst.type !== 'card') continue
-      if (
-        normalizeBrand(inst.brand) === parseBrand &&
-        normalizeLast4(inst.last4) === parseLast4
-      ) {
-        return inst.id
-      }
+  const cardInstitutions = institutions.filter((inst) => inst.type === 'card')
+
+  // Institution-first: the card institutions matching the parse's issuer name.
+  const nameMatches =
+    parseName === ''
+      ? []
+      : cardInstitutions.filter((inst) => normalizeName(inst.name) === parseName)
+
+  if (nameMatches.length === 1) {
+    // One card per issuer (the common case): matched regardless of brand/last4.
+    return nameMatches[0].id
+  }
+
+  if (nameMatches.length > 1) {
+    // Two+ cards at the same issuer: name alone is ambiguous — disambiguate by the
+    // precise (brand + last4) identity when the parse carries both. This is the ONLY
+    // place brand + last4 are consulted, and only WITHIN a matched issuer name.
+    if (parseBrand !== '' && parseLast4 !== '') {
+      const preciseWithinName = nameMatches.filter(
+        (inst) =>
+          normalizeBrand(inst.brand) === parseBrand &&
+          normalizeLast4(inst.last4) === parseLast4,
+      )
+      if (preciseWithinName.length === 1) return preciseWithinName[0].id
     }
-    // The parse had a full identity but nothing matched: refuse to guess by name.
+    // No distinguishing identity (or still ambiguous): let the user resolve it.
     return null
   }
-  // Fallback: name-only match (ADR-184), only for identity-less statements.
-  const parseName = normalizeName(parse.bankName)
-  if (parseName === '') return null
-  for (const inst of institutions) {
-    if (inst.type !== 'card') continue
-    if (normalizeName(inst.name) === parseName) return inst.id
-  }
+
+  // Zero name matches: the issuer is genuinely absent. Return null so the review
+  // prompts "Register this card" (ADR-190). We do NOT attempt a cross-issuer
+  // (brand + last4) match: that key is not unique across banks and could misroute a
+  // statement to the wrong institution's accounts — a safe prompt beats a silent
+  // wrong-bank attribution.
   return null
 }
 
@@ -180,10 +215,11 @@ function institutionsFromAccounts(
  * map (the UI shows it unmatched, and its lines import unattached). Pure +
  * deterministic.
  *
- * The institution is resolved by (brand + last4) when the parse + an institution
- * both carry them (ADR-190), else by name (ADR-184). When `institutions` is
- * omitted, a synthetic name-only list is derived from the accounts so existing
- * callers keep the ADR-184 behavior.
+ * The institution is resolved issuer-name-first (ADR-184), with brand + last4
+ * (ADR-190) used only to disambiguate two+ cards at the same issuer. When
+ * `institutions` is omitted, a synthetic name-only list is derived from the
+ * accounts so existing callers keep the ADR-184 behavior (name-first is now the
+ * default, so the synthetic fallback works better than ever).
  *
  * @param parse The successful statement parse (its `network`/`cardLast4`/`bankName` name the card).
  * @param accounts The user's account list (card leaves are the match candidates).

@@ -90,6 +90,8 @@ import {
   projectedBalance,
 } from '../accounts/availableBalance'
 import { todayIsoDate } from '../transactions/useAddEditFormState'
+import { usePreferredRate } from '../budgets/queries'
+import { useSettings } from '../settings/queries'
 import { RegisterCardForm, type RegisterCardSubmit } from './RegisterCardForm'
 
 /** Expense categories offered in the per-line editor (statements are expenses). */
@@ -356,10 +358,111 @@ function LineDates({
   )
 }
 
+/**
+ * The amount cell for a USD statement line (ADR-079). A USD line carries its
+ * dollar figure (`usdAmount`); its ARS-equivalent `amount` is materialized from
+ * the live preferred-source rate at review (ADR-148/149). This cell shows the USD
+ * figure, an EDITABLE ARS amount (so the user can confirm or adjust the computed
+ * value before import), and — when materialized — a calm caption showing the
+ * applied rate. When the rate was unavailable and no amount could be computed, the
+ * field is empty and a "enter the ARS amount to import" hint is shown; a rate is
+ * never fabricated (ADR-149/150). The ARS field is the authoritative `amount` sent
+ * on import — a USD-only line requires a positive ARS amount to pass the contract.
+ */
+function UsdAmountCell({
+  line,
+  kept,
+  disabled,
+  amountLabelId,
+  onAmountChange,
+}: {
+  line: ReviewLine
+  kept: boolean
+  disabled: boolean
+  amountLabelId: string
+  onAmountChange: (id: string, amount: number) => void
+}) {
+  const { t } = useTranslation('statements')
+  const hasAmount = line.amount > 0
+  const parseAmount = (raw: string): number => {
+    const value = Number.parseFloat(raw.replace(/[^\d.,-]/g, '').replace(',', '.'))
+    return Number.isFinite(value) ? value : 0
+  }
+  return (
+    <TableCell align="right" sx={{ whiteSpace: 'nowrap', minWidth: 150 }}>
+      <Box
+        sx={{
+          display: 'inline-flex',
+          flexDirection: 'column',
+          alignItems: 'flex-end',
+          gap: 0.25,
+        }}
+      >
+        {/* The stated dollar figure — the source of the ARS-equivalent. */}
+        {line.usdAmount !== undefined ? (
+          <Typography
+            component="span"
+            sx={{
+              fontFamily: monoFontFamily,
+              fontSize: 13,
+              color: 'text.primary',
+              textDecoration: kept ? 'none' : 'line-through',
+            }}
+          >
+            {formatCurrency(line.usdAmount, 'USD')}
+          </Typography>
+        ) : null}
+        {/* Editable ARS-equivalent (the authoritative import amount, ADR-079). */}
+        <Typography id={amountLabelId} component="span" sx={visuallyHiddenSx}>
+          {t('review.line.arsAmountFor', { name: line.name })}
+        </Typography>
+        <TextField
+          value={hasAmount ? String(line.amount) : ''}
+          onChange={(e) => onAmountChange(line.id, parseAmount(e.target.value))}
+          size="small"
+          disabled={disabled || !kept}
+          placeholder={t('review.line.arsAmountPlaceholder')}
+          slotProps={{
+            htmlInput: {
+              inputMode: 'decimal',
+              'aria-labelledby': amountLabelId,
+              style: { textAlign: 'right', padding: '4px 6px', width: 96 },
+            },
+          }}
+          sx={{
+            '& .MuiInputBase-input': { fontFamily: monoFontFamily, fontSize: 12.5 },
+          }}
+        />
+        {/* Non-color status beyond the field: the applied rate, or a calm hint to
+            enter the amount when the live rate was unavailable (ADR-019/149). */}
+        {hasAmount && line.fxRate !== undefined ? (
+          <Typography
+            component="span"
+            sx={{ fontSize: 11, color: 'text.disabled', fontFamily: monoFontFamily }}
+          >
+            {t('review.line.appliedRate', {
+              rate: formatCurrency(line.fxRate, 'ARS'),
+            })}
+          </Typography>
+        ) : !hasAmount ? (
+          <Typography
+            component="span"
+            role="note"
+            sx={{ fontSize: 11, color: 'text.secondary', maxWidth: 150, whiteSpace: 'normal', textAlign: 'right' }}
+          >
+            {t('review.line.enterArsAmount')}
+          </Typography>
+        ) : null}
+      </Box>
+    </TableCell>
+  )
+}
+
 /** A single editable line row (+ an expandable compare row when flagged). */
 function LineRow({
   line,
   onToggleKeep,
+  onAmountChange,
   onCategoryChange,
   onResolutionChange,
   onCuotaChange,
@@ -368,6 +471,7 @@ function LineRow({
 }: {
   line: ReviewLine
   onToggleKeep: (id: string, keep: boolean) => void
+  onAmountChange: (id: string, amount: number) => void
   onCategoryChange: (id: string, category: string) => void
   onResolutionChange: (id: string, resolution: ReviewResolution) => void
   onCuotaChange: (id: string, index: number | null, total: number | null) => void
@@ -376,6 +480,7 @@ function LineRow({
 }) {
   const { t } = useTranslation('statements')
   const selectLabelId = useId()
+  const amountLabelId = useId()
   const compareRegionId = useId()
   const [compareOpen, setCompareOpen] = useState(false)
   const kept = line.keep
@@ -503,17 +608,27 @@ function LineRow({
             </Box>
           ) : null}
         </TableCell>
-        <TableCell
-          align="right"
-          sx={{
-            whiteSpace: 'nowrap',
-            fontFamily: monoFontFamily,
-            fontSize: 13,
-            textDecoration: kept ? 'none' : 'line-through',
-          }}
-        >
-          {formatCurrency(line.amount, line.currency)}
-        </TableCell>
+        {line.currency === 'USD' ? (
+          <UsdAmountCell
+            line={line}
+            kept={kept}
+            disabled={disabled}
+            amountLabelId={amountLabelId}
+            onAmountChange={onAmountChange}
+          />
+        ) : (
+          <TableCell
+            align="right"
+            sx={{
+              whiteSpace: 'nowrap',
+              fontFamily: monoFontFamily,
+              fontSize: 13,
+              textDecoration: kept ? 'none' : 'line-through',
+            }}
+          >
+            {formatCurrency(line.amount, line.currency)}
+          </TableCell>
+        )}
         <TableCell sx={{ minWidth: 150 }}>
           <Typography
             id={selectLabelId}
@@ -859,7 +974,21 @@ export function StatementReviewTable({
     () => institutionsQuery.data ?? [],
     [institutionsQuery.data],
   )
-  const review = useStatementReviewState(parse, accounts, institutions)
+  // The live preferred-source rate + the persisted source (ADR-149/151) materialize
+  // a USD-only line's ARS-equivalent + FX snapshot at review (ADR-079) — the SAME
+  // cached rate the Add-transaction flow uses. Unavailable (null) leaves USD lines
+  // at amount 0 with a calm "enter the ARS amount" hint; a rate is never guessed.
+  const preferredRateQuery = usePreferredRate()
+  const settingsQuery = useSettings()
+  const preferredRate = preferredRateQuery.data ?? null
+  const preferredRateSource = settingsQuery.data?.preferredRateSource
+  const review = useStatementReviewState(
+    parse,
+    accounts,
+    institutions,
+    preferredRate,
+    preferredRateSource,
+  )
 
   // AVAILABLE per currency uses each account's as-of-today NATIVE balance (opening
   // + transaction deltas, ADR-186) from the net-worth read model, falling back to
@@ -1187,7 +1316,16 @@ export function StatementReviewTable({
       : '—'
 
   const handleImport = () => {
-    if (review.includedCount === 0 || isImporting) return
+    // Block the submit while any kept line still has a non-positive amount (ADR-079):
+    // sending amount 0 would 422 the whole import; the inline hint asks for the ARS
+    // amount instead.
+    if (
+      review.includedCount === 0 ||
+      review.hasBlockingZeroAmount ||
+      isImporting
+    ) {
+      return
+    }
     onImport(review.buildImportRequest())
   }
 
@@ -1303,6 +1441,24 @@ export function StatementReviewTable({
         {t('review.dateNote')}
       </Typography>
 
+      {/* USD lines with no peso amount need a live rate to materialize their ARS
+          equivalent (ADR-079/148/149). When the rate is unavailable we never guess
+          one — surface a calm, non-blocking hint that the user must enter the ARS
+          amount for those lines to import (ADR-149/150/037). */}
+      {review.usdRateUnavailable ? (
+        <Alert
+          severity="info"
+          variant="outlined"
+          sx={{
+            mb: 2,
+            borderColor: 'var(--mg-border-2)',
+            '& .MuiAlert-message': { fontSize: 13 },
+          }}
+        >
+          {t('review.usdRateUnavailable')}
+        </Alert>
+      ) : null}
+
       {/* The editable line table. */}
       <TableContainer
         sx={{
@@ -1350,6 +1506,7 @@ export function StatementReviewTable({
                 key={line.id}
                 line={line}
                 onToggleKeep={review.toggleKeep}
+                onAmountChange={review.setAmount}
                 onCategoryChange={review.setCategory}
                 onResolutionChange={review.setResolution}
                 onCuotaChange={review.setCuota}
@@ -1391,7 +1548,11 @@ export function StatementReviewTable({
           variant="contained"
           color="primary"
           onClick={handleImport}
-          disabled={review.includedCount === 0 || isImporting}
+          disabled={
+            review.includedCount === 0 ||
+            review.hasBlockingZeroAmount ||
+            isImporting
+          }
           startIcon={
             isImporting ? (
               <CircularProgress size={15} thickness={5} color="inherit" />

@@ -1380,13 +1380,13 @@ class TestSantanderPurchaseEdgeCases:
 class TestSantanderFeeEdgeCases:
     """Defensive branches in the Santander fee row parser."""
 
-    def test_no_vencimiento_skips_the_whole_fee_section(self):
+    def test_no_vencimiento_dates_fees_on_the_closing_date(self):
         """
-        GIVEN a statement with no VENCIMIENTO (pay_date is None) carrying a fee row
+        GIVEN a statement with no VENCIMIENTO but a parseable CIERRE, carrying a fee
         WHEN it is parsed
-        THEN the fee section is skipped entirely (fees need a pay date)
+        THEN the fee is NOT dropped — it dates on the closing date (ADR-089 fallback)
         """
-        # GIVEN — no VENCIMIENTO header, plus a well-formed fee line after the total.
+        # GIVEN — a CIERRE (closing) header but no VENCIMIENTO, plus a fee row.
         text = "\n".join(
             [
                 "N319",
@@ -1403,8 +1403,39 @@ class TestSantanderFeeEdgeCases:
         # WHEN
         parsed = SantanderAmexParser().parse(text)
 
-        # THEN — pay date is None, so no fee line is emitted.
+        # THEN — no due date, so the fee falls back to the closing date, not dropped.
         assert parsed.period_due is None
+        assert parsed.period_close == date(2026, 5, 28)
+        fees = [line for line in parsed.lines if line.line_kind is LineKind.FEE]
+        assert len(fees) == 1
+        assert fees[0].name == "IMPUESTO SELLOS"
+        assert fees[0].occurred_on == date(2026, 5, 28)
+
+    def test_wholly_dateless_statement_skips_the_fee_section(self):
+        """
+        GIVEN a statement with NEITHER a VENCIMIENTO nor a CIERRE (no fee date at all)
+        WHEN it is parsed
+        THEN the fee section is skipped (there is no date to place the fee on)
+        """
+        # GIVEN — no CIERRE and no VENCIMIENTO, plus a well-formed fee line.
+        text = "\n".join(
+            [
+                "N319",
+                "30 50000845 4",
+                "AMERICAN  EXPRESS",
+                "____________________________",
+                "15 Mayo 1 1234 * SOME SHOP 1.000,00",
+                "Tarjeta 5678 Total Consumos 1.000,00",
+                "10 Jun 26 IMPUESTO SELLOS $ 500,00",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderAmexParser().parse(text)
+
+        # THEN — no due date and no closing date, so no fee line is emitted.
+        assert parsed.period_due is None
+        assert parsed.period_close is None
         assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
 
     def test_non_matching_line_after_total_is_ignored(self):
@@ -1521,3 +1552,495 @@ def _minimal_detail(cells: list[str]) -> str:
             "1.000,00",
         ]
     )
+
+
+# --------------------------------------------------------------------------- #
+# FLAT-TEXT fixture for the Santander parser (ADR-076). The REAL statement's     #
+# get_text() PRESERVES the fixed-width layout with space padding: money is        #
+# right-aligned to stable CHARACTER END columns (peso ends at 91, U$S at 110),     #
+# pages joined by \n so each purchase stays its own line. These SYNTHETIC lines    #
+# reproduce the real char columns + quirks with FAKE merchants/amounts (no PII):   #
+# a marker-less USD row (empty peso col + a decoy@65 + the amount@110), a          #
+# continuation row (no month, indented), a wide-description row still right-        #
+# aligned to 91, page-2 reprinted header chrome, a total with a missing leading    #
+# thousands dot, the day-only continuation fee, the RG-5617 parens/percent/no-"$"  #
+# fee, and a phantom financing block whose numbers are OUTSIDE the money columns.  #
+# --------------------------------------------------------------------------- #
+
+_PESO_END = 91
+_USD_END = 110
+
+
+def _flat_row(
+    prefix: str,
+    *,
+    peso: str | None = None,
+    usd: str | None = None,
+    decoy: str | None = None,
+    decoy_end: int = 65,
+) -> str:
+    """Place amounts right-aligned to their real END columns over a padded prefix."""
+    line = list(prefix.ljust(120))
+
+    def place(amount: str, end: int) -> None:
+        start = end - len(amount)
+        for i, char in enumerate(amount):
+            line[start + i] = char
+
+    if decoy is not None:
+        place(decoy, decoy_end)
+    if peso is not None:
+        place(peso, _PESO_END)
+    if usd is not None:
+        place(usd, _USD_END)
+    return "".join(line).rstrip()
+
+
+_SANTANDER_VISA_FLAT_TEXT = "\n".join(
+    [
+        # fingerprint + metadata (read from the flat text):
+        "Santander Rio",
+        "VISA",
+        "30 50000845 4",
+        "N456",
+        "CIERRE  02 Jul 26 VENCIMIENTO 13 Jul 26",
+        # column-anchor + carryover rows (skipped as transactions):
+        _flat_row("                        SALDO ANTERIOR", peso="748.358,07", usd="0,00"),
+        _flat_row("26 Junio   05           SU PAGO EN PESOS", peso="748.358,07-"),
+        "________________________________________________________________________________",
+        # ARS purchase, marker + cuota:
+        _flat_row("26 Mayo    10 007490 *  TIENDA UNO           C.02/06", peso="68.750,00"),
+        # ARS purchase, continuation (no month), K marker, small amount still ends 91:
+        _flat_row("           30 159049 K  TRANSPORTE LOCAL", peso="1.675,04"),
+        # USD purchase: NO marker, empty peso column, decoy@65, real USD@110:
+        _flat_row("26 Junio   01 444186    PROVEEDOR* GLOBAL ref9xUSD", usd="200,00", decoy="200,00"),
+        # ARS purchase, wide description; amount still right-aligned to 91 (pesos):
+        _flat_row("           29 001125 K  COMERCIO CON NOMBRE MUY LARGO SA", peso="14.545,00"),
+        # page-2 reprinted header chrome (ignored):
+        "Santander Rio",
+        "VISA",
+        "Fecha          Comprobante Referencia",
+        "$",
+        "U$S",
+        _flat_row("           26 000078 K  OTRA TIENDA", peso="56.113,25"),
+        # end of purchases (total with a MISSING leading thousands dot):
+        _flat_row("Tarjeta 1041 Total Consumos de JUAN PEREZ", peso="9064.321,50", usd="200,00"),
+        # BLANK line between the total and the first tax (real-statement quirk): the
+        # fee section must SKIP it, not terminate on it.
+        "                                                                                    ",
+        # fees: two real SELLOS + RG-5617 (parenthetical decoy + percent, no "$"):
+        _flat_row("26 Julio   02           IMPUESTO DE SELLOS        $", peso="13.844,18"),
+        _flat_row("           02           IMPUESTO DE SELLOS      P $", peso="3.573,60"),
+        _flat_row("           02           DB.RG 5617  30% (", peso="89.340,00", decoy="297800,00", decoy_end=53),
+        # BLANK line before the disclosure block (real-statement quirk): skipped too,
+        # the block is bounded by its "Plan V"/"Cuotas a vencer" keyword, not the blank.
+        "                                                                                    ",
+        # phantom financing / disclosure block: numbers OUTSIDE the money columns:
+        _flat_row("                      3 cuotas de $ 379313,26 (TNA Fija:", decoy="379313,26", decoy_end=45),
+        _flat_row("                Plan V: abonando el pago minimo de $", decoy="171660,00", decoy_end=67),
+        _flat_row("                Cuotas a vencer:"),
+        "                SALDO ACTUAL                                                    1.114.759,64",
+    ]
+)
+
+
+class TestSantanderVisaFlatColumnParse:
+    """The flat-text column parser reads the real fixed-width Santander layout.
+
+    Ground-truth cover for the live bug: a marker-less USD row (empty peso column,
+    a decoy left of both columns, the amount in the U$S column), a continuation
+    row, a wide-description row that stays pesos, a missing-leading-dot total, the
+    three taxes, and a phantom financing block — all classified by the money
+    tokens' END char positions against columns detected from an anchor line.
+    """
+
+    @pytest.fixture(name="parsed")
+    def fixture_parsed(self) -> ParsedStatement:
+        """Parse the synthetic flat statement once for the class."""
+        return SantanderVisaParser().parse(_SANTANDER_VISA_FLAT_TEXT)
+
+    def test_reads_the_total_with_a_missing_leading_thousands_dot(self, parsed: ParsedStatement):
+        """
+        GIVEN a Total Consumos row whose peso figure prints "9064.321,50"
+        WHEN it is parsed
+        THEN the total is 9064321.50 (the missing leading thousands dot is tolerated)
+        """
+        # THEN
+        assert parsed.status is ParseStatus.OK
+        assert parsed.total_amount == Decimal("9064321.50")
+
+    def test_extracts_exactly_five_purchases(self, parsed: ParsedStatement):
+        """
+        GIVEN the five real purchase rows (four ARS incl. a page-2 row + one USD)
+        WHEN they are parsed
+        THEN exactly five purchase lines are present (SALDO/SU PAGO skipped)
+        """
+        # THEN
+        purchases = [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE]
+        assert len(purchases) == 5
+        assert {line.name for line in purchases} == {
+            "TIENDA UNO",
+            "TRANSPORTE LOCAL",
+            "PROVEEDOR* GLOBAL ref9xUSD",
+            "COMERCIO CON NOMBRE MUY LARGO SA",
+            "OTRA TIENDA",
+        }
+
+    def test_marker_less_usd_row_is_one_usd_line_with_no_fabricated_pesos(self, parsed: ParsedStatement):
+        """
+        GIVEN the marker-less row: empty peso column, a decoy "200,00" left of both
+              columns, and the billed "200,00" in the U$S column
+        WHEN it is parsed
+        THEN it is one USD line with usd_amount=200 and amount=0, decoy absent from
+             the name, FX left for the review UI (ADR-079)
+        """
+        # THEN
+        usd_lines = [line for line in parsed.lines if line.currency is Currency.USD]
+        assert len(usd_lines) == 1
+        line = usd_lines[0]
+        assert line.line_kind is LineKind.PURCHASE
+        assert line.usd_amount == Decimal("200.00")
+        assert line.amount == Decimal("0")
+        assert line.fx_rate is None
+        assert line.fx_rate_type is None
+        assert "PROVEEDOR" in line.name
+        assert "200,00" not in line.name  # the decoy reference is dropped.
+
+    def test_ars_rows_including_wide_description_and_continuation_stay_pesos(self, parsed: ParsedStatement):
+        """
+        GIVEN the ordinary, continuation and wide-description ARS rows (all right-
+              aligned to the peso column)
+        WHEN they are parsed
+        THEN each is an ARS line carrying its peso amount (no USD guess) (ADR-025)
+        """
+        # THEN
+        tienda = _by_name(parsed, "TIENDA UNO")
+        assert tienda is not None
+        assert tienda.currency is Currency.ARS
+        assert tienda.amount == Decimal("68750.00")
+        assert tienda.cuota == "02/06"
+        transporte = _by_name(parsed, "TRANSPORTE LOCAL")
+        assert transporte is not None
+        assert transporte.amount == Decimal("1675.04")  # continuation row (no month).
+        wide = _by_name(parsed, "COMERCIO CON NOMBRE MUY LARGO SA")
+        assert wide is not None
+        assert wide.currency is Currency.ARS
+        assert wide.amount == Decimal("14545.00")
+
+    def test_captures_exactly_the_three_taxes_no_phantom_fees(self, parsed: ParsedStatement):
+        """
+        GIVEN the three real taxes plus a phantom financing block (cuotas / Plan V /
+              SALDO ACTUAL) whose numbers are outside the money columns
+        WHEN it is parsed
+        THEN exactly the three AR$ taxes become fees; none of the financing rows do
+        """
+        # THEN
+        fees = [line for line in parsed.lines if line.line_kind is LineKind.FEE]
+        assert {line.name: line.amount for line in fees} == {
+            "IMPUESTO DE SELLOS": Decimal("13844.18"),
+            "IMPUESTO DE SELLOS P": Decimal("3573.60"),
+            "DB.RG 5617 30%": Decimal("89340.00"),  # the "( 297800,00 )" decoy is stripped.
+        }
+        names = " ".join(line.name.upper() for line in parsed.lines)
+        assert "CUOTAS" not in names
+        assert "PLAN" not in names
+        assert "SALDO" not in names
+
+    def test_all_lines_count_on_the_due_date(self, parsed: ParsedStatement):
+        """
+        GIVEN the statement's parsed due date
+        WHEN each line's occurred_on is read
+        THEN every line counts on the due date (ADR-089)
+        """
+        # THEN
+        assert parsed.period_due == date(2026, 7, 13)
+        assert all(line.occurred_on == date(2026, 7, 13) for line in parsed.lines)
+
+
+class TestSantanderVisaFlatEdgeCases:
+    """Defensive branches of the flat-text column classifier and fee builder."""
+
+    def test_anchor_with_a_stray_description_number_still_pins_the_real_columns(self):
+        """
+        GIVEN an anchor line ("Total Consumos") whose DESCRIPTION carries a stray
+              money-shaped number (e.g. "12,50") LEFT of the peso column
+        WHEN the peso/USD columns are detected
+        THEN the detector takes the two RIGHTMOST tokens (real peso + USD columns),
+             so normal peso rows still classify correctly (the stray does not corrupt
+             peso_end and vanish every peso amount)
+        """
+        # GIVEN — the total line carries a stray "12,50" in its description text; the
+        # real peso (91) and USD (110) columns are its two rightmost tokens.
+        total = _flat_row("Tarjeta 1041 Total Consumos de LOTE 12,50", peso="9.999,00", usd="0,00")
+        text = "\n".join(
+            [
+                "VISA",
+                "30 50000845 4",
+                "CIERRE  02 Jul 26 VENCIMIENTO 13 Jul 26",
+                "________________________________________________________________________________",
+                _flat_row("26 Mayo    10 007490 *  TIENDA UNO", peso="68.750,00"),
+                total,
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaParser().parse(text)
+
+        # THEN — peso column pinned correctly, so the peso row classifies as ARS and
+        # the total reads the real peso amount (not the stray "12,50").
+        line = _by_name(parsed, "TIENDA UNO")
+        assert line is not None
+        assert line.currency is Currency.ARS
+        assert line.amount == Decimal("68750.00")
+        assert parsed.total_amount == Decimal("9999.00")
+
+    def test_wide_description_amount_drifting_off_column_is_dropped(self):
+        """
+        GIVEN a purchase whose amount ends far from BOTH detected columns
+        WHEN it is parsed
+        THEN the amount is not classified (dropped), so the row yields no line
+        """
+        # GIVEN — an anchor line pins peso@91/usd@110, but this row's amount ends ~75.
+        row = _flat_row("           31 002200 K  DRIFTED SHOP").rstrip() + "         12.000,00"
+        text = "\n".join(
+            [
+                "VISA",
+                "30 50000845 4",
+                "CIERRE  02 Jul 26 VENCIMIENTO 13 Jul 26",
+                _flat_row("                        SALDO ANTERIOR", peso="748.358,07", usd="0,00"),
+                "________________________________________________________________________________",
+                row,
+                _flat_row("Tarjeta 1041 Total Consumos de JUAN PEREZ", peso="1.000,00", usd="0,00"),
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaParser().parse(text)
+
+        # THEN — the off-column amount was dropped, so no purchase line.
+        assert [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE] == []
+
+    def test_no_dual_amount_anchor_falls_back_to_positional(self):
+        """
+        GIVEN a statement with NO dual-amount anchor line (a minimal AMEX-like layout)
+        WHEN it is parsed
+        THEN amounts fall back to positional order (first money = pesos)
+        """
+        # GIVEN — no SALDO ANTERIOR / dual-amount total; single-amount rows.
+        text = "\n".join(
+            [
+                "N319",
+                "30 50000845 4",
+                "AMERICAN  EXPRESS",
+                "CIERRE 28 May 26",
+                "VENCIMIENTO 10 Jun 26",
+                "____________________________",
+                "15 Mayo 1 1234 * SOME SHOP 1.000,00",
+                "Tarjeta 5678 Total Consumos 1.000,00",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderAmexParser().parse(text)
+
+        # THEN — positional fallback keeps the AMEX layout working.
+        purchases = [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE]
+        assert len(purchases) == 1
+        assert purchases[0].amount == Decimal("1000.00")
+        assert purchases[0].currency is Currency.ARS
+
+    def test_fee_keyword_row_without_a_peso_column_amount_is_dropped(self):
+        """
+        GIVEN a post-total fee-keyword row whose only number is OUTSIDE the peso
+              column (no charge in the money column)
+        WHEN it is parsed
+        THEN no fee line is emitted (the peso-column requirement rejects it)
+        """
+        # GIVEN — an "IMPUESTO …" row with a number at ~char 50, not the peso column.
+        text = "\n".join(
+            [
+                "VISA",
+                "30 50000845 4",
+                "CIERRE  02 Jul 26 VENCIMIENTO 13 Jul 26",
+                _flat_row("                        SALDO ANTERIOR", peso="748.358,07", usd="0,00"),
+                _flat_row("Tarjeta 1041 Total Consumos de JUAN PEREZ", peso="1.000,00", usd="0,00"),
+                _flat_row("           02           IMPUESTO DE SELLOS", decoy="500,00", decoy_end=50),
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaParser().parse(text)
+
+        # THEN
+        assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
+
+    def test_non_fee_keyword_row_after_total_is_ignored(self):
+        """
+        GIVEN a post-total row carrying a peso-column amount but NO fee keyword
+        WHEN it is parsed
+        THEN it never becomes a fee (the fee-keyword opener rejects it)
+        """
+        # GIVEN — a "SERVICIO …" row with a real peso-column amount.
+        text = "\n".join(
+            [
+                "VISA",
+                "30 50000845 4",
+                "CIERRE  02 Jul 26 VENCIMIENTO 13 Jul 26",
+                _flat_row("                        SALDO ANTERIOR", peso="748.358,07", usd="0,00"),
+                _flat_row("Tarjeta 1041 Total Consumos de JUAN PEREZ", peso="1.000,00", usd="0,00"),
+                _flat_row("           02           SERVICIO EXTRA", peso="500,00"),
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaParser().parse(text)
+
+        # THEN
+        assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
+
+    def test_merchant_containing_total_substring_is_not_dropped(self):
+        """
+        GIVEN a real merchant whose name CONTAINS "TOTAL" ("ESTACION TOTAL")
+        WHEN it is parsed
+        THEN it is NOT dropped — the skip guard matches only the EXACT payment /
+             carryover phrases, never a bare "TOTAL"/"SALDO" substring
+        """
+        # GIVEN — a gas-station purchase named "ESTACION TOTAL" (contains TOTAL).
+        text = "\n".join(
+            [
+                "VISA",
+                "30 50000845 4",
+                "CIERRE  02 Jul 26 VENCIMIENTO 13 Jul 26",
+                _flat_row("                        SALDO ANTERIOR", peso="748.358,07", usd="0,00"),
+                "________________________________________________________________________________",
+                _flat_row("26 Mayo    10 007490 *  ESTACION TOTAL", peso="15.000,00"),
+                _flat_row("Tarjeta 1041 Total Consumos de JUAN PEREZ", peso="15.000,00", usd="0,00"),
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaParser().parse(text)
+
+        # THEN — the merchant survives (bare-substring skip would have dropped it).
+        line = _by_name(parsed, "ESTACION TOTAL")
+        assert line is not None
+        assert line.currency is Currency.ARS
+        assert line.amount == Decimal("15000.00")
+
+    def test_fee_section_line_for_a_merchant_containing_saldo_is_kept(self):
+        """
+        GIVEN a genuine interest fee whose label CONTAINS "SALDO" ("INT SALDO DEUDOR")
+        WHEN it is parsed
+        THEN it is kept as a fee — only the EXACT "SALDO ANTERIOR"/"SALDO ACTUAL"
+             carryover phrases are skipped, not a bare "SALDO" substring
+        """
+        # GIVEN — a real "INT SALDO DEUDOR" interest charge in the peso column.
+        text = "\n".join(
+            [
+                "VISA",
+                "30 50000845 4",
+                "CIERRE  02 Jul 26 VENCIMIENTO 13 Jul 26",
+                _flat_row("                        SALDO ANTERIOR", peso="748.358,07", usd="0,00"),
+                _flat_row("Tarjeta 1041 Total Consumos de JUAN PEREZ", peso="1.000,00", usd="0,00"),
+                _flat_row("           02           INT SALDO DEUDOR", peso="500,00"),
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaParser().parse(text)
+
+        # THEN — the interest fee is kept (bare-"SALDO" substring would have dropped it).
+        fees = [line for line in parsed.lines if line.line_kind is LineKind.FEE]
+        assert len(fees) == 1
+        assert fees[0].name == "INT SALDO DEUDOR"
+        assert fees[0].amount == Decimal("500.00")
+
+    def test_exact_carryover_phrase_after_total_is_not_a_fee(self):
+        """
+        GIVEN a post-total "SALDO ACTUAL" carryover row with a peso-column amount
+        WHEN it is parsed
+        THEN it never becomes a fee (the fee-keyword opener rejects the balance row)
+        """
+        # GIVEN — a "SALDO ACTUAL" line whose amount lands in the peso column.
+        text = "\n".join(
+            [
+                "VISA",
+                "30 50000845 4",
+                "CIERRE  02 Jul 26 VENCIMIENTO 13 Jul 26",
+                _flat_row("                        SALDO ANTERIOR", peso="748.358,07", usd="0,00"),
+                _flat_row("Tarjeta 1041 Total Consumos de JUAN PEREZ", peso="1.000,00", usd="0,00"),
+                _flat_row("           02           SALDO ACTUAL", peso="500,00"),
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaParser().parse(text)
+
+        # THEN — "SALDO ACTUAL" is not a fee keyword, so it never becomes a fee.
+        assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
+
+    def test_fee_keyword_row_containing_an_exact_skip_phrase_is_dropped(self):
+        """
+        GIVEN a fee-keyword row whose cleaned name CONTAINS an exact carryover phrase
+              ("IVA SALDO ACTUAL")
+        WHEN it is parsed
+        THEN no fee line is emitted (the exact skip-phrase guard rejects it — ADR-079)
+        """
+        # GIVEN — opens with the fee keyword "IVA" but names "SALDO ACTUAL".
+        text = "\n".join(
+            [
+                "VISA",
+                "30 50000845 4",
+                "CIERRE  02 Jul 26 VENCIMIENTO 13 Jul 26",
+                _flat_row("                        SALDO ANTERIOR", peso="748.358,07", usd="0,00"),
+                _flat_row("Tarjeta 1041 Total Consumos de JUAN PEREZ", peso="1.000,00", usd="0,00"),
+                _flat_row("           02           IVA SALDO ACTUAL", peso="500,00"),
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaParser().parse(text)
+
+        # THEN — the exact "SALDO ACTUAL" phrase in the name drops it.
+        assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
+
+    def test_comprobante_row_without_any_amount_is_dropped(self):
+        """
+        GIVEN a purchase-shaped row (date + comprobante) carrying NO money token
+        WHEN it is parsed
+        THEN it yields no purchase line (no peso and no USD amount landed)
+        """
+        # GIVEN — a well-formed opener row with no amount at all.
+        text = "\n".join(
+            [
+                "VISA",
+                "30 50000845 4",
+                "CIERRE  02 Jul 26 VENCIMIENTO 13 Jul 26",
+                _flat_row("                        SALDO ANTERIOR", peso="748.358,07", usd="0,00"),
+                "________________________________________________________________________________",
+                "26 Mayo    10 007490 *  SHOP WITHOUT AMOUNT",
+                _flat_row("Tarjeta 1041 Total Consumos de JUAN PEREZ", peso="1.000,00", usd="0,00"),
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaParser().parse(text)
+
+        # THEN
+        assert [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE] == []
+
+    def test_empty_text_yields_unparseable(self):
+        """
+        GIVEN a fingerprinting text with no transaction lines
+        WHEN it is parsed
+        THEN the status is UNPARSEABLE (nothing extracted)
+        """
+        # GIVEN — fingerprint markers only.
+        text = "VISA\n30 50000845 4\n"
+
+        # WHEN
+        parsed = SantanderVisaParser().parse(text)
+
+        # THEN
+        assert parsed.status is ParseStatus.UNPARSEABLE
+        assert parsed.lines == []

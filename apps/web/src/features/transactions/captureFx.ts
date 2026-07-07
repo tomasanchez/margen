@@ -60,6 +60,74 @@ function toRateString(rate: number): string {
 }
 
 /**
+ * The {@link FxRateType} FAMILY implied by the persisted preferred rate source
+ * (ADR-151) — the counterpart to {@link sourceForFxRateType} so the two never
+ * drift. `'oficial'` → `'official'`; everything else (the MEP/`'bolsa'` default)
+ * → `'MEP'`. Used where a captured live-rate snapshot must be tagged with the
+ * rate FAMILY the backend records (e.g. the statement USD line materialization),
+ * rather than the `fxSource` provenance string.
+ */
+export function fxRateTypeForSource(
+  source: PreferredRateSource | undefined,
+): FxRateType {
+  return source === 'oficial' ? 'official' : 'MEP'
+}
+
+/** The materialized ARS-equivalent + FX snapshot for a USD statement line (ADR-148/149). */
+export interface MaterializedUsdLineFx {
+  /** The ARS-equivalent magnitude (`usdAmount × rate`), the authoritative `amount`. */
+  readonly amount: number
+  /** The applied rate (ARS per 1 USD), the snapshot `fxRate`. */
+  readonly fxRate: number
+  /** The rate FAMILY the snapshot is tagged with (from the preferred source). */
+  readonly fxRateType: FxRateType
+  /**
+   * The snapshot's provenance tag (ADR-148), the persisted preferred rate SOURCE
+   * (`'oficial'` / `'bolsa'`) — the SAME `fxSource` the Add-transaction ARS capture
+   * stamps (see `captureFxForCreate`'s ARS branch, which uses `casaForSource`). Sent
+   * ALONGSIDE `fxRate`/`fxRateType` so the imported USD row lands with a COMPLETE,
+   * auditable FX snapshot and the backend runs its authoritative
+   * `usd_amount = round(amount ÷ fx_rate)` re-materialization (which only fires when
+   * `fx_source` is set). Never hardcoded `'manual'`.
+   */
+  readonly fxSource: string
+}
+
+/**
+ * Materialize a USD statement line's ARS-equivalent + FX snapshot from the live
+ * preferred-source rate (ADR-079/148/149). A USD-only card charge arrives with a
+ * `usdAmount` but no peso `amount` (the printed statement never stated one), and
+ * the import contract requires a positive ARS `amount` — so at review we compute
+ * `amount = usdAmount × rate` and stamp `fxRate` + `fxRateType` exactly like the
+ * Add-transaction USD path, capturing the snapshot client-side (ADR-149).
+ *
+ * Returns `null` when the rate is unavailable/non-positive or `usdAmount` is not
+ * positive: we NEVER fabricate a rate (ADR-149/150) — the caller leaves `amount`
+ * at 0 and surfaces a calm "enter the ARS amount" hint. The `rate` FAMILY is
+ * derived from the preferred source via {@link fxRateTypeForSource}, and the
+ * `fxSource` provenance from the SAME preferred source via {@link casaForSource},
+ * so the snapshot mirrors `captureFxForCreate` and never drifts.
+ */
+export function materializeUsdLineFx(
+  usdAmount: number | undefined,
+  rate: number | null | undefined,
+  source: PreferredRateSource | undefined,
+): MaterializedUsdLineFx | null {
+  if (typeof usdAmount !== 'number' || !Number.isFinite(usdAmount) || usdAmount <= 0) {
+    return null
+  }
+  if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) return null
+  return {
+    amount: usdAmount * rate,
+    fxRate: rate,
+    fxRateType: fxRateTypeForSource(source),
+    // The persisted preferred SOURCE ('oficial' / 'bolsa') — the same provenance
+    // the ARS Add-transaction capture stamps, so the row's snapshot is complete.
+    fxSource: casaForSource(source),
+  }
+}
+
+/**
  * Options for {@link captureFxForCreate}.
  */
 export interface CaptureFxOptions {
