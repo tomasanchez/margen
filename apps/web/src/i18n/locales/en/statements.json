@@ -81,10 +81,11 @@
       "schedule": "Schedule these transfers",
       "scheduling": "Scheduling…",
       "scheduled": "Transfers scheduled",
-      "scheduledDetail": "Your top-up transfers are scheduled for the due date. They stay pending until then.",
+      "scheduledDetail": "Your transfers are scheduled for the due date. They stay pending until then.",
       "scheduleError": "We couldn't schedule these transfers. Please try again.",
       "scheduleHint": "Move the funds now as transfers dated for the due date — they stay pending until then.",
-      "scheduleNote": "Statement payment top-up"
+      "scheduleNote": "Statement payment top-up",
+      "paymentNote": "Card payment"
     },
     "tableAriaLabel": "Statement line items",
     "columns": {

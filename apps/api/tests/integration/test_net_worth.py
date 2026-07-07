@@ -22,11 +22,14 @@ from margen_api.adapters.account_repository import SqlAlchemyAccountRepository
 from margen_api.adapters.debt_repository import SqlAlchemyDebtRepository
 from margen_api.adapters.institution_repository import SqlAlchemyInstitutionRepository
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
+from margen_api.adapters.unit_of_work import SqlAlchemyUnitOfWork
+from margen_api.domain.commands.transfer import CreateTransfer
 from margen_api.domain.models.account import build_account
 from margen_api.domain.models.debt import build_debt
 from margen_api.domain.models.institution import build_institution
 from margen_api.domain.models.transaction import build_transaction
 from margen_api.domain.models.value_objects import Currency, InstitutionType, Kind, RecurringCadence
+from margen_api.service_layer.transfer_handlers import create_transfer
 
 pytestmark = pytest.mark.integration
 
@@ -462,6 +465,189 @@ class TestCcBalanceLiabilitySql:
         # THEN
         assert net_worth.liabilities.cc_balance == Decimal("0.00")
         assert net_worth.total == Decimal("10000.00")
+
+
+async def _seed_transfer(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    owner: str,
+    from_account_id,
+    to_account_id,
+    amount: Decimal,
+    occurred_on: date,
+) -> None:
+    """Record a same-currency own-account transfer through the ADR-135 handler.
+
+    Slice B models paying a card as a future-dated own-account transfer from a
+    bank/wallet account into the CARD account (ADR-196). The handler validates only
+    ownership + ``from != to`` + positive legs, so a bank→card transfer is
+    structurally valid with no backend change — this helper drives that exact path.
+    """
+    await create_transfer(
+        CreateTransfer(
+            user_id=owner,
+            from_account_id=from_account_id,
+            to_account_id=to_account_id,
+            amount_out=amount,
+            amount_in=amount,
+            occurred_on=occurred_on,
+        ),
+        SqlAlchemyUnitOfWork(session_factory),
+    )
+
+
+class TestCardPaymentAsTransferNoDoubleCount:
+    """Paying a card as a bank→card transfer never double-counts the obligation (ADR-196, ADR-185, ADR-186).
+
+    Slice B (ADR-196) reserves a card payment as a future-dated own-account transfer from
+    a bank account into the CARD account. These lock the load-bearing invariant: the
+    ``cc_balance`` liability (ADR-185) sums card EXPENSE charges only, so a payment
+    TRANSFER never enters it; the as-of-today balance (ADR-186) excludes future-dated
+    rows, so a pending payment moves no settled figure. On/after the due date the charge
+    (-) and the payment (+) cross and settle into the card, which nets to ~0. No peso is
+    ever both a settled balance hit and a pending liability.
+    """
+
+    async def test_pending_payment_leaves_cc_balance_net_worth_and_bank_unchanged(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a CARD account with a future-dated 100 charge AND a bank account funding it,
+              with and without an equal future-dated bank→card payment transfer
+        WHEN net worth is read from PostgreSQL in each case
+        THEN while the payment is pending, cc_balance still equals the 100 charge (the
+             transfer is not an expense, ADR-185), the as-of-today asset total and
+             net_after_liabilities are identical to the no-payment case, and the bank's
+             settled balance is unchanged — the future transfer moves nothing (ADR-186/196)
+        """
+        # GIVEN — a bank (opening 1000) and a card (opening 0) with a future 100 charge.
+        bank_id = await _seed_account(
+            session_factory, owner=OWNER, opening_balance=Decimal("1000"), institution_type=InstitutionType.BANK
+        )
+        card_id = await _seed_account(
+            session_factory, owner=OWNER, opening_balance=Decimal("0"), institution_type=InstitutionType.CARD
+        )
+        await _seed_transactions(
+            session_factory,
+            [_tx(name="MERPAGO*PASSLINE", amount=Decimal("100"), occurred_on=_FUTURE, account_id=card_id)],
+        )
+
+        # WHEN — baseline: no payment scheduled yet.
+        async with session_factory() as session:
+            baseline = await SqlAlchemyAccountReader(session).net_worth(OWNER)
+
+        # AND — schedule the payment as a future-dated bank→card transfer of 100.
+        await _seed_transfer(
+            session_factory,
+            owner=OWNER,
+            from_account_id=bank_id,
+            to_account_id=card_id,
+            amount=Decimal("100"),
+            occurred_on=_FUTURE,
+        )
+        async with session_factory() as session:
+            with_payment = await SqlAlchemyAccountReader(session).net_worth(OWNER)
+
+        # THEN — the pending payment changes NOTHING: the charge is the only cc_balance,
+        # the assets total and net_after_liabilities match the baseline, and the bank's
+        # settled balance is unchanged (the future transfer has not moved).
+        assert baseline.liabilities.cc_balance == Decimal("100.00")
+        assert with_payment.liabilities.cc_balance == Decimal("100.00")
+        assert with_payment.total == baseline.total == Decimal("1000.00")
+        assert with_payment.net_after_liabilities == baseline.net_after_liabilities == Decimal("900.00")
+        by_id = {account.id: account for account in with_payment.accounts}
+        assert by_id[bank_id].balance == Decimal("1000.00")
+        assert by_id[card_id].balance == Decimal("0.00")
+
+    async def test_settled_payment_clears_card_and_drops_bank_with_no_double_count(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a CARD account with a PAST/today-dated 100 charge and an equal past/today
+              bank→card payment transfer, funded by a 1000 bank account
+        WHEN net worth is read from PostgreSQL
+        THEN the charge (-100) and the payment (+100) both settle into the card, which
+             nets to ~0; the bank drops by 100; the charge is no longer future-dated so it
+             leaves cc_balance; net worth reflects "paid" with the obligation counted once
+             (ADR-186/196)
+        """
+        # GIVEN — bank (opening 1000), card (opening 0), both the charge and the payment
+        # dated in the past so they are settled.
+        bank_id = await _seed_account(
+            session_factory, owner=OWNER, opening_balance=Decimal("1000"), institution_type=InstitutionType.BANK
+        )
+        card_id = await _seed_account(
+            session_factory, owner=OWNER, opening_balance=Decimal("0"), institution_type=InstitutionType.CARD
+        )
+        await _seed_transactions(
+            session_factory,
+            [_tx(name="MERPAGO*PASSLINE", amount=Decimal("100"), occurred_on=_PAST, account_id=card_id)],
+        )
+        await _seed_transfer(
+            session_factory,
+            owner=OWNER,
+            from_account_id=bank_id,
+            to_account_id=card_id,
+            amount=Decimal("100"),
+            occurred_on=_PAST,
+        )
+
+        # WHEN
+        async with session_factory() as session:
+            net_worth = await SqlAlchemyAccountReader(session).net_worth(OWNER)
+
+        # THEN — the card nets to ~0 (0 - 100 charge + 100 payment); the bank dropped to
+        # 900; the settled charge is no longer in cc_balance; no double-count.
+        by_id = {account.id: account for account in net_worth.accounts}
+        assert by_id[card_id].balance == Decimal("0.00")
+        assert by_id[bank_id].balance == Decimal("900.00")
+        assert net_worth.liabilities.cc_balance == Decimal("0.00")
+        # The obligation is counted ONCE: net worth is the bank's 900, with no liability.
+        assert net_worth.total == Decimal("900.00")
+        assert net_worth.net_after_liabilities == Decimal("900.00")
+
+    async def test_partial_settled_payment_leaves_a_negative_residual_on_the_card(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a settled 100 card charge but only a settled 60 bank→card payment transfer
+        WHEN net worth is read from PostgreSQL
+        THEN the card shows a -40 residual (the underpayment), the bank dropped by 60, the
+             charge is no longer in cc_balance, and net worth counts the 40 gap once — never
+             as both a balance hit and a liability (ADR-196)
+        """
+        # GIVEN — bank (opening 1000), card (opening 0), a settled 100 charge, a settled 60 payment.
+        bank_id = await _seed_account(
+            session_factory, owner=OWNER, opening_balance=Decimal("1000"), institution_type=InstitutionType.BANK
+        )
+        card_id = await _seed_account(
+            session_factory, owner=OWNER, opening_balance=Decimal("0"), institution_type=InstitutionType.CARD
+        )
+        await _seed_transactions(
+            session_factory,
+            [_tx(name="MERPAGO*PASSLINE", amount=Decimal("100"), occurred_on=_PAST, account_id=card_id)],
+        )
+        await _seed_transfer(
+            session_factory,
+            owner=OWNER,
+            from_account_id=bank_id,
+            to_account_id=card_id,
+            amount=Decimal("60"),
+            occurred_on=_PAST,
+        )
+
+        # WHEN
+        async with session_factory() as session:
+            net_worth = await SqlAlchemyAccountReader(session).net_worth(OWNER)
+
+        # THEN — the card carries the -40 underpayment (0 - 100 + 60); the bank dropped to
+        # 940; the settled charge left cc_balance; net worth = 940 - 40 = 900, counted once.
+        by_id = {account.id: account for account in net_worth.accounts}
+        assert by_id[card_id].balance == Decimal("-40.00")
+        assert by_id[bank_id].balance == Decimal("940.00")
+        assert net_worth.liabilities.cc_balance == Decimal("0.00")
+        assert net_worth.total == Decimal("900.00")
+        assert net_worth.net_after_liabilities == Decimal("900.00")
 
 
 async def _seed_debt(

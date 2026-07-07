@@ -78,7 +78,6 @@ import {
 } from './useStatementReviewState'
 import {
   computePaymentPlan,
-  isPlanSchedulable,
   pendingDueDate,
   scheduleOccurredOn,
   type FundingAccount,
@@ -945,11 +944,18 @@ export function StatementReviewTable({
     [parse.periodDue, parse.periodClose],
   )
 
-  // One-click execution of the suggested legs as future-dated transfers (ADR-191).
-  // The plan is executable only when it fully covers every currency's shortfall
-  // (no residual gap) with at least one leg to move — otherwise it stays
-  // suggest-only and the residual note guides the user (never half-scheduled).
-  const canSchedule = useMemo(() => isPlanSchedulable(paymentPlan), [paymentPlan])
+  // The card account the payment leg (Slice B, ADR-196) settles TO, per currency:
+  // the same (institution, currency) card account the import attaches the lines to
+  // (ADR-184 — `review.accountChoices`). A currency with no attached card account
+  // (user chose "Don't attach" / no match) has no destination, so its payment leg
+  // is skipped — the top-ups still fire, we just don't invent a card to pay.
+  const cardAccountByCurrency = useMemo(() => {
+    const map = new Map<Currency, string>()
+    for (const choice of review.accountChoices) {
+      if (choice.selectedAccountId) map.set(choice.currency, choice.selectedAccountId)
+    }
+    return map
+  }, [review.accountChoices])
   const createTransfer = useCreateTransfer()
   const [scheduleState, setScheduleState] = useState<ScheduleState>('idle')
   // Resume cursor for a partially-sent batch (money-correctness): how many legs of
@@ -964,20 +970,84 @@ export function StatementReviewTable({
     signature: '',
     count: 0,
   })
-  // A stable signature of the schedulable legs (source, amount, destination per
-  // currency). Used to re-arm the button when the plan changes after a run.
+  // The ordered flat list of own-account transfer legs the schedule action fires,
+  // grouped per currency in fire order: FIRST the greedy top-up legs (source →
+  // main/pay-from), THEN — as the LAST leg for that currency — the Slice B payment
+  // leg (main/pay-from → the attached CARD account) that settles the statement
+  // (ADR-196). A currency with no attached card account skips its payment leg but
+  // still contributes its top-ups (don't invent a destination). Only currencies
+  // whose shortfall is fully coverable (no residual gap) participate. The `kind`
+  // distinguishes top-up vs payment for the signature/tests; the note is a display
+  // concern applied at fire time. Per-currency native — a currency that is already
+  // sufficient (main covers the whole balance, zero top-ups) STILL emits its
+  // payment leg when a card is attached: that is the primary Slice B case — "I have
+  // the money, just earmark the card payment so the next card's plan sees it gone."
+  // This module is the SINGLE source of truth for what's firable; `canSchedule`
+  // below is simply "there is at least one firable leg." Amounts are native decimal
+  // strings (ADR-025/133).
+  const scheduleLegs = useMemo(() => {
+    const legs: {
+      currency: Currency
+      kind: 'topup' | 'payment'
+      fromAccountId: string
+      toAccountId: string
+      amount: string
+    }[] = []
+    for (const currencyPlan of paymentPlan.currencies) {
+      const main = currencyPlan.main
+      if (main === null || currencyPlan.residualGap > 0) continue
+      // Top-ups first: source → the main/pay-from account (skipped when sufficient).
+      if (!currencyPlan.sufficient) {
+        for (const leg of currencyPlan.transfers) {
+          const amount = toDecimalString(leg.amount)
+          legs.push({
+            currency: currencyPlan.currency,
+            kind: 'topup',
+            fromAccountId: leg.from.id,
+            toAccountId: main.id,
+            amount,
+          })
+        }
+      }
+      // Payment leg LAST: main → the attached card account for this currency. The
+      // amount is the currency's full need (the statement balance in native units).
+      // Future-dated (same due date), so it becomes pendingOut(main) and reserves
+      // the pay-from account for the NEXT card's plan (ADR-195 double-source fix).
+      const cardAccountId = cardAccountByCurrency.get(currencyPlan.currency)
+      if (cardAccountId !== undefined && currencyPlan.need > 0) {
+        legs.push({
+          currency: currencyPlan.currency,
+          kind: 'payment',
+          fromAccountId: main.id,
+          toAccountId: cardAccountId,
+          amount: toDecimalString(currencyPlan.need),
+        })
+      }
+    }
+    return legs
+  }, [paymentPlan, cardAccountByCurrency])
+
+  // One-click execution is offered whenever there is at least one FIRABLE leg
+  // (ADR-191/196): a coverable top-up OR a payment leg (a currency with need > 0 and
+  // an attached card). Derived from `scheduleLegs` — the single source of truth — so
+  // a payment-ONLY plan (main already covers, zero top-ups, but a card is attached
+  // to earmark) is schedulable, which is the primary Slice B case. A residual-gap
+  // currency contributes no leg (its transfers/payment are withheld above), so the
+  // suggest-only, never-half-scheduled guarantee holds.
+  const canSchedule = scheduleLegs.length > 0
+
+  // A stable signature of the schedulable legs (source, amount, destination, kind).
+  // Used to re-arm the button when the plan changes after a run and to key the
+  // resume cursor so a retry never re-fires an already-sent leg (payment included).
   const legSignature = useMemo(
     () =>
-      paymentPlan.currencies
-        .filter((c) => !c.sufficient && c.residualGap === 0)
+      scheduleLegs
         .map(
-          (c) =>
-            `${c.currency}:${c.main?.id ?? ''}:${c.transfers
-              .map((leg) => `${leg.from.id}@${leg.amount}`)
-              .join(',')}`,
+          (leg) =>
+            `${leg.currency}:${leg.kind}:${leg.fromAccountId}→${leg.toAccountId}@${leg.amount}`,
         )
         .join('|'),
-    [paymentPlan],
+    [scheduleLegs],
   )
   // Re-arm the button if the plan changes after a completed/errored run (e.g. the
   // user toggles a line): a stale "scheduled" state shouldn't outlive the plan it
@@ -1003,24 +1073,21 @@ export function StatementReviewTable({
     if (scheduleState === 'scheduling') return
     // ADR-191 dating: future due date → pending until then; else today.
     const occurredOn = scheduleOccurredOn(parse.periodDue, parse.periodClose)
-    // Flatten the coverable legs across currencies into own-account transfers:
-    // from = the suggested source, to = that currency's main/pay-from account,
-    // same-currency (net-zero, no FX) with the exact greedy amount (ADR-135/189).
-    const inputs = paymentPlan.currencies.flatMap((currencyPlan) => {
-      const main = currencyPlan.main
-      if (main === null || currencyPlan.sufficient) return []
-      return currencyPlan.transfers.map((leg) => {
-        const amount = toDecimalString(leg.amount)
-        return {
-          fromAccountId: leg.from.id,
-          toAccountId: main.id,
-          amountOut: amount,
-          amountIn: amount,
-          occurredOn,
-          note: t('review.plan.scheduleNote'),
-        }
-      })
-    })
+    // The ordered, flattened own-account transfers to fire, per currency in fire
+    // order (top-ups then the payment leg, ADR-196). Each is same-currency, net-zero,
+    // no FX (ADR-135). Top-ups carry the "top-up" note; the payment leg (main → the
+    // attached card) carries the "Card payment" note and settles the statement.
+    const inputs = scheduleLegs.map((leg) => ({
+      fromAccountId: leg.fromAccountId,
+      toAccountId: leg.toAccountId,
+      amountOut: leg.amount,
+      amountIn: leg.amount,
+      occurredOn,
+      note:
+        leg.kind === 'payment'
+          ? t('review.plan.paymentNote')
+          : t('review.plan.scheduleNote'),
+    }))
     if (inputs.length === 0) return
     // Resume from the first un-sent leg. When the plan signature differs from the
     // cursor's, this is a genuinely new batch — reset the cursor to 0 and fire
@@ -1056,7 +1123,7 @@ export function StatementReviewTable({
     legSignature,
     parse.periodClose,
     parse.periodDue,
-    paymentPlan.currencies,
+    scheduleLegs,
     scheduleState,
     t,
   ])

@@ -81,10 +81,11 @@
       "schedule": "Programar estas transferencias",
       "scheduling": "Programando…",
       "scheduled": "Transferencias programadas",
-      "scheduledDetail": "Tus transferencias de refuerzo quedan programadas para la fecha de vencimiento. Quedan pendientes hasta entonces.",
+      "scheduledDetail": "Tus transferencias quedan programadas para la fecha de vencimiento. Quedan pendientes hasta entonces.",
       "scheduleError": "No pudimos programar estas transferencias. Probá de nuevo.",
       "scheduleHint": "Mové los fondos ahora como transferencias con fecha del vencimiento — quedan pendientes hasta entonces.",
-      "scheduleNote": "Refuerzo de pago de resumen"
+      "scheduleNote": "Refuerzo de pago de resumen",
+      "paymentNote": "Pago de tarjeta"
     },
     "tableAriaLabel": "Líneas del resumen",
     "columns": {
