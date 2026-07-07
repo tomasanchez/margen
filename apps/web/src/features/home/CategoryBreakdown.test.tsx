@@ -74,7 +74,14 @@ function renderBreakdown() {
     defaultOptions: { queries: { retry: false } },
   })
   const rootRoute = createRootRoute({
-    component: () => <CategoryBreakdown categories={CATEGORIES_FIXTURE} />,
+    // June 2026 is the pinned "now" (below), so the card's viewing month serializes
+    // to 2026-06 — the drill-in opens the current viewing month (ADR-040/116).
+    component: () => (
+      <CategoryBreakdown
+        categories={CATEGORIES_FIXTURE}
+        viewingMonth={{ year: 2026, month: 5 }}
+      />
+    ),
   })
   const transactionsRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -101,9 +108,12 @@ describe('CategoryBreakdown drill-in links', () => {
     const link = await screen.findByRole('link', {
       name: 'Food, ARS 38.400, up +22% — view transactions',
     })
-    // Href carries the category + explicit month=all window (ADR-062/ADR-116:
-    // the category drilldown opens at All-time) so the screen opens pre-filtered.
-    expect(link).toHaveAttribute('href', '/transactions?category=Food&month=all')
+    // Href carries the category + the viewing month (serialized YYYY-MM, here the
+    // pinned June 2026) so the ledger opens on the month Home shows (ADR-040/116).
+    expect(link).toHaveAttribute(
+      'href',
+      '/transactions?category=Food&month=2026-06',
+    )
   })
 
   test('a row with no rise omits the "up" clause from the accessible name', async () => {
@@ -114,7 +124,7 @@ describe('CategoryBreakdown drill-in links', () => {
     })
     expect(link).toHaveAttribute(
       'href',
-      '/transactions?category=Rent&month=all',
+      '/transactions?category=Rent&month=2026-06',
     )
   })
 })

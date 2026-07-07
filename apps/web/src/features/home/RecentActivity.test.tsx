@@ -71,7 +71,10 @@ function renderRecent(transactions: Transaction[]) {
   return render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider theme={darkTheme}>
-        <RecentActivity transactions={transactions} />
+        <RecentActivity
+          transactions={transactions}
+          viewingMonth={{ year: 2026, month: 5 }}
+        />
       </ThemeProvider>
     </QueryClientProvider>,
   )
