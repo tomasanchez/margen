@@ -4,11 +4,20 @@
 
 API_DIR = apps/api
 WEB_DIR = apps/web
+SERVICE   ?= db
 
 .PHONY: install
 install: ## Install backend (uv) and frontend (pnpm) dependencies
 	cd $(API_DIR) && uv sync --dev
 	cd $(WEB_DIR) && pnpm install
+
+.PHONY: up
+up: ## Start a compose service — SERVICE=db|app|db-test (default db)
+	cd $(API_DIR) && docker compose $(if $(filter db-test,$(SERVICE)),--profile test) up -d $(SERVICE)
+
+.PHONY: down
+down: ## Stop all compose services (including the test profile)
+	cd $(API_DIR) && docker compose --profile test down
 
 .PHONY: db
 db: ## Start the local PostgreSQL container (backend)
