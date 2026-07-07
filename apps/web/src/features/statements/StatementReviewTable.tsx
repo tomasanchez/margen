@@ -85,7 +85,12 @@ import {
 } from './paymentPlan'
 import { PaymentPlanPanel, type ScheduleState } from './PaymentPlanPanel'
 import { toDecimalString } from '../accounts/balance'
-import { useCreateTransfer } from '../transfers/queries'
+import { useCreateTransfer, useTransfers } from '../transfers/queries'
+import {
+  computeAvailable,
+  projectedBalance,
+} from '../accounts/availableBalance'
+import { todayIsoDate } from '../transactions/useAddEditFormState'
 import { RegisterCardForm, type RegisterCardSubmit } from './RegisterCardForm'
 
 /** Expense categories offered in the per-line editor (statements are expenses). */
@@ -864,31 +869,50 @@ export function StatementReviewTable({
     () => buildNetWorthBalanceIndex(netWorthQuery.data?.accounts ?? []),
     [netWorthQuery.data?.accounts],
   )
-  // The user's NON-card funding accounts (bank / cash / wallet) with native
-  // balances — the AVAILABLE pool + the greedy transfer sources (ADR-188/189).
-  const fundingAccounts = useMemo<FundingAccount[]>(
-    () =>
-      accounts
-        .filter((account) => account.type !== 'card')
-        .map((account) => {
-          const fromNetWorth = balanceIndex.get(account.id)
-          const opening = Number.parseFloat(account.openingBalance)
-          const balance =
-            fromNetWorth != null
-              ? fromNetWorth
-              : Number.isFinite(opening)
-                ? opening
-                : 0
-          return {
-            id: account.id,
-            institutionName: account.institutionName,
-            type: account.type,
-            currency: account.currency,
-            balance,
-          }
-        }),
-    [accounts, balanceIndex],
-  )
+  // Already-scheduled (future-dated, ADR-191) own-account transfers are layered
+  // onto each funding account below via the shared primitive (ADR-193).
+  const transfersQuery = useTransfers()
+  // The user's NON-card funding accounts (bank / cash / wallet), each carrying its
+  // PROJECTED due-date native balance (ADR-195): `balance + pendingIn − pendingOut`
+  // from the shared primitive (ADR-193). Projecting — rather than passing the raw
+  // as-of-today balance — makes an account's already-promised pending OUTFLOW
+  // reduce what it can source (fixing the source-side double-source: a scheduled
+  // top-up leg already committed can't also be counted as spare funding), and lets
+  // a scheduled top-up INTO an account count toward its funding. `paymentPlan.ts`
+  // needs no change — it just receives the projected number as `FundingAccount.balance`.
+  // Degrades gracefully: with net-worth/transfers unloaded the balance falls back
+  // to opening (pending 0), so the projection equals today's figure — no NaN. Card
+  // charges are NOT modelled here (that reservation is Slice B). Per-currency
+  // native; never cross-summed (ADR-133).
+  const fundingAccounts = useMemo<FundingAccount[]>(() => {
+    const nonCard = accounts.filter((account) => account.type !== 'card')
+    const availableInputs = nonCard.map((account) => {
+      const fromNetWorth = balanceIndex.get(account.id)
+      const opening = Number.parseFloat(account.openingBalance)
+      const balance =
+        fromNetWorth != null
+          ? fromNetWorth
+          : Number.isFinite(opening)
+            ? opening
+            : 0
+      return { id: account.id, currency: account.currency, balance }
+    })
+    const available = computeAvailable(
+      availableInputs,
+      transfersQuery.data ?? [],
+      todayIsoDate(),
+    )
+    return nonCard.map((account) => {
+      const entry = available.get(account.id)
+      return {
+        id: account.id,
+        institutionName: account.institutionName,
+        type: account.type,
+        currency: account.currency,
+        balance: entry ? projectedBalance(entry) : 0,
+      }
+    })
+  }, [accounts, balanceIndex, transfersQuery.data])
 
   // The per-currency main / pay-from account selection (ADR-189). Absent entries
   // fall back to the largest-balance default inside computePaymentPlan.

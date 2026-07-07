@@ -167,7 +167,9 @@
     },
     "account": {
       "label": "Cuenta",
-      "none": "Sin cuenta"
+      "none": "Sin cuenta",
+      "spendable": "Disponible ahora {{amount}}",
+      "arriving": "+{{amount}} en camino"
     },
     "date": {
       "label": "Fecha",
