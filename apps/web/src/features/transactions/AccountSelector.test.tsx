@@ -27,6 +27,8 @@ const {
   fetchSettingsMock,
   monotributoMock,
   accountsListMock,
+  netWorthMock,
+  transfersListMock,
   navigateMock,
 } = vi.hoisted(() => ({
   createMock: vi.fn(),
@@ -36,6 +38,8 @@ const {
   fetchSettingsMock: vi.fn(),
   monotributoMock: vi.fn(),
   accountsListMock: vi.fn(),
+  netWorthMock: vi.fn(),
+  transfersListMock: vi.fn(),
   navigateMock: vi.fn(),
 }))
 
@@ -76,7 +80,22 @@ vi.mock('../../api/accountsClient', async () => {
       list: accountsListMock,
       create: vi.fn(),
       update: vi.fn(),
-      netWorth: vi.fn(),
+      netWorth: netWorthMock,
+    },
+  }
+})
+
+vi.mock('../../api/transfersClient', async () => {
+  const actual =
+    await vi.importActual<typeof import('../../api/transfersClient')>(
+      '../../api/transfersClient',
+    )
+  return {
+    ...actual,
+    transfersClient: {
+      list: transfersListMock,
+      create: vi.fn(),
+      remove: vi.fn(),
     },
   }
 })
@@ -137,6 +156,10 @@ beforeEach(() => {
       openingBalance: '0.00',
     },
   ])
+  // Default: no cross-currency net worth + no transfers so the spendable-now
+  // subline degrades to each account's opening balance (0) with no pending legs.
+  netWorthMock.mockResolvedValue({ total: 0, accounts: [] })
+  transfersListMock.mockResolvedValue([])
 })
 
 afterEach(() => vi.clearAllMocks())
@@ -174,8 +197,10 @@ describe('transaction account selector (ADR-122/133)', () => {
 
     // Open the Account select and pick "Galicia · ARS" (institution · currency).
     // The form currency is ARS, so only the ARS account is offered (ADR-122/123).
+    // The option's accessible name now also carries the spendable-now subline
+    // (ADR-194), so match the institution·currency label as a prefix.
     await user.click(form.getByRole('combobox', { name: 'Account' }))
-    const option = await screen.findByRole('option', { name: 'Galicia · ARS' })
+    const option = await screen.findByRole('option', { name: /Galicia · ARS/ })
     await user.click(option)
 
     // Save.
@@ -225,10 +250,10 @@ describe('transaction account selector (ADR-122/133)', () => {
     // account is absent (an account holds one currency, ADR-122/123).
     await user.click(form.getByRole('combobox', { name: 'Account' }))
     expect(
-      await screen.findByRole('option', { name: 'Galicia · ARS' }),
+      await screen.findByRole('option', { name: /Galicia · ARS/ }),
     ).toBeInTheDocument()
     expect(
-      screen.queryByRole('option', { name: 'Deel · USD' }),
+      screen.queryByRole('option', { name: /Deel · USD/ }),
     ).not.toBeInTheDocument()
   })
 
@@ -239,7 +264,7 @@ describe('transaction account selector (ADR-122/133)', () => {
 
     // Pick the ARS account while the form is ARS.
     await user.click(form.getByRole('combobox', { name: 'Account' }))
-    await user.click(await screen.findByRole('option', { name: 'Galicia · ARS' }))
+    await user.click(await screen.findByRole('option', { name: /Galicia · ARS/ }))
     expect(form.getByRole('combobox', { name: 'Account' })).toHaveTextContent(
       'Galicia · ARS',
     )
@@ -255,10 +280,10 @@ describe('transaction account selector (ADR-122/133)', () => {
 
     await user.click(form.getByRole('combobox', { name: 'Account' }))
     expect(
-      await screen.findByRole('option', { name: 'Deel · USD' }),
+      await screen.findByRole('option', { name: /Deel · USD/ }),
     ).toBeInTheDocument()
     expect(
-      screen.queryByRole('option', { name: 'Galicia · ARS' }),
+      screen.queryByRole('option', { name: /Galicia · ARS/ }),
     ).not.toBeInTheDocument()
   })
 
@@ -275,7 +300,7 @@ describe('transaction account selector (ADR-122/133)', () => {
     await form.findByText('≈ ARS 622.500 at MEP 1.245')
 
     await user.click(form.getByRole('combobox', { name: 'Account' }))
-    await user.click(await screen.findByRole('option', { name: 'Deel · USD' }))
+    await user.click(await screen.findByRole('option', { name: /Deel · USD/ }))
 
     await user.click(form.getByRole('button', { name: /^Save$/ }))
 
@@ -315,6 +340,59 @@ describe('transaction account selector (ADR-122/133)', () => {
     await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
     const [, patch] = updateMock.mock.calls[0]
     expect(patch.accountId).toBe('acc-2')
+  })
+
+  test('each option shows spendable-now = balance − pendingOut + an "arriving" caption when pendingIn > 0 (ADR-194)', async () => {
+    // Galicia (ARS) has an as-of-today balance of 100.000, a future-dated
+    // outflow of 30.000 (pending, ADR-191), and a future-dated top-up of 20.000
+    // arriving. Spendable-now = 100.000 − 30.000 = 70.000 (the arriving 20.000 is
+    // NEVER folded in — it shows as a calm caption only).
+    netWorthMock.mockResolvedValue({
+      total: 0,
+      accounts: [
+        {
+          id: 'acc-1',
+          institutionId: 'inst-1',
+          institutionName: 'Galicia',
+          type: 'bank',
+          currency: 'ARS',
+          balance: '100000.00',
+          balanceConverted: '100000.00',
+        },
+      ],
+    })
+    transfersListMock.mockResolvedValue([
+      {
+        id: 't-out',
+        fromAccountId: 'acc-1',
+        toAccountId: 'acc-9',
+        amountOut: '30000.00',
+        amountIn: '30000.00',
+        occurredOn: '2100-01-01',
+      },
+      {
+        id: 't-in',
+        fromAccountId: 'acc-9',
+        toAccountId: 'acc-1',
+        amountOut: '20000.00',
+        amountIn: '20000.00',
+        occurredOn: '2100-01-02',
+      },
+    ])
+
+    const { user, dialog } = await openDialog()
+    const form = within(dialog)
+    await waitFor(() => expect(accountsListMock).toHaveBeenCalled())
+    await waitFor(() => expect(netWorthMock).toHaveBeenCalled())
+    await waitFor(() => expect(transfersListMock).toHaveBeenCalled())
+
+    await user.click(form.getByRole('combobox', { name: 'Account' }))
+    const option = await screen.findByRole('option', { name: /Galicia · ARS/ })
+    // Spendable-now = balance (100.000) − pendingOut (30.000) = 70.000.
+    expect(within(option).getByText('Spendable now ARS 70.000')).toBeInTheDocument()
+    // The arriving inflow (20.000) is a caption, NOT added to the figure.
+    expect(within(option).getByText('+ARS 20.000 arriving')).toBeInTheDocument()
+    expect(within(option).queryByText(/ARS 90\.000/)).not.toBeInTheDocument()
   })
 
   test('an edit seeded with an account preserves it on save', async () => {

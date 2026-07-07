@@ -29,6 +29,7 @@ const {
   createInstitutionMock,
   createAccountMock,
   createTransferMock,
+  transfersListMock,
 } = vi.hoisted(() => ({
   accountsListMock: vi.fn(),
   institutionsListMock: vi.fn(),
@@ -36,9 +37,12 @@ const {
   createInstitutionMock: vi.fn(),
   createAccountMock: vi.fn(),
   createTransferMock: vi.fn(),
+  transfersListMock: vi.fn(),
 }))
 
 // The Schedule action (ADR-191) fires one own-account transfer per suggested leg.
+// The list feeds the projected due-date balance (ADR-193/195): pending legs shift
+// what each funding account can source.
 vi.mock('../../api/transfersClient', async () => {
   const actual =
     await vi.importActual<typeof import('../../api/transfersClient')>(
@@ -48,7 +52,7 @@ vi.mock('../../api/transfersClient', async () => {
     ...actual,
     transfersClient: {
       ...actual.transfersClient,
-      list: vi.fn().mockResolvedValue([]),
+      list: transfersListMock,
       create: createTransferMock,
       remove: vi.fn(),
     },
@@ -171,6 +175,7 @@ beforeEach(() => {
   accountsListMock.mockResolvedValue([])
   institutionsListMock.mockResolvedValue([])
   netWorthMock.mockResolvedValue(netWorthWith([]))
+  transfersListMock.mockResolvedValue([])
   createInstitutionMock.mockResolvedValue({
     id: 'new-inst',
     name: 'Galicia',
@@ -244,6 +249,52 @@ describe('PaymentPlanPanel (ADR-188/189)', () => {
     ).toBeInTheDocument()
     // Pending label for the far-future due date.
     expect(within(region).getByText(/Pending — due/)).toBeInTheDocument()
+  })
+
+  test('a pending outflow reduces a funding account\'s projected contribution (ADR-193/195)', async () => {
+    // Galicia 4,000 (main) + Deel 3,000 as-of-today → AVAILABLE would be 7,000 and
+    // the 2,000 shortfall would pull cleanly from Deel. But Deel already has a
+    // scheduled (future-dated, ADR-191) OUTFLOW of 2,000: its PROJECTED balance is
+    // 3,000 − 2,000 = 1,000, so it can no longer source the full 2,000. AVAILABLE
+    // drops to 4,000 + 1,000 = 5,000 and the plan is left 1,000 short — proving the
+    // planner now sources against the projected (commitment-aware) balance.
+    const funding = [
+      nwAccount('gal', 'Galicia', 'bank', 'USD', '4000'),
+      nwAccount('deel', 'Deel', 'wallet', 'USD', '3000'),
+    ]
+    accountsListMock.mockResolvedValue([
+      acctLeaf('gal', 'Galicia', 'bank', 'USD', '4000'),
+      acctLeaf('deel', 'Deel', 'wallet', 'USD', '3000'),
+    ])
+    netWorthMock.mockResolvedValue(netWorthWith(funding))
+    transfersListMock.mockResolvedValue([
+      {
+        // A scheduled payment OUT of Deel to an account outside the funding pool
+        // (e.g. an external / card destination) — so it debits Deel's projection
+        // WITHOUT crediting any funding account back (no self-cancelling top-up).
+        id: 'pending-out',
+        fromAccountId: 'deel',
+        toAccountId: 'external-x',
+        amountOut: '2000.00',
+        amountIn: '2000.00',
+        occurredOn: '2999-12-30',
+      },
+    ])
+
+    const region = await renderAndFindPlan()
+    await waitFor(() => expect(transfersListMock).toHaveBeenCalled())
+    // AVAILABLE reflects the projection: 4,000 (Galicia) + 1,000 (Deel projected).
+    await waitFor(() =>
+      expect(within(region).getByText('USD 5.000')).toBeInTheDocument(),
+    )
+    // Deel can only supply its projected 1,000 toward the 2,000 shortfall.
+    expect(
+      within(region).getByText('Move USD 1.000 from Deel → Galicia'),
+    ).toBeInTheDocument()
+    // The remaining 1,000 is unreachable — the plan is no longer fully coverable.
+    expect(
+      within(region).getByText('Still short by USD 1.000 after all your USD accounts.'),
+    ).toBeInTheDocument()
   })
 
   test('recomputes the need when a kept line is toggled off', async () => {

@@ -14,7 +14,7 @@
  * restoration are handled by the surrounding Dialog/Drawer.
  */
 
-import { useId, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from '@tanstack/react-router'
 import Alert from '@mui/material/Alert'
@@ -58,11 +58,20 @@ import {
   parseInvoice,
 } from '../../api/invoicesClient'
 import { useMonotributoSnapshot } from '../monotributo/queries'
-import { useAccounts } from '../accounts/queries'
+import { useAccounts, useNetWorth } from '../accounts/queries'
+import { buildNetWorthBalanceIndex } from '../accounts/grouping'
+import {
+  computeAvailable,
+  spendableNow,
+  type AvailableBalance,
+} from '../accounts/availableBalance'
+import { useTransfers } from '../transfers/queries'
+import { formatCurrency } from '../../lib/format'
 import type { AddPrefill } from './addContext'
 import { accountOptionLabel, categoryLabel } from './presentation'
 import {
   EXPENSE_CATEGORIES,
+  todayIsoDate,
   useAddEditFormState,
 } from './useAddEditFormState'
 import type { FxSource, RecurrenceOption } from './useAddEditFormState'
@@ -225,7 +234,12 @@ export function AddEditForm({
   // non-blockingly: while pending or absent the selector shows only the "no
   // account" option, so the form never waits on the accounts load.
   const accountsQuery = useAccounts()
-  const accounts = accountsQuery.data ?? []
+  // Memoized so the identity is stable across renders — the spendable-now map
+  // below depends on it, and a fresh array each render would recompute it needlessly.
+  const accounts = useMemo(
+    () => accountsQuery.data ?? [],
+    [accountsQuery.data],
+  )
   // Only offer accounts whose currency matches the transaction's currency: an
   // account holds one currency (ADR-122/123), so a USD txn must not be linkable
   // to an ARS account, and vice-versa. The "no account" option is always shown.
@@ -235,6 +249,35 @@ export function AddEditForm({
   const accountOptions = accounts.filter(
     (account) => account.currency === form.currency,
   )
+
+  // Commitment-aware SPENDABLE-NOW per account (ADR-193/194): each option shows
+  // `balance − pendingOut` in its native currency, so a scheduled (future-dated,
+  // ADR-191) outflow already reduces what the option reads as available. The
+  // as-of-today native balance comes from the net-worth read model (ADR-186),
+  // falling back to the account's opening balance while it loads; pending legs
+  // come from the transfers list. Both degrade gracefully: with neither loaded
+  // the map is still populated from opening balances (pending 0) so the selector
+  // never crashes or shows NaN — it just shows today's figure. Per-currency
+  // native; never cross-summed (ADR-133).
+  const netWorthQuery = useNetWorth()
+  const transfersQuery = useTransfers()
+  const availableByAccount = useMemo<Map<string, AvailableBalance>>(() => {
+    const balanceIndex = buildNetWorthBalanceIndex(
+      netWorthQuery.data?.accounts ?? [],
+    )
+    const inputs = accounts.map((account) => {
+      const fromNetWorth = balanceIndex.get(account.id)
+      const opening = Number.parseFloat(account.openingBalance)
+      const balance =
+        fromNetWorth != null
+          ? fromNetWorth
+          : Number.isFinite(opening)
+            ? opening
+            : 0
+      return { id: account.id, currency: account.currency, balance }
+    })
+    return computeAvailable(inputs, transfersQuery.data ?? [], todayIsoDate())
+  }, [accounts, netWorthQuery.data?.accounts, transfersQuery.data])
 
   const nameInputId = useId()
   const amountInputId = useId()
@@ -997,15 +1040,64 @@ export function AddEditForm({
             value={form.accountId}
             onChange={(event) => form.setAccountId(event.target.value)}
             sx={{ borderRadius: '10px', bgcolor: 'var(--mg-paper)' }}
+            // Keep the CLOSED combobox to the compact "{institution} · {currency}"
+            // label; the spendable-now figure + the "arriving" caption live inside
+            // the open menu options (below), not in the collapsed control.
+            renderValue={(selected) => {
+              if (!selected) return <em>{t('form.account.none')}</em>
+              const account = accountOptions.find((a) => a.id === selected)
+              return account ? accountOptionLabel(account) : ''
+            }}
           >
             <MenuItem value="">
               <em>{t('form.account.none')}</em>
             </MenuItem>
-            {accountOptions.map((account) => (
-              <MenuItem key={account.id} value={account.id}>
-                {accountOptionLabel(account)}
-              </MenuItem>
-            ))}
+            {accountOptions.map((account) => {
+              // SPENDABLE-NOW (ADR-194): balance − pendingOut in the account's
+              // native currency. The map always has an entry (populated from
+              // opening balances even before net-worth/transfers load), so this
+              // never reads NaN — it degrades to today's figure. `pendingIn` is
+              // NEVER folded into the figure; when present it shows as a calm
+              // secondary caption only (money that hasn't arrived can't be spent).
+              const available = availableByAccount.get(account.id)
+              const spendable = available ? spendableNow(available) : undefined
+              const pendingIn = available?.pendingIn ?? 0
+              return (
+                <MenuItem key={account.id} value={account.id}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      minWidth: 0,
+                    }}
+                  >
+                    <Typography component="span" sx={{ fontSize: 14.5 }}>
+                      {accountOptionLabel(account)}
+                    </Typography>
+                    {spendable !== undefined ? (
+                      <Typography
+                        component="span"
+                        sx={{ fontSize: 12.5, color: 'text.secondary' }}
+                      >
+                        {t('form.account.spendable', {
+                          amount: formatCurrency(spendable, account.currency),
+                        })}
+                      </Typography>
+                    ) : null}
+                    {pendingIn > 0 ? (
+                      <Typography
+                        component="span"
+                        sx={{ fontSize: 12, color: 'text.secondary' }}
+                      >
+                        {t('form.account.arriving', {
+                          amount: formatCurrency(pendingIn, account.currency),
+                        })}
+                      </Typography>
+                    ) : null}
+                  </Box>
+                </MenuItem>
+              )
+            })}
           </Select>
         </FormControl>
       </Box>

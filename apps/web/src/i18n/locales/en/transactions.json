@@ -167,7 +167,9 @@
     },
     "account": {
       "label": "Account",
-      "none": "No account"
+      "none": "No account",
+      "spendable": "Spendable now {{amount}}",
+      "arriving": "+{{amount}} arriving"
     },
     "date": {
       "label": "Date",
