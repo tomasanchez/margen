@@ -18,6 +18,7 @@ import Box from '@mui/material/Box'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import { Link } from '@tanstack/react-router'
+import { serializeMonth, type ViewingMonth } from '../../components/months'
 import { Amount } from '../../components/Amount'
 import { FxBadge } from '../../components/FxBadge'
 import { monoFontFamily } from '../../theme'
@@ -154,36 +155,50 @@ function ActivityRow({
 export interface RecentActivityProps {
   transactions: Transaction[] | undefined
   loading?: boolean
+  /**
+   * The Home viewing month (top-bar navigator). "View all" opens the Transactions
+   * screen scoped to THIS month (serialized `YYYY-MM`) so it matches the activity
+   * previewed here — defaulting to the current month (ADR-040/116).
+   */
+  viewingMonth: ViewingMonth
 }
 
-function ViewAllLink({ t }: { t: TFunction<'home'> }) {
+/**
+ * CSS class (index.css) for the "View all" link. A BARE TanStack {@link Link}
+ * (not `Box component={Link}`) so the typed `to` / `search` inference is kept and
+ * `search={{ month }}` is checked against the route's search schema (ADR-116) —
+ * the visual styling lives in the class.
+ */
+const viewAllLinkClass = 'mg-recent-view-all'
+
+function ViewAllLink({
+  t,
+  monthToken,
+}: {
+  t: TFunction<'home'>
+  /** Pre-serialized `YYYY-MM` viewing month for the drill-in `month` param. */
+  monthToken: string
+}) {
   return (
-    <Box
-      component={Link}
+    <Link
       to="/transactions"
-      sx={{
-        fontSize: 13,
-        color: 'primary.main',
-        textDecoration: 'none',
-        borderRadius: 1,
-        '&:hover': { textDecoration: 'underline', textUnderlineOffset: 2 },
-        '&:focus-visible': {
-          outline: '2px solid',
-          outlineColor: 'primary.main',
-          outlineOffset: 2,
-        },
-      }}
+      search={{ month: monthToken }}
+      className={viewAllLinkClass}
     >
       {t('recent.viewAll')}
-    </Box>
+    </Link>
   )
 }
 
 export function RecentActivity({
   transactions,
   loading = false,
+  viewingMonth,
 }: RecentActivityProps) {
   const { t } = useTranslation('home')
+  // Serialize the viewing month once to the `YYYY-MM` URL token the Transactions
+  // route validates (ADR-116); the "View all" link carries it.
+  const monthToken = serializeMonth(viewingMonth)
   // The accounts list doubles as the row attribution source (ADR-136 extension):
   // build a single `accountId → institutionName` lookup so each row resolves its
   // institution in O(1) with no per-row fetch. A row with no resolvable account
@@ -198,7 +213,10 @@ export function RecentActivity({
   }, [accountsQuery.data])
   if (loading || !transactions) {
     return (
-      <SectionCard title={t('recent.title')} action={<ViewAllLink t={t} />}>
+      <SectionCard
+        title={t('recent.title')}
+        action={<ViewAllLink t={t} monthToken={monthToken} />}
+      >
         <Box>
           {Array.from({ length: 5 }).map((_, i) => (
             <Box
@@ -219,7 +237,10 @@ export function RecentActivity({
   }
 
   return (
-    <SectionCard title={t('recent.title')} action={<ViewAllLink t={t} />}>
+    <SectionCard
+      title={t('recent.title')}
+      action={<ViewAllLink t={t} monthToken={monthToken} />}
+    >
       {transactions.length === 0 ? (
         <Typography sx={{ fontSize: 13.5, py: 1 }} color="text.disabled">
           {t('recent.empty')}

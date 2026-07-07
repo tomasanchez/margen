@@ -44,6 +44,7 @@
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from '@tanstack/react-router'
+import { serializeMonth, type ViewingMonth } from '../../components/months'
 import { useSettings, useUpdateSettings } from '../settings/queries'
 import type { PreferredRateSource } from '../../api/settingsClient'
 import Box from '@mui/material/Box'
@@ -418,10 +419,13 @@ function AccountRow({
   account,
   displayCurrency,
   mep,
+  monthToken,
 }: {
   account: NetWorthAccount
   displayCurrency: Currency
   mep: number | null
+  /** Pre-serialized `YYYY-MM` viewing month for the drill-in `month` param. */
+  monthToken: string
 }) {
   const { t } = useTranslation('accounts')
   const nativeCurrency = asCurrency(account.currency)
@@ -434,7 +438,7 @@ function AccountRow({
   return (
     <Link
       to="/transactions"
-      search={{ account: account.id, month: 'all' as const }}
+      search={{ account: account.id, month: monthToken }}
       aria-label={t('netWorth.drilldownAria', {
         institution: account.institutionName,
         currency: account.currency,
@@ -489,10 +493,13 @@ function InstitutionBlock({
   group,
   displayCurrency,
   mep,
+  monthToken,
 }: {
   group: InstitutionGroup
   displayCurrency: Currency
   mep: number | null
+  /** Pre-serialized `YYYY-MM` viewing month for each account drill-in. */
+  monthToken: string
 }) {
   const { t } = useTranslation('accounts')
   return (
@@ -525,6 +532,7 @@ function InstitutionBlock({
             account={account}
             displayCurrency={displayCurrency}
             mep={mep}
+            monthToken={monthToken}
           />
         ))}
       </Box>
@@ -613,6 +621,13 @@ export interface NetWorthCardProps {
    * toggle, ADR-157). Display-only: balances are still fetched.
    */
   hidden?: boolean
+  /**
+   * The Home viewing month (top-bar navigator). Net worth itself stays
+   * as-of-today; only the per-account drill-in scopes to THIS month (serialized
+   * `YYYY-MM`) so the ledger opens on the month Home is showing — defaulting to
+   * the current month (ADR-040/116).
+   */
+  viewingMonth: ViewingMonth
 }
 
 export function NetWorthCard({
@@ -621,6 +636,7 @@ export function NetWorthCard({
   isError = false,
   onRetry,
   hidden = false,
+  viewingMonth,
 }: NetWorthCardProps) {
   const { t } = useTranslation('accounts')
   // Live suggested FX rates (ADR-044/133): both MEP + Official, cached for a few
@@ -718,6 +734,10 @@ export function NetWorthCard({
   // Only offer the source picker when there is something to convert — an
   // other-currency account — so the header stays calm otherwise.
   const showRatePicker = netWorth.accounts.length > 0 && decomp.hasOther
+  // Serialize the viewing month once to the `YYYY-MM` URL token the Transactions
+  // route validates (ADR-116); each account drill-in carries it so the ledger
+  // opens on the month Home is showing (net worth itself stays as-of-today).
+  const monthToken = serializeMonth(viewingMonth)
 
   return (
     <SectionCard
@@ -796,6 +816,7 @@ export function NetWorthCard({
                   group={group}
                   displayCurrency={displayCurrency}
                   mep={mep}
+                  monthToken={monthToken}
                 />
               ))}
             </Box>

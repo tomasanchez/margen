@@ -109,3 +109,24 @@ body {
   outline: 2px solid var(--mg-gold);
   outline-offset: 2px;
 }
+
+/*
+ * Recent-activity "View all" link (ADR-062 pattern). A bare TanStack <Link> (so
+ * the typed `search` prop keeps route inference — the viewing-month drill-in)
+ * styled to match the previous inline `sx`: primary text, gentle underline on
+ * hover, and a visible focus ring (never color alone — HIG / ADR-019).
+ */
+.mg-recent-view-all {
+  font-size: 13px;
+  color: var(--mg-gold);
+  text-decoration: none;
+  border-radius: 8px;
+}
+.mg-recent-view-all:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.mg-recent-view-all:focus-visible {
+  outline: 2px solid var(--mg-gold);
+  outline-offset: 2px;
+}

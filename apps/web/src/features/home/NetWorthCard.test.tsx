@@ -58,13 +58,20 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+/**
+ * Fixed viewing month for the drill-in assertions (serializes to `2026-06`), so
+ * the account drilldown deterministically opens that month (ADR-040/116) without
+ * depending on the wall clock.
+ */
+const VIEWING_MONTH = { year: 2026, month: 5 } as const
+
 /** Render the card behind a memory router so its drilldown <Link>s resolve. */
-function renderCard(props: NetWorthCardProps) {
+function renderCard(props: Omit<NetWorthCardProps, 'viewingMonth'>) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   const rootRoute = createRootRoute({
-    component: () => <NetWorthCard {...props} />,
+    component: () => <NetWorthCard {...props} viewingMonth={VIEWING_MONTH} />,
   })
   const transactionsRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -346,7 +353,9 @@ describe('NetWorthCard', () => {
     const link = await screen.findByRole('link', {
       name: 'View Deel USD transactions',
     })
-    expect(link).toHaveAttribute('href', '/transactions?account=a2&month=all')
+    // The drill-in carries the viewing month (serialized YYYY-MM) so the ledger
+    // opens on the month Home shows (ADR-040/116); net worth itself is as-of-today.
+    expect(link).toHaveAttribute('href', '/transactions?account=a2&month=2026-06')
   })
 
   test('degrades to native when the selected source rate is unavailable (null)', async () => {

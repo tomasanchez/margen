@@ -287,6 +287,9 @@ export function HomePage() {
           isError={netWorthQuery.isError}
           onRetry={() => void netWorthQuery.refetch()}
           hidden={amountsHidden}
+          // Net worth stays as-of-today; only the account drill-in scopes to the
+          // viewing month so the ledger opens on the month Home is showing.
+          viewingMonth={viewingMonth}
         />
         <BudgetProgressCard
           period={budgetPeriod}
@@ -333,6 +336,8 @@ export function HomePage() {
               <CategoryBreakdown
                 categories={summaryQuery.data?.categories}
                 loading={summaryQuery.isPending}
+                // Drill into the category scoped to the viewing month (ADR-116).
+                viewingMonth={viewingMonth}
               />
             </>
           )}
@@ -362,6 +367,8 @@ export function HomePage() {
       <RecentActivity
         transactions={recent}
         loading={transactionsQuery.isPending}
+        // "View all" opens the ledger scoped to the viewing month (ADR-116).
+        viewingMonth={viewingMonth}
       />
     </Box>
   )

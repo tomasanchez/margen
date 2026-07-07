@@ -20,6 +20,7 @@ import Skeleton from '@mui/material/Skeleton'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { Link } from '@tanstack/react-router'
+import { serializeMonth, type ViewingMonth } from '../../components/months'
 import { monoFontFamily } from '../../theme'
 import { formatCurrency } from '../../lib/format'
 import { useDisplayMoney } from '../settings/displayCurrencyContext'
@@ -39,6 +40,12 @@ const categoryRowLinkClass = 'mg-category-row-link'
 export interface CategoryBreakdownProps {
   categories: CategorySpend[] | undefined
   loading?: boolean
+  /**
+   * The Home viewing month (top-bar navigator). The category drill-in opens the
+   * Transactions screen scoped to THIS month (serialized `YYYY-MM`) so the ledger
+   * matches what the card shows — defaulting to the current month (ADR-040/116).
+   */
+  viewingMonth: ViewingMonth
 }
 
 /**
@@ -53,12 +60,15 @@ function CategoryRow({
   row,
   maxPct,
   formatMoney,
+  monthToken,
   t,
 }: {
   row: CategorySpend
   maxPct: number
   /** Currency-aware money formatter from the display-currency context (ADR-056). */
   formatMoney: (ars: number | null | undefined) => string
+  /** Pre-serialized `YYYY-MM` viewing month for the drill-in `month` param. */
+  monthToken: string
   t: TFunction<'home'>
 }) {
   const widthPct = maxPct > 0 ? Math.min((row.pct / maxPct) * 100, 100) : 0
@@ -75,7 +85,7 @@ function CategoryRow({
   return (
     <Link
       to="/transactions"
-      search={{ category: row.category, month: 'all' as const }}
+      search={{ category: row.category, month: monthToken }}
       aria-label={linkLabel}
       className={categoryRowLinkClass}
     >
@@ -169,9 +179,13 @@ function CategoryRow({
 export function CategoryBreakdown({
   categories,
   loading = false,
+  viewingMonth,
 }: CategoryBreakdownProps) {
   const { t } = useTranslation('home')
   const formatMoney = useDisplayMoney()
+  // Serialize the viewing month once to the `YYYY-MM` URL token the Transactions
+  // route validates (ADR-116); every row's drill-in carries it.
+  const monthToken = serializeMonth(viewingMonth)
 
   if (loading || !categories) {
     return (
@@ -235,6 +249,7 @@ export function CategoryBreakdown({
             row={row}
             maxPct={maxPct}
             formatMoney={formatMoney}
+            monthToken={monthToken}
             t={t}
           />
         ))}
