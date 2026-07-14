@@ -35,58 +35,11 @@
     "dateNote": "Lines are dated when the card is paid; the original purchase date is shown per row.",
     "usdRateUnavailable": "We couldn't get today's exchange rate, so the peso amount for USD charges is blank. Enter each one's peso amount to import it.",
     "account": {
-      "title": "Card account",
-      "subtitle": "We matched these charges to your card. Confirm or pick another.",
+      "title": "Account",
+      "subtitle": "These charges import as expenses on this account. Confirm or pick another.",
       "currencyLabel": "{{currency}} account",
       "dontAttach": "Don't attach",
-      "noMatch": "No {{currency}} card account — these lines import without one.",
-      "register": "Register this card"
-    },
-    "registerCard": {
-      "title": "Register this card",
-      "subtitle": "We read this card from the statement. Confirm the details and we'll add it with its accounts.",
-      "name": {
-        "label": "Name"
-      },
-      "brand": {
-        "label": "Brand / network"
-      },
-      "last4": {
-        "label": "Last 4 digits",
-        "error": "Enter the 4 digits, or leave this blank."
-      },
-      "accountsHeading": "Accounts to create",
-      "accountsSubheading": "One per currency in this statement. Edit the opening balance if you know it.",
-      "openingBalance": {
-        "label": "{{currency}} opening balance"
-      },
-      "error": "We couldn't register this card. Check your connection and try again.",
-      "cancel": "Cancel",
-      "confirm": "Register card"
-    },
-    "plan": {
-      "title": "Payment plan",
-      "subtitle": "Whether your accounts cover this statement, per currency.",
-      "pending": "Pending — due {{date}}",
-      "need": "Need",
-      "available": "Available",
-      "sufficient": "Sufficient",
-      "sufficientDetail": "{{account}} covers the {{currency}} balance.",
-      "shortfall": "Shortfall {{amount}}",
-      "mainLabel": "{{currency}} pay from",
-      "transfersHeading": "Suggested transfers",
-      "transferLeg": "Move {{amount}} from {{from}} → {{main}}",
-      "residual": "Still short by {{amount}} after all your {{currency}} accounts.",
-      "noAccounts": "No {{currency}} account to pay from — add one to plan this.",
-      "regionAria": "Card payment plan",
-      "schedule": "Schedule these transfers",
-      "scheduling": "Scheduling…",
-      "scheduled": "Transfers scheduled",
-      "scheduledDetail": "Your transfers are scheduled for the due date. They stay pending until then.",
-      "scheduleError": "We couldn't schedule these transfers. Please try again.",
-      "scheduleHint": "Move the funds now as transfers dated for the due date — they stay pending until then.",
-      "scheduleNote": "Statement payment top-up",
-      "paymentNote": "Card payment"
+      "noMatch": "No {{currency}} account — these lines import without one."
     },
     "tableAriaLabel": "Statement line items",
     "columns": {

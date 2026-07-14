@@ -4,7 +4,7 @@ adr: 191
 title: Schedule suggested transfers as future-dated own-account transfers
 category: architecture
 date: 2026-07-06
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -73,3 +73,4 @@ A scheduled (pending) transfer is a normal transfer record. The user cancels or 
 ## Status History
 
 - 2026-07-06: accepted
+- 2026-07-14: superseded by ADR-198 ("Schedule transfers" action removed from the import review flow; card payment scheduling retired)

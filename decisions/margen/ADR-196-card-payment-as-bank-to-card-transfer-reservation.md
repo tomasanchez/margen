@@ -4,7 +4,7 @@ adr: 196
 title: Card payment as bank-to-card transfer reservation closing the destination-earmark gap
 category: architecture
 date: 2026-07-07
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -98,3 +98,4 @@ Violating this invariant would double-count: reducing the liability AND reservin
 
 - 2026-07-07: accepted
 - 2026-07-07: clarified before merge — schedulability broadened from the ADR-191 top-up-only gate to "any firable leg" so payment-only plans (funds already sufficient) are schedulable, which is the primary reservation case. Recorded after code review flagged that a fully-covered statement had no path to schedule its payment.
+- 2026-07-14: superseded by ADR-198 (bank-to-card payment-leg reservation retired; no card accounts exist to target)

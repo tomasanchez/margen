@@ -61,10 +61,12 @@ const {
   netWorthMock: vi.fn(),
 }))
 
-// The review table auto-matches statement lines to the user's card accounts by
-// (institution, currency) (ADR-184/190) and computes the per-currency payment plan
-// (ADR-188/189) from the institutions + net-worth balances. Mock all three reads
-// so the match + plan are deterministic and no real network is hit.
+// The review table auto-matches statement lines to the user's NON-card accounts by
+// (issuer, currency) (ADR-198) — charges import as ordinary expenses on a bank /
+// cash / wallet account, not a card pseudo-account. The institutions + net-worth
+// reads are no longer consumed by the review table (the payment planner was removed
+// with ADR-198), but they remain mocked so the accounts query and any incidental
+// reads are deterministic and no real network is hit.
 vi.mock('../../api/accountsClient', async () => {
   const actual =
     await vi.importActual<typeof import('../../api/accountsClient')>(
@@ -140,28 +142,28 @@ beforeEach(() => {
   listMock.mockResolvedValue([])
   setFxSnapshotMock.mockResolvedValue(undefined)
   historicalRateMock.mockResolvedValue(1200)
-  // Default: the user holds a Galicia ARS card account, so ARS statement lines
-  // auto-match to it (ADR-184). Tests override this to exercise other cases.
+  // Default: the user holds a Galicia BANK ARS account, so ARS statement lines
+  // auto-match to it (ADR-198 — charges import as expenses on a non-card account).
+  // Tests override this to exercise other cases.
   accountsListMock.mockResolvedValue([
     {
-      id: 'galicia-ars-card',
+      id: 'galicia-ars-bank',
       institutionId: 'inst-galicia',
       institutionName: 'Galicia',
-      type: 'card',
+      type: 'bank',
       currency: 'ARS',
       openingBalance: '0',
     },
   ])
-  // The institutions read backs the (brand + last4) match (ADR-190); the net-worth
-  // read backs the payment plan's AVAILABLE balances (ADR-188). Default to a lone
-  // Galicia card institution + an empty net worth; tests override as needed.
+  // The institutions + net-worth reads are no longer consumed by the review table
+  // (the payment planner + card match were removed with ADR-198); they stay mocked
+  // for any incidental reads. Default to a lone Galicia bank institution + an empty
+  // net worth.
   institutionsListMock.mockResolvedValue([
     {
       id: 'inst-galicia',
       name: 'Galicia',
-      type: 'card',
-      brand: 'VISA',
-      last4: '5771',
+      type: 'bank',
     },
   ])
   netWorthMock.mockResolvedValue({
@@ -422,14 +424,14 @@ describe('Import statement — only the included lines are sent on import', () =
   })
 })
 
-describe('Import statement — card-account attachment (ADR-184)', () => {
-  test('auto-matches ARS lines to the Galicia ARS card account and sends accountId', async () => {
+describe('Import statement — account attachment (ADR-198)', () => {
+  test('auto-matches ARS lines to the Galicia bank ARS account and sends accountId', async () => {
     parseStatementMock.mockResolvedValueOnce(okParse)
     importStatementMock.mockResolvedValueOnce(importResult({ createdCount: 2 }))
     const { user, fileInput } = renderImport()
 
     await user.upload(fileInput, pdfFile())
-    // The confirm affordance shows the matched card account for the ARS section.
+    // The confirm affordance shows the matched non-card account for the ARS section.
     const arsSelect = await screen.findByRole('combobox', {
       name: 'ARS account',
     })
@@ -439,15 +441,18 @@ describe('Import statement — card-account attachment (ADR-184)', () => {
 
     await waitFor(() => expect(importStatementMock).toHaveBeenCalledTimes(1))
     const [payload] = importStatementMock.mock.calls[0]
-    // Every kept (ARS) line carries the matched card account id (ADR-184).
+    // Every kept (ARS) line carries the matched non-card account id (ADR-198), and
+    // the parsed card identity is still preserved on the line for reference (ADR-117).
     for (const line of payload.lines) {
-      expect(line.accountId).toBe('galicia-ars-card')
+      expect(line.accountId).toBe('galicia-ars-bank')
+      expect(line.card).toBe('VISA ·5771')
     }
   })
 
-  test('leaves lines unattached when no matching card account exists', async () => {
-    // The user has no card account for this issuer — the ARS lines import
-    // unattached (no accountId), and the section shows a calm "no match" note.
+  test('leaves lines unattached when no matching account exists (no register-card prompt)', async () => {
+    // The user has no account for this issuer — the ARS lines import unattached
+    // (no accountId), and the section shows a calm "no match" note. Under ADR-198
+    // there is NO "Register this card" affordance.
     accountsListMock.mockResolvedValue([])
     parseStatementMock.mockResolvedValueOnce(okParse)
     importStatementMock.mockResolvedValueOnce(importResult({ createdCount: 2 }))
@@ -455,9 +460,11 @@ describe('Import statement — card-account attachment (ADR-184)', () => {
 
     await user.upload(fileInput, pdfFile())
     await screen.findByText('Galicia · VISA ·5771')
+    expect(await screen.findByText(/No ARS account/i)).toBeInTheDocument()
+    // The removed card machinery leaves no register-card affordance.
     expect(
-      await screen.findByText(/No ARS card account/i),
-    ).toBeInTheDocument()
+      screen.queryByRole('button', { name: /Register this card/i }),
+    ).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Import 2 expenses' }))
 

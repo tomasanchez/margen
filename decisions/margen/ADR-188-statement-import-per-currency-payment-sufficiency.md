@@ -4,7 +4,7 @@ adr: 188
 title: Statement import shows a per-currency card-payment sufficiency check
 category: architecture
 date: 2026-07-06
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -63,3 +63,4 @@ The displayed "Sufficient" verdict is refined by ADR-189 to be **main-account-ba
 ## Status History
 
 - 2026-07-06: accepted
+- 2026-07-14: superseded by ADR-198 (payment planner removed from the import review flow; charges land on bank accounts, not card accounts)

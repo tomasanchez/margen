@@ -4,7 +4,7 @@ adr: 197
 title: Institution-first card identity; brand+last4 is only a disambiguator
 category: architecture
 date: 2026-07-07
-status: accepted
+status: superseded
 supersedes: ADR-190
 authors: [Tomas Sanchez]
 ---
@@ -69,3 +69,4 @@ The rule that a parse carrying a precise brand+last4 identity must refuse name-o
 
 - 2026-07-07: accepted
 - 2026-07-07: supersedes ADR-190 (strict brand+last4-primary rule revoked; institution-name match promoted to primary step)
+- 2026-07-14: superseded by ADR-198 (import no longer targets card accounts or card institutions; card-matching logic retired from the import flow)
