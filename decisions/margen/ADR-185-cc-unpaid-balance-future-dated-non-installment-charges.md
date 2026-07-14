@@ -4,7 +4,7 @@ adr: 185
 title: Credit-card unpaid-balance liability equals future-dated non-installment card-account charges
 category: data
 date: 2026-07-03
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -61,3 +61,4 @@ cc_balance(account) =
 ## Status History
 
 - 2026-07-03: accepted
+- 2026-07-14: superseded by ADR-198 (no card accounts are produced by import; ccBalance liability becomes inert and the derivation no longer applies)

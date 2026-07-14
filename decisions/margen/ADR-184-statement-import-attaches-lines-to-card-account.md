@@ -4,7 +4,7 @@ adr: 184
 title: Statement imports attach each charge to the (institution, currency) card account
 category: data
 date: 2026-07-03
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -45,3 +45,4 @@ Each imported statement line is attached to a specific card account via **fronte
 ## Status History
 
 - 2026-07-03: accepted
+- 2026-07-14: superseded by ADR-198 (charges now import as ordinary expenses on a non-card account; card-account attachment retired from the import flow)

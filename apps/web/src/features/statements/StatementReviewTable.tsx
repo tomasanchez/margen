@@ -27,7 +27,7 @@
  * Select / ToggleButtonGroup / disclosure Button) with descriptive labels.
  */
 
-import { useCallback, useId, useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
@@ -59,15 +59,8 @@ import { CATEGORIES } from '../../mock/seed'
 import { formatCurrency, isoToDispDateLike } from './format'
 import { categoryLabel } from '../transactions/presentation'
 import { monoFontFamily } from '../../theme'
-import {
-  useAccounts,
-  useCreateAccount,
-  useCreateInstitution,
-  useInstitutions,
-  useNetWorth,
-} from '../accounts/queries'
-import { buildNetWorthBalanceIndex } from '../accounts/grouping'
-import type { Account, Currency } from '../../mock/types'
+import { useAccounts } from '../accounts/queries'
+import type { Account } from '../../mock/types'
 import type { StatementMatch, StatementParse } from '../../api/statementsClient'
 import {
   parseCuota,
@@ -76,23 +69,8 @@ import {
   type ReviewLine,
   type ReviewResolution,
 } from './useStatementReviewState'
-import {
-  computePaymentPlan,
-  pendingDueDate,
-  scheduleOccurredOn,
-  type FundingAccount,
-} from './paymentPlan'
-import { PaymentPlanPanel, type ScheduleState } from './PaymentPlanPanel'
-import { toDecimalString } from '../accounts/balance'
-import { useCreateTransfer, useTransfers } from '../transfers/queries'
-import {
-  computeAvailable,
-  projectedBalance,
-} from '../accounts/availableBalance'
-import { todayIsoDate } from '../transactions/useAddEditFormState'
 import { usePreferredRate } from '../budgets/queries'
 import { useSettings } from '../settings/queries'
-import { RegisterCardForm, type RegisterCardSubmit } from './RegisterCardForm'
 
 /** Expense categories offered in the per-line editor (statements are expenses). */
 const STATEMENT_CATEGORIES = CATEGORIES.filter((c) => c !== 'Income')
@@ -783,36 +761,32 @@ const visuallyHiddenSx = {
   width: '1px',
 } as const
 
-/** A short "Institution · CUR" label for a card-account option. */
+/** A short "Institution · CUR" label for an account option. */
 function accountOptionLabel(account: Account): string {
   return `${account.institutionName} · ${account.currency}`
 }
 
 /**
- * The per-currency card-account attachment control (ADR-184). A statement is
- * from ONE card and Argentine cards carry separate ARS + USD balances, so the
+ * The per-currency account attachment control (ADR-198). A statement is from one
+ * issuer and Argentine accounts carry separate ARS + USD balances, so the
  * attachment is confirmed ONCE per line-currency present in the statement — a
  * calm confirm-the-match affordance, not a noisy per-row selector. Each currency
- * present gets a labeled Select pre-selected to its auto-matched card account
- * (ADR-184); the user can confirm, switch to another card account of the SAME
- * currency, or choose "Don't attach" (import that currency's lines unattached).
- * Only card accounts whose currency equals the section currency are offered.
+ * present gets a labeled Select pre-selected to its auto-matched NON-card account
+ * (ADR-198); the user can confirm, switch to another account of the SAME currency,
+ * or choose "Don't attach" (import that currency's lines unattached). Only
+ * non-card (bank / cash / wallet) accounts whose currency equals the section
+ * currency are offered — card charges import as ordinary expenses on a real
+ * money account, never on a card pseudo-account (ADR-198).
  */
 function AccountAttachSection({
   choices,
   accounts,
   onChange,
-  onRegister,
-  canRegister,
   disabled,
 }: {
   choices: readonly CurrencyAccountChoice[]
   accounts: readonly Account[]
   onChange: (currency: CurrencyAccountChoice['currency'], accountId: string | null) => void
-  /** Open the prefilled register-card wizard (ADR-190). */
-  onRegister: () => void
-  /** Whether a register-card action is offered (the parse carries a card identity). */
-  canRegister: boolean
   disabled: boolean
 }) {
   const { t } = useTranslation('statements')
@@ -847,9 +821,9 @@ function AccountAttachSection({
         useFlexGap
       >
         {choices.map((choice) => {
-          // Only card accounts of the SAME currency are eligible options (ADR-184).
+          // Only NON-card accounts of the SAME currency are eligible (ADR-198).
           const options = accounts.filter(
-            (a) => a.type === 'card' && a.currency === choice.currency,
+            (a) => a.type !== 'card' && a.currency === choice.currency,
           )
           const value = choice.selectedAccountId ?? ''
           const noMatch = choice.matched === null && options.length === 0
@@ -860,8 +834,6 @@ function AccountAttachSection({
               value={value}
               options={options}
               noMatch={noMatch}
-              canRegister={canRegister}
-              onRegister={onRegister}
               disabled={disabled}
               onChange={(id) => onChange(choice.currency, id === '' ? null : id)}
             />
@@ -872,14 +844,12 @@ function AccountAttachSection({
   )
 }
 
-/** One labeled currency section's card-account Select (ADR-184). */
+/** One labeled currency section's account Select (ADR-198). */
 function CurrencyAccountSelect({
   currency,
   value,
   options,
   noMatch,
-  canRegister,
-  onRegister,
   disabled,
   onChange,
 }: {
@@ -887,20 +857,15 @@ function CurrencyAccountSelect({
   value: string
   options: readonly Account[]
   noMatch: boolean
-  /** Whether the register-card action is offered (parse carries a card identity). */
-  canRegister: boolean
-  /** Open the prefilled register-card wizard (ADR-190). */
-  onRegister: () => void
   disabled: boolean
   onChange: (accountId: string) => void
 }) {
   const { t } = useTranslation('statements')
   const labelId = useId()
   const label = t('review.account.currencyLabel', { currency })
-  // No card account of this currency exists — the lines import unattached; show a
-  // calm caption instead of an empty picker so the state is clear (ADR-184/037).
-  // When the parse carries a card identity, also offer a "Register this card"
-  // action that opens the prefilled registration wizard (ADR-190).
+  // No non-card account of this currency exists at all — the lines import
+  // unattached; show a calm caption instead of an empty picker so the state is
+  // clear (ADR-198/037). No "register card" prompt — the card modelling is gone.
   if (noMatch) {
     return (
       <Box sx={{ minWidth: 200 }}>
@@ -908,24 +873,6 @@ function CurrencyAccountSelect({
         <Typography sx={{ fontSize: 13, color: 'text.secondary' }} role="note">
           {t('review.account.noMatch', { currency })}
         </Typography>
-        {canRegister ? (
-          <Button
-            type="button"
-            size="small"
-            variant="text"
-            onClick={onRegister}
-            disabled={disabled}
-            sx={{
-              mt: 0.25,
-              px: 0,
-              fontSize: 12.5,
-              fontWeight: 600,
-              textTransform: 'none',
-            }}
-          >
-            {t('review.account.register')}
-          </Button>
-        ) : null}
       </Box>
     )
   }
@@ -958,26 +905,21 @@ export function StatementReviewTable({
   isImporting,
 }: StatementReviewTableProps) {
   const { t } = useTranslation('statements')
-  // The user's accounts + institutions drive the card match (ADR-184/190): the
-  // institution is resolved by (brand + last4) when present, else by name, then
-  // its per-currency card accounts seed the attachment defaults. While loading,
-  // the lists are empty and no defaults are seeded; the selection re-seeds to the
-  // auto-match once they resolve.
+  // The user's accounts drive the attachment match (ADR-198): the statement issuer
+  // is matched to the user's NON-card (bank / cash / wallet) account of each line
+  // currency, and that seeds the per-currency attachment default. While loading,
+  // the list is empty and no default is seeded; the selection re-seeds to the
+  // auto-match once it resolves.
   const accountsQuery = useAccounts()
-  const institutionsQuery = useInstitutions()
-  const netWorthQuery = useNetWorth()
   const accounts = useMemo(
     () => accountsQuery.data ?? [],
     [accountsQuery.data],
-  )
-  const institutions = useMemo(
-    () => institutionsQuery.data ?? [],
-    [institutionsQuery.data],
   )
   // The live preferred-source rate + the persisted source (ADR-149/151) materialize
   // a USD-only line's ARS-equivalent + FX snapshot at review (ADR-079) — the SAME
   // cached rate the Add-transaction flow uses. Unavailable (null) leaves USD lines
   // at amount 0 with a calm "enter the ARS amount" hint; a rate is never guessed.
+  // USD charges still need an ARS-equivalent to import as ordinary expenses (ADR-198).
   const preferredRateQuery = usePreferredRate()
   const settingsQuery = useSettings()
   const preferredRate = preferredRateQuery.data ?? null
@@ -985,322 +927,9 @@ export function StatementReviewTable({
   const review = useStatementReviewState(
     parse,
     accounts,
-    institutions,
     preferredRate,
     preferredRateSource,
   )
-
-  // AVAILABLE per currency uses each account's as-of-today NATIVE balance (opening
-  // + transaction deltas, ADR-186) from the net-worth read model, falling back to
-  // the account's opening balance when the read hasn't resolved yet (ADR-188).
-  const balanceIndex = useMemo(
-    () => buildNetWorthBalanceIndex(netWorthQuery.data?.accounts ?? []),
-    [netWorthQuery.data?.accounts],
-  )
-  // Already-scheduled (future-dated, ADR-191) own-account transfers are layered
-  // onto each funding account below via the shared primitive (ADR-193).
-  const transfersQuery = useTransfers()
-  // The user's NON-card funding accounts (bank / cash / wallet), each carrying its
-  // PROJECTED due-date native balance (ADR-195): `balance + pendingIn − pendingOut`
-  // from the shared primitive (ADR-193). Projecting — rather than passing the raw
-  // as-of-today balance — makes an account's already-promised pending OUTFLOW
-  // reduce what it can source (fixing the source-side double-source: a scheduled
-  // top-up leg already committed can't also be counted as spare funding), and lets
-  // a scheduled top-up INTO an account count toward its funding. `paymentPlan.ts`
-  // needs no change — it just receives the projected number as `FundingAccount.balance`.
-  // Degrades gracefully: with net-worth/transfers unloaded the balance falls back
-  // to opening (pending 0), so the projection equals today's figure — no NaN. Card
-  // charges are NOT modelled here (that reservation is Slice B). Per-currency
-  // native; never cross-summed (ADR-133).
-  const fundingAccounts = useMemo<FundingAccount[]>(() => {
-    const nonCard = accounts.filter((account) => account.type !== 'card')
-    const availableInputs = nonCard.map((account) => {
-      const fromNetWorth = balanceIndex.get(account.id)
-      const opening = Number.parseFloat(account.openingBalance)
-      const balance =
-        fromNetWorth != null
-          ? fromNetWorth
-          : Number.isFinite(opening)
-            ? opening
-            : 0
-      return { id: account.id, currency: account.currency, balance }
-    })
-    const available = computeAvailable(
-      availableInputs,
-      transfersQuery.data ?? [],
-      todayIsoDate(),
-    )
-    return nonCard.map((account) => {
-      const entry = available.get(account.id)
-      return {
-        id: account.id,
-        institutionName: account.institutionName,
-        type: account.type,
-        currency: account.currency,
-        balance: entry ? projectedBalance(entry) : 0,
-      }
-    })
-  }, [accounts, balanceIndex, transfersQuery.data])
-
-  // The per-currency main / pay-from account selection (ADR-189). Absent entries
-  // fall back to the largest-balance default inside computePaymentPlan.
-  const [mainByCurrency, setMainByCurrency] = useState<
-    Partial<Record<Currency, string>>
-  >({})
-  const setMainAccount = useCallback((currency: Currency, accountId: string) => {
-    setMainByCurrency((current) => ({ ...current, [currency]: accountId }))
-  }, [])
-
-  // The kept lines drive NEED; recomputed live as the user toggles keep/exclude or
-  // changes a main account (ADR-188). Native amounts only — never cross-summed.
-  const paymentPlan = useMemo(
-    () =>
-      computePaymentPlan(
-        review.lines
-          .filter((line) => line.keep)
-          .map((line) => ({
-            currency: line.currency,
-            amount: line.amount,
-            ...(line.usdAmount !== undefined ? { usdAmount: line.usdAmount } : {}),
-          })),
-        fundingAccounts,
-        mainByCurrency,
-      ),
-    [review.lines, fundingAccounts, mainByCurrency],
-  )
-  const pendingDue = useMemo(
-    () => pendingDueDate(parse.periodDue, parse.periodClose),
-    [parse.periodDue, parse.periodClose],
-  )
-
-  // The card account the payment leg (Slice B, ADR-196) settles TO, per currency:
-  // the same (institution, currency) card account the import attaches the lines to
-  // (ADR-184 — `review.accountChoices`). A currency with no attached card account
-  // (user chose "Don't attach" / no match) has no destination, so its payment leg
-  // is skipped — the top-ups still fire, we just don't invent a card to pay.
-  const cardAccountByCurrency = useMemo(() => {
-    const map = new Map<Currency, string>()
-    for (const choice of review.accountChoices) {
-      if (choice.selectedAccountId) map.set(choice.currency, choice.selectedAccountId)
-    }
-    return map
-  }, [review.accountChoices])
-  const createTransfer = useCreateTransfer()
-  const [scheduleState, setScheduleState] = useState<ScheduleState>('idle')
-  // Resume cursor for a partially-sent batch (money-correctness): how many legs of
-  // a given plan signature's flat leg list have already been POSTed successfully,
-  // keyed to that signature. A retry after a mid-batch failure starts from `count`
-  // so the already-created legs are never re-fired (which would duplicate and
-  // over-top the balance). Keyed to the signature so a plan change (toggled line /
-  // new main account) is detected inside the handler and the cursor resets to 0 (a
-  // genuinely new batch). A ref (not state) because it is a within-a-run cursor
-  // read/written across the sequential loop's awaits — not render-driving UI.
-  const sentCursorRef = useRef<{ signature: string; count: number }>({
-    signature: '',
-    count: 0,
-  })
-  // The ordered flat list of own-account transfer legs the schedule action fires,
-  // grouped per currency in fire order: FIRST the greedy top-up legs (source →
-  // main/pay-from), THEN — as the LAST leg for that currency — the Slice B payment
-  // leg (main/pay-from → the attached CARD account) that settles the statement
-  // (ADR-196). A currency with no attached card account skips its payment leg but
-  // still contributes its top-ups (don't invent a destination). Only currencies
-  // whose shortfall is fully coverable (no residual gap) participate. The `kind`
-  // distinguishes top-up vs payment for the signature/tests; the note is a display
-  // concern applied at fire time. Per-currency native — a currency that is already
-  // sufficient (main covers the whole balance, zero top-ups) STILL emits its
-  // payment leg when a card is attached: that is the primary Slice B case — "I have
-  // the money, just earmark the card payment so the next card's plan sees it gone."
-  // This module is the SINGLE source of truth for what's firable; `canSchedule`
-  // below is simply "there is at least one firable leg." Amounts are native decimal
-  // strings (ADR-025/133).
-  const scheduleLegs = useMemo(() => {
-    const legs: {
-      currency: Currency
-      kind: 'topup' | 'payment'
-      fromAccountId: string
-      toAccountId: string
-      amount: string
-    }[] = []
-    for (const currencyPlan of paymentPlan.currencies) {
-      const main = currencyPlan.main
-      if (main === null || currencyPlan.residualGap > 0) continue
-      // Top-ups first: source → the main/pay-from account (skipped when sufficient).
-      if (!currencyPlan.sufficient) {
-        for (const leg of currencyPlan.transfers) {
-          const amount = toDecimalString(leg.amount)
-          legs.push({
-            currency: currencyPlan.currency,
-            kind: 'topup',
-            fromAccountId: leg.from.id,
-            toAccountId: main.id,
-            amount,
-          })
-        }
-      }
-      // Payment leg LAST: main → the attached card account for this currency. The
-      // amount is the currency's full need (the statement balance in native units).
-      // Future-dated (same due date), so it becomes pendingOut(main) and reserves
-      // the pay-from account for the NEXT card's plan (ADR-195 double-source fix).
-      const cardAccountId = cardAccountByCurrency.get(currencyPlan.currency)
-      if (cardAccountId !== undefined && currencyPlan.need > 0) {
-        legs.push({
-          currency: currencyPlan.currency,
-          kind: 'payment',
-          fromAccountId: main.id,
-          toAccountId: cardAccountId,
-          amount: toDecimalString(currencyPlan.need),
-        })
-      }
-    }
-    return legs
-  }, [paymentPlan, cardAccountByCurrency])
-
-  // One-click execution is offered whenever there is at least one FIRABLE leg
-  // (ADR-191/196): a coverable top-up OR a payment leg (a currency with need > 0 and
-  // an attached card). Derived from `scheduleLegs` — the single source of truth — so
-  // a payment-ONLY plan (main already covers, zero top-ups, but a card is attached
-  // to earmark) is schedulable, which is the primary Slice B case. A residual-gap
-  // currency contributes no leg (its transfers/payment are withheld above), so the
-  // suggest-only, never-half-scheduled guarantee holds.
-  const canSchedule = scheduleLegs.length > 0
-
-  // A stable signature of the schedulable legs (source, amount, destination, kind).
-  // Used to re-arm the button when the plan changes after a run and to key the
-  // resume cursor so a retry never re-fires an already-sent leg (payment included).
-  const legSignature = useMemo(
-    () =>
-      scheduleLegs
-        .map(
-          (leg) =>
-            `${leg.currency}:${leg.kind}:${leg.fromAccountId}→${leg.toAccountId}@${leg.amount}`,
-        )
-        .join('|'),
-    [scheduleLegs],
-  )
-  // Re-arm the button if the plan changes after a completed/errored run (e.g. the
-  // user toggles a line): a stale "scheduled" state shouldn't outlive the plan it
-  // described. This is the sanctioned "adjust state while rendering" pattern
-  // (React docs) — compare the signature the run was fired for against the live
-  // one, using state (not a ref) so the lint rule is satisfied.
-  const [runSignature, setRunSignature] = useState<string | null>(null)
-  if (
-    (scheduleState === 'done' || scheduleState === 'error') &&
-    runSignature !== null &&
-    runSignature !== legSignature
-  ) {
-    setRunSignature(null)
-    setScheduleState('idle')
-    // The resume cursor is keyed to the plan signature and reset inside
-    // handleSchedule when the signature changes, so no ref write is needed here.
-  }
-
-  const handleSchedule = useCallback(async () => {
-    if (!canSchedule) return
-    // Re-entry guard: two clicks in the same tick (or a click while a batch is
-    // still firing) must not double-fire the legs (money-correctness).
-    if (scheduleState === 'scheduling') return
-    // ADR-191 dating: future due date → pending until then; else today.
-    const occurredOn = scheduleOccurredOn(parse.periodDue, parse.periodClose)
-    // The ordered, flattened own-account transfers to fire, per currency in fire
-    // order (top-ups then the payment leg, ADR-196). Each is same-currency, net-zero,
-    // no FX (ADR-135). Top-ups carry the "top-up" note; the payment leg (main → the
-    // attached card) carries the "Card payment" note and settles the statement.
-    const inputs = scheduleLegs.map((leg) => ({
-      fromAccountId: leg.fromAccountId,
-      toAccountId: leg.toAccountId,
-      amountOut: leg.amount,
-      amountIn: leg.amount,
-      occurredOn,
-      note:
-        leg.kind === 'payment'
-          ? t('review.plan.paymentNote')
-          : t('review.plan.scheduleNote'),
-    }))
-    if (inputs.length === 0) return
-    // Resume from the first un-sent leg. When the plan signature differs from the
-    // cursor's, this is a genuinely new batch — reset the cursor to 0 and fire
-    // every leg. When it matches (a retry after a mid-batch failure of the SAME
-    // plan), start from the succeeded count so the already-created legs are never
-    // re-POSTed (which would duplicate and over-top the balance — the bug this
-    // guards). Clamp defensively in case the leg list shrank.
-    if (sentCursorRef.current.signature !== legSignature) {
-      sentCursorRef.current = { signature: legSignature, count: 0 }
-    }
-    const startFrom = Math.min(sentCursorRef.current.count, inputs.length)
-    setScheduleState('scheduling')
-    setRunSignature(legSignature)
-    try {
-      // Sequential so a mid-run failure stops cleanly and we report it (rather
-      // than firing the rest); the mutation invalidates balances/net-worth +
-      // transfers on each success so the pending reservation refreshes. Advance
-      // the resume cursor after each success so a retry continues from here.
-      for (let i = startFrom; i < inputs.length; i += 1) {
-        await createTransfer.mutateAsync(inputs[i])
-        sentCursorRef.current = { signature: legSignature, count: i + 1 }
-      }
-      setScheduleState('done')
-    } catch {
-      // A leg failed — surface a calm error; the ones already created remain
-      // (partial cancellation is supported via the Transfers UI, ADR-191). The
-      // resume cursor holds the succeeded count so a retry fires only the rest.
-      setScheduleState('error')
-    }
-  }, [
-    canSchedule,
-    createTransfer,
-    legSignature,
-    parse.periodClose,
-    parse.periodDue,
-    scheduleLegs,
-    scheduleState,
-    t,
-  ])
-
-  // In-flow card registration (ADR-190): opened from the "Register this card"
-  // action when a currency has no matching card account. Prefilled from the parse;
-  // creates the institution (type=card, brand+last4) then its per-currency accounts.
-  const [registerOpen, setRegisterOpen] = useState(false)
-  const createInstitution = useCreateInstitution()
-  const createAccount = useCreateAccount()
-  const [registerError, setRegisterError] = useState(false)
-  const registerSaving = createInstitution.isPending || createAccount.isPending
-  // The currencies the statement carries — queued as the new card's accounts.
-  const statementCurrencies = useMemo<Currency[]>(() => {
-    const seen = new Set<Currency>()
-    for (const line of parse.lines) seen.add(line.currency)
-    return (['ARS', 'USD'] as const).filter((c) => seen.has(c))
-  }, [parse.lines])
-  // The register action is offered only when the parse carries a card identity.
-  const canRegisterCard =
-    Boolean(parse.bankName) || Boolean(parse.cardLast4) || Boolean(parse.network)
-
-  const openRegister = () => {
-    createInstitution.reset()
-    createAccount.reset()
-    setRegisterError(false)
-    setRegisterOpen(true)
-  }
-  const closeRegister = () => setRegisterOpen(false)
-
-  const handleRegisterSubmit = async (submit: RegisterCardSubmit) => {
-    setRegisterError(false)
-    try {
-      const created = await createInstitution.mutateAsync(submit.institution)
-      for (const account of submit.accounts) {
-        await createAccount.mutateAsync({
-          institutionId: created.id,
-          currency: account.currency,
-          openingBalance: account.openingBalance,
-        })
-      }
-      // The accounts/institutions queries are invalidated by the mutations, so the
-      // auto-match re-runs and finds the new card by (brand + last4, currency).
-      setRegisterOpen(false)
-    } catch {
-      setRegisterError(true)
-    }
-  }
 
   // The detected card identity as "Galicia · VISA ·5771" — the normalized bank
   // joined with the card detail (ADR-117). Falls back gracefully when a part is
@@ -1404,33 +1033,14 @@ export function StatementReviewTable({
         </Alert>
       ) : null}
 
-      {/* Per-currency card-payment plan (ADR-188/189): NEED vs AVAILABLE in native
-          units + a Sufficient badge or a concrete greedy transfer list. Sits
-          between the header strip and the account-attach section; recomputes live
-          as lines toggle or the main account changes. Suggest-only (no execute). */}
-      <PaymentPlanPanel
-        plan={paymentPlan}
-        fundingAccounts={fundingAccounts}
-        pendingDue={pendingDue}
-        disabled={isImporting}
-        onMainChange={setMainAccount}
-        canSchedule={canSchedule}
-        scheduleState={scheduleState}
-        onSchedule={() => {
-          void handleSchedule()
-        }}
-      />
-
-      {/* Per-currency card-account attachment (ADR-184): confirm the auto-matched
-          (institution, currency) card account for this statement's lines. When a
-          currency has no matching card account, a "Register this card" action opens
-          the prefilled registration wizard (ADR-190). */}
+      {/* Per-currency account attachment (ADR-198): confirm the auto-matched
+          (issuer, currency) NON-card account these charges import onto as ordinary
+          expenses. When a currency has no matching account, the user picks one from
+          their non-card accounts (or leaves it unattached). No card modelling. */}
       <AccountAttachSection
         choices={review.accountChoices}
         accounts={accounts}
         onChange={review.setAccountForCurrency}
-        onRegister={openRegister}
-        canRegister={canRegisterCard}
         disabled={isImporting}
       />
 
@@ -1563,24 +1173,6 @@ export function StatementReviewTable({
           {ctaText}
         </Button>
       </Stack>
-
-      {/* In-flow card registration (ADR-190): prefilled from the parse; keyed on
-          open so its seeded state starts fresh each time. */}
-      {registerOpen ? (
-        <RegisterCardForm
-          open
-          bankName={parse.bankName}
-          network={parse.network}
-          cardLast4={parse.cardLast4}
-          currencies={statementCurrencies}
-          isSaving={registerSaving}
-          saveError={registerError}
-          onSubmit={(submit) => {
-            void handleRegisterSubmit(submit)
-          }}
-          onClose={closeRegister}
-        />
-      ) : null}
     </Box>
   )
 }

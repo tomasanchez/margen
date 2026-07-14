@@ -4,7 +4,7 @@ adr: 195
 title: Card-payment planner uses the projected due-date balance, not the raw balance
 category: architecture
 date: 2026-07-07
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -67,3 +67,4 @@ When the planner assigns funds to cover card A, that commitment is not yet model
 ## Status History
 
 - 2026-07-07: accepted
+- 2026-07-14: superseded by ADR-198 (card-payment planner removed from the import flow; the ADR-193 primitive is retained for ADR-194 only)

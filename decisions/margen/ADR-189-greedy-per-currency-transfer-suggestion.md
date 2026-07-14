@@ -4,7 +4,7 @@ adr: 189
 title: Greedy per-currency transfer suggestion that zeroes the shortfall
 category: architecture
 date: 2026-07-06
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -76,3 +76,4 @@ This slice displays the suggestion list. One-click execution (creating future-da
 ## Status History
 
 - 2026-07-06: accepted
+- 2026-07-14: superseded by ADR-198 (greedy transfer suggestion removed from the import review flow)

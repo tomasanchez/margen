@@ -4,7 +4,7 @@ adr: 192
 title: Home surfaces an upcoming card-payment-due alert as a Monthly Insights fact
 category: ux
 date: 2026-07-06
-status: accepted
+status: superseded
 supersedes: null
 authors: [Tomas Sanchez]
 ---
@@ -95,3 +95,4 @@ The alert is informational only. Whether the user has already scheduled transfer
 
 - 2026-07-06: accepted
 - 2026-07-06: corrected before implementation — the alert INCLUDES installment cuotas (cash-due-on-date = full statement payment, consistent with the Slice-1 Need, ADR-188), rather than mirroring `cc_balance`'s installment exclusion. The exclusion was a misapplication (that avoids a net-worth *tail* double-count, which doesn't apply to a per-date cash reminder).
+- 2026-07-14: superseded by ADR-198 (Home card-due alert retired; no card accounts exist to source the query)

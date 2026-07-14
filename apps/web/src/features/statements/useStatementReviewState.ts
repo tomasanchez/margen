@@ -30,12 +30,12 @@ import type {
   StatementLineResolution,
   StatementParse,
 } from '../../api/statementsClient'
-import type { Account, Currency, Institution } from '../../mock/types'
+import type { Account, Currency } from '../../mock/types'
 import type { PreferredRateSource } from '../../api/settingsClient'
 import { materializeUsdLineFx } from '../transactions/captureFx'
 import {
   currenciesInParse,
-  matchCardAccounts,
+  matchAccounts,
   type AccountMatch,
 } from './accountMatch'
 
@@ -97,17 +97,17 @@ export function formatCuota(index: number | null, total: number | null): string 
 }
 
 /**
- * The per-currency card-account attachment for the import (ADR-184). A statement
- * is from ONE card institution, and Argentine cards carry separate ARS + USD
- * balances, so the attachment is decided ONCE per line-currency present in the
- * statement — not per row. Each entry carries the currency, its auto-matched
- * default (or `null` when the user has no matching card account), and the CURRENT
- * selected account id (`null` = import that currency's lines unattached).
+ * The per-currency account attachment for the import (ADR-198). A statement is
+ * from one issuer, and Argentine accounts carry separate ARS + USD balances, so
+ * the attachment is decided ONCE per line-currency present in the statement — not
+ * per row. Each entry carries the currency, its auto-matched NON-card default (or
+ * `null` when the user has no matching account), and the CURRENT selected account
+ * id (`null` = import that currency's lines unattached).
  */
 export interface CurrencyAccountChoice {
   /** The line currency this choice governs (ARS or USD). */
   readonly currency: Currency
-  /** The auto-matched card account for (institution, currency), or null (ADR-184). */
+  /** The auto-matched non-card account for (issuer, currency), or null (ADR-198). */
   readonly matched: AccountMatch | null
   /** The currently selected account id, or null to import unattached. */
   readonly selectedAccountId: string | null
@@ -117,14 +117,14 @@ export interface StatementReviewState {
   /** The editable line drafts, in statement order. */
   readonly lines: readonly ReviewLine[]
   /**
-   * The per-currency card-account attachment choices (ADR-184), one per line-
-   * currency present in the statement, ARS before USD. Empty when the parse has
-   * no lines. The review UI renders a confirm/override selector per entry.
+   * The per-currency account attachment choices (ADR-198), one per line-currency
+   * present in the statement, ARS before USD. Empty when the parse has no lines.
+   * The review UI renders a confirm/override selector per entry.
    */
   readonly accountChoices: readonly CurrencyAccountChoice[]
   /**
-   * Set (or clear, with `null`) the card account a currency's lines attach to
-   * (ADR-184). No-op for a currency not present in the statement.
+   * Set (or clear, with `null`) the account a currency's lines attach to
+   * (ADR-198). No-op for a currency not present in the statement.
    */
   setAccountForCurrency: (currency: Currency, accountId: string | null) => void
   /** Count of lines currently kept for import (new + merged). */
@@ -226,7 +226,7 @@ function toLineRequest(
     ...(bank ? { bank } : {}),
     ...(card ? { card } : {}),
     ...(line.cuota ? { cuota: line.cuota } : {}),
-    // The card account the user confirmed for this line's currency (ADR-184);
+    // The non-card account the user confirmed for this line's currency (ADR-198);
     // omitted (null) imports the line unattached — the backend is tolerant.
     ...(accountId ? { accountId } : {}),
     resolution,
@@ -245,7 +245,6 @@ function toLineRequest(
 export function useStatementReviewState(
   parse: StatementParse,
   accounts: readonly Account[] = [],
-  institutions: readonly Institution[] = [],
   /**
    * The live preferred-source rate (ARS per 1 USD, ADR-149/151) the review uses
    * to materialize a USD-only line's ARS-equivalent + FX snapshot (ADR-079). The
@@ -325,14 +324,14 @@ export function useStatementReviewState(
     )
   }
 
-  // Auto-match the (institution, currency) card account per line-currency and
-  // seed each currency's selected account id from it (ADR-184). Recomputed when
-  // the accounts list resolves (it may be empty on first render): a currency's
+  // Auto-match the (issuer, currency) NON-card account per line-currency and seed
+  // each currency's selected account id from it (ADR-198). Recomputed when the
+  // accounts list resolves (it may be empty on first render): a currency's
   // selection is (re)seeded to the match ONLY while the user hasn't chosen — a
   // user override (tracked in `accountOverrides`) always wins.
   const matches = useMemo(
-    () => matchCardAccounts(parse, accounts, institutions),
-    [parse, accounts, institutions],
+    () => matchAccounts(parse, accounts),
+    [parse, accounts],
   )
   const currencies = useMemo(() => currenciesInParse(parse), [parse])
   // Per-currency user overrides: absent = follow the auto-match; present (id or
@@ -478,8 +477,8 @@ export function useStatementReviewState(
 
   const buildImportRequest = useCallback((): StatementImportRequest => {
     const kept = lines.filter((line) => line.keep)
-    // The selected account id per currency (ADR-184): each kept line attaches to
-    // the account chosen for ITS currency (ARS line → ARS card account, etc.).
+    // The selected account id per currency (ADR-198): each kept line attaches to
+    // the account chosen for ITS currency (ARS line → ARS bank account, etc.).
     const accountByCurrency = new Map<Currency, string | null>(
       accountChoices.map((choice) => [choice.currency, choice.selectedAccountId]),
     )

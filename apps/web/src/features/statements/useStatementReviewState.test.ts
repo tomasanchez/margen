@@ -101,13 +101,13 @@ describe('useStatementReviewState.setCuota', () => {
   })
 })
 
-/** A card-account leaf under a named institution + currency (ADR-134/184). */
-function cardAccount(overrides: Partial<Account>): Account {
+/** A non-card money-account leaf under a named institution + currency (ADR-198). */
+function bankAccount(overrides: Partial<Account>): Account {
   return {
     id: 'acc',
     institutionId: 'inst-1',
     institutionName: 'Galicia',
-    type: 'card',
+    type: 'bank',
     currency: 'ARS',
     openingBalance: '0',
     ...overrides,
@@ -184,7 +184,7 @@ describe('useStatementReviewState — USD-only line materialization (ADR-079/148
   test('materializes amount = usdAmount × rate + fxRate/fxRateType, imports amount > 0', () => {
     const { result } = renderHook(() =>
       // rate 1245 (ARS per USD), preferred source 'bolsa' → fxRateType 'MEP'.
-      useStatementReviewState(usdOnlyParse(), [], [], 1245, 'bolsa'),
+      useStatementReviewState(usdOnlyParse(), [], 1245, 'bolsa'),
     )
 
     const usd = result.current.lines.find((l) => l.name === 'AWS')
@@ -209,7 +209,7 @@ describe('useStatementReviewState — USD-only line materialization (ADR-079/148
 
   test('a materialized USD line sends fxSource = the preferred source (oficial), never manual', () => {
     const { result } = renderHook(() =>
-      useStatementReviewState(usdOnlyParse(), [], [], 1050, 'oficial'),
+      useStatementReviewState(usdOnlyParse(), [], 1050, 'oficial'),
     )
     const request = result.current.buildImportRequest()
     const awsLine = request.lines.find((l) => l.name === 'AWS')
@@ -223,7 +223,7 @@ describe('useStatementReviewState — USD-only line materialization (ADR-079/148
 
   test('tags fxRateType official when the preferred source is oficial', () => {
     const { result } = renderHook(() =>
-      useStatementReviewState(usdOnlyParse(), [], [], 1050, 'oficial'),
+      useStatementReviewState(usdOnlyParse(), [], 1050, 'oficial'),
     )
     const usd = result.current.lines.find((l) => l.name === 'AWS')
     expect(usd?.amount).toBe(200 * 1050)
@@ -233,7 +233,7 @@ describe('useStatementReviewState — USD-only line materialization (ADR-079/148
   test('materializes once the rate resolves (was null on first render) without a re-seed clobber', () => {
     const { result, rerender } = renderHook(
       ({ rate }: { rate: number | null }) =>
-        useStatementReviewState(usdOnlyParse(), [], [], rate, 'bolsa'),
+        useStatementReviewState(usdOnlyParse(), [], rate, 'bolsa'),
       { initialProps: { rate: null as number | null } },
     )
 
@@ -257,7 +257,7 @@ describe('useStatementReviewState — USD-only line materialization (ADR-079/148
       amount: 260000,
     }
     const { result } = renderHook(() =>
-      useStatementReviewState(parseWithPeso, [], [], 1245, 'bolsa'),
+      useStatementReviewState(parseWithPeso, [], 1245, 'bolsa'),
     )
     const usd = result.current.lines.find((l) => l.name === 'AWS')
     // Left as-is — not recomputed to 200 × 1245.
@@ -267,7 +267,7 @@ describe('useStatementReviewState — USD-only line materialization (ADR-079/148
 
   test('leaves ARS lines untouched by the USD materialization', () => {
     const { result } = renderHook(() =>
-      useStatementReviewState(usdOnlyParse(), [], [], 1245, 'bolsa'),
+      useStatementReviewState(usdOnlyParse(), [], 1245, 'bolsa'),
     )
     const ars = result.current.lines.find((l) => l.name === 'Coto')
     expect(ars?.amount).toBe(45000)
@@ -277,7 +277,7 @@ describe('useStatementReviewState — USD-only line materialization (ADR-079/148
 
   test('rate unavailable: leaves amount 0, no fabricated rate, sets the hint', () => {
     const { result } = renderHook(() =>
-      useStatementReviewState(usdOnlyParse(), [], [], null, 'bolsa'),
+      useStatementReviewState(usdOnlyParse(), [], null, 'bolsa'),
     )
     const usd = result.current.lines.find((l) => l.name === 'AWS')
     expect(usd?.amount).toBe(0)
@@ -289,7 +289,7 @@ describe('useStatementReviewState — USD-only line materialization (ADR-079/148
   test('a user-entered ARS amount is not clobbered when the rate later lands', () => {
     const { result, rerender } = renderHook(
       ({ rate }: { rate: number | null }) =>
-        useStatementReviewState(usdOnlyParse(), [], [], rate, 'bolsa'),
+        useStatementReviewState(usdOnlyParse(), [], rate, 'bolsa'),
       { initialProps: { rate: null as number | null } },
     )
 
@@ -303,33 +303,50 @@ describe('useStatementReviewState — USD-only line materialization (ADR-079/148
   })
 })
 
-describe('useStatementReviewState — card-account attachment (ADR-184)', () => {
-  const arsCard = cardAccount({ id: 'ars-card', currency: 'ARS' })
-  const usdCard = cardAccount({ id: 'usd-card', currency: 'USD' })
+describe('useStatementReviewState — account attachment (ADR-198)', () => {
+  // The charges attach to the issuer's NON-card money accounts (ADR-198): a Galicia
+  // statement's ARS lines land on the Galicia bank ARS account, USD on the USD one.
+  const arsBank = bankAccount({ id: 'ars-bank', currency: 'ARS' })
+  const usdBank = bankAccount({ id: 'usd-bank', currency: 'USD' })
 
-  test('auto-matches each line-currency to its (institution, currency) card account and stamps accountId per line', () => {
+  test('auto-matches each line-currency to its (issuer, currency) non-card account and stamps accountId per line', () => {
     const { result } = renderHook(() =>
-      useStatementReviewState(dualCurrencyParse(), [arsCard, usdCard]),
+      useStatementReviewState(dualCurrencyParse(), [arsBank, usdBank]),
     )
 
     // A per-currency choice is seeded, defaulting to the auto-matched account.
     const choices = result.current.accountChoices
     expect(choices.map((c) => c.currency)).toEqual(['ARS', 'USD'])
-    expect(choices[0].selectedAccountId).toBe('ars-card')
-    expect(choices[1].selectedAccountId).toBe('usd-card')
+    expect(choices[0].selectedAccountId).toBe('ars-bank')
+    expect(choices[1].selectedAccountId).toBe('usd-bank')
 
     // Each line's accountId follows its currency in the import request.
     const request = result.current.buildImportRequest()
     const carrefour = request.lines.find((l) => l.name === 'Carrefour')
     const spotify = request.lines.find((l) => l.name === 'Spotify')
-    expect(carrefour?.accountId).toBe('ars-card')
-    expect(spotify?.accountId).toBe('usd-card')
+    expect(carrefour?.accountId).toBe('ars-bank')
+    expect(spotify?.accountId).toBe('usd-bank')
+  })
+
+  test('a same-name CARD account is NOT a candidate; the currency stays unmatched (ADR-198)', () => {
+    // The user holds only a Galicia CARD account for USD — card accounts are
+    // excluded, so the USD line has no default and imports unattached.
+    const usdCard = bankAccount({ id: 'usd-card', currency: 'USD', type: 'card' })
+    const { result } = renderHook(() =>
+      useStatementReviewState(dualCurrencyParse(), [arsBank, usdCard]),
+    )
+
+    const usdChoice = result.current.accountChoices.find(
+      (c) => c.currency === 'USD',
+    )
+    expect(usdChoice?.matched).toBeNull()
+    expect(usdChoice?.selectedAccountId).toBeNull()
   })
 
   test('leaves an unmatched currency unattached (no accountId sent)', () => {
-    // Only an ARS card account exists — the USD line stays unattached (ADR-184).
+    // Only an ARS account exists — the USD line stays unattached (ADR-198).
     const { result } = renderHook(() =>
-      useStatementReviewState(dualCurrencyParse(), [arsCard]),
+      useStatementReviewState(dualCurrencyParse(), [arsBank]),
     )
 
     const usdChoice = result.current.accountChoices.find(
@@ -344,20 +361,20 @@ describe('useStatementReviewState — card-account attachment (ADR-184)', () => 
   })
 
   test('a user override replaces the auto-match for that currency', () => {
-    const otherArsCard = cardAccount({ id: 'ars-card-2', currency: 'ARS' })
+    const otherArsBank = bankAccount({ id: 'ars-bank-2', currency: 'ARS' })
     const { result } = renderHook(() =>
       useStatementReviewState(dualCurrencyParse(), [
-        arsCard,
-        otherArsCard,
-        usdCard,
+        arsBank,
+        otherArsBank,
+        usdBank,
       ]),
     )
 
-    // Override the ARS section to the second ARS card.
-    act(() => result.current.setAccountForCurrency('ARS', 'ars-card-2'))
+    // Override the ARS section to the second ARS account.
+    act(() => result.current.setAccountForCurrency('ARS', 'ars-bank-2'))
     const request = result.current.buildImportRequest()
     const carrefour = request.lines.find((l) => l.name === 'Carrefour')
-    expect(carrefour?.accountId).toBe('ars-card-2')
+    expect(carrefour?.accountId).toBe('ars-bank-2')
 
     // Clearing to null imports that currency's lines unattached.
     act(() => result.current.setAccountForCurrency('ARS', null))
@@ -366,7 +383,7 @@ describe('useStatementReviewState — card-account attachment (ADR-184)', () => 
     expect('accountId' in (carrefour2 ?? {})).toBe(false)
     // The USD line is untouched by the ARS override.
     const spotify = cleared.lines.find((l) => l.name === 'Spotify')
-    expect(spotify?.accountId).toBe('usd-card')
+    expect(spotify?.accountId).toBe('usd-bank')
   })
 
   test('re-seeds the default from the auto-match once the accounts list resolves', () => {
@@ -380,9 +397,9 @@ describe('useStatementReviewState — card-account attachment (ADR-184)', () => 
 
     expect(result.current.accountChoices[0].selectedAccountId).toBeNull()
 
-    rerender({ accounts: [arsCard, usdCard] })
-    expect(result.current.accountChoices[0].selectedAccountId).toBe('ars-card')
-    expect(result.current.accountChoices[1].selectedAccountId).toBe('usd-card')
+    rerender({ accounts: [arsBank, usdBank] })
+    expect(result.current.accountChoices[0].selectedAccountId).toBe('ars-bank')
+    expect(result.current.accountChoices[1].selectedAccountId).toBe('usd-bank')
   })
 })
 
@@ -390,7 +407,7 @@ describe('useStatementReviewState — blocking zero amount (ADR-079)', () => {
   test('a kept USD line at amount 0 (rate unavailable) blocks import until an amount is entered', () => {
     const { result, rerender } = renderHook(
       ({ rate }: { rate: number | null }) =>
-        useStatementReviewState(usdOnlyParse(), [], [], rate, 'bolsa'),
+        useStatementReviewState(usdOnlyParse(), [], rate, 'bolsa'),
       { initialProps: { rate: null as number | null } },
     )
 
@@ -410,7 +427,7 @@ describe('useStatementReviewState — blocking zero amount (ADR-079)', () => {
 
   test('excluding the zero-amount line also clears the block', () => {
     const { result } = renderHook(() =>
-      useStatementReviewState(usdOnlyParse(), [], [], null, 'bolsa'),
+      useStatementReviewState(usdOnlyParse(), [], null, 'bolsa'),
     )
     expect(result.current.hasBlockingZeroAmount).toBe(true)
 
@@ -421,7 +438,7 @@ describe('useStatementReviewState — blocking zero amount (ADR-079)', () => {
 
   test('no block when the rate materializes every kept line to a positive amount', () => {
     const { result } = renderHook(() =>
-      useStatementReviewState(usdOnlyParse(), [], [], 1245, 'bolsa'),
+      useStatementReviewState(usdOnlyParse(), [], 1245, 'bolsa'),
     )
     // Both lines carry positive amounts (ARS parsed, USD materialized).
     expect(result.current.hasBlockingZeroAmount).toBe(false)
