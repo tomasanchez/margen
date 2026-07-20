@@ -1,0 +1,54 @@
+name: keep-alive
+
+# Keeps the Render free-plan API warm so it doesn't cold-start (~50s) after the
+# 15-min idle spin-down. Pings the API's /readiness every ~10 minutes. Public repo
+# => Actions minutes are free/unlimited, so this costs nothing and runs on its own
+# (no manual step). You can also trigger it by hand from the Actions tab.
+#
+# The target URL comes from the repo variable KEEPALIVE_URL
+# (Settings -> Secrets and variables -> Actions -> Variables -> New variable),
+# e.g. https://<your-service>.onrender.com — set WITHOUT a trailing slash.
+#
+# NOTE: GitHub disables scheduled workflows after 60 days of NO repo activity;
+# this repo is active, so it stays on. Cron times are best-effort (can be delayed
+# a few minutes at peak) — if you still see occasional cold starts, change the
+# schedule below from */10 to */5.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+# Never let overlapping runs pile up.
+concurrency:
+  group: keep-alive
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping /readiness
+        env:
+          BASE_URL: ${{ vars.KEEPALIVE_URL }}
+        run: |
+          if [ -z "${BASE_URL}" ]; then
+            echo "KEEPALIVE_URL repo variable is not set — nothing to ping. Skipping."
+            exit 0
+          fi
+          url="${BASE_URL%/}/readiness"
+          echo "Pinging ${url}"
+          # -m 120 tolerates a cold start; --retry rides out a boot/transient blip.
+          code=$(curl -sS -m 120 --retry 3 --retry-delay 15 --retry-all-errors \
+                      -o /dev/null -w '%{http_code}' "${url}" || echo "000")
+          echo "HTTP ${code}"
+          # Warm-up is best-effort: a 2xx/3xx is healthy; anything else is logged
+          # but does not fail the run (avoids failure-email noise on a transient miss).
+          case "${code}" in
+            2*|3*) echo "API is awake." ;;
+            *) echo "::warning::Readiness returned ${code} — API may be cold or down." ;;
+          esac
