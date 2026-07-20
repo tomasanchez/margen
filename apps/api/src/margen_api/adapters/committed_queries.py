@@ -5,10 +5,10 @@ pure :mod:`margen_api.service_layer.committed` engine splits into paid vs pendin
 TARGET month; the offset-0 no-double-count rule lives there, this adapter only does the
 SQL (AGENTS.md). The committed universe mirrors the forecast (ADR-176, ADR-177):
 
-* **Recurring subscriptions** — flagged recurring expense streams (``recurring=true``,
-  cadence not ``installment``). Grouped by ``(name, category)``; each stream's LATEST
-  occurrence supplies its cadence and last-actual month, and this-month rows supply its
-  posted amount.
+* **Recurring subscriptions** — expense streams carrying a non-installment
+  ``recurring_cadence`` (ADR-199; the legacy ``recurring`` boolean is no longer read).
+  Grouped by ``(name, category)``; each stream's LATEST occurrence supplies its cadence
+  and last-actual month, and this-month rows supply its posted amount.
 * **Instalment cuotas** — expense streams marked ``recurring_cadence='installment'``.
   Grouped by ``(name, category)``; each plan's latest occurrence supplies its remaining
   count and last-actual month, and this-month rows supply its posted amount.
@@ -29,11 +29,12 @@ awaited.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from margen_api.adapters.models.transaction import TransactionRecord
@@ -47,6 +48,13 @@ from margen_api.service_layer.monotributo_repository import AbstractMonotributoS
 from margen_api.service_layer.summaries import add_months, month_key
 
 _ZERO = Decimal(0)
+
+# Relative tolerance for the loose "paid this month" fallback (ADR-199): a this-month
+# expense in the SAME category whose denominated amount is within ±15% of a stream's
+# expected amount fulfils that stream, even when the merchant name was renamed or the
+# charge was imported untagged (ADR-198). The exact ``(name, category)`` match is still
+# tried first; this is only the fallback.
+_PAID_MATCH_TOLERANCE = Decimal("0.15")
 
 # The activity-type token that selects the services cuota column; anything else
 # (``bienes``) selects the goods column (ADR-046, mirrors the forecast reader).
@@ -63,6 +71,75 @@ _CADENCE_MONTHS: dict[RecurringCadence, int] = {
     RecurringCadence.QUARTERLY: 3,
     RecurringCadence.ANNUAL: 12,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class _PoolCharge:
+    """One this-month expense available to fulfil a committed stream via the loose fallback (ADR-199).
+
+    Attributes:
+        name: The charge's merchant name; used to drop the charges an EXACT-match stream
+            already consumed so the loose fallback never reuses them (no double-count).
+        category: The charge's category; a stream matches only within its own category.
+        amount: The charge's denominated amount (per the requested currency, ADR-168).
+    """
+
+    name: str
+    category: str | None
+    amount: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class _StreamCandidate:
+    """A committed stream's target-month figures before the loose paid fallback runs (ADR-199).
+
+    The adapter derives one per subscription / instalment stream. ``exact_posted`` is the
+    exact ``(name, category)`` this-month SUM (the ADR-179 first pass); when it is ``None``
+    the greedy fallback may still fulfil the stream from a same-category pool charge within
+    tolerance of ``expected``.
+
+    Attributes:
+        source: Whether the stream is a subscription or an instalment cuota.
+        name: The stream's merchant name (its exact-match key with ``category``).
+        category: The stream's category, used to scope the loose fallback match.
+        exact_posted: The exact-match posted amount this month, or ``None`` when the
+            stream did not post under its own ``(name, category)`` (or a USD row lacked a
+            snapshot).
+        expected: The stream's expected-this-month amount at offset 0, or ``None`` when it
+            is not due this month (or a USD snapshot is missing). Also the target the loose
+            fallback matches a pool charge against.
+    """
+
+    source: CommitmentSource
+    name: str
+    category: str | None
+    exact_posted: Decimal | None
+    expected: Decimal | None
+
+
+@dataclass(frozen=True, slots=True)
+class _LoosePair:
+    """One eligible (pending stream, this-month charge) match for the closest-fit sweep (ADR-199).
+
+    Built only for a candidate that has an ``expected`` and no exact match, paired with a
+    same-category charge within tolerance. The sweep sorts these by ascending ``gap`` so the
+    tightest fit is committed first.
+
+    Attributes:
+        gap: ``abs(charge.amount - expected)`` — the closeness of the fit (smaller is better).
+        expected: The stream's expected amount (a tie-break: larger obligations first).
+        candidate_index: The position of the stream in the candidate list.
+        candidate_name: The stream's name (a deterministic tie-break).
+        charge_index: The position of the charge in the (post-exact-removal) pool.
+        charge: The matched charge; its amount becomes the stream's ``posted``.
+    """
+
+    gap: Decimal
+    expected: Decimal
+    candidate_index: int
+    candidate_name: str
+    charge_index: int
+    charge: _PoolCharge
 
 
 def _as_decimal(value: object) -> Decimal:
@@ -105,30 +182,165 @@ class SqlAlchemyCommittedReader(AbstractCommittedReader):
         *,
         currency: Currency = Currency.ARS,
     ) -> CommittedSplit:
-        """Assemble the owner's committed paid/pending split for a month (ADR-179, ADR-131)."""
+        """Assemble the owner's committed paid/pending split for a month (ADR-179, ADR-199, ADR-131).
+
+        Subscription and instalment streams first take their exact ``(name, category)``
+        this-month posted amount (the ADR-179 rule). A single pool of this-month expenses
+        is then swept once, greedily, to fulfil any still-pending stream from a
+        same-category charge within tolerance of its expected amount — the ADR-199 loose
+        fallback that keeps renamed / untagged statement charges (ADR-198) from showing as
+        false-pending. The monotributo tax leg is unchanged (ADR-177/179).
+        """
         owner = UUID(user_id)
         is_usd = currency is Currency.USD
         target = month_key(month)
 
-        subscription_streams, subscription_unconverted = await self._subscription_streams(
+        subscription_candidates, subscription_unconverted = await self._subscription_candidates(
             owner, target=target, is_usd=is_usd
         )
-        installment_streams, installment_unconverted = await self._installment_streams(
+        installment_candidates, installment_unconverted = await self._installment_candidates(
             owner, target=target, is_usd=is_usd
         )
-        tax_stream = await self._tax_stream(user_id, owner, month=month, target=target)
+        pool = await self._this_month_expense_pool(owner, target=target, is_usd=is_usd)
 
-        streams = subscription_streams + installment_streams
+        streams = self._resolve_paid(subscription_candidates + installment_candidates, pool)
+        tax_stream = await self._tax_stream(user_id, owner, month=month, target=target)
         if tax_stream is not None:
             streams.append(tax_stream)
         unconverted = subscription_unconverted + installment_unconverted if is_usd else 0
         return build_committed(target, currency.value, streams=streams, unconverted=unconverted)
 
+    def _resolve_paid(
+        self,
+        candidates: list[_StreamCandidate],
+        pool: list[_PoolCharge],
+    ) -> list[CommittedStream]:
+        """Turn stream candidates into committed streams, applying the loose paid fallback (ADR-199).
+
+        A candidate whose exact ``(name, category)`` this-month match already posted keeps
+        that posted figure (the ADR-179 first pass). Otherwise, when the stream is due this
+        month (``expected`` set) it may be fulfilled by a same-category pool charge within
+        :data:`_PAID_MATCH_TOLERANCE` of its expected amount.
+
+        The loose sweep is a CLOSEST-FIT-FIRST greedy assignment, one-charge-per-stream:
+        every eligible (candidate, charge) pair — same category, amount within tolerance —
+        is ranked by ASCENDING gap ``abs(charge.amount - expected)`` so the tightest fit is
+        assigned first, and each candidate and each charge is used at most once. This beats
+        the naive "largest expected grabs the first in-tolerance charge" ordering, which
+        could let a bigger stream steal a charge that fits a smaller same-category stream
+        exactly — inverting paid/pending and shifting the subscription/installment split.
+        Ranking on the gap (never on source) keeps the split correct without tagging the
+        pool charges with a source. Ties break deterministically (larger expected, then
+        candidate name, then a stable charge key). A stream left unmatched stays pending
+        (``posted`` None), preserving the ADR-179 no-double-count invariant (paid XOR
+        pending; the pending figure is never re-added to the spent total).
+        """
+        # An exact-match stream already claims its own this-month rows; drop them from the
+        # pool so the loose fallback can never re-attribute them to another stream (a Netflix
+        # charge that paid Netflix exactly must not also fulfil a same-category installment).
+        exact_keys = {(c.name, c.category) for c in candidates if c.exact_posted is not None}
+        remaining_pool = [charge for charge in pool if (charge.name, charge.category) not in exact_keys]
+
+        # A stream with an exact match keeps its posted figure (ADR-179 first pass); a stream
+        # with no expected this month is never a loose candidate — it starts pending (None).
+        posted_by_index: dict[int, Decimal | None] = {
+            i: candidate.exact_posted for i, candidate in enumerate(candidates)
+        }
+        for candidate_index, charge in self._assign_closest_fit(candidates, remaining_pool).items():
+            posted_by_index[candidate_index] = charge.amount
+
+        return [
+            CommittedStream(source=candidate.source, posted=posted_by_index[i], expected=candidate.expected)
+            for i, candidate in enumerate(candidates)
+        ]
+
+    def _assign_closest_fit(
+        self,
+        candidates: list[_StreamCandidate],
+        pool: list[_PoolCharge],
+    ) -> dict[int, _PoolCharge]:
+        """Assign each still-pending stream its closest in-tolerance same-category charge (ADR-199).
+
+        Builds every eligible (candidate, charge) pair — the candidate has an ``expected`` and
+        no exact match, the charge shares its category, and ``abs(charge.amount - expected) <=
+        expected * _PAID_MATCH_TOLERANCE`` — then greedily commits pairs in ASCENDING gap
+        order so the tightest fit wins, each candidate and charge used at most once. Ties
+        break deterministically on larger expected, then candidate name, then a stable
+        per-charge key — never on source, so the split stays correct. Returns a map from
+        candidate index to its matched charge; an unmatched candidate is simply absent (it
+        stays pending).
+        """
+        pairs: list[_LoosePair] = []
+        for candidate_index, candidate in enumerate(candidates):
+            expected = candidate.expected
+            if candidate.exact_posted is not None or expected is None or expected <= _ZERO:
+                continue
+            tolerance = expected * _PAID_MATCH_TOLERANCE
+            for charge_index, charge in enumerate(pool):
+                if charge.category == candidate.category and abs(charge.amount - expected) <= tolerance:
+                    pairs.append(
+                        _LoosePair(
+                            gap=abs(charge.amount - expected),
+                            expected=expected,
+                            candidate_index=candidate_index,
+                            candidate_name=candidate.name,
+                            charge_index=charge_index,
+                            charge=charge,
+                        )
+                    )
+
+        # Tightest gap first; then larger expected, candidate name and a stable per-charge
+        # key (name, amount, position) as deterministic tie-breaks — no source in the key.
+        pairs.sort(key=lambda p: (p.gap, -p.expected, p.candidate_name, p.charge.name, p.charge.amount, p.charge_index))
+
+        assignment: dict[int, _PoolCharge] = {}
+        used_charges: set[int] = set()
+        for pair in pairs:
+            if pair.candidate_index in assignment or pair.charge_index in used_charges:
+                continue
+            assignment[pair.candidate_index] = pair.charge
+            used_charges.add(pair.charge_index)
+        return assignment
+
+    async def _this_month_expense_pool(
+        self,
+        owner: UUID,
+        *,
+        target: str,
+        is_usd: bool,
+    ) -> list[_PoolCharge]:
+        """Fetch the owner's this-month expenses available for the loose paid fallback (ADR-199).
+
+        Every ``kind=expense`` row dated in the target month, denominated per the requested
+        currency (ADR-168); rows that cannot be denominated (a USD row lacking a snapshot,
+        ADR-152) are excluded, since they cannot be compared against a stream's expected
+        amount. Fetched ONCE per :meth:`committed` call and consumed greedily by
+        :meth:`_resolve_paid`.
+        """
+        statement = (
+            select(TransactionRecord)
+            .where(
+                TransactionRecord.user_id == owner,
+                TransactionRecord.kind == Kind.EXPENSE.value,
+            )
+            .order_by(TransactionRecord.occurred_on.desc(), TransactionRecord.created_at.desc())
+        )
+        result = await self.session.execute(statement)
+        pool: list[_PoolCharge] = []
+        for record in result.scalars().all():
+            if month_key(record.occurred_on) != target:
+                continue
+            amount = self._denominated_amount(record, is_usd=is_usd)
+            if amount is None:
+                continue
+            pool.append(_PoolCharge(name=record.name, category=record.category, amount=amount))
+        return pool
+
     async def _committed_expense_rows(self, owner: UUID, *, installments: bool) -> list[TransactionRecord]:
         """Return the owner's committed expense rows for one source, newest-first (ADR-108).
 
         Mirrors the forecast reader: fetches either the recurring-subscription source
-        (``recurring=true``, cadence not ``installment``) or the instalment source
+        (a non-installment ``recurring_cadence``, ADR-199) or the instalment source
         (``recurring_cadence='installment'``), ordered ``(occurred_on DESC, created_at
         DESC)`` so the FIRST row seen per ``(name, category)`` stream is its LATEST actual
         occurrence. Every row is an EXPENSE scoped to the owner.
@@ -136,12 +348,14 @@ class SqlAlchemyCommittedReader(AbstractCommittedReader):
         if installments:
             source_predicate = TransactionRecord.recurring_cadence == RecurringCadence.INSTALLMENT.value
         else:
+            # A subscription stream is any expense carrying a NON-installment cadence
+            # (ADR-199): recurrence lives on ``recurring_cadence`` (ADR-174), so the legacy
+            # ``recurring`` boolean is no longer read as a source signal — in production it
+            # matched zero rows. An instalment-marked row is excluded so a row never counts
+            # as both a subscription and a tail.
             source_predicate = and_(
-                TransactionRecord.recurring.is_(True),
-                or_(
-                    TransactionRecord.recurring_cadence.is_(None),
-                    TransactionRecord.recurring_cadence != RecurringCadence.INSTALLMENT.value,
-                ),
+                TransactionRecord.recurring_cadence.is_not(None),
+                TransactionRecord.recurring_cadence != RecurringCadence.INSTALLMENT.value,
             )
         statement = (
             select(TransactionRecord)
@@ -165,24 +379,25 @@ class SqlAlchemyCommittedReader(AbstractCommittedReader):
             return record.amount
         return record.usd_amount
 
-    async def _subscription_streams(
+    async def _subscription_candidates(
         self,
         owner: UUID,
         *,
         target: str,
         is_usd: bool,
-    ) -> tuple[list[CommittedStream], int]:
-        """Derive the subscription streams' paid/pending figures for the target month (ADR-179).
+    ) -> tuple[list[_StreamCandidate], int]:
+        """Derive the subscription stream candidates for the target month (ADR-179, ADR-199).
 
-        Collapses the owner's flagged recurring rows to one stream per ``(name,
+        Collapses the owner's non-installment-cadence rows to one stream per ``(name,
         category)`` keyed off its LATEST occurrence (cadence, last-actual month, expected
-        amount). The posted amount is the SUM of the stream's rows dated in the target
+        amount). ``exact_posted`` is the SUM of the stream's own rows dated in the target
         month; the expected amount applies only when the stream's cadence lands the target
-        month strictly after its latest actual (offset 0 rule, ADR-176). On the USD path a
-        stream whose latest row lacks a snapshot contributes to ``unconverted``.
+        month strictly after its latest actual (offset 0 rule, ADR-176). The greedy loose
+        fallback (ADR-199) runs later over the shared pool. On the USD path a stream whose
+        latest row lacks a snapshot contributes to ``unconverted``.
         """
         rows = await self._committed_expense_rows(owner, installments=False)
-        streams: list[CommittedStream] = []
+        candidates: list[_StreamCandidate] = []
         unconverted = 0
         seen: set[tuple[str, str | None]] = set()
         for record in rows:
@@ -194,29 +409,38 @@ class SqlAlchemyCommittedReader(AbstractCommittedReader):
             if amount is None:
                 unconverted += 1
             cadence = RecurringCadence.parse(record.recurring_cadence) or RecurringCadence.MONTHLY
-            posted = self._posted_this_month(rows, key, target=target, is_usd=is_usd)
+            exact_posted = self._posted_this_month(rows, key, target=target, is_usd=is_usd)
             expected = self._subscription_expected(record, amount, cadence=cadence, target=target)
-            streams.append(CommittedStream(source=CommitmentSource.SUBSCRIPTION, posted=posted, expected=expected))
-        return streams, unconverted
+            candidates.append(
+                _StreamCandidate(
+                    source=CommitmentSource.SUBSCRIPTION,
+                    name=record.name,
+                    category=record.category,
+                    exact_posted=exact_posted,
+                    expected=expected,
+                )
+            )
+        return candidates, unconverted
 
-    async def _installment_streams(
+    async def _installment_candidates(
         self,
         owner: UUID,
         *,
         target: str,
         is_usd: bool,
-    ) -> tuple[list[CommittedStream], int]:
-        """Derive the instalment plans' paid/pending figures for the target month (ADR-179).
+    ) -> tuple[list[_StreamCandidate], int]:
+        """Derive the instalment plan candidates for the target month (ADR-179, ADR-199).
 
         Collapses the owner's instalment rows to one plan per ``(name, category)`` keyed
-        off its LATEST occurrence. The posted amount is the SUM of the plan's cuotas dated
-        in the target month; the expected amount applies only when the plan still has a
+        off its LATEST occurrence. ``exact_posted`` is the SUM of the plan's cuotas dated in
+        the target month; the expected amount applies only when the plan still has a
         remaining cuota AND its latest actual is a prior month (its tail reaches the target
-        month, offset 0 rule, ADR-176). On the USD path a plan whose latest row lacks a
-        snapshot contributes to ``unconverted``.
+        month, offset 0 rule, ADR-176). The greedy loose fallback (ADR-199) runs later over
+        the shared pool. On the USD path a plan whose latest row lacks a snapshot
+        contributes to ``unconverted``.
         """
         rows = await self._committed_expense_rows(owner, installments=True)
-        streams: list[CommittedStream] = []
+        candidates: list[_StreamCandidate] = []
         unconverted = 0
         seen: set[tuple[str, str | None]] = set()
         for record in rows:
@@ -227,10 +451,18 @@ class SqlAlchemyCommittedReader(AbstractCommittedReader):
             amount = self._denominated_amount(record, is_usd=is_usd)
             if amount is None:
                 unconverted += 1
-            posted = self._posted_this_month(rows, key, target=target, is_usd=is_usd)
+            exact_posted = self._posted_this_month(rows, key, target=target, is_usd=is_usd)
             expected = self._installment_expected(record, amount, target=target)
-            streams.append(CommittedStream(source=CommitmentSource.INSTALLMENT, posted=posted, expected=expected))
-        return streams, unconverted
+            candidates.append(
+                _StreamCandidate(
+                    source=CommitmentSource.INSTALLMENT,
+                    name=record.name,
+                    category=record.category,
+                    exact_posted=exact_posted,
+                    expected=expected,
+                )
+            )
+        return candidates, unconverted
 
     def _posted_this_month(
         self,

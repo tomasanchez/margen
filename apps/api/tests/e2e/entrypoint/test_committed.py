@@ -394,7 +394,7 @@ class TestCommittedDbBacked:
         THEN it is excluded from the totals and surfaced in unconverted (ADR-152/168)
         """
         # GIVEN — an ARS-only recurring expense (no usd snapshot) posted this month.
-        await self._post(test_client, kind="expense", amountNum="5000", name="Local sub", recurring=True)
+        await self._post(test_client, kind="expense", amountNum="5000", name="Local sub", recurringCadence="monthly")
 
         # WHEN
         data = (await test_client.get(COMMITTED, params={"month": _this_month_key(), "currency": "USD"})).json()["data"]
@@ -418,6 +418,147 @@ class TestCommittedDbBacked:
         assert data["paid"]["total"] == "0.00"
         assert data["pending"]["total"] == "0.00"
         assert data["unconverted"] == 0
+
+    async def test_cadence_only_subscription_recurring_bool_false_is_recognized(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a subscription recorded via recurring_cadence='monthly' with the recurring
+              bool UNSET (recurring=false) - the production reality (ADR-199)
+        WHEN the committed split is read for the current month
+        THEN it is recognized and lands on the paid side (ADR-199)
+        """
+        # GIVEN — no ``recurring`` flag at all; recurrence lives on the cadence (ADR-174/199).
+        await self._post(test_client, kind="expense", amountNum="1200", name="OpenAI", recurringCadence="monthly")
+
+        # WHEN
+        data = (await test_client.get(COMMITTED, params={"month": _this_month_key(), "currency": "ARS"})).json()["data"]
+
+        # THEN — the cadence alone makes it a subscription; the this-month row is paid.
+        assert data["paid"]["subscription"] == "1200.00"
+        assert data["pending"]["total"] == "0.00"
+
+    async def test_installment_paid_via_loose_fallback_on_renamed_untagged_charge(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN an installment plan due this month (prior-month actual, expected ~68,750) and a
+              this-month Shopping expense with a DIFFERENT merchant name, NO installment tag,
+              and an amount within 15% of expected
+        WHEN the committed split is read
+        THEN the plan is PAID by the untagged charge, not left pending (ADR-198/199)
+        """
+        # GIVEN — the plan's latest actual is the prior month so its exact-name row is not
+        # this month; its remaining tail reaches this month at ~68,750.
+        await self._post(
+            test_client,
+            occurred_on=_prior_month_first_iso(),
+            kind="expense",
+            amountNum="68750",
+            name="TOMMY",
+            category="Shopping",
+            recurringCadence="installment",
+            installmentsTotal=6,
+            installmentsIndex=2,
+        )
+        # An untagged, renamed statement-style charge this month, same category, within 15%.
+        await self._post(
+            test_client, kind="expense", amountNum="70000", name="TOMMY HILFIGER UNICENTER", category="Shopping"
+        )
+
+        # WHEN
+        data = (await test_client.get(COMMITTED, params={"month": _this_month_key(), "currency": "ARS"})).json()["data"]
+
+        # THEN — the plan flips to paid via the loose fallback; nothing pending for it.
+        assert data["paid"]["installment"] == "70000.00"
+        assert data["pending"]["installment"] == "0.00"
+
+    async def test_loose_fallback_greedy_one_charge_per_stream(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN two same-category installment plans due this month and TWO this-month untagged
+              Shopping charges, each within tolerance of a distinct plan
+        WHEN the committed split is read
+        THEN each plan is matched to a DISTINCT charge (no charge fulfils two plans, ADR-199)
+        """
+        # GIVEN — two plans (100,000 and 50,000) with prior-month actuals so they are pending.
+        for name, amount, index in (("Plan Big", "100000", 2), ("Plan Small", "50000", 3)):
+            await self._post(
+                test_client,
+                occurred_on=_prior_month_first_iso(),
+                kind="expense",
+                amountNum=amount,
+                name=name,
+                category="Shopping",
+                recurringCadence="installment",
+                installmentsTotal=6,
+                installmentsIndex=index,
+            )
+        # Two untagged this-month Shopping charges near each plan's amount.
+        await self._post(test_client, kind="expense", amountNum="98000", name="Store One", category="Shopping")
+        await self._post(test_client, kind="expense", amountNum="52000", name="Store Two", category="Shopping")
+
+        # WHEN
+        data = (await test_client.get(COMMITTED, params={"month": _this_month_key(), "currency": "ARS"})).json()["data"]
+
+        # THEN — both plans paid (98,000 + 52,000 = 150,000); none left pending.
+        assert data["paid"]["installment"] == "150000.00"
+        assert data["pending"]["installment"] == "0.00"
+
+    async def test_loose_fallback_ignores_out_of_tolerance_and_other_category_charges(
+        self, test_client: httpx.AsyncClient
+    ):
+        """
+        GIVEN an installment plan due this month and only this-month charges that are either
+              out of tolerance or in a different category
+        WHEN the committed split is read
+        THEN the plan is NOT falsely marked paid - it stays pending (ADR-199)
+        """
+        # GIVEN — a plan expecting ~68,750 (prior-month actual → pending this month).
+        await self._post(
+            test_client,
+            occurred_on=_prior_month_first_iso(),
+            kind="expense",
+            amountNum="68750",
+            name="TOMMY",
+            category="Shopping",
+            recurringCadence="installment",
+            installmentsTotal=6,
+            installmentsIndex=2,
+        )
+        # A same-category but far-off charge, and an in-range charge in the WRONG category.
+        await self._post(test_client, kind="expense", amountNum="20000", name="Cheap thing", category="Shopping")
+        await self._post(test_client, kind="expense", amountNum="70000", name="Food thing", category="Food")
+
+        # WHEN
+        data = (await test_client.get(COMMITTED, params={"month": _this_month_key(), "currency": "ARS"})).json()["data"]
+
+        # THEN — no false match; the plan is still pending at its expected cuota.
+        assert data["paid"]["installment"] == "0.00"
+        assert data["pending"]["installment"] == "68750.00"
+
+    async def test_loose_fallback_matched_stream_is_not_also_pending(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a plan paid via the loose fallback
+        WHEN the committed split is read
+        THEN the plan contributes to paid and is NEVER also in pending - the no-double-count
+             invariant holds (ADR-179/199)
+        """
+        # GIVEN — a pending plan (prior-month actual) and a matching untagged this-month charge.
+        await self._post(
+            test_client,
+            occurred_on=_prior_month_first_iso(),
+            kind="expense",
+            amountNum="40000",
+            name="Sofa plan",
+            category="Shopping",
+            recurringCadence="installment",
+            installmentsTotal=6,
+            installmentsIndex=2,
+        )
+        await self._post(test_client, kind="expense", amountNum="41000", name="Muebles SA", category="Shopping")
+
+        # WHEN
+        data = (await test_client.get(COMMITTED, params={"month": _this_month_key(), "currency": "ARS"})).json()["data"]
+
+        # THEN — paid holds the matched charge; pending is empty (no double-count).
+        assert data["paid"]["installment"] == "41000.00"
+        assert data["pending"]["installment"] == "0.00"
 
     async def test_user_b_committed_excludes_user_a(
         self,

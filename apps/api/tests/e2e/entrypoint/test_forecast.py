@@ -246,14 +246,14 @@ class TestForecastDbBacked:
         assert installment["remainingCount"] == 2
         assert len(installment["months"]) == 2  # 2 remaining payments → a 2-month tail.
 
-    async def test_recurring_without_cadence_defaults_monthly(self, test_client: httpx.AsyncClient):
+    async def test_recurring_monthly_cadence_lands_every_month(self, test_client: httpx.AsyncClient):
         """
-        GIVEN a flagged recurring expense with NO explicit cadence
+        GIVEN a recurring expense carrying a monthly cadence (recurring bool unset, ADR-199)
         WHEN the ARS forecast is read
-        THEN it defaults to monthly and lands in every horizon month (ADR-176)
+        THEN the monthly cadence lands it in every horizon month (ADR-176, ADR-199)
         """
-        # GIVEN
-        await self._post(test_client, kind="expense", amountNum="200", name="Water", recurring=True)
+        # GIVEN — recurrence is recorded via recurring_cadence, not the legacy bool (ADR-199).
+        await self._post(test_client, kind="expense", amountNum="200", name="Water", recurringCadence="monthly")
 
         # WHEN
         data = (await test_client.get(FORECAST, params={"horizon": 3, "currency": "ARS"})).json()["data"]
@@ -301,7 +301,7 @@ class TestForecastDbBacked:
             recurring=True,
             recurringCadence="monthly",
         )
-        await self._post(test_client, kind="expense", amountNum="5000", name="Local sub", recurring=True)
+        await self._post(test_client, kind="expense", amountNum="5000", name="Local sub", recurringCadence="monthly")
 
         # WHEN
         data = (await test_client.get(FORECAST, params={"horizon": 2, "currency": "USD"})).json()["data"]
