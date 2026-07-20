@@ -5,7 +5,8 @@ streams the pure :mod:`margen_api.service_layer.forecast` engine projects; the h
 math and no-double-count rule live there, this adapter only does the SQL (AGENTS.md).
 Three committed sources feed the forecast (ADR-176, ADR-177):
 
-* **Recurring subscriptions** — flagged recurring expense streams (``recurring=true``).
+* **Recurring subscriptions** — expense streams carrying a non-installment
+  ``recurring_cadence`` (ADR-199; the legacy ``recurring`` boolean is no longer read).
   Grouped by ``(name, category)``; each stream's LATEST occurrence supplies its amount,
   cadence (monthly / quarterly / annual, defaulting to monthly) and last-actual month.
 * **Instalment tails** — expense streams marked ``recurring_cadence='installment'``.
@@ -31,7 +32,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from margen_api.adapters.models.transaction import TransactionRecord
@@ -109,7 +110,8 @@ class SqlAlchemyForecastReader(AbstractForecastReader):
         """Return the owner's committed expense rows for one source, newest-first (ADR-108).
 
         Fetches the candidate rows for either the recurring-subscription source
-        (``recurring=true``) or the instalment source (``recurring_cadence='installment'``),
+        (a non-installment ``recurring_cadence``, ADR-199) or the instalment source
+        (``recurring_cadence='installment'``),
         ordered by ``(occurred_on DESC, created_at DESC)`` so the FIRST row seen per
         ``(name, category)`` stream is that stream's LATEST actual occurrence — the one
         that supplies the amount, cadence / cuota figures and last-actual month (ADR-176).
@@ -118,7 +120,7 @@ class SqlAlchemyForecastReader(AbstractForecastReader):
         Args:
             owner: The authenticated owner every row is scoped to.
             installments: When ``True`` fetch the instalment source; otherwise the
-                flagged-recurring subscription source.
+                non-installment-cadence subscription source (ADR-199).
 
         Returns:
             The candidate expense rows, newest-first.
@@ -126,15 +128,14 @@ class SqlAlchemyForecastReader(AbstractForecastReader):
         if installments:
             source_predicate = TransactionRecord.recurring_cadence == RecurringCadence.INSTALLMENT.value
         else:
-            # A subscription stream is a flagged recurring expense whose cadence is a
-            # subscription cadence (or unset → monthly). An instalment-marked row is
-            # excluded here so a row never counts as both a subscription and a tail.
+            # A subscription stream is any expense carrying a NON-installment cadence
+            # (ADR-199): recurrence is recorded via ``recurring_cadence`` (ADR-174), so
+            # the legacy ``recurring`` boolean is no longer read as a source signal — in
+            # production it matched zero rows. An instalment-marked row is excluded here
+            # so a row never counts as both a subscription and a tail.
             source_predicate = and_(
-                TransactionRecord.recurring.is_(True),
-                or_(
-                    TransactionRecord.recurring_cadence.is_(None),
-                    TransactionRecord.recurring_cadence != RecurringCadence.INSTALLMENT.value,
-                ),
+                TransactionRecord.recurring_cadence.is_not(None),
+                TransactionRecord.recurring_cadence != RecurringCadence.INSTALLMENT.value,
             )
         statement = (
             select(TransactionRecord)
@@ -163,9 +164,9 @@ class SqlAlchemyForecastReader(AbstractForecastReader):
         return record.usd_amount
 
     async def _recurring_streams(self, owner: UUID, *, is_usd: bool) -> tuple[list[RecurringStream], int]:
-        """Derive the flagged recurring subscription streams and the USD unconverted count (ADR-176).
+        """Derive the recurring subscription streams and the USD unconverted count (ADR-176, ADR-199).
 
-        Collapses the owner's flagged recurring expense rows to one stream per
+        Collapses the owner's non-installment-cadence expense rows to one stream per
         ``(name, category)`` keyed off each stream's LATEST occurrence: its denominated
         amount, its cadence (the latest row's ``recurring_cadence`` or monthly when
         unset) and its last-actual month. On the USD path a stream whose latest row

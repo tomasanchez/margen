@@ -271,6 +271,69 @@ class TestCommittedSql:
         assert split.paid.tax != get_category("B").cuota_servicios
         assert split.pending.tax == Decimal("0.00")
 
+    async def test_cadence_only_subscription_recurring_bool_false_is_recognized(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN a subscription recorded via recurring_cadence='monthly' with recurring=False
+              (the production reality, ADR-199)
+        WHEN the ARS committed split is read for the current month
+        THEN it is recognized and paid (the cadence alone is the source signal, ADR-199)
+        """
+        # GIVEN — no recurring flag; recurrence lives on the cadence (ADR-174/199).
+        await _seed(
+            session_factory,
+            [
+                _tx(
+                    name="OpenAI",
+                    category="Subscriptions",
+                    amount=Decimal("1200"),
+                    recurring_cadence=RecurringCadence.MONTHLY,
+                )
+            ],
+        )
+
+        # WHEN
+        async with session_factory() as session:
+            split = await _reader(session).committed(_first_of_current_month(), OWNER, currency=Currency.ARS)
+
+        # THEN
+        assert split.paid.subscription == Decimal("1200.00")
+        assert split.pending.subscription == Decimal("0.00")
+
+    async def test_installment_paid_via_loose_fallback_on_renamed_untagged_charge(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN an installment plan due this month (prior-month actual, expected 68,750) and a
+              this-month same-category untagged charge with a different name within 15%
+        WHEN the ARS committed split is read
+        THEN the plan is PAID by the untagged charge, not left pending (ADR-198/199)
+        """
+        # GIVEN — a plan whose latest actual is the prior month (so no exact this-month row)
+        # and a renamed untagged Shopping charge this month within tolerance.
+        rows = [
+            _tx(
+                name="TOMMY",
+                category="Shopping",
+                amount=Decimal("68750"),
+                occurred_on=_first_of_prior_month(),
+                recurring_cadence=RecurringCadence.INSTALLMENT,
+                installments_total=6,
+                installments_index=2,
+            ),
+            _tx(name="TOMMY HILFIGER UNICENTER", category="Shopping", amount=Decimal("70000")),
+        ]
+        await _seed(session_factory, rows)
+
+        # WHEN
+        async with session_factory() as session:
+            split = await _reader(session).committed(_first_of_current_month(), OWNER, currency=Currency.ARS)
+
+        # THEN
+        assert split.paid.installment == Decimal("70000.00")
+        assert split.pending.installment == Decimal("0.00")
+
     async def test_committed_is_owner_scoped(self, session_factory: async_sessionmaker[AsyncSession]):
         """
         GIVEN owner A has a committed subscription this month

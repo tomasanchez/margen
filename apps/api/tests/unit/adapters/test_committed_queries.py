@@ -15,9 +15,16 @@ from uuid import uuid4
 
 import pytest
 
-from margen_api.adapters.committed_queries import SqlAlchemyCommittedReader, _as_decimal, _month_offset
+from margen_api.adapters.committed_queries import (
+    SqlAlchemyCommittedReader,
+    _as_decimal,
+    _month_offset,
+    _PoolCharge,
+    _StreamCandidate,
+)
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.domain.models.value_objects import Currency, Kind, RecurringCadence
+from margen_api.service_layer.forecast_read_models import CommitmentSource
 from tests.fakes.persistence import FakeMonotributoSnapshotRepository
 
 _MOMENT = datetime(2026, 1, 1, tzinfo=UTC)
@@ -345,3 +352,242 @@ class TestMonotributoCuota:
 
         # WHEN / THEN
         assert await reader._monotributo_cuota("u1") is None
+
+
+def _candidate(
+    *,
+    source: CommitmentSource = CommitmentSource.INSTALLMENT,
+    name: str = "Stream",
+    category: str | None = "Shopping",
+    exact_posted: Decimal | None = None,
+    expected: Decimal | None = None,
+) -> _StreamCandidate:
+    """Build a stream candidate for the loose-fallback assembly tests (ADR-199)."""
+    return _StreamCandidate(source=source, name=name, category=category, exact_posted=exact_posted, expected=expected)
+
+
+class TestLooseFallbackTolerance:
+    """The loose fallback matches a same-category charge within ±15% of expected (ADR-199)."""
+
+    def test_matches_same_category_within_tolerance(self):
+        """
+        GIVEN a pending stream (expected 68,750) and a same-category charge within 15%
+        WHEN the split is resolved
+        THEN the stream is paid at the charge's amount (75,000 is within tolerance ~10,312)
+        """
+        # GIVEN
+        candidates = [_candidate(expected=Decimal("68750"))]
+        pool = [_PoolCharge(name="TOMMY HILFIGER UNICENTER", category="Shopping", amount=Decimal("75000"))]
+
+        # WHEN
+        (stream,) = _reader()._resolve_paid(candidates, pool)
+
+        # THEN
+        assert stream.posted == Decimal("75000")
+
+    def test_no_expected_stays_pending(self):
+        """
+        GIVEN a stream not due this month (no expected amount)
+        WHEN the split is resolved
+        THEN nothing matches — the stream is not a loose-fallback candidate
+        """
+        # GIVEN
+        pool = [_PoolCharge(name="X", category="Shopping", amount=Decimal("100"))]
+
+        # WHEN
+        (stream,) = _reader()._resolve_paid([_candidate(expected=None)], pool)
+
+        # THEN
+        assert stream.posted is None
+
+    def test_out_of_tolerance_does_not_match(self):
+        """
+        GIVEN a same-category charge whose amount is well outside ±15% of expected
+        WHEN the split is resolved
+        THEN it does not match (the stream stays pending)
+        """
+        # GIVEN — 50,000 is far below 15% of 68,750.
+        pool = [_PoolCharge(name="Other", category="Shopping", amount=Decimal("50000"))]
+
+        # WHEN
+        (stream,) = _reader()._resolve_paid([_candidate(expected=Decimal("68750"))], pool)
+
+        # THEN
+        assert stream.posted is None
+
+    def test_different_category_does_not_match(self):
+        """
+        GIVEN an in-tolerance charge in a DIFFERENT category
+        WHEN the split is resolved
+        THEN it does not match (matching is category-scoped)
+        """
+        # GIVEN
+        pool = [_PoolCharge(name="Food thing", category="Food", amount=Decimal("70000"))]
+
+        # WHEN
+        (stream,) = _reader()._resolve_paid([_candidate(category="Shopping", expected=Decimal("68750"))], pool)
+
+        # THEN
+        assert stream.posted is None
+
+    def test_zero_expected_stays_pending(self):
+        """
+        GIVEN a stream whose expected amount is zero (nothing meaningful to fulfil)
+        WHEN the split is resolved
+        THEN nothing matches
+        """
+        # WHEN
+        (stream,) = _reader()._resolve_paid([_candidate(expected=Decimal("0"))], [])
+
+        # THEN
+        assert stream.posted is None
+
+
+class TestResolvePaid:
+    """``_resolve_paid`` applies the exact-first, closest-fit loose fallback across streams (ADR-199)."""
+
+    def test_exact_posted_wins_and_its_charge_is_removed_from_pool(self):
+        """
+        GIVEN one stream that already posted EXACTLY and a second pending stream sharing its
+              category whose expected is within tolerance of the exact stream's charge
+        WHEN the split is resolved
+        THEN the exact stream keeps its posted figure, its charge is NOT reused, and the
+             second stream stays pending (no double-count, ADR-179/199)
+        """
+        # GIVEN — "Netflix" posted exactly (100, Shopping); a pending "Plan" expects ~100.
+        candidates = [
+            _candidate(name="Netflix", category="Shopping", exact_posted=Decimal("100"), expected=None),
+            _candidate(name="Plan", category="Shopping", exact_posted=None, expected=Decimal("100")),
+        ]
+        pool = [_PoolCharge(name="Netflix", category="Shopping", amount=Decimal("100"))]
+
+        # WHEN
+        streams = _reader()._resolve_paid(candidates, pool)
+
+        # THEN — Netflix paid at 100; the Plan finds no charge left → pending.
+        by_name = dict(zip((c.name for c in candidates), streams, strict=True))
+        assert by_name["Netflix"].posted == Decimal("100")
+        assert by_name["Plan"].posted is None
+        assert by_name["Plan"].expected == Decimal("100")
+
+    def test_loose_fallback_marks_untagged_charge_as_paid(self):
+        """
+        GIVEN a pending installment stream and a differently-named, same-category untagged
+              charge within tolerance
+        WHEN the split is resolved
+        THEN the stream is PAID at the matched charge's amount (ADR-199 loose fallback)
+        """
+        # GIVEN — a "TOMMY" plan expects 68,750; a renamed charge in Shopping is 70,000.
+        candidates = [_candidate(name="TOMMY", category="Shopping", exact_posted=None, expected=Decimal("68750"))]
+        pool = [_PoolCharge(name="TOMMY HILFIGER UNICENTER", category="Shopping", amount=Decimal("70000"))]
+
+        # WHEN
+        (stream,) = _reader()._resolve_paid(candidates, pool)
+
+        # THEN
+        assert stream.posted == Decimal("70000")
+
+    def test_greedy_gives_each_stream_a_distinct_charge(self):
+        """
+        GIVEN two same-category pending streams and two in-tolerance charges
+        WHEN the split is resolved
+        THEN each stream claims its OWN nearest charge, and neither charge fulfils two
+             streams (ADR-199)
+        """
+        # GIVEN — two Shopping streams (100k, 50k) and two Shopping charges near them.
+        candidates = [
+            _candidate(name="Small", category="Shopping", expected=Decimal("50000")),
+            _candidate(name="Big", category="Shopping", expected=Decimal("100000")),
+        ]
+        pool = [
+            _PoolCharge(name="Charge A", category="Shopping", amount=Decimal("52000")),
+            _PoolCharge(name="Charge B", category="Shopping", amount=Decimal("98000")),
+        ]
+
+        # WHEN
+        streams = _reader()._resolve_paid(candidates, pool)
+
+        # THEN — Big claims the 98,000 charge (its nearest), Small claims the 52,000 one.
+        by_name = dict(zip((c.name for c in candidates), streams, strict=True))
+        assert by_name["Big"].posted == Decimal("98000")
+        assert by_name["Small"].posted == Decimal("52000")
+
+    def test_single_charge_does_not_satisfy_two_streams(self):
+        """
+        GIVEN two same-category pending streams but only ONE in-tolerance charge
+        WHEN the split is resolved
+        THEN exactly one stream is paid and the other stays pending (one-charge-per-stream)
+        """
+        # GIVEN — two Shopping streams both expecting ~100,000; one 100,000 charge.
+        candidates = [
+            _candidate(name="First", category="Shopping", expected=Decimal("100000")),
+            _candidate(name="Second", category="Shopping", expected=Decimal("100000")),
+        ]
+        pool = [_PoolCharge(name="Only", category="Shopping", amount=Decimal("100000"))]
+
+        # WHEN
+        streams = _reader()._resolve_paid(candidates, pool)
+
+        # THEN — exactly one paid, one pending.
+        posted = [s.posted for s in streams]
+        assert posted.count(Decimal("100000")) == 1
+        assert posted.count(None) == 1
+
+    def test_closest_fit_wins_when_order_and_nearest_diverge(self):
+        """
+        GIVEN two same-category streams (expected 68,750 & 61,000) and charges laid out so
+              the FIRST-in-order charge is NOT the nearest for the first stream
+        WHEN the split is resolved
+        THEN each stream is matched to its OWN nearest charge, not the first in tolerance —
+             closest-fit beats naive largest-first + first-in-tolerance (ADR-199)
+        """
+        # GIVEN — pool order [61,066, 68,750]; naive first-in-tolerance would let 68,750
+        # grab 61,066 (within its ±15%), stealing 61,000's exact charge. Closest-fit must
+        # instead give 68,750 → 68,750 (gap 0) and 61,000 → 61,066 (gap 66).
+        candidates = [
+            _candidate(name="TOMMY", category="Shopping", expected=Decimal("68750")),
+            _candidate(name="Cuota", category="Shopping", expected=Decimal("61000")),
+        ]
+        pool = [
+            _PoolCharge(name="Charge Near 61k", category="Shopping", amount=Decimal("61066")),
+            _PoolCharge(name="Charge Near 68k", category="Shopping", amount=Decimal("68750")),
+        ]
+
+        # WHEN
+        streams = _reader()._resolve_paid(candidates, pool)
+
+        # THEN
+        by_name = dict(zip((c.name for c in candidates), streams, strict=True))
+        assert by_name["TOMMY"].posted == Decimal("68750")
+        assert by_name["Cuota"].posted == Decimal("61066")
+
+    def test_cross_source_split_is_not_inverted(self):
+        """
+        GIVEN a SUBSCRIPTION due at 100,000 with NO matching charge, and an INSTALLMENT due
+              at 95,000 with a same-category 95,000 charge
+        WHEN the split is resolved
+        THEN the installment is PAID at 95,000 and the subscription stays PENDING — the
+             larger subscription must not steal the installment's exact-fit charge (ADR-199)
+        """
+        # GIVEN — same category "Insurance"; the 95,000 charge fits Cuota Auto exactly (gap 0)
+        # and Seguro loosely (gap 5,000, within its ±15%). Closest-fit keeps it with Cuota Auto.
+        candidates = [
+            _candidate(
+                source=CommitmentSource.SUBSCRIPTION, name="Seguro", category="Insurance", expected=Decimal("100000")
+            ),
+            _candidate(
+                source=CommitmentSource.INSTALLMENT, name="Cuota Auto", category="Insurance", expected=Decimal("95000")
+            ),
+        ]
+        pool = [_PoolCharge(name="AUTO INSURANCE CO", category="Insurance", amount=Decimal("95000"))]
+
+        # WHEN
+        streams = _reader()._resolve_paid(candidates, pool)
+
+        # THEN — installment paid, subscription still pending; buckets not inverted.
+        by_name = dict(zip((c.name for c in candidates), streams, strict=True))
+        assert by_name["Cuota Auto"].source is CommitmentSource.INSTALLMENT
+        assert by_name["Cuota Auto"].posted == Decimal("95000")
+        assert by_name["Seguro"].source is CommitmentSource.SUBSCRIPTION
+        assert by_name["Seguro"].posted is None
+        assert by_name["Seguro"].expected == Decimal("100000")
