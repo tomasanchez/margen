@@ -27,7 +27,7 @@ from margen_api.adapters.settings_repository import SqlAlchemySettingsRepository
 from margen_api.adapters.unit_of_work import SqlAlchemyUnitOfWork
 from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
 from margen_api.domain.models.monotributo_scale import get_ceiling
-from margen_api.domain.models.transaction import build_transaction
+from margen_api.domain.models.transaction import Transaction, build_transaction
 from margen_api.domain.models.value_objects import Currency, Kind
 from margen_api.service_layer.monotributo import prior_window
 from margen_api.service_layer.monotributo_handlers import capture_monotributo_snapshot
@@ -137,8 +137,20 @@ class TestMonotributoAggregation:
         assert standing.used == Decimal("1700000.00")
         # No app_settings row under create_all → the settings default category 'C' (ADR-054/055).
         assert standing.category == "C"
-        assert standing.limit == get_ceiling("C")
-        assert standing.remaining == get_ceiling("C") - Decimal("1700000.00")
+        # The ceiling resolves for the standing's reference date (2026-02), not the
+        # latest published vintage — the standing passes as_of=reference (ADR-067).
+        assert standing.limit == get_ceiling("C", as_of=REFERENCE)
+        assert standing.remaining == get_ceiling("C", as_of=REFERENCE) - Decimal("1700000.00")
+
+        # THEN — single-clock consistency (ADR-067): the served scale table resolves to the
+        # SAME vintage as the meter, so the standing's limit equals the ceiling of the
+        # same-letter row in snapshot.scale — the table and the meter never diverge.
+        assert snapshot.current.category == "C"
+        scale_row = next(entry for entry in snapshot.scale if entry.letter == "C")
+        assert snapshot.current.limit == scale_row.annual_ceiling
+        # THEN — the data-driven subtitle dates resolve off the same reference vintage.
+        assert snapshot.scale_effective_from == date(2026, 2, 1)
+        assert snapshot.scale_next_review == date(2026, 8, 1)
 
         # THEN — drilldown is the counting rows oldest-first with a running cumulative.
         amounts = [(invoice.amount, invoice.cumulative) for invoice in snapshot.invoices]
@@ -147,6 +159,84 @@ class TestMonotributoAggregation:
             (Decimal("200000.00"), Decimal("1200000.00")),
             (Decimal("500000.00"), Decimal("1700000.00")),
         ]
+
+
+def _reimbursement(occurred_on: date, amount: str, offsets: Transaction):
+    """Build an owner-owned reimbursement linked to an expense (ADR-158)."""
+    return build_transaction(
+        transaction_id=uuid4(),
+        occurred_on=occurred_on,
+        name="Payback",
+        kind=Kind.REIMBURSEMENT,
+        amount=Decimal(amount),
+        currency=Currency.ARS,
+        category="Food",
+        offsets_transaction_id=offsets.id,
+        user_id=OWNER,
+        created_at=_MOMENT,
+        updated_at=_MOMENT,
+    )
+
+
+class TestRecommendationAggregation:
+    """The recommendation's avg-expenses is the trailing-3-month net-of-reimbursements mean."""
+
+    async def test_avg_expenses_window_is_net_over_three_months(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN expenses across the three calendar months before the reference month
+              (Mar/Apr/May 2026), one partly reimbursed, plus out-of-window noise
+        WHEN the snapshot is read from PostgreSQL
+        THEN the recommendation's avgMonthlyExpenses is the mean of the NET monthly
+             totals over exactly three months (ADR-158), and its needed invoicing
+             annualizes that average
+        """
+        # GIVEN — Mar 600k with a 150k payback (net 450k), Apr 300k, May 300k.
+        # An in-limit invoice and a June (current-month, out of the trailing-3) expense
+        # must NOT feed the average. Net window total = 450k + 300k + 300k = 1_050_000;
+        # mean over 3 = 350_000/mo.
+        march_expense = _expense(date(2026, 3, 10), "600000.00")
+        await _seed(
+            session_factory,
+            [
+                march_expense,
+                _reimbursement(date(2026, 3, 20), "150000.00", offsets=march_expense),
+                _expense(date(2026, 4, 5), "300000.00"),
+                _expense(date(2026, 5, 5), "300000.00"),
+                _expense(date(2026, 6, 5), "999999.00"),  # current month, outside the 3-mo window
+                _counted(date(2026, 3, 15), "1000000.00"),  # invoice income, not an expense
+            ],
+        )
+
+        # WHEN
+        async with session_factory() as session:
+            snapshot = await SqlAlchemyMonotributoReader(session).snapshot(REFERENCE, OWNER)
+
+        # THEN — net mean 350k/mo, annualized to 4.2M needed invoicing.
+        recommendation = snapshot.current.recommendation
+        assert recommendation is not None
+        assert recommendation.avg_monthly_expenses == Decimal("350000.00")
+        assert recommendation.needed_annual_invoicing == Decimal("4200000.00")
+        assert recommendation.above_scale is False
+
+    async def test_recommendation_is_none_without_expense_history(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ):
+        """
+        GIVEN only invoice income and no expenses in the trailing-3-month window
+        WHEN the snapshot is read from PostgreSQL
+        THEN the recommendation is None (the calm "add expenses to see this" note)
+        """
+        # GIVEN — counting income only, no expenses.
+        await _seed(session_factory, [_counted(date(2026, 3, 15), "1000000.00")])
+
+        # WHEN
+        async with session_factory() as session:
+            snapshot = await SqlAlchemyMonotributoReader(session).snapshot(REFERENCE, OWNER)
+
+        # THEN
+        assert snapshot.current.recommendation is None
 
 
 class TestReadRecordsAndBackfill:
@@ -257,4 +347,5 @@ class TestConfigRoundTrip:
         assert persisted.monotributo_current_category == "D"
         assert persisted.monotributo_activity_type == "services"
         assert standing.category == "D"
-        assert standing.limit == get_ceiling("D")
+        # Resolved for the standing's reference date (2026-02), not the latest vintage.
+        assert standing.limit == get_ceiling("D", as_of=REFERENCE)

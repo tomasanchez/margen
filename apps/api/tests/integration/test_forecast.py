@@ -200,12 +200,19 @@ class TestForecastSql:
         async with session_factory() as session:
             series = await _reader(session).forecast(OWNER, horizon=2, currency=Currency.ARS)
 
-        # THEN
-        expected = get_category("B").cuota_servicios
-        tax = next(line for line in series.commitments if line.source.value == "tax")
-        assert tax.amount == expected
-        assert len(tax.months) == 2
-        assert all(month.committed == expected for month in series.months)
+        # THEN — the cuota is resolved per projected month's vintage (ADR-067). Derive the
+        # expected figure the same way, as-of each horizon month, so the assertion stays
+        # robust to the live clock and to any vintage boundary inside the 2-month horizon.
+        first_month = add_months(_first_of_current_month(), 1)
+        horizon_months = [first_month, add_months(first_month, 1)]
+        expected_by_month = {month_key(m): get_category("B", as_of=m).cuota_servicios for m in horizon_months}
+        tax_lines = [line for line in series.commitments if line.source.value == "tax"]
+        # Every tax line's amount matches the vintage cuota for each month it lists.
+        for line in tax_lines:
+            for m in line.months:
+                assert line.amount == expected_by_month[m]
+        assert sorted(m for line in tax_lines for m in line.months) == sorted(expected_by_month)
+        assert all(month.committed == expected_by_month[month.month] for month in series.months)
 
     async def test_forecast_is_owner_scoped(self, session_factory: async_sessionmaker[AsyncSession]):
         """

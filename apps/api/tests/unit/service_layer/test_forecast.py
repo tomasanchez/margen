@@ -30,6 +30,7 @@ from margen_api.service_layer.forecast import (
     horizon_window,
 )
 from margen_api.service_layer.forecast_read_models import CommitmentSource
+from margen_api.service_layer.summaries import month_key
 
 _REF = date(2026, 6, 15)  # anchor: current month is 2026-06; horizon starts 2026-07.
 
@@ -79,6 +80,11 @@ class TestHorizonWindow:
         assert window == [date(2026, 12, 1), date(2027, 1, 1), date(2027, 2, 1)]
 
 
+def _uniform_cuota(amount: Decimal, *, horizon: int) -> dict[str, Decimal]:
+    """Build a per-month cuota map applying the same amount to every horizon month."""
+    return {month_key(month): amount for month in horizon_window(_REF, horizon)}
+
+
 def _forecast(**kwargs):
     """Build a forecast with sensible empty defaults, overridden by kwargs."""
     horizon = kwargs.pop("horizon", DEFAULT_HORIZON)
@@ -86,7 +92,7 @@ def _forecast(**kwargs):
     params = {
         "recurring_streams": [],
         "installment_streams": [],
-        "monotributo_cuota": None,
+        "monotributo_cuota_by_month": None,
         "unconverted": 0,
     }
     params.update(kwargs)
@@ -112,7 +118,13 @@ class TestRecurringProjection:
 
         # WHEN
         series = build_forecast(
-            _REF, 3, "ARS", recurring_streams=[stream], installment_streams=[], monotributo_cuota=None, unconverted=0
+            _REF,
+            3,
+            "ARS",
+            recurring_streams=[stream],
+            installment_streams=[],
+            monotributo_cuota_by_month=None,
+            unconverted=0,
         )
 
         # THEN
@@ -283,13 +295,17 @@ class TestMonotributo:
 
     def test_cuota_in_every_month_ars(self):
         """
-        GIVEN a configured monotributo cuota on an ARS forecast
+        GIVEN a configured monotributo cuota (same amount every month) on an ARS forecast
         WHEN a 3-month forecast is built
         THEN the cuota (same ARS denomination) is added to every month total and a single
              ARS-fixed tax commitment line spans the whole horizon (ADR-177)
         """
-        # WHEN
-        series = _forecast(monotributo_cuota=Decimal("42386.74"), horizon=3, currency="ARS")
+        # WHEN — a uniform per-month cuota (no vintage change inside the horizon).
+        series = _forecast(
+            monotributo_cuota_by_month=_uniform_cuota(Decimal("42386.74"), horizon=3),
+            horizon=3,
+            currency="ARS",
+        )
 
         # THEN — same denomination, so the cuota IS summed into the ARS month totals.
         assert [m.committed for m in series.months] == [Decimal("42386.74")] * 3
@@ -301,6 +317,39 @@ class TestMonotributo:
         assert line.ars_fixed is True
         assert line.months == ["2026-07", "2026-08", "2026-09"]
         assert line.remaining_count is None
+
+    def test_cuota_resolved_per_month_across_vintage_boundary(self):
+        """
+        GIVEN a horizon (Jul/Aug/Sep 2026) straddling the Aug-1 ARCA vintage change, so the
+              cuota map carries the OLD cuota for July and the NEW cuota for Aug/Sep
+        WHEN the forecast is built
+        THEN each month's total carries its OWN cuota, and the tax leg splits into two lines
+             (one per distinct amount) listing exactly the months each applies to (ADR-067)
+        """
+        # GIVEN — 2026-02 cuota for July, 2026-08 cuota for Aug+ (the vintage boundary).
+        cuota_by_month = {
+            "2026-07": Decimal("42386.74"),  # 2026-02 vintage
+            "2026-08": Decimal("49527.18"),  # 2026-08 vintage
+            "2026-09": Decimal("49527.18"),
+        }
+
+        # WHEN
+        series = _forecast(monotributo_cuota_by_month=cuota_by_month, horizon=3, currency="ARS")
+
+        # THEN — each month's total is its own cuota, not a single clock-free figure.
+        assert [m.committed for m in series.months] == [
+            Decimal("42386.74"),
+            Decimal("49527.18"),
+            Decimal("49527.18"),
+        ]
+        # Two tax lines: the July (old) amount and the Aug/Sep (new) amount.
+        tax_lines = [line for line in series.commitments if line.source is CommitmentSource.TAX]
+        by_amount = {line.amount: line.months for line in tax_lines}
+        assert by_amount == {
+            Decimal("42386.74"): ["2026-07"],
+            Decimal("49527.18"): ["2026-08", "2026-09"],
+        }
+        assert all(line.currency == "ARS" and line.ars_fixed is True for line in tax_lines)
 
     def test_cuota_is_ars_fixed_and_out_of_usd_total(self):
         """
@@ -322,7 +371,7 @@ class TestMonotributo:
             "USD",
             recurring_streams=[sub],
             installment_streams=[],
-            monotributo_cuota=Decimal("42386.74"),
+            monotributo_cuota_by_month=_uniform_cuota(Decimal("42386.74"), horizon=3),
             unconverted=0,
         )
 
@@ -346,9 +395,9 @@ class TestMonotributo:
         WHEN the forecast is built
         THEN no tax commitment line is produced
         """
-        # WHEN
-        zero = _forecast(monotributo_cuota=Decimal("0"))
-        absent = _forecast(monotributo_cuota=None)
+        # WHEN — a zero-amount per-month map, and an absent (None) map.
+        zero = _forecast(monotributo_cuota_by_month=_uniform_cuota(Decimal("0"), horizon=DEFAULT_HORIZON))
+        absent = _forecast(monotributo_cuota_by_month=None)
 
         # THEN
         assert zero.commitments == []
@@ -377,7 +426,7 @@ class TestCombinedSums:
             "ARS",
             recurring_streams=[sub],
             installment_streams=[plan],
-            monotributo_cuota=Decimal("50"),
+            monotributo_cuota_by_month=_uniform_cuota(Decimal("50"), horizon=2),
             unconverted=0,
         )
 
@@ -430,7 +479,7 @@ class TestDenomination:
             "USD",
             recurring_streams=[missing, present],
             installment_streams=[],
-            monotributo_cuota=None,
+            monotributo_cuota_by_month=None,
             unconverted=1,
         )
 

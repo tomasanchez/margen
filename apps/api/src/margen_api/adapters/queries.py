@@ -8,6 +8,7 @@ never mutates state, so it can be wired independently of the unit of work
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID
@@ -44,10 +45,12 @@ from margen_api.service_layer.monotributo import (
     build_snapshot,
     build_standing,
     prior_window,
+    recommend_category,
     trailing_window,
 )
 from margen_api.service_layer.monotributo_read_models import (
     MonotributoInvoice,
+    MonotributoRecommendation,
     MonotributoSnapshot,
     MonotributoStanding,
 )
@@ -58,6 +61,7 @@ from margen_api.service_layer.settings_read_models import AppSettings
 from margen_api.service_layer.settings_reader import AbstractSettingsReader
 from margen_api.service_layer.summaries import (
     UNCATEGORIZED,
+    add_months,
     build_monthly_summary,
     trend_window,
 )
@@ -151,6 +155,8 @@ _CATEGORY = func.coalesce(TransactionRecord.category, UNCATEGORIZED)
 
 
 _ZERO = Decimal(0)
+# The trailing-average window is exactly three calendar months (ADR-145).
+_THREE = Decimal(3)
 
 
 def _as_decimal(value: object) -> Decimal:
@@ -814,12 +820,24 @@ class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
         self.session = session
 
     async def snapshot(self, reference: date, user_id: str) -> MonotributoSnapshot:
-        """Assemble the owner's current standing, previous standing and drilldown (ADR-112)."""
+        """Assemble the owner's current standing, previous standing and drilldown (ADR-112).
+
+        The live ``current`` standing additionally carries a "best category"
+        recommendation derived from the owner's trailing-3-month average expenses
+        (owner-confirmed feature); it is ``None`` when there is no expense history.
+        The recommendation rides only the current standing (not the comparison or
+        persisted snapshots), and is attached here so the write-path
+        ``current_standing`` stays free of it.
+        """
         owner = UUID(user_id)
         current = await self._current_standing(reference, owner)
+        current = replace(
+            current,
+            recommendation=await self._recommendation(reference, current.activity_type, owner),
+        )
         invoices = await self._invoices_in_window(current.period_start, current.period_end, owner)
         previous = await self._previous_standing(reference, owner)
-        return build_snapshot(current=current, previous=previous, invoices=invoices)
+        return build_snapshot(reference=reference, current=current, previous=previous, invoices=invoices)
 
     async def current_standing(self, reference: date, user_id: str) -> MonotributoStanding:
         """Compute the owner's live trailing-12-month standing (ADR-046, ADR-112)."""
@@ -895,6 +913,40 @@ class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
         )
         total = (await self.session.execute(statement)).scalar_one_or_none()
         return _ZERO if total is None else _as_decimal(total)
+
+    async def _recommendation(
+        self,
+        reference: date,
+        activity_type: str,
+        owner: UUID,
+    ) -> MonotributoRecommendation | None:
+        """Build the owner's "best category" recommendation from trailing-3-month expenses.
+
+        Delegates the band selection, fee lookup and effective-rate math to the pure
+        :func:`recommend_category`; this adapter only supplies the avg-expenses input
+        (owner-scoped SQL) and the clock (``reference``). ``None`` when the owner has
+        no expense history so the UI shows a calm "add expenses to see this" note.
+        """
+        avg_monthly_expenses = await self._avg_monthly_expenses(reference, owner)
+        return recommend_category(avg_monthly_expenses, activity_type=activity_type, as_of=reference)
+
+    async def _avg_monthly_expenses(self, reference: date, owner: UUID) -> Decimal:
+        """Return the owner's trailing-3-calendar-month average NET expense outflow (ADR-158, ADR-025).
+
+        Mirrors the budgets ``avg3mo`` window exactly (ADR-145): the three calendar
+        months immediately before ``reference``'s month, summed across all categories
+        via the shared :func:`month_category_expense_totals` (reimbursement-net,
+        ARS-equivalent, each category-month floored at zero — ADR-160/162), then the
+        mean over exactly three months (a month with no spend contributes zero), so
+        the divisor is always ``3``. Owner-scoped (ADR-108).
+        """
+        period = date(reference.year, reference.month, 1)
+        prior_months = [add_months(period, offset) for offset in (-3, -2, -1)]
+        total = _ZERO
+        for prior in prior_months:
+            month_totals = await month_category_expense_totals(self.session, prior, owner)
+            total += sum(month_totals.values(), _ZERO)
+        return total / _THREE
 
     async def _invoices_in_window(self, window_start: date, window_end: date, owner: UUID) -> list[MonotributoInvoice]:
         """List the owner's counted invoices oldest-first with a running cumulative (ADR-108)."""

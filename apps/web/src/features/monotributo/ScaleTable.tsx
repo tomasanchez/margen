@@ -14,6 +14,7 @@ import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { monoFontFamily } from '../../theme'
 import { formatARS } from '../../lib/format'
+import { localizedIsoDate } from '../../i18n/locale'
 import type { MonotributoScaleRow } from '../../mock/types'
 import { SectionCard } from '../../components/SectionCard'
 
@@ -80,6 +81,12 @@ export interface ScaleTableProps {
   scale: MonotributoScaleRow[]
   current: string
   projected: string
+  /** The recommended best-fit category letter (ADR-200), or undefined. */
+  recommended?: string
+  /** ISO date (`YYYY-MM-DD`) the in-effect scale vintage started. */
+  effectiveFrom: string
+  /** ISO date (`YYYY-MM-DD`) of the next scheduled scale review. */
+  nextReview: string
   arcaUrl: string
 }
 
@@ -87,13 +94,22 @@ export function ScaleTable({
   scale,
   current,
   projected,
+  recommended,
+  effectiveFrom,
+  nextReview,
   arcaUrl,
 }: ScaleTableProps) {
   const { t } = useTranslation('monotributo')
   return (
     <SectionCard
       title={t('scale.title')}
-      subtitle={t('scale.subtitle')}
+      subtitle={t('scale.subtitle', {
+        // Data-driven vintage dates, formatted at the render edge (ADR-102) so
+        // the subtitle tracks the effective vintage (Feb 2026 today, auto-flips
+        // to Aug 2026 on Aug 1) and the active UI language.
+        effectiveFrom: localizedIsoDate(effectiveFrom),
+        nextReview: localizedIsoDate(nextReview),
+      })}
       action={<ArcaLink href={arcaUrl} variant="button" />}
     >
       {/* Desktop table header. */}
@@ -164,26 +180,41 @@ export function ScaleTable({
         {scale.map((row) => {
           const isCurrent = row.letter === current
           const isProjected = row.letter === projected
+          // Best-fit only tags a row that isn't already current/projected, so
+          // the existing tag is never clobbered (ADR-200).
+          const isBest =
+            recommended != null &&
+            row.letter === recommended &&
+            !isCurrent &&
+            !isProjected
           const tag = isCurrent
             ? t('scale.tagCurrent')
             : isProjected
               ? t('scale.tagProjected')
-              : ''
+              : isBest
+                ? t('scale.tagBest')
+                : ''
           const tagShort = isCurrent
             ? t('scale.tagShortCurrent')
             : isProjected
               ? t('scale.tagShortProjected')
-              : ''
+              : isBest
+                ? t('scale.tagShortBest')
+                : ''
           const letterColor = isCurrent
             ? 'var(--mg-text)'
             : isProjected
               ? 'var(--mg-watch)'
-              : 'var(--mg-text-2)'
+              : isBest
+                ? 'var(--mg-text)'
+                : 'var(--mg-text-2)'
           const rowTint = isCurrent
             ? 'color-mix(in srgb, var(--mg-gold) 10%, transparent)'
             : isProjected
               ? 'color-mix(in srgb, var(--mg-watch) 5%, transparent)'
-              : 'transparent'
+              : isBest
+                ? 'color-mix(in srgb, var(--mg-gold) 5%, transparent)'
+                : 'transparent'
 
           return (
             <Box component="li" key={row.letter}>
@@ -211,10 +242,12 @@ export function ScaleTable({
                           ? 'var(--mg-gold)'
                           : isProjected
                             ? 'var(--mg-watch)'
-                            : 'var(--mg-border-2)',
+                            : isBest
+                              ? 'var(--mg-gold)'
+                              : 'var(--mg-border-2)',
                     }}
                   >
-                    {isCurrent ? '●' : isProjected ? '○' : '·'}
+                    {isCurrent ? '●' : isProjected ? '○' : isBest ? '◆' : '·'}
                   </Box>
                   <Box
                     component="span"
@@ -281,12 +314,19 @@ export function ScaleTable({
                               color: 'var(--mg-on-gold)',
                               bgcolor: 'var(--mg-gold)',
                             }
-                          : {
-                              color: 'var(--mg-watch)',
-                              border: '1px solid var(--mg-watch)',
-                              bgcolor:
-                                'color-mix(in srgb, var(--mg-watch) 10%, transparent)',
-                            }),
+                          : isBest
+                            ? {
+                                color: 'var(--mg-gold)',
+                                border: '1px solid var(--mg-gold)',
+                                bgcolor:
+                                  'color-mix(in srgb, var(--mg-gold) 10%, transparent)',
+                              }
+                            : {
+                                color: 'var(--mg-watch)',
+                                border: '1px solid var(--mg-watch)',
+                                bgcolor:
+                                  'color-mix(in srgb, var(--mg-watch) 10%, transparent)',
+                              }),
                       }}
                     >
                       {tag}
@@ -348,7 +388,7 @@ export function ScaleTable({
                       sx={{
                         fontSize: 9,
                         fontWeight: 700,
-                        color: isCurrent ? 'var(--mg-gold)' : 'var(--mg-watch)',
+                        color: isProjected ? 'var(--mg-watch)' : 'var(--mg-gold)',
                       }}
                     >
                       {tagShort}

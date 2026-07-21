@@ -81,6 +81,7 @@ class TestMonotributoUsesSettingsCategory:
         async with session_factory() as session:
             standing = await SqlAlchemyMonotributoReader(session).current_standing(REFERENCE, OWNER)
 
-        # THEN
+        # THEN — the ceiling resolves for the standing's reference date (2026-02),
+        # not the latest published vintage — the standing passes as_of=reference (ADR-067).
         assert standing.category == "E"
-        assert standing.limit == get_ceiling("E")
+        assert standing.limit == get_ceiling("E", as_of=REFERENCE)

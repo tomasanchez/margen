@@ -23,6 +23,7 @@ import { authedFetch } from './http'
 import type {
   MonotributoComparison,
   MonotributoInvoice,
+  MonotributoRecommendation,
   MonotributoScaleRow,
   MonotributoSnapshot,
   MonotributoStanding,
@@ -36,6 +37,31 @@ interface ResponseEnvelope<T> {
 
 /** Backend status band keys (ADR-046). */
 type StatusDto = 'safe' | 'watch' | 'close' | 'over'
+
+/**
+ * The cheapest Monotributo category that would cover the user's average
+ * expenses (ADR-200), as serialized by the backend. Money fields are ARS Decimal
+ * strings; `effectiveTaxRatePct` is a 2dp percentage Decimal string (e.g.
+ * "4.83"); `aboveScale` is true when the needed invoicing exceeds the top
+ * category (no category fits — consider the régimen general). Null on the
+ * standing when the user has no expense history yet.
+ */
+export interface MonotributoRecommendationDto {
+  /** Average monthly expenses to cover, as a Decimal string (ARS). */
+  avgMonthlyExpenses: string
+  /** Annual invoicing needed to cover those expenses, as a Decimal string (ARS). */
+  neededAnnualInvoicing: string
+  /** The cheapest fitting category letter (meaningless when `aboveScale`). */
+  category: string
+  /** Monthly fee for that category, as a Decimal string (ARS). */
+  monthlyFee: string
+  /** Annual fee for that category, as a Decimal string (ARS). */
+  annualFee: string
+  /** Fee as a percentage of what you'd invoice, 2dp Decimal string (e.g. "4.83"). */
+  effectiveTaxRatePct: string
+  /** True when the needed invoicing is beyond the top monotributo category. */
+  aboveScale: boolean
+}
 
 /** One trailing-12-month standing as serialized by the backend (Decimal strings). */
 export interface MonotributoStandingDto {
@@ -56,6 +82,8 @@ export interface MonotributoStandingDto {
   periodStart: string
   /** ISO date (`YYYY-MM-DD`). */
   periodEnd: string
+  /** Cheapest category that covers the user's expenses (ADR-200); null when no history. */
+  recommendation: MonotributoRecommendationDto | null
 }
 
 /** One A–K scale row as serialized by the backend (Decimal strings). */
@@ -88,6 +116,10 @@ export interface MonotributoSnapshotDto {
   /** Prior trailing-12-month window; null when no prior period exists yet. */
   previous: MonotributoStandingDto | null
   scale: MonotributoScaleRowDto[]
+  /** ISO date (`YYYY-MM-DD`) the in-effect scale vintage started. */
+  scaleEffectiveFrom: string
+  /** ISO date (`YYYY-MM-DD`) of the next scheduled scale review. */
+  scaleNextReview: string
   invoices: MonotributoInvoiceDto[]
 }
 
@@ -130,6 +162,21 @@ function asStatus(value: StatusDto): StatusLevel {
   return value
 }
 
+/** Adapt one backend recommendation to the frontend {@link MonotributoRecommendation}. */
+export function adaptRecommendation(
+  dto: MonotributoRecommendationDto,
+): MonotributoRecommendation {
+  return {
+    avgMonthlyExpenses: parseDecimal(dto.avgMonthlyExpenses),
+    neededAnnualInvoicing: parseDecimal(dto.neededAnnualInvoicing),
+    category: dto.category,
+    monthlyFee: parseDecimal(dto.monthlyFee),
+    annualFee: parseDecimal(dto.annualFee),
+    effectiveTaxRatePct: parseDecimal(dto.effectiveTaxRatePct),
+    aboveScale: dto.aboveScale,
+  }
+}
+
 /** Adapt one backend standing to the frontend {@link MonotributoStanding}. */
 export function adaptStanding(dto: MonotributoStandingDto): MonotributoStanding {
   const percentUsed = parseDecimal(dto.percentUsed)
@@ -146,6 +193,9 @@ export function adaptStanding(dto: MonotributoStandingDto): MonotributoStanding 
     projectionNote: dto.projectionNote,
     periodStart: dto.periodStart,
     periodEnd: dto.periodEnd,
+    recommendation: dto.recommendation
+      ? adaptRecommendation(dto.recommendation)
+      : null,
   }
 }
 
@@ -212,6 +262,9 @@ export function adaptSnapshot(dto: MonotributoSnapshotDto): MonotributoSnapshot 
     current: adaptStanding(dto.current),
     previous: dto.previous ? adaptStanding(dto.previous) : null,
     scale: dto.scale.map(adaptScaleRow),
+    // ISO dates are kept as-is and formatted at the render edge (ADR-102).
+    scaleEffectiveFrom: dto.scaleEffectiveFrom,
+    scaleNextReview: dto.scaleNextReview,
     invoices: dto.invoices.map(adaptInvoice),
   }
 }

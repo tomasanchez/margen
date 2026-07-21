@@ -13,6 +13,7 @@ not the SQL aggregation (the integration tier proves that).
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -25,7 +26,12 @@ from margen_api.asgi import get_application
 from margen_api.bootstrap import ApplicationContainer, bootstrap
 from margen_api.entrypoint.dependencies import get_bus, get_monotributo_reader, get_settings
 from margen_api.service_layer.messagebus import MessageBus
-from margen_api.service_layer.monotributo import build_standing, scale_entries, trailing_window
+from margen_api.service_layer.monotributo import (
+    build_snapshot,
+    build_standing,
+    recommend_category,
+    trailing_window,
+)
 from margen_api.service_layer.monotributo_read_models import (
     MonotributoInvoice,
     MonotributoSnapshot,
@@ -58,8 +64,8 @@ def _standing(*, used: str, reference: date = TODAY) -> MonotributoStanding:
     )
 
 
-def _snapshot(*, with_previous: bool) -> MonotributoSnapshot:
-    """Build a canned snapshot, optionally carrying a previous standing."""
+def _snapshot(*, with_previous: bool, with_recommendation: bool = True) -> MonotributoSnapshot:
+    """Build a canned snapshot, optionally carrying a previous standing and recommendation."""
     invoices = [
         MonotributoInvoice(
             id=uuid4(),
@@ -73,12 +79,14 @@ def _snapshot(*, with_previous: bool) -> MonotributoSnapshot:
         ),
     ]
     previous = _standing(used="500000.00") if with_previous else None
-    return MonotributoSnapshot(
-        current=_standing(used="1500000.50"),
-        previous=previous,
-        scale=scale_entries(),  # full A-K scale so the response mapping is exercised.
-        invoices=invoices,
-    )
+    current = _standing(used="1500000.50")
+    if with_recommendation:
+        # 1M/mo trailing average -> needed 12M -> band B (the shape the frontend wires).
+        recommendation = recommend_category(Decimal("1000000.00"), activity_type="services", as_of=TODAY)
+        current = replace(current, recommendation=recommendation)
+    # Assemble on the same clock as the meter (as_of=TODAY) so the scale table + its
+    # effective/next-review dates all resolve to the one vintage (ADR-067).
+    return build_snapshot(reference=TODAY, current=current, previous=previous, invoices=invoices)
 
 
 @pytest.fixture(name="uow")
@@ -158,7 +166,14 @@ class TestMonotributoSnapshot:
         # THEN
         assert response.status_code == status.HTTP_200_OK
         data = response.json()["data"]
-        assert set(data) == {"current", "previous", "scale", "invoices"}
+        assert set(data) == {
+            "current",
+            "previous",
+            "scale",
+            "invoices",
+            "scaleEffectiveFrom",
+            "scaleNextReview",
+        }
         # The A-K scale crosses the boundary in camelCase with Decimal-string money.
         assert {row["letter"] for row in data["scale"]} >= {"A", "K"}
         assert "annualCeiling" in data["scale"][0]
@@ -176,6 +191,38 @@ class TestMonotributoSnapshot:
         assert invoice["isForeignCurrency"] is False
         # The reader was asked for the server "today" reference.
         assert reader.requested_reference == datetime.now(UTC).date()
+
+    async def test_scale_dates_are_iso_and_data_driven(self, client: httpx.AsyncClient):
+        """
+        GIVEN a canned snapshot assembled on the TODAY (2026-06-14) clock
+        WHEN the Monotributo endpoint is requested
+        THEN scaleEffectiveFrom is the in-effect vintage's ISO date (2026-02-01) and
+             scaleNextReview is the next vintage's effective_from (2026-08-01), so the
+             frontend renders the "in effect since" subtitle without hardcoding a date
+        """
+        # WHEN
+        response = await client.get(MONOTRIBUTO)
+
+        # THEN — the page resolves to the 2026-02 vintage; the next review is 2026-08-01.
+        data = response.json()["data"]
+        assert data["scaleEffectiveFrom"] == "2026-02-01"
+        assert data["scaleNextReview"] == "2026-08-01"
+
+    async def test_standing_limit_matches_same_letter_scale_row(self, client: httpx.AsyncClient):
+        """
+        GIVEN the standing meter and the A-K reference table on ONE clock (ADR-067)
+        WHEN the Monotributo endpoint is requested
+        THEN the current standing's limit equals the ceiling of the SAME-letter row in the
+             served scale — they must never diverge (the single-clock consistency invariant)
+        """
+        # WHEN
+        response = await client.get(MONOTRIBUTO)
+
+        # THEN — find the scale row for the standing's category and compare ceilings.
+        data = response.json()["data"]
+        category = data["current"]["category"]
+        row = next(entry for entry in data["scale"] if entry["letter"] == category)
+        assert data["current"]["limit"] == row["annualCeiling"]
 
     async def test_previous_present(self, client: httpx.AsyncClient):
         """
@@ -209,6 +256,55 @@ class TestMonotributoSnapshot:
         # THEN
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["data"]["previous"] is None
+
+    async def test_recommendation_shape(self, client: httpx.AsyncClient):
+        """
+        GIVEN a snapshot whose current standing carries a best-category recommendation
+        WHEN the Monotributo endpoint is requested
+        THEN current.recommendation is a camelCase object with Decimal-string money and
+             the boolean aboveScale flag (the exact shape the frontend wires)
+        """
+        # WHEN
+        response = await client.get(MONOTRIBUTO)
+
+        # THEN
+        recommendation = response.json()["data"]["current"]["recommendation"]
+        assert set(recommendation) == {
+            "avgMonthlyExpenses",
+            "neededAnnualInvoicing",
+            "category",
+            "monthlyFee",
+            "annualFee",
+            "effectiveTaxRatePct",
+            "aboveScale",
+        }
+        # Money crosses as Decimal strings, not floats; the band letter is a string.
+        assert recommendation["avgMonthlyExpenses"] == "1000000.00"
+        assert recommendation["neededAnnualInvoicing"] == "12000000.00"
+        assert recommendation["category"] == "B"
+        assert isinstance(recommendation["monthlyFee"], str)
+        assert isinstance(recommendation["annualFee"], str)
+        assert isinstance(recommendation["effectiveTaxRatePct"], str)
+        assert recommendation["aboveScale"] is False
+
+    async def test_recommendation_may_be_null(self, uow: FakeUnitOfWork):
+        """
+        GIVEN a snapshot whose current standing has no recommendation (no expense history)
+        WHEN the Monotributo endpoint is requested
+        THEN current.recommendation is serialized as null (the calm "add expenses" note)
+        """
+        # GIVEN
+        reader = FakeMonotributoReader(_snapshot(with_previous=False, with_recommendation=False))
+        client, container = _build_client(uow, reader)
+
+        # WHEN
+        async with client:
+            response = await client.get(MONOTRIBUTO)
+        await container.shutdown()
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["data"]["current"]["recommendation"] is None
 
     async def test_records_the_capture_command(
         self, client: httpx.AsyncClient, uow: FakeUnitOfWork, reader: FakeMonotributoReader

@@ -28,7 +28,8 @@ would misrepresent it (ADR-177); it therefore never contributes to ``unconverted
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Sequence
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -44,6 +45,7 @@ from margen_api.service_layer.forecast import (
     RecurringStream,
     build_forecast,
     clamp_horizon,
+    horizon_window,
 )
 from margen_api.service_layer.forecast_read_models import ForecastSeries
 from margen_api.service_layer.forecast_reader import AbstractForecastReader
@@ -89,7 +91,11 @@ class SqlAlchemyForecastReader(AbstractForecastReader):
 
         recurring_streams, recurring_unconverted = await self._recurring_streams(owner, is_usd=is_usd)
         installment_streams, installment_unconverted = await self._installment_streams(owner, is_usd=is_usd)
-        monotributo_cuota = await self._monotributo_cuota(user_id)
+        # Resolve the cuota per projected month so a mid-horizon vintage change (e.g. the
+        # 2026-08 scale effective Aug 1) is reflected month-by-month (ADR-067), matching the
+        # forecast's own horizon window so keys line up exactly.
+        window = horizon_window(reference, horizon)
+        monotributo_cuota_by_month = await self._monotributo_cuota_by_month(user_id, window)
         unconverted = recurring_unconverted + installment_unconverted if is_usd else 0
         return build_forecast(
             reference,
@@ -97,7 +103,7 @@ class SqlAlchemyForecastReader(AbstractForecastReader):
             currency.value,
             recurring_streams=recurring_streams,
             installment_streams=installment_streams,
-            monotributo_cuota=monotributo_cuota,
+            monotributo_cuota_by_month=monotributo_cuota_by_month,
             unconverted=unconverted,
         )
 
@@ -244,23 +250,34 @@ class SqlAlchemyForecastReader(AbstractForecastReader):
             return 0
         return max(0, total - index)
 
-    async def _monotributo_cuota(self, user_id: str) -> Decimal | None:
-        """Return the owner's configured monotributo monthly cuota, or ``None`` (ADR-177).
+    async def _monotributo_cuota_by_month(
+        self,
+        user_id: str,
+        window: Sequence[date],
+    ) -> dict[str, Decimal] | None:
+        """Return the owner's monotributo cuota per projected month, or ``None`` (ADR-177/067).
 
         Reads the configured ``(category, activity_type)`` from ``app_settings`` via the
-        monotributo repository (ADR-112). The monthly cuota is the current scale's cuota
-        for that category and activity — the services cuota for a services taxpayer, the
-        goods cuota otherwise (ADR-046). Returns ``None`` when the owner has no configured
-        category (monotributo not set up), so the forecast simply omits the tax leg. The
-        figure is AFIP-ARS and is included at its ARS value regardless of the requested
-        display currency (ADR-177).
+        monotributo repository (ADR-112). For each month-start in ``window`` the cuota is the
+        scale vintage in effect ON THAT MONTH (``as_of``, ADR-067): pre-Aug-2026 months use
+        the 2026-02 vintage, Aug-2026-onward months the 2026-08 one — so the forecast never
+        projects a future vintage's cuota before its effective date. The services cuota
+        applies to a services taxpayer, the goods cuota otherwise (ADR-046). Returns ``None``
+        when the owner has no configured category (monotributo not set up), so the forecast
+        omits the tax leg. The figure is AFIP-ARS and included at its ARS value regardless of
+        the requested display currency (ADR-177).
         """
         configured = await self.monotributo.configured_category(user_id)
         if configured is None:
             return None
         category, activity_type = configured
-        try:
-            row = get_category(category)
-        except KeyError:
-            return None
-        return row.cuota_servicios if activity_type == _SERVICES_ACTIVITY else row.cuota_bienes
+        cuota_by_month: dict[str, Decimal] = {}
+        for month in window:
+            try:
+                row = get_category(category, as_of=month)
+            except KeyError:
+                return None
+            cuota_by_month[month_key(month)] = (
+                row.cuota_servicios if activity_type == _SERVICES_ACTIVITY else row.cuota_bienes
+            )
+        return cuota_by_month

@@ -134,9 +134,32 @@ _SCALE_2026_02 = MonotributoScaleVersion(
     ),
 )
 
+# Official ARCA second-semester 2026 table (in effect from Aug 1 2026, the +16.8%
+# IPC adjustment over the 2026-02 vintage). Verified against the AFIP page + press:
+# the A and K ceilings are confirmed to the cent. This is the latest published
+# vintage; because its effective_from is Aug 1 2026, ``scale_for(as_of)`` still
+# resolves live standings to the 2026-02 vintage until then (ADR-052/067).
+_SCALE_2026_08 = MonotributoScaleVersion(
+    version="2026-08",
+    effective_from=date(2026, 8, 1),
+    categories=(
+        MonotributoCategory("A", Decimal("12009410.45"), Decimal("49527.18"), Decimal("49527.18")),
+        MonotributoCategory("B", Decimal("17595182.74"), Decimal("56379.08"), Decimal("56379.08")),
+        MonotributoCategory("C", Decimal("24670494.31"), Decimal("66020.12"), Decimal("64530.58")),
+        MonotributoCategory("D", Decimal("30628651.43"), Decimal("84612.93"), Decimal("82564.81")),
+        MonotributoCategory("E", Decimal("36028231.33"), Decimal("119811.45"), Decimal("108267.51")),
+        MonotributoCategory("F", Decimal("45151659.41"), Decimal("150784.21"), Decimal("129930.65")),
+        MonotributoCategory("G", Decimal("53995798.87"), Decimal("230312.94"), Decimal("158815.05")),
+        MonotributoCategory("H", Decimal("81924660.37"), Decimal("522706.68"), Decimal("317895.01")),
+        MonotributoCategory("I", Decimal("91699761.90"), Decimal("963747.86"), Decimal("474992.78")),
+        MonotributoCategory("J", Decimal("105012519.20"), Decimal("1167299.76"), Decimal("580793.69")),
+        MonotributoCategory("K", Decimal("126610838.75"), Decimal("1614446.04"), Decimal("702103.24")),
+    ),
+)
+
 # The effective-dated registry, ordered by effective_from ascending. APPEND a new
 # vintage each ARCA semester (≈ Feb/Aug); never overwrite an existing entry.
-MONOTRIBUTO_SCALES: tuple[MonotributoScaleVersion, ...] = (_SCALE_2025_08, _SCALE_2026_02)
+MONOTRIBUTO_SCALES: tuple[MonotributoScaleVersion, ...] = (_SCALE_2025_08, _SCALE_2026_02, _SCALE_2026_08)
 
 # Convenience markers for the current (latest) vintage. Other modules that need
 # the "current" table import these or call current_scale()/scale_for().
@@ -194,6 +217,36 @@ def scale_for(as_of: date | None = None) -> MonotributoScaleVersion:
         else:
             break
     return selected
+
+
+# ARCA revises the scale each semester, so the review cadence is six calendar months.
+_REVIEW_CADENCE_MONTHS = 6
+
+
+def next_scale_review(as_of: date | None = None) -> date:
+    """Return the date the ``as_of`` vintage is expected to be superseded (ADR-067).
+
+    The "next review" the page surfaces alongside the in-effect scale: when a later
+    vintage already exists in the registry, its ``effective_from`` (the exact date the
+    scale will change); otherwise the resolved vintage is the latest published one, so
+    the estimate is its ``effective_from`` plus the six-month ARCA semester cadence.
+
+    Args:
+        as_of: The date selecting the in-effect vintage; ``None`` uses the latest
+            (current) vintage (ADR-067).
+
+    Returns:
+        The next later vintage's ``effective_from`` when one exists, else the resolved
+        vintage's ``effective_from`` advanced by six months (the review cadence).
+    """
+    resolved = scale_for(as_of)
+    for vintage in MONOTRIBUTO_SCALES:
+        if vintage.effective_from > resolved.effective_from:
+            return vintage.effective_from
+    start = resolved.effective_from
+    index = start.year * 12 + (start.month - 1) + _REVIEW_CADENCE_MONTHS
+    year, month = divmod(index, 12)
+    return date(year, month + 1, start.day)
 
 
 def get_category(letter: str, as_of: date | None = None) -> MonotributoCategory:

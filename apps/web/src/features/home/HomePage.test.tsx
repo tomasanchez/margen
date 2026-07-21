@@ -64,9 +64,12 @@ const MONOTRIBUTO_SNAPSHOT: MonotributoSnapshot = {
     projectionNote: 'Estimate, assumes steady pace',
     periodStart: '2025-06-01',
     periodEnd: '2026-06-01',
+    recommendation: null,
   },
   previous: null,
   scale: [],
+  scaleEffectiveFrom: '2026-02-01',
+  scaleNextReview: '2026-08-01',
   invoices: [],
 }
 

@@ -568,9 +568,12 @@ class SqlAlchemyCommittedReader(AbstractCommittedReader):
         monotributo SCALE cuota — the expected-this-month figure for a monthly committed
         outflow (ADR-177). The scale cuota therefore drives ONLY the pending case. Both legs
         are AFIP-ARS and ``ars_fixed`` so the engine sums the tax only on an ARS request
-        (ADR-177).
+        (ADR-177). The scale cuota is resolved for the TARGET MONTH's vintage (ADR-067): a
+        July-2026 split uses the 2026-02 cuota, an Aug-2026 split the 2026-08 one — the same
+        as-of behavior the standing meter uses, so the figure never jumps ahead of the
+        vintage's effective date.
         """
-        cuota = await self._monotributo_cuota(user_id)
+        cuota = await self._monotributo_cuota(user_id, as_of=month)
         if cuota is None or cuota <= Decimal(0):
             return None
         posted = await self._tax_posted_this_month(owner, month=month)
@@ -604,20 +607,22 @@ class SqlAlchemyCommittedReader(AbstractCommittedReader):
         # No Taxes expense posted (coalesced SUM is 0) → keep the scale cuota as pending (ADR-179).
         return total if total != _ZERO else None
 
-    async def _monotributo_cuota(self, user_id: str) -> Decimal | None:
-        """Return the owner's configured monotributo monthly cuota, or ``None`` (ADR-177).
+    async def _monotributo_cuota(self, user_id: str, *, as_of: date) -> Decimal | None:
+        """Return the owner's configured monotributo monthly cuota for ``as_of``, or ``None`` (ADR-177).
 
         Mirrors the forecast reader: reads the configured ``(category, activity_type)``
         from ``app_settings`` via the monotributo repository (ADR-112) and returns the
-        current scale's services or goods cuota (ADR-046). Returns ``None`` when the owner
-        has no configured category.
+        services or goods cuota (ADR-046) from the scale vintage in effect on ``as_of``
+        (ADR-067) — the target month's date — so the cuota tracks the standing's as-of
+        behavior and never uses a future vintage. Returns ``None`` when the owner has no
+        configured category.
         """
         configured = await self.monotributo.configured_category(user_id)
         if configured is None:
             return None
         category, activity_type = configured
         try:
-            row = get_category(category)
+            row = get_category(category, as_of=as_of)
         except KeyError:
             return None
         return row.cuota_servicios if activity_type == _SERVICES_ACTIVITY else row.cuota_bienes

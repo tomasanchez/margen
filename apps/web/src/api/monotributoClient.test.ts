@@ -38,6 +38,15 @@ const currentDto: MonotributoStandingDto = {
   projectionNote: 'Estimate, assumes steady pace',
   periodStart: '2025-06-13',
   periodEnd: '2026-06-13',
+  recommendation: {
+    avgMonthlyExpenses: '850000.00',
+    neededAnnualInvoicing: '10200000.00',
+    category: 'B',
+    monthlyFee: '48251.00',
+    annualFee: '579012.00',
+    effectiveTaxRatePct: '5.68',
+    aboveScale: false,
+  },
 }
 
 /** A prior-period standing DTO (a different category + lower usage). */
@@ -53,6 +62,7 @@ const previousDto: MonotributoStandingDto = {
   projectionNote: 'Estimate, assumes steady pace',
   periodStart: '2024-06-13',
   periodEnd: '2025-06-13',
+  recommendation: null,
 }
 
 /** A full snapshot DTO with one scale row and two invoices (one USD/FX). */
@@ -67,6 +77,8 @@ const snapshotDto: MonotributoSnapshotDto = {
       cuotaBienes: '55227.00',
     },
   ],
+  scaleEffectiveFrom: '2026-02-01',
+  scaleNextReview: '2026-08-01',
   invoices: [
     {
       id: '11111111-2222-4333-8444-555566667777',
@@ -113,6 +125,25 @@ describe('adaptStanding', () => {
     expect(standing.percentUsed).toBe(60.23)
     expect(standing.ratio).toBeCloseTo(0.6023, 5)
   })
+
+  test('parses the best-category recommendation to numbers, keeping category + aboveScale (ADR-200)', () => {
+    const { recommendation } = adaptStanding(currentDto)
+
+    expect(recommendation).not.toBeNull()
+    expect(recommendation?.avgMonthlyExpenses).toBe(850_000)
+    expect(recommendation?.neededAnnualInvoicing).toBe(10_200_000)
+    expect(recommendation?.monthlyFee).toBe(48_251)
+    expect(recommendation?.annualFee).toBe(579_012)
+    expect(recommendation?.effectiveTaxRatePct).toBe(5.68)
+    expect(typeof recommendation?.effectiveTaxRatePct).toBe('number')
+    expect(recommendation?.category).toBe('B')
+    expect(recommendation?.aboveScale).toBe(false)
+  })
+
+  test('maps a null recommendation through as null', () => {
+    const standing = adaptStanding(previousDto)
+    expect(standing.recommendation).toBeNull()
+  })
 })
 
 describe('adaptInvoice', () => {
@@ -150,6 +181,12 @@ describe('adaptSnapshot', () => {
     expect(snapshot.scale[0].annualCeiling).toBe(21_113_697)
     expect(snapshot.invoices).toHaveLength(2)
     expect(snapshot.invoices[0].client).toBe('Beta Studio')
+  })
+
+  test('carries the scale vintage dates through as ISO strings', () => {
+    const snapshot = adaptSnapshot(snapshotDto)
+    expect(snapshot.scaleEffectiveFrom).toBe('2026-02-01')
+    expect(snapshot.scaleNextReview).toBe('2026-08-01')
   })
 
   test('returns previous=null when the API previous is null', () => {

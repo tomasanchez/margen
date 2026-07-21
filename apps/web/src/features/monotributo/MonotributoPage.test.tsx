@@ -130,6 +130,15 @@ const CURRENT: MonotributoStanding = {
   projectionNote: 'Estimate, assumes steady pace',
   periodStart: '2025-06-13',
   periodEnd: '2026-06-13',
+  recommendation: {
+    avgMonthlyExpenses: 850_000,
+    neededAnnualInvoicing: 10_200_000,
+    category: 'B',
+    monthlyFee: 48_251,
+    annualFee: 579_012,
+    effectiveTaxRatePct: 5.68,
+    aboveScale: false,
+  },
 }
 
 /** A prior trailing-12-month standing (Category B, lower usage, calmer band). */
@@ -146,6 +155,7 @@ const PREVIOUS: MonotributoStanding = {
   projectionNote: 'Estimate, assumes steady pace',
   periodStart: '2024-06-13',
   periodEnd: '2025-06-13',
+  recommendation: null,
 }
 
 function makeSnapshot(
@@ -155,6 +165,8 @@ function makeSnapshot(
     current: CURRENT,
     previous: null,
     scale: SCALE,
+    scaleEffectiveFrom: '2026-02-01',
+    scaleNextReview: '2026-08-01',
     invoices: INVOICES,
     ...overrides,
   }
@@ -404,6 +416,62 @@ describe('category selector (ADR-049)', () => {
       screen.getByRole('meter', {
         name: '60% of the Category C annual limit used',
       }),
+    ).toBeInTheDocument()
+  })
+})
+
+describe('best category for you (ADR-200)', () => {
+  test('renders the recommendation block with the fitting category + rate', async () => {
+    renderPage()
+
+    const heading = await screen.findByRole('heading', {
+      name: 'Best category for you',
+    })
+    const card = heading.closest('section') as HTMLElement
+    const scoped = within(card)
+
+    // The fitting category letter, its monthly fee, and the effective rate.
+    expect(scoped.getByText('B')).toBeInTheDocument()
+    expect(scoped.getByText('ARS 48.251')).toBeInTheDocument()
+    expect(scoped.getByText('5.68%')).toBeInTheDocument()
+  })
+
+  test('above-scale points at the régimen general instead of a category', async () => {
+    fetchMock.mockResolvedValue(
+      makeSnapshot({
+        current: {
+          ...CURRENT,
+          recommendation: {
+            avgMonthlyExpenses: 40_000_000,
+            neededAnnualInvoicing: 480_000_000,
+            category: 'K',
+            monthlyFee: 0,
+            annualFee: 0,
+            effectiveTaxRatePct: 0,
+            aboveScale: true,
+          },
+        },
+      }),
+    )
+    renderPage()
+
+    const heading = await screen.findByRole('heading', {
+      name: 'Best category for you',
+    })
+    const scoped = within(heading.closest('section') as HTMLElement)
+    expect(scoped.getByText(/régimen general/)).toBeInTheDocument()
+  })
+
+  test('no expense history renders the calm nudge', async () => {
+    fetchMock.mockResolvedValue(
+      makeSnapshot({ current: { ...CURRENT, recommendation: null } }),
+    )
+    renderPage()
+
+    expect(
+      await screen.findByText(
+        "Add a few expenses and we'll suggest the most cost-effective category.",
+      ),
     ).toBeInTheDocument()
   })
 })

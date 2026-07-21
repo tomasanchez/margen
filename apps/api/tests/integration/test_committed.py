@@ -237,11 +237,14 @@ class TestCommittedSql:
             await session.commit()
 
         # WHEN
+        month = _first_of_current_month()
         async with session_factory() as session:
-            split = await _reader(session).committed(_first_of_current_month(), OWNER, currency=Currency.ARS)
+            split = await _reader(session).committed(month, OWNER, currency=Currency.ARS)
 
-        # THEN
-        expected = get_category("B").cuota_servicios
+        # THEN — the pending cuota is resolved for the TARGET MONTH's vintage (ADR-067), so
+        # derive the expected figure as-of that month to stay robust to the live clock and
+        # any vintage boundary (e.g. Aug 1 2026).
+        expected = get_category("B", as_of=month).cuota_servicios
         assert split.pending.tax == expected
         assert split.paid.tax == Decimal("0.00")
 
@@ -263,12 +266,13 @@ class TestCommittedSql:
         await _seed(session_factory, [_tx(name="Bank tax", category="Taxes", amount=Decimal("5000"))])
 
         # WHEN
+        month = _first_of_current_month()
         async with session_factory() as session:
-            split = await _reader(session).committed(_first_of_current_month(), OWNER, currency=Currency.ARS)
+            split = await _reader(session).committed(month, OWNER, currency=Currency.ARS)
 
         # THEN — paid.tax is the real posted spend, NOT the scale cuota; pending flips to 0.
         assert split.paid.tax == Decimal("5000.00")
-        assert split.paid.tax != get_category("B").cuota_servicios
+        assert split.paid.tax != get_category("B", as_of=month).cuota_servicios
         assert split.pending.tax == Decimal("0.00")
 
     async def test_cadence_only_subscription_recurring_bool_false_is_recognized(

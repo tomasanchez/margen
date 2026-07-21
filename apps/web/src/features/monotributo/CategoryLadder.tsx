@@ -32,6 +32,8 @@ export interface CategoryLadderProps {
   current: string
   /** Projected category letter. */
   projected: string
+  /** Recommended best-fit category letter (ADR-200), or undefined. */
+  recommended?: string
 }
 
 /**
@@ -44,11 +46,14 @@ function selectAnchors(
   scale: MonotributoScaleRow[],
   current: string,
   projected: string,
+  recommended: string | undefined,
 ): MonotributoScaleRow[] {
   if (scale.length === 0) return []
   const lowest = scale[0].letter
   const highest = scale[scale.length - 1].letter
   const keep = new Set([lowest, highest, current, projected])
+  // Keep the best-fit anchor so it survives the condensed mobile strip (ADR-200).
+  if (recommended != null) keep.add(recommended)
   return scale.filter((row) => keep.has(row.letter))
 }
 
@@ -56,22 +61,27 @@ interface LadderCellProps {
   row: MonotributoScaleRow
   isCurrent: boolean
   isProjected: boolean
+  isBest: boolean
 }
 
 /** One ladder cell (tag · letter chip · ceiling). Shared by both strips. */
-function LadderCell({ row, isCurrent, isProjected }: LadderCellProps) {
+function LadderCell({ row, isCurrent, isProjected, isBest }: LadderCellProps) {
   const { t } = useTranslation('monotributo')
   const tag = isCurrent
     ? t('ladder.tagNow')
     : isProjected
       ? t('ladder.tagProjected')
-      : ''
+      : isBest
+        ? t('ladder.tagBest')
+        : ''
   const ceilingLabel = formatMillionsCompact(row.annualCeiling)
   const role = isCurrent
     ? t('ladder.roleCurrent')
     : isProjected
       ? t('ladder.roleProjected')
-      : t('ladder.roleCategory')
+      : isBest
+        ? t('ladder.roleBest')
+        : t('ladder.roleCategory')
 
   return (
     <Box
@@ -102,7 +112,9 @@ function LadderCell({ row, isCurrent, isProjected }: LadderCellProps) {
             ? 'var(--mg-gold)'
             : isProjected
               ? 'var(--mg-watch)'
-              : 'transparent',
+              : isBest
+                ? 'var(--mg-gold)'
+                : 'transparent',
         }}
       >
         {tag}
@@ -117,8 +129,8 @@ function LadderCell({ row, isCurrent, isProjected }: LadderCellProps) {
           justifyContent: 'center',
           borderRadius: '10px',
           fontFamily: monoFontFamily,
-          fontWeight: isCurrent || isProjected ? 700 : 600,
-          fontSize: isCurrent || isProjected ? 18 : 16,
+          fontWeight: isCurrent || isProjected || isBest ? 700 : 600,
+          fontSize: isCurrent || isProjected || isBest ? 18 : 16,
           ...(isCurrent
             ? {
                 color: 'var(--mg-on-gold)',
@@ -132,11 +144,18 @@ function LadderCell({ row, isCurrent, isProjected }: LadderCellProps) {
                     'color-mix(in srgb, var(--mg-watch) 8%, transparent)',
                   border: '1px dashed var(--mg-watch)',
                 }
-              : {
-                  color: 'var(--mg-text-2)',
-                  bgcolor: 'var(--mg-raised)',
-                  border: '1px solid var(--mg-border-2)',
-                }),
+              : isBest
+                ? {
+                    color: 'var(--mg-gold)',
+                    bgcolor:
+                      'color-mix(in srgb, var(--mg-gold) 8%, transparent)',
+                    border: '1px solid var(--mg-gold)',
+                  }
+                : {
+                    color: 'var(--mg-text-2)',
+                    bgcolor: 'var(--mg-raised)',
+                    border: '1px solid var(--mg-border-2)',
+                  }),
         }}
       >
         {row.letter}
@@ -161,6 +180,7 @@ interface LadderStripProps {
   rows: MonotributoScaleRow[]
   current: string
   projected: string
+  recommended: string | undefined
   /** Test/identification hook + whether gaps between anchors are flagged. */
   variant: 'full' | 'condensed'
   display: { xs: string; md: string }
@@ -171,6 +191,7 @@ function LadderStrip({
   rows,
   current,
   projected,
+  recommended,
   variant,
   display,
 }: LadderStripProps) {
@@ -193,6 +214,12 @@ function LadderStrip({
       {rows.map((row, index) => {
         const isCurrent = row.letter === current
         const isProjected = row.letter === projected
+        // Best-fit never clobbers the current/projected marker (ADR-200).
+        const isBest =
+          recommended != null &&
+          row.letter === recommended &&
+          !isCurrent &&
+          !isProjected
         // A gap exists when consecutive condensed anchors skip alphabet letters.
         const prev = index > 0 ? rows[index - 1] : null
         const hasGapBefore =
@@ -228,6 +255,7 @@ function LadderStrip({
             row={row}
             isCurrent={isCurrent}
             isProjected={isProjected}
+            isBest={isBest}
           />,
         ]
       })}
@@ -239,9 +267,10 @@ export function CategoryLadder({
   scale,
   current,
   projected,
+  recommended,
 }: CategoryLadderProps) {
   const { t } = useTranslation('monotributo')
-  const anchors = selectAnchors(scale, current, projected)
+  const anchors = selectAnchors(scale, current, projected, recommended)
 
   return (
     <SectionCard
@@ -253,6 +282,7 @@ export function CategoryLadder({
         rows={anchors}
         current={current}
         projected={projected}
+        recommended={recommended}
         variant="condensed"
         display={{ xs: 'flex', md: 'none' }}
       />
@@ -261,6 +291,7 @@ export function CategoryLadder({
         rows={scale}
         current={current}
         projected={projected}
+        recommended={recommended}
         variant="full"
         display={{ xs: 'none', md: 'flex' }}
       />

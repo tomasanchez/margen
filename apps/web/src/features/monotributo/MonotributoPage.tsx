@@ -39,6 +39,7 @@ import {
 } from './queries'
 import { deriveProjection, standingToState } from './derive'
 import { MeterHero } from './MeterHero'
+import { BestCategory } from './BestCategory'
 import { CategoryLadder } from './CategoryLadder'
 import { ProjectionBreakdown } from './ProjectionBreakdown'
 import { InvoiceDrilldown } from './InvoiceDrilldown'
@@ -74,6 +75,13 @@ export function MonotributoPage() {
     () => (snapshot ? deriveComparison(snapshot) : null),
     [snapshot],
   )
+  // The best-fit category letter to highlight on the ladder + scale (ADR-200).
+  // Undefined when there's no recommendation, or when the needed invoicing is
+  // above the scale (no category fits, so nothing gets a "best fit" tag).
+  const recommendedCategory =
+    standing?.recommendation && !standing.recommendation.aboveScale
+      ? standing.recommendation.category
+      : undefined
 
   // Surface an unknown-category 422 as a calm inline message; other failures
   // fall back to a generic line (the page itself stays usable).
@@ -212,7 +220,10 @@ export function MonotributoPage() {
             scale={snapshot.scale}
             current={monotributo.category}
             projected={projection.landsInCategory}
+            recommended={recommendedCategory}
           />
+
+          <BestCategory recommendation={snapshot.current.recommendation} />
 
           <Box
             sx={{
@@ -234,6 +245,9 @@ export function MonotributoPage() {
             scale={snapshot.scale}
             current={monotributo.category}
             projected={projection.landsInCategory}
+            recommended={recommendedCategory}
+            effectiveFrom={snapshot.scaleEffectiveFrom}
+            nextReview={snapshot.scaleNextReview}
             arcaUrl={projection.arcaUrl}
           />
         </Box>
