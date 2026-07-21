@@ -33,6 +33,7 @@ from margen_api.adapters.settings_repository import (
     DEFAULT_MONOTRIBUTO_CATEGORY,
     DEFAULT_MONOTRIBUTO_ENABLED,
 )
+from margen_api.domain.models.monotributo_scale import get_category
 from margen_api.domain.models.value_objects import Currency, FxRateType, Kind, TxType
 
 # The card-due window looks 3 days ahead inclusive of today; a fixed "today" keeps
@@ -1035,6 +1036,21 @@ def _snapshot_record(period_end: date) -> MonotributoSnapshotRecord:
     return record
 
 
+def _avg_expense_results(monthly_totals: list[str]) -> list[MagicMock]:
+    """Build the execute results for the trailing-3-month avg-expenses queries.
+
+    Each month runs ``month_category_expense_totals`` = a gross-category query then a
+    (here always empty) reimbursement query. A ``"0"`` month yields no gross rows so it
+    contributes zero to the average — mirroring a month with no spend.
+    """
+    results: list[MagicMock] = []
+    for total in monthly_totals:
+        gross = [] if total == "0" else [_category_row("Services", Decimal(total))]
+        results.append(_result(gross))  # gross expense totals
+        results.append(_result([]))  # no linked reimbursements
+    return results
+
+
 class TestMonotributoReader:
     """``SqlAlchemyMonotributoReader`` aggregates the standing, drilldown and previous."""
 
@@ -1045,12 +1061,14 @@ class TestMonotributoReader:
         THEN current is computed live, the drilldown carries a cumulative, and previous
              reads the frozen persisted snapshot
         """
-        # GIVEN — execute sequence: config, used(current), invoices, snapshot_at(prior).
+        # GIVEN — execute sequence: config, used(current), avg-expenses (3 months, each
+        # a [gross, reimbursement] pair), invoices, snapshot_at(prior).
         reference = date(2026, 6, 14)
         session = AsyncMock()
         session.execute.side_effect = [
             _first_result(_config_row(category="A")),
             _scalar_result(Decimal("1500000.50")),
+            *_avg_expense_results(["200000.00", "200000.00", "200000.00"]),
             _scalars_result([_invoice_record(date(2026, 1, 15), "1500000.50")]),
             _scalar_result(_snapshot_record(date(2025, 6, 1))),
         ]
@@ -1067,10 +1085,19 @@ class TestMonotributoReader:
         assert [entry.letter for entry in snapshot.scale] == list("ABCDEFGHIJK")
         assert snapshot.invoices[0].cumulative == Decimal("1500000.50")
         assert snapshot.invoices[0].is_foreign_currency is False
+        # The current standing carries the trailing-3-month recommendation: avg 200000/mo,
+        # needed 2.4M -> the cheapest band covering it (A, ceiling ~10.3M).
+        assert snapshot.current.recommendation is not None
+        assert snapshot.current.recommendation.avg_monthly_expenses == Decimal("200000.00")
+        assert snapshot.current.recommendation.needed_annual_invoicing == Decimal("2400000.00")
+        assert snapshot.current.recommendation.category == "A"
+        assert snapshot.current.recommendation.above_scale is False
         # previous resolved from the persisted snapshot (note labels it a saved snapshot).
         assert snapshot.previous is not None
         assert snapshot.previous.category == "B"
         assert snapshot.previous.projection_note == "Saved snapshot from this period."
+        # The recommendation rides only the live current standing, never the comparison.
+        assert snapshot.previous.recommendation is None
 
     async def test_snapshot_computes_previous_live_when_absent(self):
         """
@@ -1079,13 +1106,15 @@ class TestMonotributoReader:
         THEN current and previous both use the settings default category (ADR-054)
              and previous is computed live
         """
-        # GIVEN — execute sequence: config(None), used(current), invoices(none),
-        # snapshot_at(None), config(None) again, used(prior).
+        # GIVEN — execute sequence: config(None), used(current), avg-expenses (3 months,
+        # all empty -> no expense history), invoices(none), snapshot_at(None),
+        # config(None) again, used(prior).
         reference = date(2026, 6, 14)
         session = AsyncMock()
         session.execute.side_effect = [
             _first_result(None),  # no app_settings -> settings defaults
             _scalar_result(None),  # no current income -> 0
+            *_avg_expense_results(["0", "0", "0"]),  # no expense history -> recommendation None
             _scalars_result([]),  # no invoices
             _scalar_result(None),  # no persisted prior snapshot
             _first_result(None),  # no app_settings (prior) -> settings defaults
@@ -1100,10 +1129,106 @@ class TestMonotributoReader:
         assert snapshot.current.category == "C"
         assert snapshot.current.activity_type == "services"
         assert snapshot.current.used == Decimal("0")
+        # No expense history -> the recommendation is null (the calm "add expenses" note).
+        assert snapshot.current.recommendation is None
         assert snapshot.invoices == []
         assert snapshot.previous is not None
         assert snapshot.previous.used == Decimal("300000.00")
         assert snapshot.previous.projection_note != "Saved snapshot from this period."
+
+    async def test_recommendation_averages_window_net_of_reimbursements(self):
+        """
+        GIVEN three trailing months of gross expense with a linked reimbursement in one
+        WHEN the snapshot is assembled
+        THEN avgMonthlyExpenses is the mean of the NET (reimbursement-subtracted) totals
+             over exactly three months, and each avg query is owner-scoped (ADR-158/108)
+        """
+        # GIVEN — three months: 300k gross with a 90k payback (net 210k), 300k, 300k.
+        # Net totals 210k + 300k + 300k = 810k; mean over 3 = 270k.
+        reference = date(2026, 6, 14)
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _first_result(_config_row(category="A", activity="services")),
+            _scalar_result(Decimal("0")),
+            _result([_category_row("Services", Decimal("300000.00"))]),
+            _result([_reduction_row("Services", Decimal("90000.00"))]),
+            _result([_category_row("Services", Decimal("300000.00"))]),
+            _result([]),
+            _result([_category_row("Services", Decimal("300000.00"))]),
+            _result([]),
+            _scalars_result([]),
+            _scalar_result(None),
+            _first_result(_config_row(category="A", activity="services")),
+            _scalar_result(Decimal("0")),
+        ]
+        reader = SqlAlchemyMonotributoReader(session)
+
+        # WHEN
+        snapshot = await reader.snapshot(reference, A_USER)
+
+        # THEN — mean net = 270000/mo; every avg query is owner-scoped.
+        assert snapshot.current.recommendation is not None
+        assert snapshot.current.recommendation.avg_monthly_expenses == Decimal("270000.00")
+        assert snapshot.current.recommendation.needed_annual_invoicing == Decimal("3240000.00")
+        for call in session.execute.await_args_list:
+            assert "user_id" in str(call.args[0]).lower()
+
+    async def test_recommendation_flags_above_scale(self):
+        """
+        GIVEN trailing expenses so high the annualized need exceeds the top ceiling
+        WHEN the snapshot is assembled
+        THEN the recommendation lands on the top band (K) and flags aboveScale (régimen general)
+        """
+        # GIVEN — 10M/mo -> needed 120M > K ceiling (~108.36M for 2026-02).
+        reference = date(2026, 6, 14)
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _first_result(_config_row(category="A", activity="services")),
+            _scalar_result(Decimal("0")),
+            *_avg_expense_results(["10000000.00", "10000000.00", "10000000.00"]),
+            _scalars_result([]),
+            _scalar_result(None),
+            _first_result(_config_row(category="A", activity="services")),
+            _scalar_result(Decimal("0")),
+        ]
+        reader = SqlAlchemyMonotributoReader(session)
+
+        # WHEN
+        snapshot = await reader.snapshot(reference, A_USER)
+
+        # THEN — top band as a floor, flagged beyond Monotributo.
+        assert snapshot.current.recommendation is not None
+        assert snapshot.current.recommendation.category == "K"
+        assert snapshot.current.recommendation.above_scale is True
+
+    async def test_recommendation_uses_goods_cuota_for_bienes(self):
+        """
+        GIVEN a goods (bienes) taxpayer with trailing expenses landing in category C
+        WHEN the snapshot is assembled
+        THEN the recommendation's monthlyFee is category C's cuotaBienes, not cuotaServicios
+        """
+        # GIVEN — 1.5M/mo -> needed 18M, covered by C (ceiling ~21.1M for 2026-02).
+        reference = date(2026, 6, 14)
+        session = AsyncMock()
+        session.execute.side_effect = [
+            _first_result(_config_row(category="C", activity="bienes")),
+            _scalar_result(Decimal("0")),
+            *_avg_expense_results(["1500000.00", "1500000.00", "1500000.00"]),
+            _scalars_result([]),
+            _scalar_result(None),
+            _first_result(_config_row(category="C", activity="bienes")),
+            _scalar_result(Decimal("0")),
+        ]
+        reader = SqlAlchemyMonotributoReader(session)
+
+        # WHEN
+        snapshot = await reader.snapshot(reference, A_USER)
+
+        # THEN — the goods cuota applies for a bienes taxpayer.
+        recommendation = snapshot.current.recommendation
+        assert recommendation is not None
+        assert recommendation.category == "C"
+        assert recommendation.monthly_fee == get_category("C", as_of=reference).cuota_bienes
 
     async def test_foreign_currency_invoice_flagged(self):
         """
@@ -1111,11 +1236,13 @@ class TestMonotributoReader:
         WHEN current_standing then the drilldown are read
         THEN the row is flagged as foreign currency
         """
-        # GIVEN — snapshot path: config, used, invoices(USD), snapshot_at(None), config, used.
+        # GIVEN — snapshot path: config, used, avg-expenses (3 months), invoices(USD),
+        # snapshot_at(None), config, used.
         session = AsyncMock()
         session.execute.side_effect = [
             _first_result(_config_row()),
             _scalar_result(Decimal("1000.00")),
+            *_avg_expense_results(["0", "0", "0"]),
             _scalars_result([_invoice_record(date(2026, 2, 1), "1000.00", currency="USD")]),
             _scalar_result(None),
             _first_result(_config_row()),

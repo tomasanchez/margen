@@ -34,6 +34,7 @@ const current: MonotributoStanding = {
   projectionNote: 'Estimate, assumes steady pace',
   periodStart: '2025-06-13',
   periodEnd: '2026-06-13',
+  recommendation: null,
 }
 
 /** A prior standing: a lower category (B), lower % and a calmer status band. */
@@ -50,6 +51,7 @@ const previous: MonotributoStanding = {
   projectionNote: 'Estimate, assumes steady pace',
   periodStart: '2024-06-13',
   periodEnd: '2025-06-13',
+  recommendation: null,
 }
 
 const SCALE: MonotributoScaleRow[] = [
@@ -61,7 +63,14 @@ const SCALE: MonotributoScaleRow[] = [
 function snapshot(
   previousStanding: MonotributoStanding | null,
 ): MonotributoSnapshot {
-  return { current, previous: previousStanding, scale: SCALE, invoices: [] }
+  return {
+    current,
+    previous: previousStanding,
+    scale: SCALE,
+    scaleEffectiveFrom: '2026-02-01',
+    scaleNextReview: '2026-08-01',
+    invoices: [],
+  }
 }
 
 describe('deriveComparison', () => {

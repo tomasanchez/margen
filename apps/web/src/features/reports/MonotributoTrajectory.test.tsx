@@ -39,6 +39,7 @@ function standing(overrides: Partial<MonotributoStanding> = {}): MonotributoStan
     projectionNote: '',
     periodStart: '2025-07-01',
     periodEnd: '2026-06-30',
+    recommendation: null,
     ...overrides,
   }
 }

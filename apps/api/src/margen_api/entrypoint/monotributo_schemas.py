@@ -19,10 +19,44 @@ from pydantic import Field
 from margen_api.entrypoint.schemas import CamelCaseModel
 from margen_api.service_layer.monotributo_read_models import (
     MonotributoInvoice,
+    MonotributoRecommendation,
     MonotributoScaleEntry,
     MonotributoSnapshot,
     MonotributoStanding,
 )
+
+
+class MonotributoRecommendationResponse(CamelCaseModel):
+    """The "best category" recommendation for the Monotributo page (owner-confirmed feature)."""
+
+    avg_monthly_expenses: Decimal = Field(
+        description="Trailing-3-month average net expense outflow in ARS (reimbursement-net).",
+    )
+    needed_annual_invoicing: Decimal = Field(
+        description="avgMonthlyExpenses * 12 — the income the taxpayer needs to invoice.",
+    )
+    category: str = Field(description="Cheapest category (A-K) whose ceiling covers the needed invoicing.")
+    monthly_fee: Decimal = Field(description="That category's monthly cuota for the taxpayer's activity type.")
+    annual_fee: Decimal = Field(description="monthlyFee * 12 — the yearly cost of that category.")
+    effective_tax_rate_pct: Decimal = Field(
+        description="annualFee / neededAnnualInvoicing * 100, rounded to two decimals.",
+    )
+    above_scale: bool = Field(
+        description="True when the needed invoicing exceeds the top category — beyond Monotributo.",
+    )
+
+    @classmethod
+    def from_read_model(cls, model: MonotributoRecommendation) -> MonotributoRecommendationResponse:
+        """Build the response recommendation from a read model."""
+        return cls(
+            avg_monthly_expenses=model.avg_monthly_expenses,
+            needed_annual_invoicing=model.needed_annual_invoicing,
+            category=model.category,
+            monthly_fee=model.monthly_fee,
+            annual_fee=model.annual_fee,
+            effective_tax_rate_pct=model.effective_tax_rate_pct,
+            above_scale=model.above_scale,
+        )
 
 
 class MonotributoStandingResponse(CamelCaseModel):
@@ -39,6 +73,10 @@ class MonotributoStandingResponse(CamelCaseModel):
     projection_note: str = Field(description="Plain-language note labeling the projection an estimate.")
     period_start: date = Field(description="First day of the trailing-12-month window.")
     period_end: date = Field(description="Last day of the trailing-12-month window.")
+    recommendation: MonotributoRecommendationResponse | None = Field(
+        default=None,
+        description="Best-category recommendation from trailing-3-month expenses; null with no expense history.",
+    )
 
     @classmethod
     def from_read_model(cls, model: MonotributoStanding) -> MonotributoStandingResponse:
@@ -55,6 +93,11 @@ class MonotributoStandingResponse(CamelCaseModel):
             projection_note=model.projection_note,
             period_start=model.period_start,
             period_end=model.period_end,
+            recommendation=(
+                MonotributoRecommendationResponse.from_read_model(model.recommendation)
+                if model.recommendation is not None
+                else None
+            ),
         )
 
 
@@ -105,16 +148,24 @@ class MonotributoInvoiceResponse(CamelCaseModel):
 
 
 class MonotributoSnapshotResponse(CamelCaseModel):
-    """The full Monotributo page payload (ADR-052)."""
+    """The full Monotributo page payload (ADR-052, ADR-067)."""
 
     current: MonotributoStandingResponse = Field(description="The live trailing-12-month standing.")
     previous: MonotributoStandingResponse | None = Field(
         default=None,
         description="The prior trailing-12-month standing for comparison; null when no data exists.",
     )
-    scale: list[MonotributoScaleEntryResponse] = Field(description="The A-K reference scale rows.")
+    scale: list[MonotributoScaleEntryResponse] = Field(
+        description="The A-K reference scale rows for the vintage in effect on the reference date.",
+    )
     invoices: list[MonotributoInvoiceResponse] = Field(
         description="The included-invoice drilldown, oldest-first with a running cumulative.",
+    )
+    scale_effective_from: date = Field(
+        description="Date (YYYY-MM-DD) the in-effect scale vintage took effect; powers the 'in effect since' subtitle.",
+    )
+    scale_next_review: date = Field(
+        description="Date (YYYY-MM-DD) the in-effect vintage is expected to be superseded (next review).",
     )
 
     @classmethod
@@ -127,6 +178,8 @@ class MonotributoSnapshotResponse(CamelCaseModel):
             ),
             scale=[MonotributoScaleEntryResponse.from_read_model(entry) for entry in model.scale],
             invoices=[MonotributoInvoiceResponse.from_read_model(invoice) for invoice in model.invoices],
+            scale_effective_from=model.scale_effective_from,
+            scale_next_review=model.scale_next_review,
         )
 
 

@@ -298,19 +298,19 @@ class TestNativeAmountAndPosted:
 
 
 class TestMonotributoCuota:
-    """The configured cuota is resolved from the scale, or None for absent/unknown config (ADR-177)."""
+    """The cuota is resolved from the TARGET MONTH's vintage, or None for absent/unknown config (ADR-177/067)."""
 
     async def test_services_cuota_when_configured(self):
         """
         GIVEN a configured category with the services activity type
-        WHEN the cuota is resolved
+        WHEN the cuota is resolved for a target month
         THEN a positive services cuota is returned
         """
         # GIVEN
         reader = _reader({"current_category": "A", "activity_type": "services"})
 
         # WHEN
-        cuota = await reader._monotributo_cuota("u1")
+        cuota = await reader._monotributo_cuota("u1", as_of=date(2026, 7, 1))
 
         # THEN
         assert cuota is not None
@@ -319,18 +319,39 @@ class TestMonotributoCuota:
     async def test_bienes_cuota_when_goods_activity(self):
         """
         GIVEN a configured category with the goods (bienes) activity type
-        WHEN the cuota is resolved
+        WHEN the cuota is resolved for a target month
         THEN the goods cuota column is used (ADR-046)
         """
         # GIVEN
         reader = _reader({"current_category": "H", "activity_type": "bienes"})
 
         # WHEN
-        cuota = await reader._monotributo_cuota("u1")
+        cuota = await reader._monotributo_cuota("u1", as_of=date(2026, 7, 1))
 
         # THEN
         assert cuota is not None
         assert cuota > Decimal(0)
+
+    async def test_cuota_resolves_target_month_vintage(self):
+        """
+        GIVEN a configured services taxpayer and two target months straddling the Aug-1 2026
+              ARCA vintage boundary
+        WHEN the cuota is resolved for each
+        THEN July uses the 2026-02 cuota and August the (higher) 2026-08 cuota (ADR-067)
+        """
+        # GIVEN
+        reader = _reader({"current_category": "A", "activity_type": "services"})
+
+        # WHEN — July 2026 (pre-boundary) vs August 2026 (on/after boundary).
+        july = await reader._monotributo_cuota("u1", as_of=date(2026, 7, 1))
+        august = await reader._monotributo_cuota("u1", as_of=date(2026, 8, 1))
+
+        # THEN — the target-month vintage drives the figure; Aug's is the new, higher one.
+        assert july is not None
+        assert august is not None
+        assert july == Decimal("42386.74")  # 2026-02 category A services cuota
+        assert august == Decimal("49527.18")  # 2026-08 category A services cuota
+        assert august > july
 
     async def test_no_config_yields_none(self):
         """
@@ -339,7 +360,7 @@ class TestMonotributoCuota:
         THEN None is returned (the tax leg is omitted)
         """
         # WHEN / THEN
-        assert await _reader({})._monotributo_cuota("u1") is None
+        assert await _reader({})._monotributo_cuota("u1", as_of=date(2026, 7, 1)) is None
 
     async def test_unknown_category_yields_none(self):
         """
@@ -351,7 +372,7 @@ class TestMonotributoCuota:
         reader = _reader({"current_category": "ZZ", "activity_type": "services"})
 
         # WHEN / THEN
-        assert await reader._monotributo_cuota("u1") is None
+        assert await reader._monotributo_cuota("u1", as_of=date(2026, 7, 1)) is None
 
 
 def _candidate(

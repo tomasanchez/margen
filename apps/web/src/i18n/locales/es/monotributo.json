@@ -25,20 +25,28 @@
     "perYear": "/ año",
     "projectedBadge": "Proyectado"
   },
+  "bestCategory": {
+    "title": "La mejor categoría para vos",
+    "body": "Para cubrir tus gastos promedio de {{avgMonthlyExpenses}}/mes (≈ {{neededAnnualInvoicing}}/año a facturar), la categoría más económica que te alcanza es <category>{{category}}</category> — cuota <fee>{{monthlyFee}}</fee>/mes ({{annualFee}}/año), alrededor del <rate>{{rate}}%</rate> de lo que facturarías.",
+    "aboveScale": "Para cubrir tus gastos promedio de {{avgMonthlyExpenses}}/mes necesitarías facturar ≈ {{neededAnnualInvoicing}}/año — más allá de la categoría más alta del Monotributo. Considerá el régimen general.",
+    "empty": "Agregá algunos gastos y te sugerimos la categoría más conveniente."
+  },
   "ladder": {
     "title": "Dónde caés en la escala",
     "subtitle": "Techo de ingresos brutos anuales por categoría",
     "tagNow": "Hoy",
     "tagProjected": "Proy.",
+    "tagBest": "Vos",
     "roleCurrent": "categoría actual",
     "roleProjected": "categoría proyectada",
+    "roleBest": "categoría recomendada",
     "roleCategory": "categoría",
     "cellAriaLabel": "Categoría {{letter}}, {{role}}, techo {{ceiling}}",
     "gapNote": "Categorías intermedias omitidas en esta vista"
   },
   "scale": {
     "title": "Monotributo 2026 — escala completa",
-    "subtitle": "Escala oficial, vigente desde el 1 de febrero de 2026 · próxima revisión jul / ago 2026",
+    "subtitle": "Escala oficial, vigente desde {{effectiveFrom}} · próxima revisión {{nextReview}}",
     "arcaButton": "ARCA · tabla oficial",
     "arcaText": "Ver categorías en arca.gob.ar",
     "header": {
@@ -54,8 +62,10 @@
     },
     "tagCurrent": "Actual",
     "tagProjected": "Proyectada",
+    "tagBest": "Para vos",
     "tagShortCurrent": "HOY",
     "tagShortProjected": "PROY",
+    "tagShortBest": "VOS",
     "footnote": "La cuota incluye el componente impositivo, el aporte al SIPA (jubilación) y el aporte a la obra social. Los valores están redondeados; los montos exactos (con centavos) están en el sitio de ARCA. Desde 2026 la escala llega hasta la categoría K tanto para servicios como para bienes."
   },
   "projection": {

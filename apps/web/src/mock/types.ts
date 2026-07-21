@@ -623,6 +623,31 @@ export interface MonotributoProjection {
 }
 
 /**
+ * The cheapest Monotributo category that would cover the user's average
+ * expenses (ADR-200). Money fields are ARS numbers (parsed in the client
+ * adapter); `effectiveTaxRatePct` is a 2dp percentage number (e.g. 4.83);
+ * `aboveScale` is true when the needed invoicing exceeds the top category, in
+ * which case no category fits and `category` is not meaningful (the UI points
+ * the user to the régimen general instead).
+ */
+export interface MonotributoRecommendation {
+  /** Average monthly expenses to cover (ARS). */
+  avgMonthlyExpenses: number
+  /** Annual invoicing needed to cover those expenses (ARS). */
+  neededAnnualInvoicing: number
+  /** The cheapest fitting category letter (ignore when `aboveScale`). */
+  category: string
+  /** Monthly fee for that category (ARS). */
+  monthlyFee: number
+  /** Annual fee for that category (ARS). */
+  annualFee: number
+  /** Fee as a percentage of what you'd invoice, 2dp (e.g. 4.83). */
+  effectiveTaxRatePct: number
+  /** True when the needed invoicing is beyond the top monotributo category. */
+  aboveScale: boolean
+}
+
+/**
  * A single trailing-12-month Monotributo standing (ADR-046, ADR-052).
  *
  * Returned for both the live `current` period and the prior `previous` window
@@ -655,6 +680,8 @@ export interface MonotributoStanding {
   periodStart: string
   /** ISO date the trailing window ends (`YYYY-MM-DD`). */
   periodEnd: string
+  /** Cheapest category that covers expenses (ADR-200); null when no history. */
+  recommendation: MonotributoRecommendation | null
 }
 
 /** A signed delta between the current and previous standing for one field. */
@@ -696,6 +723,10 @@ export interface MonotributoSnapshot {
   current: MonotributoStanding
   previous: MonotributoStanding | null
   scale: MonotributoScaleRow[]
+  /** ISO date (`YYYY-MM-DD`) the in-effect scale vintage started. */
+  scaleEffectiveFrom: string
+  /** ISO date (`YYYY-MM-DD`) of the next scheduled scale review. */
+  scaleNextReview: string
   invoices: MonotributoInvoice[]
 }
 

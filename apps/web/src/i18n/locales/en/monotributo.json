@@ -25,20 +25,28 @@
     "perYear": "/ yr",
     "projectedBadge": "Projected"
   },
+  "bestCategory": {
+    "title": "Best category for you",
+    "body": "To cover your average expenses of {{avgMonthlyExpenses}}/mo (≈ {{neededAnnualInvoicing}}/yr to invoice), the cheapest category that fits is <category>{{category}}</category> — fee <fee>{{monthlyFee}}</fee>/mo ({{annualFee}}/yr), about <rate>{{rate}}%</rate> of what you'd invoice.",
+    "aboveScale": "To cover your average expenses of {{avgMonthlyExpenses}}/mo you'd need to invoice ≈ {{neededAnnualInvoicing}}/yr — beyond the top Monotributo category. Consider the régimen general.",
+    "empty": "Add a few expenses and we'll suggest the most cost-effective category."
+  },
   "ladder": {
     "title": "Where you land on the scale",
     "subtitle": "Annual gross-income ceiling per category",
     "tagNow": "Now",
     "tagProjected": "Proj.",
+    "tagBest": "Best",
     "roleCurrent": "current category",
     "roleProjected": "projected category",
+    "roleBest": "recommended category",
     "roleCategory": "category",
     "cellAriaLabel": "Category {{letter}}, {{role}}, ceiling {{ceiling}}",
     "gapNote": "Intermediate categories omitted on this view"
   },
   "scale": {
     "title": "Monotributo 2026 — full scale",
-    "subtitle": "Official scale, in effect since February 1, 2026 · next review Jul / Aug 2026",
+    "subtitle": "Official scale, in effect since {{effectiveFrom}} · next review {{nextReview}}",
     "arcaButton": "ARCA · official table",
     "arcaText": "View categories on arca.gob.ar",
     "header": {
@@ -54,8 +62,10 @@
     },
     "tagCurrent": "Current",
     "tagProjected": "Projected",
+    "tagBest": "Best fit",
     "tagShortCurrent": "NOW",
     "tagShortProjected": "PROJ",
+    "tagShortBest": "BEST",
     "footnote": "The fee includes the tax component, the SIPA (pension) contribution, and the health-insurance contribution. Values are rounded; exact amounts (with cents) are on the ARCA site. Since 2026 the scale runs up to category K for both services and goods."
   },
   "projection": {

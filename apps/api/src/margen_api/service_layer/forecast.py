@@ -220,6 +220,60 @@ def _installment_months(window: list[date], stream: InstallmentStream) -> list[s
     return hits
 
 
+def _monotributo_lines(
+    cuota_by_month: dict[str, Decimal] | None,
+    *,
+    month_keys: list[str],
+    currency: str,
+    totals: dict[str, Decimal],
+) -> list[CommitmentLine]:
+    """Build the monotributo TAX commitment line(s), one per distinct per-month cuota (ADR-177/067).
+
+    The cuota is an AFIP-fixed ARS liability — always denominated ARS and never
+    re-denominated to USD (ADR-177). It joins a month's total only on an ARS request (it
+    can't be summed into a USD total without re-denominating, which is forbidden); on a USD
+    request it surfaces only as its own ARS line for the frontend to render separately, and
+    never touches ``unconverted`` (it is a known fixed ARS figure, not a missing snapshot).
+
+    Because the cuota is resolved per projected month (ADR-067), a mid-horizon vintage
+    change produces two distinct amounts across the horizon; this groups the months by their
+    rounded cuota (preserving horizon order) and emits one line per distinct amount, so each
+    line keeps a single ``amount`` while the months it lists carry exactly that figure.
+
+    Args:
+        cuota_by_month: Per-month AFIP-ARS cuota keyed by ``YYYY-MM``, or ``None`` when
+            monotributo is not configured; a non-positive or absent month carries no cuota.
+        month_keys: The horizon month keys, oldest-first.
+        currency: The requested denomination; the cuota is added to the total only on ARS.
+        totals: The per-month running totals to add each month's ARS cuota into (mutated).
+
+    Returns:
+        The TAX commitment lines (empty when no month has a positive cuota).
+    """
+    if cuota_by_month is None:
+        return []
+    months_by_cuota: dict[Decimal, list[str]] = {}
+    for key in month_keys:
+        raw = cuota_by_month.get(key)
+        if raw is None or raw <= _ZERO:
+            continue
+        cuota = _money(raw)
+        if currency == CURRENCY_ARS:
+            totals[key] += cuota
+        months_by_cuota.setdefault(cuota, []).append(key)
+    return [
+        CommitmentLine(
+            source=CommitmentSource.TAX,
+            label=MONOTRIBUTO_LABEL,
+            amount=cuota,
+            currency=CURRENCY_ARS,
+            months=months,
+            ars_fixed=True,
+        )
+        for cuota, months in months_by_cuota.items()
+    ]
+
+
 def build_forecast(
     reference: date,
     horizon: int,
@@ -227,7 +281,7 @@ def build_forecast(
     *,
     recurring_streams: list[RecurringStream],
     installment_streams: list[InstallmentStream],
-    monotributo_cuota: Decimal | None,
+    monotributo_cuota_by_month: dict[str, Decimal] | None,
     unconverted: int,
 ) -> ForecastSeries:
     """Assemble the full committed-outflow forecast from the raw stream inputs (ADR-176, ADR-177).
@@ -245,7 +299,12 @@ def build_forecast(
     currency, and it is added into the month total ONLY when ``currency == "ARS"`` (same
     denomination). On a USD request it is NOT summed into the USD total (it can't be
     re-denominated) and never increments ``unconverted`` — it still appears as its own ARS
-    commitment line so the frontend can surface it separately.
+    commitment line so the frontend can surface it separately. The cuota is resolved PER
+    PROJECTED MONTH (ADR-067): when an ARCA scale change lands inside the horizon (e.g. the
+    2026-08 vintage effective Aug 1), the pre-boundary months carry the old cuota and the
+    post-boundary months the new one, emitted as one TAX commitment line per distinct
+    amount (each listing the months it applies to) so the figure never jumps ahead of a
+    vintage's effective date.
 
     Args:
         reference: The reference date (server "today"); its month anchors the horizon.
@@ -253,9 +312,12 @@ def build_forecast(
         currency: The requested denomination currency (``ARS`` / ``USD``), echoed back.
         recurring_streams: The flagged recurring expense streams to project.
         installment_streams: The instalment plans whose tails to project.
-        monotributo_cuota: The configured monotributo monthly cuota as an AFIP-fixed ARS
-            amount (ADR-177), or ``None`` when monotributo is not configured / not
-            applicable. Always ARS regardless of the requested ``currency``.
+        monotributo_cuota_by_month: The configured monotributo monthly cuota as an
+            AFIP-fixed ARS amount (ADR-177), keyed by forecast month (``YYYY-MM``) so a
+            mid-horizon vintage change is reflected month-by-month (ADR-067); ``None`` when
+            monotributo is not configured / not applicable. Always ARS regardless of the
+            requested ``currency``; months absent from the map (or a non-positive amount)
+            carry no cuota.
         unconverted: Count of committed rows excluded from a USD denomination for
             lacking a snapshot; always ``0`` on the ARS path (ADR-152).
 
@@ -302,27 +364,9 @@ def build_forecast(
             )
         )
 
-    if monotributo_cuota is not None and monotributo_cuota > _ZERO:
-        cuota = _money(monotributo_cuota)
-        # The cuota is an AFIP-fixed ARS liability — always denominated ARS and never
-        # re-denominated to USD (ADR-177). It joins the month total only when the
-        # request is in the SAME denomination (ARS); on a USD request it can't be summed
-        # into the USD total without re-denominating (forbidden), so it is surfaced only
-        # as its own ARS commitment line for the frontend to render separately. It never
-        # touches ``unconverted`` — it is a known fixed ARS figure, not a missing snapshot.
-        if currency == CURRENCY_ARS:
-            for key in month_keys:
-                totals[key] += cuota
-        commitments.append(
-            CommitmentLine(
-                source=CommitmentSource.TAX,
-                label=MONOTRIBUTO_LABEL,
-                amount=cuota,
-                currency=CURRENCY_ARS,
-                months=list(month_keys),
-                ars_fixed=True,
-            )
-        )
+    commitments.extend(
+        _monotributo_lines(monotributo_cuota_by_month, month_keys=month_keys, currency=currency, totals=totals)
+    )
 
     months = [
         ForecastMonth(

@@ -19,6 +19,42 @@ from uuid import UUID
 
 
 @dataclass(frozen=True, slots=True)
+class MonotributoRecommendation:
+    """A "best category" recommendation from trailing spend (owner-confirmed feature).
+
+    Answers "which is the cheapest Monotributo category I could sit in and still
+    cover my expenses?" by treating trailing-3-month average expenses (annualized)
+    as the income the taxpayer needs to invoice, then picking the cheapest band
+    whose annual ceiling covers it. Money is :class:`~decimal.Decimal` (ADR-025).
+
+    Attributes:
+        avg_monthly_expenses: Trailing-3-calendar-month average of the owner's net
+            EXPENSE outflow (reimbursement-net, ARS-equivalent; ADR-025/158), the
+            mean over exactly three months.
+        needed_annual_invoicing: ``avg_monthly_expenses * 12`` — the income the
+            taxpayer needs to invoice to cover a year at that pace.
+        category: The cheapest category (A-K) whose annual ceiling covers
+            ``needed_annual_invoicing`` (``smallest_category_for``).
+        monthly_fee: That category's monthly cuota for the taxpayer's activity type
+            (``cuota_servicios`` for services, else ``cuota_bienes``).
+        annual_fee: ``monthly_fee * 12`` — the yearly cost of that category.
+        effective_tax_rate_pct: ``annual_fee / needed_annual_invoicing * 100``,
+            rounded to two decimals (ADR-025); the fee as a share of the invoicing.
+        above_scale: Whether ``needed_annual_invoicing`` exceeds the TOP category's
+            ceiling, so ``category`` is the top band only as a floor — the taxpayer
+            is beyond Monotributo and should consider the régimen general.
+    """
+
+    avg_monthly_expenses: Decimal
+    needed_annual_invoicing: Decimal
+    category: str
+    monthly_fee: Decimal
+    annual_fee: Decimal
+    effective_tax_rate_pct: Decimal
+    above_scale: bool
+
+
+@dataclass(frozen=True, slots=True)
 class MonotributoStanding:
     """A trailing-12-month Monotributo standing (ADR-046).
 
@@ -39,6 +75,11 @@ class MonotributoStanding:
         period_start: First day of the trailing-12-month window.
         period_end: Last day of the trailing-12-month window (``today`` for the
             live current standing).
+        recommendation: The "best category" recommendation from trailing-3-month
+            average expenses, or ``None`` when there is no expense history (avg is
+            ``0``) so the UI can show a calm "add expenses to see this" note. Only
+            the live ``current`` standing carries one; comparison/persisted
+            standings leave it ``None``.
     """
 
     category: str
@@ -52,6 +93,7 @@ class MonotributoStanding:
     projection_note: str
     period_start: date
     period_end: date
+    recommendation: MonotributoRecommendation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,18 +145,27 @@ class MonotributoInvoice:
 
 @dataclass(frozen=True, slots=True)
 class MonotributoSnapshot:
-    """The full Monotributo page payload (ADR-052).
+    """The full Monotributo page payload (ADR-052, ADR-067).
 
     Attributes:
         current: The live trailing-12-month standing computed from transactions.
         previous: The prior trailing-12-month standing (window ending 12 months
             ago) for the comparison toggle, or ``None`` when no data exists.
-        scale: The A-K reference scale rows.
+        scale: The A-K reference scale rows for the vintage in effect on the page's
+            reference date — the SAME clock as ``current`` so the table and the meter
+            never diverge (ADR-067).
         invoices: The included-invoice drilldown for the current window,
             oldest-first with a running cumulative.
+        scale_effective_from: The ``effective_from`` of the vintage the page resolves
+            to, so the "in effect since" subtitle is data-driven (ADR-067).
+        scale_next_review: The date the in-effect vintage is expected to be
+            superseded — the next later vintage's ``effective_from`` when known, else
+            the review-cadence estimate (ADR-067).
     """
 
     current: MonotributoStanding
     previous: MonotributoStanding | None
     scale: list[MonotributoScaleEntry]
     invoices: list[MonotributoInvoice]
+    scale_effective_from: date
+    scale_next_review: date

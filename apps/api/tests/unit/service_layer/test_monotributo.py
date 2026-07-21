@@ -9,12 +9,18 @@ proves the financial computation is correct independently of SQL.
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import uuid4
 
 import pytest
 
-from margen_api.domain.models.monotributo_scale import current_scale, get_ceiling
+from margen_api.domain.models.monotributo_scale import (
+    current_scale,
+    get_category,
+    get_ceiling,
+    next_scale_review,
+    scale_for,
+)
 from margen_api.service_layer.monotributo import (
     DEFAULT_ACTIVITY_TYPE,
     DEFAULT_CATEGORY,
@@ -24,6 +30,7 @@ from margen_api.service_layer.monotributo import (
     month_start,
     prior_window,
     project,
+    recommend_category,
     scale_entries,
     status_band,
     status_copy,
@@ -35,7 +42,9 @@ from margen_api.service_layer.monotributo_read_models import (
 )
 
 TODAY = date(2026, 6, 14)
-CEILING_A = get_ceiling("A")
+# The ceiling the standing resolves to is the vintage in effect on TODAY (2026-02),
+# not the latest published one — build_standing passes as_of=reference (ADR-067).
+CEILING_A = get_ceiling("A", as_of=TODAY)
 
 
 class TestStatusBand:
@@ -220,8 +229,8 @@ class TestBuildStanding:
             reference=TODAY,
         )
 
-        # THEN
-        assert standing.limit == get_ceiling("H")
+        # THEN — the ceiling is resolved for the standing's reference date (2026-02).
+        assert standing.limit == get_ceiling("H", as_of=TODAY)
 
     def test_over_limit_gives_negative_remaining_and_over_band(self) -> None:
         """
@@ -317,10 +326,10 @@ class TestWindows:
 
 
 class TestScaleEntries:
-    """``scale_entries`` projects the A-K constant into read-model rows (ADR-048)."""
+    """``scale_entries`` projects the A-K scale for a given vintage into read-model rows (ADR-048, ADR-067)."""
 
     def test_returns_all_eleven_rows_in_order(self) -> None:
-        """GIVEN the scale WHEN projected THEN all A-K rows come through in order."""
+        """GIVEN no date WHEN projected THEN all A-K rows of the latest vintage come through in order."""
         # WHEN
         entries = scale_entries()
 
@@ -330,6 +339,20 @@ class TestScaleEntries:
         assert entries[0].annual_ceiling == first.annual_ceiling
         assert entries[0].cuota_servicios == first.cuota_servicios
         assert entries[0].cuota_bienes == first.cuota_bienes
+
+    def test_resolves_rows_for_the_as_of_vintage(self) -> None:
+        """
+        GIVEN an as_of date in the 2026-02 window (before the 2026-08 vintage)
+        WHEN the scale is projected
+        THEN the A ceiling is the 2026-02 value, not the latest (2026-08) one — the table
+             tracks the same clock as the meter (ADR-067)
+        """
+        # WHEN
+        entries = scale_entries(TODAY)
+
+        # THEN — 2026-02 category A ceiling, distinct from the latest vintage's.
+        assert entries[0].annual_ceiling == get_ceiling("A", as_of=TODAY)
+        assert entries[0].annual_ceiling != current_scale().categories[0].annual_ceiling
 
 
 class TestBuildSnapshot:
@@ -370,13 +393,20 @@ class TestBuildSnapshot:
         ]
 
         # WHEN
-        snapshot = build_snapshot(current=current, previous=previous, invoices=invoices)
+        snapshot = build_snapshot(reference=TODAY, current=current, previous=previous, invoices=invoices)
 
         # THEN
         assert snapshot.current is current
         assert snapshot.previous is previous
         assert snapshot.invoices == invoices
         assert [entry.letter for entry in snapshot.scale] == list("ABCDEFGHIJK")
+        # The scale table and the standing meter share the reference clock (ADR-067): the
+        # served scale row for the standing's category has the SAME ceiling as the meter.
+        row = next(entry for entry in snapshot.scale if entry.letter == current.category)
+        assert row.annual_ceiling == current.limit
+        # The effective/next-review dates are data-driven off the resolved vintage.
+        assert snapshot.scale_effective_from == scale_for(TODAY).effective_from
+        assert snapshot.scale_next_review == next_scale_review(TODAY)
 
     def test_previous_may_be_none(self) -> None:
         """
@@ -385,7 +415,7 @@ class TestBuildSnapshot:
         THEN the snapshot still assembles with previous as None
         """
         # WHEN
-        snapshot = build_snapshot(current=self._standing(used="1000000"), previous=None, invoices=[])
+        snapshot = build_snapshot(reference=TODAY, current=self._standing(used="1000000"), previous=None, invoices=[])
 
         # THEN
         assert snapshot.previous is None
@@ -411,3 +441,102 @@ class TestPercentUsed:
     def test_nonzero_ceiling_is_a_percentage(self) -> None:
         """GIVEN a positive ceiling THEN percent used is used / ceiling * 100."""
         assert _percent_used(Decimal("50"), Decimal("200")) == Decimal("25")
+
+
+class TestRecommendCategory:
+    """``recommend_category`` picks the cheapest covering band from trailing expenses."""
+
+    def test_none_when_no_expense_history(self) -> None:
+        """
+        GIVEN zero average monthly expenses (no expense history)
+        WHEN the recommendation is computed
+        THEN it is None so the UI shows the calm "add expenses" note (no divide-by-zero)
+        """
+        assert recommend_category(Decimal("0"), activity_type="services", as_of=TODAY) is None
+
+    def test_picks_cheapest_covering_category(self) -> None:
+        """
+        GIVEN a needed annual invoicing of ~12M (1M/mo)
+        WHEN the recommendation is computed
+        THEN it lands on the cheapest band whose ceiling first exceeds 12M
+        """
+        # GIVEN — 1M/mo -> needed 12M. Against the 2026-02 scale the cheapest covering
+        # band is the first whose ceiling >= 12M (A is ~10.28M, B is ~15.06M -> B).
+        recommendation = recommend_category(Decimal("1000000.00"), activity_type="services", as_of=TODAY)
+
+        # THEN
+        assert recommendation is not None
+        assert recommendation.needed_annual_invoicing == Decimal("12000000.00")
+        assert recommendation.category == "B"
+        assert recommendation.above_scale is False
+
+    def test_effective_rate_and_fee_math(self) -> None:
+        """
+        GIVEN a needed invoicing that lands squarely in a band
+        WHEN the recommendation is computed
+        THEN monthlyFee is that band's services cuota, annualFee is fee*12, and the
+             effective rate is annualFee / neededAnnualInvoicing * 100 (2 decimals, ADR-025)
+        """
+        # GIVEN — 1M/mo -> needed 12M -> band B (services).
+        recommendation = recommend_category(Decimal("1000000.00"), activity_type="services", as_of=TODAY)
+
+        # THEN — exact fee/rate arithmetic against the resolved scale.
+        assert recommendation is not None
+        monthly = get_category("B", as_of=TODAY).cuota_servicios
+        assert recommendation.monthly_fee == monthly
+        annual = (monthly * Decimal(12)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        assert recommendation.annual_fee == annual
+        expected_rate = (annual / Decimal("12000000.00") * Decimal(100)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        assert recommendation.effective_tax_rate_pct == expected_rate
+
+    def test_goods_activity_uses_bienes_cuota(self) -> None:
+        """
+        GIVEN a goods (bienes) taxpayer
+        WHEN the recommendation is computed for a band where servicios != bienes
+        THEN monthlyFee reads the goods cuota, not the services one
+        """
+        # GIVEN — 1.5M/mo -> needed 18M -> band C, whose cuotas differ by activity.
+        recommendation = recommend_category(Decimal("1500000.00"), activity_type="bienes", as_of=TODAY)
+
+        # THEN
+        assert recommendation is not None
+        assert recommendation.category == "C"
+        assert recommendation.monthly_fee == get_category("C", as_of=TODAY).cuota_bienes
+
+    def test_above_scale_flag_when_beyond_top_ceiling(self) -> None:
+        """
+        GIVEN a needed invoicing beyond the TOP category's ceiling
+        WHEN the recommendation is computed
+        THEN it lands on the top band as a floor and flags aboveScale (régimen general)
+        """
+        # GIVEN — needed just past K's ceiling.
+        top = scale_for(TODAY).categories[-1]
+        avg = (top.annual_ceiling / Decimal(12)) + Decimal("100000")
+
+        # WHEN
+        recommendation = recommend_category(avg, activity_type="services", as_of=TODAY)
+
+        # THEN
+        assert recommendation is not None
+        assert recommendation.category == top.letter
+        assert recommendation.above_scale is True
+
+    def test_exactly_at_top_ceiling_is_not_above_scale(self) -> None:
+        """
+        GIVEN a needed invoicing exactly equal to the top ceiling
+        WHEN the recommendation is computed
+        THEN the top band covers it and aboveScale stays False (boundary is inclusive)
+        """
+        # GIVEN — needed == K's ceiling exactly (avg = ceiling / 12, no rounding gap).
+        top = scale_for(TODAY).categories[-1]
+        avg = top.annual_ceiling / Decimal(12)
+
+        # WHEN
+        recommendation = recommend_category(avg, activity_type="services", as_of=TODAY)
+
+        # THEN
+        assert recommendation is not None
+        assert recommendation.category == top.letter
+        assert recommendation.above_scale is False

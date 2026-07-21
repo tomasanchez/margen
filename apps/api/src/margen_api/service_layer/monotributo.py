@@ -11,15 +11,18 @@ of I/O makes it fast to unit test (ADR-050) and keeps SQLAlchemy in the adapter
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from margen_api.domain.models.monotributo_scale import (
-    current_scale,
+    get_category,
     get_ceiling,
+    next_scale_review,
+    scale_for,
     smallest_category_for,
 )
 from margen_api.service_layer.monotributo_read_models import (
     MonotributoInvoice,
+    MonotributoRecommendation,
     MonotributoScaleEntry,
     MonotributoSnapshot,
     MonotributoStanding,
@@ -39,6 +42,13 @@ _OVER_THRESHOLD = Decimal(100)
 
 _ZERO = Decimal(0)
 _HUNDRED = Decimal(100)
+_TWELVE = Decimal(12)
+# Money and the effective-rate percentage round to two decimals, half-up (ADR-025).
+_CENTS = Decimal("0.01")
+
+# Which cuota column applies per taxpayer activity type. Anything other than the
+# services MVP path reads the goods cuota (ADR-046).
+_SERVICES_ACTIVITY = "services"
 
 # Calm, plain-language copy per status band (ADR-046).
 _STATUS_COPY: dict[str, str] = {
@@ -122,6 +132,11 @@ def status_band(percent_used: Decimal) -> str:
 def status_copy(band: str) -> str:
     """Return the calm display copy for a status band key (ADR-046)."""
     return _STATUS_COPY[band]
+
+
+def _money(value: Decimal) -> Decimal:
+    """Round a monetary or percentage value to two decimals, half-up (ADR-025)."""
+    return value.quantize(_CENTS, rounding=ROUND_HALF_UP)
 
 
 def _percent_used(used: Decimal, ceiling: Decimal) -> Decimal:
@@ -219,10 +234,70 @@ def build_standing(
     )
 
 
-def scale_entries() -> list[MonotributoScaleEntry]:
-    """Return the current A-K reference scale as read-model entries (ADR-048, ADR-067).
+def recommend_category(
+    avg_monthly_expenses: Decimal,
+    *,
+    activity_type: str,
+    as_of: date,
+) -> MonotributoRecommendation | None:
+    """Recommend the cheapest category covering the owner's needed invoicing (owner-confirmed feature).
 
-    The page shows the current scale, so this returns the latest vintage's rows.
+    Treats the trailing-3-month average expenses, annualized, as the income the
+    taxpayer needs to invoice to cover a year at that pace, then picks the cheapest
+    Monotributo band whose annual ceiling covers it and reports its cuota as the
+    "cost" plus the effective tax rate against that invoicing. The scale vintage is
+    resolved for ``as_of`` (ADR-067) so the calc stays clock-injected like the rest
+    of the Monotributo code.
+
+    Args:
+        avg_monthly_expenses: The owner's trailing-3-calendar-month average net
+            expense outflow (reimbursement-net, ARS-equivalent; ADR-025/158).
+        activity_type: ``"services"`` (reads ``cuota_servicios``) or otherwise the
+            goods path (reads ``cuota_bienes``); the standing's own activity type.
+        as_of: The reference date selecting the scale vintage (server "today").
+
+    Returns:
+        A :class:`MonotributoRecommendation`, or ``None`` when there is no expense
+        history (``avg_monthly_expenses`` is ``0``) so the UI shows a calm
+        "add expenses to see this" note rather than a divide-by-zero figure.
+    """
+    if avg_monthly_expenses <= _ZERO:
+        return None
+    needed_annual_invoicing = _money(avg_monthly_expenses * _TWELVE)
+    letter = smallest_category_for(needed_annual_invoicing, as_of=as_of)
+    row = get_category(letter, as_of=as_of)
+    monthly_fee = row.cuota_servicios if activity_type == _SERVICES_ACTIVITY else row.cuota_bienes
+    annual_fee = _money(monthly_fee * _TWELVE)
+    # needed_annual_invoicing is > 0 here (avg was > 0), so the rate never divides by
+    # zero; still round it the money way for a stable contract (ADR-025).
+    effective_tax_rate_pct = _money(annual_fee / needed_annual_invoicing * _HUNDRED)
+    # smallest_category_for floors at the top band when the amount exceeds every
+    # ceiling; flag that so the UI can say "beyond Monotributo — consider régimen
+    # general" instead of implying the top band actually covers the invoicing.
+    top_ceiling = scale_for(as_of).categories[-1].annual_ceiling
+    above_scale = needed_annual_invoicing > top_ceiling
+    return MonotributoRecommendation(
+        avg_monthly_expenses=_money(avg_monthly_expenses),
+        needed_annual_invoicing=needed_annual_invoicing,
+        category=letter,
+        monthly_fee=monthly_fee,
+        annual_fee=annual_fee,
+        effective_tax_rate_pct=effective_tax_rate_pct,
+        above_scale=above_scale,
+    )
+
+
+def scale_entries(as_of: date | None = None) -> list[MonotributoScaleEntry]:
+    """Return the A-K reference scale as read-model entries for the ``as_of`` vintage (ADR-048, ADR-067).
+
+    Resolves the scale table by the SAME date the standing meter, projection and
+    recommendation use (``as_of=reference``) so the page shows one consistent set of
+    ceilings for every category — never a table on one vintage and a meter on another.
+    ``None`` keeps the clock-free latest vintage for callers that do not date the page.
+
+    Args:
+        as_of: The reference date selecting the scale vintage; ``None`` uses the
+            latest (current) vintage (ADR-067).
     """
     return [
         MonotributoScaleEntry(
@@ -231,29 +306,40 @@ def scale_entries() -> list[MonotributoScaleEntry]:
             cuota_servicios=row.cuota_servicios,
             cuota_bienes=row.cuota_bienes,
         )
-        for row in current_scale().categories
+        for row in scale_for(as_of).categories
     ]
 
 
 def build_snapshot(
     *,
+    reference: date,
     current: MonotributoStanding,
     previous: MonotributoStanding | None,
     invoices: list[MonotributoInvoice],
 ) -> MonotributoSnapshot:
-    """Assemble the full Monotributo page snapshot (ADR-052).
+    """Assemble the full Monotributo page snapshot on ONE clock (ADR-052, ADR-067).
+
+    Every dated part of the page — the standing meter, the projection, the
+    recommendation AND the A-K reference table — resolves against ``reference`` so the
+    whole page shows the same vintage (today the 2026-02 scale; on Aug 1 2026 the page
+    auto-switches to 2026-08). The resolved vintage's ``effective_from`` and its next
+    review date ride the snapshot so the "in effect since" subtitle is data-driven.
 
     Args:
+        reference: The reference date (server "today") every dated part resolves against.
         current: The live trailing-12-month standing.
         previous: The prior-window standing, or ``None`` when no data exists.
         invoices: The included-invoice drilldown, oldest-first.
 
     Returns:
-        The assembled :class:`MonotributoSnapshot` with the A-K scale attached.
+        The assembled :class:`MonotributoSnapshot` with the ``as_of=reference`` A-K scale
+        and its effective/next-review dates attached.
     """
     return MonotributoSnapshot(
         current=current,
         previous=previous,
-        scale=scale_entries(),
+        scale=scale_entries(reference),
         invoices=invoices,
+        scale_effective_from=scale_for(reference).effective_from,
+        scale_next_review=next_scale_review(reference),
     )
