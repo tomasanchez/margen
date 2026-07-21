@@ -21,10 +21,14 @@ The scale table is a static reference; the standing card describes where the use
 
 Add a **recommendation** to the Monotributo page: the **cheapest (smallest) category whose annual income ceiling ≥ the user's needed annual invoicing**.
 
-**Needed annual invoicing** = trailing-3-month average expenses × 12, where the trailing-3-month average is:
+**Needed annual invoicing** = trailing-3-month **median** monthly expenses × 12, where the trailing-3-month median is:
 
+- **Median, not mean (robust to one-off spikes)** — the baseline is the MEDIAN of the trailing-3-month per-month expense totals rather than their mean. A single lumpy month (a house/car/trip purchase) spikes the mean and over-recommends a higher, costlier category; the median gives a robust "typical monthly spend". Median of an even count is the mean of the two middles (standard); the result is rounded per ADR-025.
+- **In-range months only (no phantom zeros)** — only months from the owner's FIRST recorded expense month onward are counted. Pre-history months are dropped entirely rather than treated as `0` (a phantom zero would wrongly deflate the median). A genuinely-zero month INSIDE the active range still counts as `0`. So: with 3 in-range months → median of 3; with 1–2 → median of what's there; with 0 → no recommendation (null).
+- **Sample-month count carried** — the recommendation surfaces `baselineMonths` (1–3), how many in-range months the median is based on, so the UI can show a "based on N month(s)" / low-confidence note when it is below three.
+- **Window kept at 3** — the window stays three months (not widened to six) for currency under inflation: a longer window smooths noise but drags in stale, inflation-eroded figures. The median (not the mean) is what makes the 3-month window robust to a lumpy month without lengthening it.
 - **Net of reimbursements** — reimbursement inflows (ADR-158) are not expenses and must not inflate the figure; the existing expense aggregation already excludes `kind='reimbursement'` by construction (only `kind='expense'` is summed), so no new filter is introduced.
-- **ARS-equivalent** — expenses in USD are converted at their persisted FX snapshot before averaging (ADR-025 money convention; ARS-equivalent `amount` is the authoritative magnitude).
+- **ARS-equivalent** — expenses in USD are converted at their persisted FX snapshot before the per-month totals (ADR-025 money convention; ARS-equivalent `amount` is the authoritative magnitude).
 
 The lookup reuses `smallest_category_for` (ADR-046 / ADR-067) with `needed_annual_invoicing` as the amount, resolved against the scale vintage in effect on the page's reference date (`as_of=reference`). The whole Monotributo page runs on ONE clock: the standing meter, the projection, this recommendation **and** the A-K reference table all resolve `as_of=reference`, so they never show two different ceilings for the same category. Until a vintage's `effective_from` the page stays on the prior vintage (e.g. the 2026-02 scale through Jul 2026) and auto-switches on that date (the 2026-08 scale on Aug 1 2026). (An earlier draft specified `as_of=None`/latest for the recommendation; that was corrected to `as_of=reference` to keep the page self-consistent — a future vintage must not surface before its effective date.)
 
@@ -36,7 +40,8 @@ Displayed alongside the recommendation:
 
 **Edge cases:**
 
-- **No expense history** (trailing-3-month average is undefined/zero): show no recommendation — a calm note (e.g., "not enough history yet"), consistent with the low-confidence handling pattern already used for the projected-category estimate (ADR-046, ADR-051).
+- **No expense history** (no in-range month, so the median is undefined/zero): show no recommendation — a calm note (e.g., "not enough history yet"), consistent with the low-confidence handling pattern already used for the projected-category estimate (ADR-046, ADR-051).
+- **Partial history** (1–2 in-range months): still recommend, off the median of the available months, and surface `baselineMonths` so the UI can flag the baseline as low-confidence.
 - **Needed invoicing exceeds category K's ceiling**: no in-scale recommendation; show a calm flag such as "beyond Monotributo, consider régimen general" rather than forcing a category.
 
 **This is planning guidance, not the legal category.** The real Monotributo category is legally determined by actual trailing-12-month invoiced income (ADR-046's `used`/projected calculation), not chosen freely. The recommendation answers "to cover your expenses, you'd need to invoice at least category X" — it is advisory sizing, displayed distinctly from the standing/projection card so the two are not confused.
@@ -47,7 +52,9 @@ Displayed alongside the recommendation:
 
 - **Pure ratio ranking (best cuota-to-ceiling ratio across all categories)**: mathematically the "most efficient" category in the abstract, but ignores whether that category actually covers the user's real spending — could recommend a category too small to invoice their needs. Not chosen; the owner wants "covers my needs, cheapest that does" not "best ratio in isolation."
 - **Passive "where you land" view (just show which category the user's current spending falls into, no explicit recommendation)**: this is close to what the standing card already does with `used`/projection (ADR-046); doesn't add the missing cost-vs-benefit framing the owner asked for. Not chosen.
-- **6-month trailing average for needed invoicing**: smoother, less reactive to one noisy month, but the existing budgets feature already uses a 3-month average (`avg3mo`) for similar planning-guidance purposes; reusing that window keeps the app's "recent typical spending" concept consistent and the recommendation more responsive to actual life changes. Not chosen.
+- **6-month trailing window for needed invoicing**: smoother, less reactive to one noisy month, but under Argentine inflation a longer window drags in stale, inflation-eroded monthly figures that understate the current typical spend. The 3-month window (shared with budgets `avg3mo`) keeps the baseline current; switching that window's statistic from mean to **median** is what makes 3 months robust to a lumpy month without lengthening it. Not chosen.
+- **Trailing-3-month MEAN (the original ADR-200 baseline)**: simplest, but a single lumpy month (a house/car/trip) spikes the mean and over-recommends a higher, costlier category. Replaced by the median (see Status History) precisely because the owner hit this over-recommendation. Superseded within this ADR.
+- **Trimmed mean / winsorized average**: also spike-robust, but more parameters to explain (trim fraction) and no clearer than the median on a 3-value window. Not chosen; the median is the simplest robust statistic here.
 - **Tax-grossed-up needed-invoicing figure (invoicing target that nets out the category's own cuota, i.e., solve for the invoicing level whose net-of-tax proceeds equal expenses)**: more precise cost-vs-benefit modeling but materially more complex to compute and explain on a page that must stay calm and legible; the owner explicitly chose the simpler ceiling-covers-spending framing. Not chosen for MVP; could be revisited later as a refinement.
 
 ## Consequences
@@ -55,10 +62,12 @@ Displayed alongside the recommendation:
 - The Monotributo page answers "which category should I be in" directly, framed as cost (cuota) vs. benefit (invoicing capacity), alongside the existing "where do I actually stand" (ADR-046) and the static scale reference (ADR-067).
 - The recommendation is explicitly advisory — copy must distinguish it from the legally-determined actual category to avoid the user thinking the app is telling them what category they're "in."
 - Reuses `smallest_category_for` (ADR-046/ADR-067) and the existing services/goods cuota split (ADR-046) — no new category-matching logic is introduced.
-- Depends on accurate reimbursement exclusion (ADR-158) and ARS-equivalent normalization (ADR-025) already being correct in the expense aggregation the 3-month average draws from; this ADR does not change that aggregation, only reads from it.
-- No backend schema/migration; the read model gains one nullable field, keeping this a additive, low-risk slice consistent with the MVP scope boundaries in ADR-051.
+- Depends on accurate reimbursement exclusion (ADR-158) and ARS-equivalent normalization (ADR-025) already being correct in the per-month expense totals the median draws from; this ADR does not change that aggregation, only reads from it.
+- The median is robust to one-off spikes but slightly less sensitive to a genuine sustained step-up in spend than the mean would be; with a 3-month window it still tracks a real change within a couple of months, which is acceptable for advisory sizing.
+- No backend schema/migration; the read model gains the nullable `recommendation` field plus its `baselineMonths` sample-count, keeping this an additive, low-risk slice consistent with the MVP scope boundaries in ADR-051.
 - Future refinement candidates (not committed here): tax-grossed-up invoicing target, configurable averaging window, goods-vs-services activity-type auto-detection.
 
 ## Status History
 
 - 2026-07-21: accepted
+- 2026-07-21: amended — baseline changed from the trailing-3-month **mean** to the trailing-3-month **median** (robust to one-off spikes; uses in-range months only, from the owner's first recorded expense month; carries a `baselineMonths` sample-count). The window is kept at 3 months for currency under inflation rather than widened to 6. Field renamed `avgMonthlyExpenses` → `typicalMonthlyExpenses` (now "median typical monthly spend"). Prompted by the mean over-recommending a costlier category after a single lumpy purchase month.

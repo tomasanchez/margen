@@ -27,8 +27,12 @@
   },
   "bestCategory": {
     "title": "Best category for you",
-    "body": "To cover your average expenses of {{avgMonthlyExpenses}}/mo (≈ {{neededAnnualInvoicing}}/yr to invoice), the cheapest category that fits is <category>{{category}}</category> — fee <fee>{{monthlyFee}}</fee>/mo ({{annualFee}}/yr), about <rate>{{rate}}%</rate> of what you'd invoice.",
-    "aboveScale": "To cover your average expenses of {{avgMonthlyExpenses}}/mo you'd need to invoice ≈ {{neededAnnualInvoicing}}/yr — beyond the top Monotributo category. Consider the régimen general.",
+    "body": "To cover your typical monthly spend of {{typicalMonthlyExpenses}}/mo (≈ {{neededAnnualInvoicing}}/yr to invoice), the cheapest category that fits is <category>{{category}}</category> — fee <fee>{{monthlyFee}}</fee>/mo ({{annualFee}}/yr), about <rate>{{rate}}%</rate> of what you'd invoice.",
+    "aboveScale": "To cover your typical monthly spend of {{typicalMonthlyExpenses}}/mo you'd need to invoice ≈ {{neededAnnualInvoicing}}/yr — beyond the top Monotributo category. Consider the régimen general.",
+    "baselineEarly_one": "Early estimate — based on {{count}} month of spending; it'll sharpen as more is recorded.",
+    "baselineEarly_other": "Early estimate — based on {{count}} months of spending; it'll sharpen as more is recorded.",
+    "baselineSettled_one": "· based on {{count}} month",
+    "baselineSettled_other": "· based on {{count}} months",
     "empty": "Add a few expenses and we'll suggest the most cost-effective category."
   },
   "ladder": {

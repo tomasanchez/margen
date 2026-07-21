@@ -23,15 +23,24 @@ class MonotributoRecommendation:
     """A "best category" recommendation from trailing spend (owner-confirmed feature).
 
     Answers "which is the cheapest Monotributo category I could sit in and still
-    cover my expenses?" by treating trailing-3-month average expenses (annualized)
+    cover my expenses?" by treating the owner's TYPICAL monthly spend (annualized)
     as the income the taxpayer needs to invoice, then picking the cheapest band
     whose annual ceiling covers it. Money is :class:`~decimal.Decimal` (ADR-025).
 
+    The baseline is the **median** of the owner's trailing-3-month expense totals
+    rather than the mean (ADR-200), so a single lumpy month (a house/car/trip) no
+    longer spikes the figure and over-recommends a costlier band. Only months from
+    the owner's first recorded expense month onward are counted; ``baseline_months``
+    reports how many in-range months the median is based on so the UI can flag a
+    low-confidence baseline when it is below three.
+
     Attributes:
-        avg_monthly_expenses: Trailing-3-calendar-month average of the owner's net
-            EXPENSE outflow (reimbursement-net, ARS-equivalent; ADR-025/158), the
-            mean over exactly three months.
-        needed_annual_invoicing: ``avg_monthly_expenses * 12`` — the income the
+        typical_monthly_expenses: The MEDIAN of the trailing-3-calendar-month totals
+            of the owner's net EXPENSE outflow (reimbursement-net, ARS-equivalent;
+            ADR-025/158), robust to one-off spikes (ADR-200). Only in-range months
+            (from the owner's first recorded expense month) contribute; the median of
+            an even count is the mean of the two middles, rounded per ADR-025.
+        needed_annual_invoicing: ``typical_monthly_expenses * 12`` — the income the
             taxpayer needs to invoice to cover a year at that pace.
         category: The cheapest category (A-K) whose annual ceiling covers
             ``needed_annual_invoicing`` (``smallest_category_for``).
@@ -43,15 +52,19 @@ class MonotributoRecommendation:
         above_scale: Whether ``needed_annual_invoicing`` exceeds the TOP category's
             ceiling, so ``category`` is the top band only as a floor — the taxpayer
             is beyond Monotributo and should consider the régimen general.
+        baseline_months: How many in-range trailing months (1-3) the median is based
+            on, so the UI can show a "based on N month(s)" / low-confidence note when
+            it is below three.
     """
 
-    avg_monthly_expenses: Decimal
+    typical_monthly_expenses: Decimal
     needed_annual_invoicing: Decimal
     category: str
     monthly_fee: Decimal
     annual_fee: Decimal
     effective_tax_rate_pct: Decimal
     above_scale: bool
+    baseline_months: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,11 +88,11 @@ class MonotributoStanding:
         period_start: First day of the trailing-12-month window.
         period_end: Last day of the trailing-12-month window (``today`` for the
             live current standing).
-        recommendation: The "best category" recommendation from trailing-3-month
-            average expenses, or ``None`` when there is no expense history (avg is
-            ``0``) so the UI can show a calm "add expenses to see this" note. Only
-            the live ``current`` standing carries one; comparison/persisted
-            standings leave it ``None``.
+        recommendation: The "best category" recommendation from the median of the
+            trailing-3-month expense totals (ADR-200), or ``None`` when there is no
+            in-range expense history so the UI can show a calm "add expenses to see
+            this" note. Only the live ``current`` standing carries one;
+            comparison/persisted standings leave it ``None``.
     """
 
     category: str

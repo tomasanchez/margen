@@ -81,8 +81,10 @@ def _snapshot(*, with_previous: bool, with_recommendation: bool = True) -> Monot
     previous = _standing(used="500000.00") if with_previous else None
     current = _standing(used="1500000.50")
     if with_recommendation:
-        # 1M/mo trailing average -> needed 12M -> band B (the shape the frontend wires).
-        recommendation = recommend_category(Decimal("1000000.00"), activity_type="services", as_of=TODAY)
+        # 1M/mo trailing median -> needed 12M -> band B (the shape the frontend wires).
+        recommendation = recommend_category(
+            Decimal("1000000.00"), activity_type="services", as_of=TODAY, baseline_months=3
+        )
         current = replace(current, recommendation=recommendation)
     # Assemble on the same clock as the meter (as_of=TODAY) so the scale table + its
     # effective/next-review dates all resolve to the one vintage (ADR-067).
@@ -261,8 +263,8 @@ class TestMonotributoSnapshot:
         """
         GIVEN a snapshot whose current standing carries a best-category recommendation
         WHEN the Monotributo endpoint is requested
-        THEN current.recommendation is a camelCase object with Decimal-string money and
-             the boolean aboveScale flag (the exact shape the frontend wires)
+        THEN current.recommendation is a camelCase object with Decimal-string money, the
+             boolean aboveScale flag and the integer baselineMonths (the frontend shape)
         """
         # WHEN
         response = await client.get(MONOTRIBUTO)
@@ -270,22 +272,25 @@ class TestMonotributoSnapshot:
         # THEN
         recommendation = response.json()["data"]["current"]["recommendation"]
         assert set(recommendation) == {
-            "avgMonthlyExpenses",
+            "typicalMonthlyExpenses",
             "neededAnnualInvoicing",
             "category",
             "monthlyFee",
             "annualFee",
             "effectiveTaxRatePct",
             "aboveScale",
+            "baselineMonths",
         }
         # Money crosses as Decimal strings, not floats; the band letter is a string.
-        assert recommendation["avgMonthlyExpenses"] == "1000000.00"
+        assert recommendation["typicalMonthlyExpenses"] == "1000000.00"
         assert recommendation["neededAnnualInvoicing"] == "12000000.00"
         assert recommendation["category"] == "B"
         assert isinstance(recommendation["monthlyFee"], str)
         assert isinstance(recommendation["annualFee"], str)
         assert isinstance(recommendation["effectiveTaxRatePct"], str)
         assert recommendation["aboveScale"] is False
+        # baselineMonths crosses as a plain integer (1-3) for the low-confidence note.
+        assert recommendation["baselineMonths"] == 3
 
     async def test_recommendation_may_be_null(self, uow: FakeUnitOfWork):
         """

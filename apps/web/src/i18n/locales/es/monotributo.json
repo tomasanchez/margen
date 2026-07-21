@@ -27,8 +27,12 @@
   },
   "bestCategory": {
     "title": "La mejor categoría para vos",
-    "body": "Para cubrir tus gastos promedio de {{avgMonthlyExpenses}}/mes (≈ {{neededAnnualInvoicing}}/año a facturar), la categoría más económica que te alcanza es <category>{{category}}</category> — cuota <fee>{{monthlyFee}}</fee>/mes ({{annualFee}}/año), alrededor del <rate>{{rate}}%</rate> de lo que facturarías.",
-    "aboveScale": "Para cubrir tus gastos promedio de {{avgMonthlyExpenses}}/mes necesitarías facturar ≈ {{neededAnnualInvoicing}}/año — más allá de la categoría más alta del Monotributo. Considerá el régimen general.",
+    "body": "Para cubrir tu gasto mensual típico de {{typicalMonthlyExpenses}}/mes (≈ {{neededAnnualInvoicing}}/año a facturar), la categoría más económica que te alcanza es <category>{{category}}</category> — cuota <fee>{{monthlyFee}}</fee>/mes ({{annualFee}}/año), alrededor del <rate>{{rate}}%</rate> de lo que facturarías.",
+    "aboveScale": "Para cubrir tu gasto mensual típico de {{typicalMonthlyExpenses}}/mes necesitarías facturar ≈ {{neededAnnualInvoicing}}/año — más allá de la categoría más alta del Monotributo. Considerá el régimen general.",
+    "baselineEarly_one": "Estimación inicial — basada en {{count}} mes de gastos; se va a afinar a medida que registres más.",
+    "baselineEarly_other": "Estimación inicial — basada en {{count}} meses de gastos; se va a afinar a medida que registres más.",
+    "baselineSettled_one": "· basado en {{count}} mes",
+    "baselineSettled_other": "· basado en {{count}} meses",
     "empty": "Agregá algunos gastos y te sugerimos la categoría más conveniente."
   },
   "ladder": {

@@ -179,23 +179,22 @@ def _reimbursement(occurred_on: date, amount: str, offsets: Transaction):
 
 
 class TestRecommendationAggregation:
-    """The recommendation's avg-expenses is the trailing-3-month net-of-reimbursements mean."""
+    """The recommendation's typical-spend is the trailing-3-month net-of-reimbursements MEDIAN (ADR-200)."""
 
-    async def test_avg_expenses_window_is_net_over_three_months(
+    async def test_typical_expenses_window_is_net_median_over_three_months(
         self, session_factory: async_sessionmaker[AsyncSession]
     ):
         """
         GIVEN expenses across the three calendar months before the reference month
               (Mar/Apr/May 2026), one partly reimbursed, plus out-of-window noise
         WHEN the snapshot is read from PostgreSQL
-        THEN the recommendation's avgMonthlyExpenses is the mean of the NET monthly
-             totals over exactly three months (ADR-158), and its needed invoicing
-             annualizes that average
+        THEN the recommendation's typicalMonthlyExpenses is the MEDIAN of the NET monthly
+             totals over exactly three in-range months (ADR-158/200), and its needed
+             invoicing annualizes that median with baselineMonths == 3
         """
         # GIVEN — Mar 600k with a 150k payback (net 450k), Apr 300k, May 300k.
         # An in-limit invoice and a June (current-month, out of the trailing-3) expense
-        # must NOT feed the average. Net window total = 450k + 300k + 300k = 1_050_000;
-        # mean over 3 = 350_000/mo.
+        # must NOT feed the baseline. Net months sorted [300k, 300k, 450k]; median = 300k.
         march_expense = _expense(date(2026, 3, 10), "600000.00")
         await _seed(
             session_factory,
@@ -213,12 +212,68 @@ class TestRecommendationAggregation:
         async with session_factory() as session:
             snapshot = await SqlAlchemyMonotributoReader(session).snapshot(REFERENCE, OWNER)
 
-        # THEN — net mean 350k/mo, annualized to 4.2M needed invoicing.
+        # THEN — net median 300k/mo, annualized to 3.6M needed invoicing, 3-month baseline.
         recommendation = snapshot.current.recommendation
         assert recommendation is not None
-        assert recommendation.avg_monthly_expenses == Decimal("350000.00")
-        assert recommendation.needed_annual_invoicing == Decimal("4200000.00")
+        assert recommendation.typical_monthly_expenses == Decimal("300000.00")
+        assert recommendation.needed_annual_invoicing == Decimal("3600000.00")
         assert recommendation.above_scale is False
+        assert recommendation.baseline_months == 3
+
+    async def test_median_ignores_single_spike_month(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN a lumpy one-off purchase month among two typical months
+        WHEN the snapshot is read from PostgreSQL
+        THEN the median is the typical middle month, not the spike-inflated mean (ADR-200)
+        """
+        # GIVEN — Mar 800k, Apr 5,000k (one-off), May 850k. Sorted [800k, 850k, 5,000k];
+        # median = 850k (the ~2.2M mean would over-recommend a costlier band).
+        await _seed(
+            session_factory,
+            [
+                _expense(date(2026, 3, 10), "800000.00"),
+                _expense(date(2026, 4, 5), "5000000.00"),
+                _expense(date(2026, 5, 5), "850000.00"),
+            ],
+        )
+
+        # WHEN
+        async with session_factory() as session:
+            snapshot = await SqlAlchemyMonotributoReader(session).snapshot(REFERENCE, OWNER)
+
+        # THEN — the spike is ignored; the middle month stands.
+        recommendation = snapshot.current.recommendation
+        assert recommendation is not None
+        assert recommendation.typical_monthly_expenses == Decimal("850000.00")
+        assert recommendation.baseline_months == 3
+
+    async def test_prehistory_months_not_counted_as_zero(self, session_factory: async_sessionmaker[AsyncSession]):
+        """
+        GIVEN the owner's first expense falls INSIDE the trailing-3-month window
+        WHEN the snapshot is read from PostgreSQL
+        THEN only the in-range months form the median (baselineMonths < 3), and a
+             pre-history month is NOT counted as a phantom zero (ADR-200)
+        """
+        # GIVEN — first expense Apr 2026 (March has none). In-range Apr 600k, May 1,000k;
+        # median (mean of two) = 800k, baseline of 2. A phantom March-zero would deflate
+        # the median to 600k (median of [0, 600k, 1,000k]).
+        await _seed(
+            session_factory,
+            [
+                _expense(date(2026, 4, 5), "600000.00"),
+                _expense(date(2026, 5, 5), "1000000.00"),
+            ],
+        )
+
+        # WHEN
+        async with session_factory() as session:
+            snapshot = await SqlAlchemyMonotributoReader(session).snapshot(REFERENCE, OWNER)
+
+        # THEN — median of the two real months (800k), not the deflated 600k.
+        recommendation = snapshot.current.recommendation
+        assert recommendation is not None
+        assert recommendation.typical_monthly_expenses == Decimal("800000.00")
+        assert recommendation.baseline_months == 2
 
     async def test_recommendation_is_none_without_expense_history(
         self, session_factory: async_sessionmaker[AsyncSession]
