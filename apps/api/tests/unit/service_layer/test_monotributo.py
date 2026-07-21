@@ -27,6 +27,7 @@ from margen_api.service_layer.monotributo import (
     _percent_used,
     build_snapshot,
     build_standing,
+    median_monthly_expenses,
     month_start,
     prior_window,
     project,
@@ -452,7 +453,7 @@ class TestRecommendCategory:
         WHEN the recommendation is computed
         THEN it is None so the UI shows the calm "add expenses" note (no divide-by-zero)
         """
-        assert recommend_category(Decimal("0"), activity_type="services", as_of=TODAY) is None
+        assert recommend_category(Decimal("0"), activity_type="services", as_of=TODAY, baseline_months=0) is None
 
     def test_picks_cheapest_covering_category(self) -> None:
         """
@@ -462,13 +463,17 @@ class TestRecommendCategory:
         """
         # GIVEN — 1M/mo -> needed 12M. Against the 2026-02 scale the cheapest covering
         # band is the first whose ceiling >= 12M (A is ~10.28M, B is ~15.06M -> B).
-        recommendation = recommend_category(Decimal("1000000.00"), activity_type="services", as_of=TODAY)
+        recommendation = recommend_category(
+            Decimal("1000000.00"), activity_type="services", as_of=TODAY, baseline_months=3
+        )
 
         # THEN
         assert recommendation is not None
         assert recommendation.needed_annual_invoicing == Decimal("12000000.00")
         assert recommendation.category == "B"
         assert recommendation.above_scale is False
+        assert recommendation.baseline_months == 3
+        assert recommendation.typical_monthly_expenses == Decimal("1000000.00")
 
     def test_effective_rate_and_fee_math(self) -> None:
         """
@@ -478,7 +483,9 @@ class TestRecommendCategory:
              effective rate is annualFee / neededAnnualInvoicing * 100 (2 decimals, ADR-025)
         """
         # GIVEN — 1M/mo -> needed 12M -> band B (services).
-        recommendation = recommend_category(Decimal("1000000.00"), activity_type="services", as_of=TODAY)
+        recommendation = recommend_category(
+            Decimal("1000000.00"), activity_type="services", as_of=TODAY, baseline_months=3
+        )
 
         # THEN — exact fee/rate arithmetic against the resolved scale.
         assert recommendation is not None
@@ -498,7 +505,9 @@ class TestRecommendCategory:
         THEN monthlyFee reads the goods cuota, not the services one
         """
         # GIVEN — 1.5M/mo -> needed 18M -> band C, whose cuotas differ by activity.
-        recommendation = recommend_category(Decimal("1500000.00"), activity_type="bienes", as_of=TODAY)
+        recommendation = recommend_category(
+            Decimal("1500000.00"), activity_type="bienes", as_of=TODAY, baseline_months=3
+        )
 
         # THEN
         assert recommendation is not None
@@ -516,7 +525,7 @@ class TestRecommendCategory:
         avg = (top.annual_ceiling / Decimal(12)) + Decimal("100000")
 
         # WHEN
-        recommendation = recommend_category(avg, activity_type="services", as_of=TODAY)
+        recommendation = recommend_category(avg, activity_type="services", as_of=TODAY, baseline_months=3)
 
         # THEN
         assert recommendation is not None
@@ -534,9 +543,51 @@ class TestRecommendCategory:
         avg = top.annual_ceiling / Decimal(12)
 
         # WHEN
-        recommendation = recommend_category(avg, activity_type="services", as_of=TODAY)
+        recommendation = recommend_category(avg, activity_type="services", as_of=TODAY, baseline_months=1)
 
         # THEN
         assert recommendation is not None
         assert recommendation.category == top.letter
         assert recommendation.above_scale is False
+        assert recommendation.baseline_months == 1
+
+
+class TestMedianMonthlyExpenses:
+    """``median_monthly_expenses`` is the robust trailing baseline (ADR-200)."""
+
+    def test_empty_is_zero(self) -> None:
+        """
+        GIVEN no in-range months (no expense history)
+        WHEN the median is computed
+        THEN it is zero so the caller yields no recommendation
+        """
+        assert median_monthly_expenses([]) == Decimal("0")
+
+    def test_single_month_is_that_month(self) -> None:
+        """
+        GIVEN a single in-range month
+        WHEN the median is computed
+        THEN it is that month's total (median of one), rounded to money precision
+        """
+        assert median_monthly_expenses([Decimal("800000.00")]) == Decimal("800000.00")
+
+    def test_even_count_averages_the_two_middles(self) -> None:
+        """
+        GIVEN an even count of months
+        WHEN the median is computed
+        THEN it is the mean of the two middle values (standard even-count median)
+        """
+        # GIVEN — two months 800k and 900k -> median is their mean, 850k.
+        assert median_monthly_expenses([Decimal("900000.00"), Decimal("800000.00")]) == Decimal("850000.00")
+
+    def test_ignores_a_single_spike_month(self) -> None:
+        """
+        GIVEN two typical months and one lumpy spike month
+        WHEN the median is computed
+        THEN it is the middle typical month, NOT the spike-inflated mean (ADR-200)
+        """
+        # GIVEN — [800k, 850k, 5,000k]; the ~2.2M mean would over-recommend; median is 850k.
+        months = [Decimal("800000.00"), Decimal("850000.00"), Decimal("5000000.00")]
+
+        # WHEN / THEN — the spike is ignored; the middle value stands.
+        assert median_monthly_expenses(months) == Decimal("850000.00")

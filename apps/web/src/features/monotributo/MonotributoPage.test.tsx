@@ -131,7 +131,8 @@ const CURRENT: MonotributoStanding = {
   periodStart: '2025-06-13',
   periodEnd: '2026-06-13',
   recommendation: {
-    avgMonthlyExpenses: 850_000,
+    typicalMonthlyExpenses: 850_000,
+    baselineMonths: 3,
     neededAnnualInvoicing: 10_200_000,
     category: 'B',
     monthlyFee: 48_251,
@@ -442,7 +443,8 @@ describe('best category for you (ADR-200)', () => {
         current: {
           ...CURRENT,
           recommendation: {
-            avgMonthlyExpenses: 40_000_000,
+            typicalMonthlyExpenses: 40_000_000,
+            baselineMonths: 3,
             neededAnnualInvoicing: 480_000_000,
             category: 'K',
             monthlyFee: 0,

@@ -44,6 +44,7 @@ from margen_api.service_layer.insights_reader import AbstractInsightsReader
 from margen_api.service_layer.monotributo import (
     build_snapshot,
     build_standing,
+    median_monthly_expenses,
     prior_window,
     recommend_category,
     trailing_window,
@@ -155,8 +156,10 @@ _CATEGORY = func.coalesce(TransactionRecord.category, UNCATEGORIZED)
 
 
 _ZERO = Decimal(0)
-# The trailing-average window is exactly three calendar months (ADR-145).
-_THREE = Decimal(3)
+# The trailing baseline window is exactly three calendar months (ADR-145); the
+# recommendation takes the MEDIAN of the in-range months rather than the mean so a
+# single lumpy month cannot spike it (ADR-200).
+_TRAILING_MONTHS = (-3, -2, -1)
 
 
 def _as_decimal(value: object) -> Decimal:
@@ -920,33 +923,74 @@ class SqlAlchemyMonotributoReader(AbstractMonotributoReader):
         activity_type: str,
         owner: UUID,
     ) -> MonotributoRecommendation | None:
-        """Build the owner's "best category" recommendation from trailing-3-month expenses.
+        """Build the owner's "best category" recommendation from trailing-3-month expenses (ADR-200).
 
         Delegates the band selection, fee lookup and effective-rate math to the pure
-        :func:`recommend_category`; this adapter only supplies the avg-expenses input
-        (owner-scoped SQL) and the clock (``reference``). ``None`` when the owner has
-        no expense history so the UI shows a calm "add expenses to see this" note.
+        :func:`recommend_category`; this adapter only supplies the median typical-spend
+        input and its sample-month count (owner-scoped SQL) and the clock
+        (``reference``). ``None`` when the owner has no in-range expense history so the
+        UI shows a calm "add expenses to see this" note.
         """
-        avg_monthly_expenses = await self._avg_monthly_expenses(reference, owner)
-        return recommend_category(avg_monthly_expenses, activity_type=activity_type, as_of=reference)
+        typical_monthly_expenses, baseline_months = await self._typical_monthly_expenses(reference, owner)
+        return recommend_category(
+            typical_monthly_expenses,
+            activity_type=activity_type,
+            as_of=reference,
+            baseline_months=baseline_months,
+        )
 
-    async def _avg_monthly_expenses(self, reference: date, owner: UUID) -> Decimal:
-        """Return the owner's trailing-3-calendar-month average NET expense outflow (ADR-158, ADR-025).
+    async def _typical_monthly_expenses(self, reference: date, owner: UUID) -> tuple[Decimal, int]:
+        """Return the owner's trailing-3-month MEDIAN NET expense outflow + its sample size (ADR-200).
 
-        Mirrors the budgets ``avg3mo`` window exactly (ADR-145): the three calendar
-        months immediately before ``reference``'s month, summed across all categories
-        via the shared :func:`month_category_expense_totals` (reimbursement-net,
-        ARS-equivalent, each category-month floored at zero — ADR-160/162), then the
-        mean over exactly three months (a month with no spend contributes zero), so
-        the divisor is always ``3``. Owner-scoped (ADR-108).
+        Mirrors the budgets ``avg3mo`` window (ADR-145): the three calendar months
+        immediately before ``reference``'s month, each summed across all categories via
+        the shared :func:`month_category_expense_totals` (reimbursement-net,
+        ARS-equivalent, each category-month floored at zero — ADR-160/162). The baseline
+        is then the MEDIAN of those totals rather than the mean (ADR-200), so a single
+        lumpy month (a house/car/trip) cannot spike it and over-recommend a costlier band.
+
+        Only months from the owner's FIRST recorded expense month onward are counted:
+        pre-history months are dropped entirely rather than treated as ``0`` (that would
+        wrongly deflate the median), while a genuinely-zero month INSIDE the active range
+        still counts as ``0``. With three in-range months the median is of three; with one
+        or two it is of what exists; with none the caller yields no recommendation.
+        Owner-scoped (ADR-108).
+
+        Returns:
+            A ``(median_monthly_expenses, baseline_months)`` tuple; ``baseline_months`` is
+            the count of in-range months (0-3) the median is based on. ``(0, 0)`` when the
+            owner has no recorded expense yet.
         """
+        first_expense_month = await self._first_expense_month(owner)
         period = date(reference.year, reference.month, 1)
-        prior_months = [add_months(period, offset) for offset in (-3, -2, -1)]
-        total = _ZERO
-        for prior in prior_months:
+        monthly_totals: list[Decimal] = []
+        for offset in _TRAILING_MONTHS:
+            prior = add_months(period, offset)
+            # Skip months before the owner's first recorded expense so pre-history never
+            # dilutes the median as a phantom zero (ADR-200).
+            if first_expense_month is None or prior < first_expense_month:
+                continue
             month_totals = await month_category_expense_totals(self.session, prior, owner)
-            total += sum(month_totals.values(), _ZERO)
-        return total / _THREE
+            monthly_totals.append(sum(month_totals.values(), _ZERO))
+        return median_monthly_expenses(monthly_totals), len(monthly_totals)
+
+    async def _first_expense_month(self, owner: UUID) -> date | None:
+        """Return the first day of the owner's earliest recorded expense month, or ``None`` (ADR-200, ADR-108).
+
+        The lower bound of the owner's active expense range: the calendar month of their
+        earliest ``kind='expense'`` row (``MIN(occurred_on)`` normalized to the first of
+        the month). Used to keep the trailing-3-month median from counting pre-history
+        months as phantom zeros. ``None`` when the owner has no expense at all — the
+        recommendation then stays null. Owner-scoped (ADR-108).
+        """
+        statement = select(func.min(TransactionRecord.occurred_on)).where(
+            TransactionRecord.user_id == owner,
+            TransactionRecord.kind == Kind.EXPENSE.value,
+        )
+        earliest = (await self.session.execute(statement)).scalar_one_or_none()
+        if earliest is None:
+            return None
+        return date(earliest.year, earliest.month, 1)
 
     async def _invoices_in_window(self, window_start: date, window_end: date, owner: UUID) -> list[MonotributoInvoice]:
         """List the owner's counted invoices oldest-first with a running cumulative (ADR-108)."""

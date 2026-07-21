@@ -623,16 +623,21 @@ export interface MonotributoProjection {
 }
 
 /**
- * The cheapest Monotributo category that would cover the user's average
- * expenses (ADR-200). Money fields are ARS numbers (parsed in the client
- * adapter); `effectiveTaxRatePct` is a 2dp percentage number (e.g. 4.83);
+ * The cheapest Monotributo category that would cover the user's typical monthly
+ * spend (ADR-200). `typicalMonthlyExpenses` is the trailing-3-month MEDIAN of
+ * monthly spend (robust to one-off lumpy months); `baselineMonths` is how many
+ * months (1–3) that median is based on, so the UI can show a low-confidence
+ * caveat while data is still thin. Money fields are ARS numbers (parsed in the
+ * client adapter); `effectiveTaxRatePct` is a 2dp percentage number (e.g. 4.83);
  * `aboveScale` is true when the needed invoicing exceeds the top category, in
  * which case no category fits and `category` is not meaningful (the UI points
  * the user to the régimen general instead).
  */
 export interface MonotributoRecommendation {
-  /** Average monthly expenses to cover (ARS). */
-  avgMonthlyExpenses: number
+  /** Typical monthly spend to cover — the trailing-3-month median (ARS). */
+  typicalMonthlyExpenses: number
+  /** How many months of data the median is based on (1–3). */
+  baselineMonths: number
   /** Annual invoicing needed to cover those expenses (ARS). */
   neededAnnualInvoicing: number
   /** The cheapest fitting category letter (ignore when `aboveScale`). */

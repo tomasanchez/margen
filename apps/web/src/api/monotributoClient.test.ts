@@ -39,7 +39,8 @@ const currentDto: MonotributoStandingDto = {
   periodStart: '2025-06-13',
   periodEnd: '2026-06-13',
   recommendation: {
-    avgMonthlyExpenses: '850000.00',
+    typicalMonthlyExpenses: '850000.00',
+    baselineMonths: 3,
     neededAnnualInvoicing: '10200000.00',
     category: 'B',
     monthlyFee: '48251.00',
@@ -130,7 +131,9 @@ describe('adaptStanding', () => {
     const { recommendation } = adaptStanding(currentDto)
 
     expect(recommendation).not.toBeNull()
-    expect(recommendation?.avgMonthlyExpenses).toBe(850_000)
+    // typicalMonthlyExpenses is the trailing-3-month median (renamed from avgMonthlyExpenses).
+    expect(recommendation?.typicalMonthlyExpenses).toBe(850_000)
+    expect(recommendation?.baselineMonths).toBe(3)
     expect(recommendation?.neededAnnualInvoicing).toBe(10_200_000)
     expect(recommendation?.monthlyFee).toBe(48_251)
     expect(recommendation?.annualFee).toBe(579_012)
@@ -138,6 +141,17 @@ describe('adaptStanding', () => {
     expect(typeof recommendation?.effectiveTaxRatePct).toBe('number')
     expect(recommendation?.category).toBe('B')
     expect(recommendation?.aboveScale).toBe(false)
+  })
+
+  test('carries baselineMonths through the adapter (median confidence, ADR-200)', () => {
+    const { recommendation } = adaptStanding({
+      ...currentDto,
+      recommendation: {
+        ...currentDto.recommendation!,
+        baselineMonths: 1,
+      },
+    })
+    expect(recommendation?.baselineMonths).toBe(1)
   })
 
   test('maps a null recommendation through as null', () => {

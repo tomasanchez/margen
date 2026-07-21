@@ -29,11 +29,11 @@ from margen_api.service_layer.monotributo_read_models import (
 class MonotributoRecommendationResponse(CamelCaseModel):
     """The "best category" recommendation for the Monotributo page (owner-confirmed feature)."""
 
-    avg_monthly_expenses: Decimal = Field(
-        description="Trailing-3-month average net expense outflow in ARS (reimbursement-net).",
+    typical_monthly_expenses: Decimal = Field(
+        description="Median of the trailing-3-month net expense totals in ARS (reimbursement-net; ADR-200).",
     )
     needed_annual_invoicing: Decimal = Field(
-        description="avgMonthlyExpenses * 12 — the income the taxpayer needs to invoice.",
+        description="typicalMonthlyExpenses * 12 — the income the taxpayer needs to invoice.",
     )
     category: str = Field(description="Cheapest category (A-K) whose ceiling covers the needed invoicing.")
     monthly_fee: Decimal = Field(description="That category's monthly cuota for the taxpayer's activity type.")
@@ -44,18 +44,22 @@ class MonotributoRecommendationResponse(CamelCaseModel):
     above_scale: bool = Field(
         description="True when the needed invoicing exceeds the top category — beyond Monotributo.",
     )
+    baseline_months: int = Field(
+        description="In-range trailing months (1-3) the median is based on; below 3 is low-confidence.",
+    )
 
     @classmethod
     def from_read_model(cls, model: MonotributoRecommendation) -> MonotributoRecommendationResponse:
         """Build the response recommendation from a read model."""
         return cls(
-            avg_monthly_expenses=model.avg_monthly_expenses,
+            typical_monthly_expenses=model.typical_monthly_expenses,
             needed_annual_invoicing=model.needed_annual_invoicing,
             category=model.category,
             monthly_fee=model.monthly_fee,
             annual_fee=model.annual_fee,
             effective_tax_rate_pct=model.effective_tax_rate_pct,
             above_scale=model.above_scale,
+            baseline_months=model.baseline_months,
         )
 
 
@@ -75,7 +79,7 @@ class MonotributoStandingResponse(CamelCaseModel):
     period_end: date = Field(description="Last day of the trailing-12-month window.")
     recommendation: MonotributoRecommendationResponse | None = Field(
         default=None,
-        description="Best-category recommendation from trailing-3-month expenses; null with no expense history.",
+        description="Best-category recommendation from the trailing-3-month median expenses; null with no history.",
     )
 
     @classmethod

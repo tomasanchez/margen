@@ -234,42 +234,74 @@ def build_standing(
     )
 
 
+def median_monthly_expenses(monthly_totals: list[Decimal]) -> Decimal:
+    """Return the MEDIAN of a list of per-month expense totals (ADR-200).
+
+    The baseline is the median rather than the mean so a single lumpy month (a
+    house/car/trip) does not spike the figure and over-recommend a costlier band.
+    Standard median: the middle value of an odd count, or the mean of the two
+    middles of an even count, rounded to money precision (ADR-025). The caller
+    passes ONLY in-range months (from the owner's first recorded expense month
+    onward), so a genuinely-zero month inside the active range counts as ``0`` but a
+    pre-history month never dilutes the median.
+
+    Args:
+        monthly_totals: The in-range per-month net expense totals (any order); each a
+            non-negative ARS-equivalent :class:`~decimal.Decimal`.
+
+    Returns:
+        The median total rounded to two decimals (ADR-025); ``0`` for an empty list.
+    """
+    if not monthly_totals:
+        return _ZERO
+    ordered = sorted(monthly_totals)
+    count = len(ordered)
+    middle = count // 2
+    if count % 2 == 1:
+        return _money(ordered[middle])
+    return _money((ordered[middle - 1] + ordered[middle]) / Decimal(2))
+
+
 def recommend_category(
-    avg_monthly_expenses: Decimal,
+    typical_monthly_expenses: Decimal,
     *,
     activity_type: str,
     as_of: date,
+    baseline_months: int,
 ) -> MonotributoRecommendation | None:
     """Recommend the cheapest category covering the owner's needed invoicing (owner-confirmed feature).
 
-    Treats the trailing-3-month average expenses, annualized, as the income the
-    taxpayer needs to invoice to cover a year at that pace, then picks the cheapest
-    Monotributo band whose annual ceiling covers it and reports its cuota as the
-    "cost" plus the effective tax rate against that invoicing. The scale vintage is
-    resolved for ``as_of`` (ADR-067) so the calc stays clock-injected like the rest
-    of the Monotributo code.
+    Treats the owner's TYPICAL monthly spend (the median of the trailing-3-month
+    expense totals, ADR-200), annualized, as the income the taxpayer needs to invoice
+    to cover a year at that pace, then picks the cheapest Monotributo band whose
+    annual ceiling covers it and reports its cuota as the "cost" plus the effective
+    tax rate against that invoicing. The median is robust to one-off spikes where the
+    old mean over-recommended. The scale vintage is resolved for ``as_of`` (ADR-067)
+    so the calc stays clock-injected like the rest of the Monotributo code.
 
     Args:
-        avg_monthly_expenses: The owner's trailing-3-calendar-month average net
-            expense outflow (reimbursement-net, ARS-equivalent; ADR-025/158).
+        typical_monthly_expenses: The owner's median trailing-3-month net expense
+            outflow (reimbursement-net, ARS-equivalent; ADR-025/158/200).
         activity_type: ``"services"`` (reads ``cuota_servicios``) or otherwise the
             goods path (reads ``cuota_bienes``); the standing's own activity type.
         as_of: The reference date selecting the scale vintage (server "today").
+        baseline_months: How many in-range trailing months (1-3) the median is based
+            on; carried through for the UI's low-confidence note (ADR-200).
 
     Returns:
-        A :class:`MonotributoRecommendation`, or ``None`` when there is no expense
-        history (``avg_monthly_expenses`` is ``0``) so the UI shows a calm
+        A :class:`MonotributoRecommendation`, or ``None`` when there is no in-range
+        expense history (``typical_monthly_expenses`` is ``0``) so the UI shows a calm
         "add expenses to see this" note rather than a divide-by-zero figure.
     """
-    if avg_monthly_expenses <= _ZERO:
+    if typical_monthly_expenses <= _ZERO:
         return None
-    needed_annual_invoicing = _money(avg_monthly_expenses * _TWELVE)
+    needed_annual_invoicing = _money(typical_monthly_expenses * _TWELVE)
     letter = smallest_category_for(needed_annual_invoicing, as_of=as_of)
     row = get_category(letter, as_of=as_of)
     monthly_fee = row.cuota_servicios if activity_type == _SERVICES_ACTIVITY else row.cuota_bienes
     annual_fee = _money(monthly_fee * _TWELVE)
-    # needed_annual_invoicing is > 0 here (avg was > 0), so the rate never divides by
-    # zero; still round it the money way for a stable contract (ADR-025).
+    # needed_annual_invoicing is > 0 here (median was > 0), so the rate never divides
+    # by zero; still round it the money way for a stable contract (ADR-025).
     effective_tax_rate_pct = _money(annual_fee / needed_annual_invoicing * _HUNDRED)
     # smallest_category_for floors at the top band when the amount exceeds every
     # ceiling; flag that so the UI can say "beyond Monotributo — consider régimen
@@ -277,13 +309,14 @@ def recommend_category(
     top_ceiling = scale_for(as_of).categories[-1].annual_ceiling
     above_scale = needed_annual_invoicing > top_ceiling
     return MonotributoRecommendation(
-        avg_monthly_expenses=_money(avg_monthly_expenses),
+        typical_monthly_expenses=_money(typical_monthly_expenses),
         needed_annual_invoicing=needed_annual_invoicing,
         category=letter,
         monthly_fee=monthly_fee,
         annual_fee=annual_fee,
         effective_tax_rate_pct=effective_tax_rate_pct,
         above_scale=above_scale,
+        baseline_months=baseline_months,
     )
 
 

@@ -39,16 +39,20 @@ interface ResponseEnvelope<T> {
 type StatusDto = 'safe' | 'watch' | 'close' | 'over'
 
 /**
- * The cheapest Monotributo category that would cover the user's average
- * expenses (ADR-200), as serialized by the backend. Money fields are ARS Decimal
- * strings; `effectiveTaxRatePct` is a 2dp percentage Decimal string (e.g.
- * "4.83"); `aboveScale` is true when the needed invoicing exceeds the top
- * category (no category fits — consider the régimen general). Null on the
+ * The cheapest Monotributo category that would cover the user's typical monthly
+ * spend (ADR-200), as serialized by the backend. `typicalMonthlyExpenses` is the
+ * trailing-3-month MEDIAN of monthly spend (robust to one-off lumpy months);
+ * `baselineMonths` is how many months (1–3) that median is based on. Money fields
+ * are ARS Decimal strings; `effectiveTaxRatePct` is a 2dp percentage Decimal
+ * string (e.g. "4.83"); `aboveScale` is true when the needed invoicing exceeds
+ * the top category (no category fits — consider the régimen general). Null on the
  * standing when the user has no expense history yet.
  */
 export interface MonotributoRecommendationDto {
-  /** Average monthly expenses to cover, as a Decimal string (ARS). */
-  avgMonthlyExpenses: string
+  /** Typical monthly spend to cover — the trailing-3-month median, as a Decimal string (ARS). */
+  typicalMonthlyExpenses: string
+  /** How many months of data the median is based on (1–3). */
+  baselineMonths: number
   /** Annual invoicing needed to cover those expenses, as a Decimal string (ARS). */
   neededAnnualInvoicing: string
   /** The cheapest fitting category letter (meaningless when `aboveScale`). */
@@ -167,7 +171,8 @@ export function adaptRecommendation(
   dto: MonotributoRecommendationDto,
 ): MonotributoRecommendation {
   return {
-    avgMonthlyExpenses: parseDecimal(dto.avgMonthlyExpenses),
+    typicalMonthlyExpenses: parseDecimal(dto.typicalMonthlyExpenses),
+    baselineMonths: dto.baselineMonths,
     neededAnnualInvoicing: parseDecimal(dto.neededAnnualInvoicing),
     category: dto.category,
     monthlyFee: parseDecimal(dto.monthlyFee),
