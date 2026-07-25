@@ -66,6 +66,20 @@ class TestMonitorEntryPoint:
         assert isinstance(probe.data, ReadinessProbed)
         assert probe.data.status == "Ready"
 
+    async def test_readiness_probe_accepts_head_requests(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a FastAPI application whose database is reachable
+        WHEN the readiness probe is requested with "HEAD /readiness" (header-only uptime monitors)
+        THEN it should return 200 with an empty body, not 405 Method Not Allowed
+        """
+
+        # when
+        response = await test_client.head("/readiness")
+
+        # then
+        assert response.status_code == status.HTTP_200_OK
+        assert response.content == b""
+
     async def test_readiness_probe_when_database_is_unreachable(self, container: ApplicationContainer):
         """
         GIVEN a FastAPI application whose database engine is unreachable

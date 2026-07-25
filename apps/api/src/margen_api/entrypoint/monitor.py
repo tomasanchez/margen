@@ -34,8 +34,12 @@ async def query_liveness_probe() -> ResponseModel[LivenessProbed]:
     return ResponseModel(data=LivenessProbed())
 
 
-@router.get(
+@router.api_route(
     "/readiness",
+    # GET returns the probe body; HEAD is accepted too so header-only uptime
+    # monitors (e.g. UptimeRobot's free tier, which sends HEAD) don't get a 405.
+    # Starlette omits the body for HEAD while still running the DB check.
+    methods=["GET", "HEAD"],
     tags=["Monitor"],
     name="Readiness",
     status_code=status.HTTP_200_OK,
