@@ -62,3 +62,4 @@ First-time users of the Budgets page face a blank slate: no targets set means th
 ## Status History
 
 - 2026-06-30: accepted
+- 2026-08-03: PARTIALLY superseded by ADR-201 — status kept `accepted` because most of this ADR still stands. Only the two spend-based templates ("Match 3-mo avg" and "Match last month") are replaced, by a single "Copy last month's budget" exact-target copy that is auto-seeded by default. The 50/30/20 and Clear all templates, the per-category "use avg" chip, and the per-category history read endpoint are unaffected and remain in effect.

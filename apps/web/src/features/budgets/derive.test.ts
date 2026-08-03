@@ -14,12 +14,11 @@ import {
   deriveBudgetTotals,
   deriveCategoryProgress,
   deriveClearAllTargets,
+  deriveCopyLastMonthTargets,
   deriveFiftyThirtyTwentyTargets,
   deriveGroupAllocation,
   deriveIncomeSaved,
   deriveLeftToAssign,
-  deriveMatchAvgTargets,
-  deriveMatchLastMonthTargets,
   derivePlanInsight,
   deriveRepricePreview,
   groupShareOfIncome,
@@ -407,24 +406,31 @@ describe('quick-start template target maps', () => {
     hist('Transport', '0', '0'), // no history → skipped
   ]
 
-  test('match 3-mo avg: each target = avg3mo, skipping zero-history categories', () => {
-    const targets = deriveMatchAvgTargets(period, history)
+  test('copy last month: carries the prior targets VERBATIM, skipping null-target categories', () => {
+    // The prior month budgeted Food + Rent (verbatim Decimal strings) and left
+    // Shopping + Transport unbudgeted → only the two real caps are carried.
+    const prior = periodOf([
+      line('Food', '123456.78', '0', null, true),
+      line('Rent', '200000.00', '0', null, true),
+      line('Shopping', null, '0', null, false),
+      line('Transport', null, '0', null, false),
+    ])
+    const targets = deriveCopyLastMonthTargets(prior)
     expect(targets).toEqual({
-      Food: '100000.00',
-      Rent: '300000.00',
-      Shopping: '60000.00',
+      Food: '123456.78', // same Decimal string, NO rounding / inflation / averaging
+      Rent: '200000.00',
     })
+    expect(targets.Shopping).toBeUndefined()
     expect(targets.Transport).toBeUndefined()
   })
 
-  test('match last month: each target = lastMonth, skipping zeros', () => {
-    const targets = deriveMatchLastMonthTargets(period, history)
-    expect(targets).toEqual({
-      Food: '95000.00',
-      Rent: '310000.00',
-      Shopping: '55000.00',
-    })
-    expect(targets.Transport).toBeUndefined()
+  test('copy last month: empty map when the prior period is absent or budgeted nothing', () => {
+    expect(deriveCopyLastMonthTargets(undefined)).toEqual({})
+    const nothingBudgeted = periodOf([
+      line('Food', null, '0', null, true),
+      line('Rent', null, '0', null, true),
+    ])
+    expect(deriveCopyLastMonthTargets(nothingBudgeted)).toEqual({})
   })
 
   test('clear all: maps only currently-targeted categories to null', () => {
