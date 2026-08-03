@@ -18,9 +18,9 @@
     "title": "Inicio rápido",
     "applying": "Aplicando…",
     "fiftyThirtyTwenty": "50 / 30 / 20",
-    "matchAvg": "Igualar prom. 3 meses",
-    "matchLastMonth": "Igualar mes pasado",
-    "clearAll": "Borrar todo"
+    "copyLastMonth": "Copiar mes pasado",
+    "clearAll": "Borrar todo",
+    "seededNote": "Copiado del presupuesto de {{month}} — editá o borrá."
   },
   "plan": {
     "title": "Este mes vs plan",

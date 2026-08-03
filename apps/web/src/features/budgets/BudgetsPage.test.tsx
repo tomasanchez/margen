@@ -101,6 +101,34 @@ function period(month: string): BudgetPeriod {
   }
 }
 
+/** A fully EMPTY period: same categories, but NONE has a target set (ADR-201). */
+function emptyPeriod(month: string): BudgetPeriod {
+  const p = period(month)
+  return {
+    ...p,
+    categories: p.categories.map((c) => ({
+      ...c,
+      target: null,
+      targetCurrency: null,
+      remaining: null,
+    })),
+  }
+}
+
+/**
+ * Route `fetchBudgets` per requested month so the CURRENT and PRIOR months can
+ * differ (the auto-fill tests need an empty current + a targeted prior, ADR-201).
+ * `byMonth` maps `YYYY-MM` → period; any month not listed falls back to `orElse`.
+ */
+function mockBudgetsByMonth(
+  byMonth: Record<string, BudgetPeriod>,
+  orElse: (month: string) => BudgetPeriod,
+) {
+  mockFetch.mockImplementation((month: string) =>
+    Promise.resolve(byMonth[month] ?? orElse(month)),
+  )
+}
+
 /**
  * Render the page behind a memory router so its <Link>s resolve — the category
  * rows drill into <Link to="/transactions"> (the spend inspector) and the
@@ -509,5 +537,226 @@ describe('BudgetsPage', () => {
     })
     // Needs categories (Food, Rent) get a share of the 50% pool.
     expect(mockSet).toHaveBeenCalled()
+  })
+
+  test('applying "Copy last month" carries the prior month\'s exact targets verbatim (ADR-201)', async () => {
+    const user = userEvent.setup()
+    // Current June already has targets (so auto-fill never fires); the prior May
+    // budgeted Food + Rent with DISTINCT verbatim caps we expect carried as-is.
+    const may = period('2026-05')
+    may.categories[0].target = '111111.11'
+    may.categories[1].target = '222222.22'
+    mockBudgetsByMonth({ '2026-05': may }, () => period('2026-06'))
+    // An income is required for the quick-start chips to be enabled.
+    mockFetchIncome.mockResolvedValue({
+      month: '2026-06',
+      amount: '600000.00',
+      currency: 'ARS',
+      source: 'manual',
+      floor: null,
+    })
+    renderPage()
+    await screen.findByText('Food')
+
+    await user.click(screen.getByRole('button', { name: 'Copy last month' }))
+
+    await waitFor(() => {
+      // Prior caps carried VERBATIM (same Decimal string, no inflation/averaging).
+      expect(mockSet).toHaveBeenCalledWith({
+        category: 'Food',
+        month: '2026-06',
+        amount: '111111.11',
+        currency: 'ARS',
+      })
+      expect(mockSet).toHaveBeenCalledWith({
+        category: 'Rent',
+        month: '2026-06',
+        amount: '222222.22',
+        currency: 'ARS',
+      })
+    })
+  })
+
+  test('"Copy last month" is disabled when the prior month budgeted nothing', async () => {
+    // Prior May is fully empty → nothing to copy → the chip is disabled.
+    mockBudgetsByMonth({ '2026-05': emptyPeriod('2026-05') }, () =>
+      period('2026-06'),
+    )
+    mockFetchIncome.mockResolvedValue({
+      month: '2026-06',
+      amount: '600000.00',
+      currency: 'ARS',
+      source: 'manual',
+      floor: null,
+    })
+    renderPage()
+    await screen.findByText('Food')
+    expect(screen.getByRole('button', { name: 'Copy last month' })).toBeDisabled()
+  })
+
+  test('auto-fill seeds an empty CURRENT month from the prior targets exactly once, and shows the note (ADR-201)', async () => {
+    // Current June is EMPTY; prior May has targets → auto-fill seeds May's caps.
+    mockBudgetsByMonth(
+      { '2026-06': emptyPeriod('2026-06'), '2026-05': period('2026-05') },
+      (m) => period(m),
+    )
+    renderPage()
+
+    await waitFor(() => {
+      // Prior May's Food + Rent caps are seeded verbatim into June.
+      expect(mockSet).toHaveBeenCalledWith({
+        category: 'Food',
+        month: '2026-06',
+        amount: '120000.00',
+        currency: 'ARS',
+      })
+      expect(mockSet).toHaveBeenCalledWith({
+        category: 'Rent',
+        month: '2026-06',
+        amount: '200000.00',
+        currency: 'ARS',
+      })
+    })
+    // Exactly once per category — the seed never re-fires on the invalidation
+    // refetch (Food seeded once, Rent seeded once → two writes total).
+    expect(mockSet).toHaveBeenCalledTimes(2)
+    // The calm inline note names the month it seeded from.
+    expect(
+      await screen.findByText("Seeded from May 2026's budget — edit or clear."),
+    ).toBeInTheDocument()
+  })
+
+  test('auto-fill does NOT fire when the current month already has targets', async () => {
+    // Both current + prior have targets → nothing to seed.
+    mockBudgetsByMonth({}, (m) => period(m))
+    mockFetchIncome.mockResolvedValue({
+      month: '2026-06',
+      amount: '600000.00',
+      currency: 'ARS',
+      source: 'manual',
+      floor: null,
+    })
+    renderPage()
+    await screen.findByText('Food')
+    // Give any stray effect a chance to run, then assert no write happened.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Clear all' })).toBeEnabled()
+    })
+    expect(mockSet).not.toHaveBeenCalled()
+    expect(
+      screen.queryByText(/Seeded from .* budget/),
+    ).not.toBeInTheDocument()
+  })
+
+  test('auto-fill does NOT fire when the prior month has no targets', async () => {
+    // Current June empty, but prior May is also empty → nothing to copy.
+    mockBudgetsByMonth(
+      { '2026-06': emptyPeriod('2026-06'), '2026-05': emptyPeriod('2026-05') },
+      (m) => emptyPeriod(m),
+    )
+    // Income set so the chip's disabled state reflects "no prior to copy" alone,
+    // not the missing-income blanket disable.
+    mockFetchIncome.mockResolvedValue({
+      month: '2026-06',
+      amount: '600000.00',
+      currency: 'ARS',
+      source: 'manual',
+      floor: null,
+    })
+    renderPage()
+    await screen.findByText('Food')
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Copy last month' })).toBeDisabled()
+    })
+    expect(mockSet).not.toHaveBeenCalled()
+    expect(screen.queryByText(/Seeded from .* budget/)).not.toBeInTheDocument()
+  })
+
+  test('auto-fill does NOT fire on a PAST empty month the user is just browsing (ADR-201)', async () => {
+    const user = userEvent.setup()
+    // Start on June (empty→would seed) is NOT what we want here; instead keep June
+    // populated so nothing seeds, then step BACK to an empty May with a targeted
+    // April prior. A past empty month must never be silently populated.
+    mockBudgetsByMonth(
+      {
+        '2026-06': period('2026-06'),
+        '2026-05': emptyPeriod('2026-05'),
+        '2026-04': period('2026-04'),
+      },
+      (m) => period(m),
+    )
+    renderPage()
+    await screen.findByText('Food')
+
+    await user.click(screen.getByRole('button', { name: 'Previous month' }))
+
+    // May (past, empty) loads; the Copy-last chip is enabled (April has targets)
+    // but the page must NOT auto-seed a past month.
+    await waitFor(() => {
+      const months = mockFetch.mock.calls.map((c) => c[0])
+      expect(months).toContain('2026-05')
+    })
+    // No auto-seed write for the past month, and no seeded note.
+    expect(mockSet).not.toHaveBeenCalled()
+    expect(screen.queryByText(/Seeded from .* budget/)).not.toBeInTheDocument()
+  })
+
+  test('auto-fill waits for income to settle and seeds in the income currency, not the preferred fallback (ADR-156/201)', async () => {
+    // Money-safety: the write currency is the INCOME's currency, which falls back
+    // to the preferred (ARS) until income loads. Budgets + prior settle FIRST here
+    // (income is held open), so a premature seed would persist the wrong (ARS)
+    // denomination. The effect must defer until income is success, then write USD.
+    let resolveIncome: (income: {
+      month: string
+      amount: string | null
+      currency: 'ARS' | 'USD'
+      source: 'manual'
+      floor: null
+    }) => void = () => {}
+    mockFetchIncome.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveIncome = resolve
+        }),
+    )
+    // Current June empty; prior May has targets → a seed is due once income lands.
+    mockBudgetsByMonth(
+      { '2026-06': emptyPeriod('2026-06'), '2026-05': period('2026-05') },
+      (m) => period(m),
+    )
+    // Preferred display currency is ARS; the stored income is USD — they DIFFER,
+    // so a fallback seed would be ARS while the correct seed is USD.
+    renderPage({ preferredCurrency: 'ARS', effectiveCurrency: 'ARS' })
+
+    // Budgets + prior have resolved, but income is still pending → the effect must
+    // NOT have claimed the month or written anything yet.
+    await screen.findByText('Food')
+    await waitFor(() => {
+      const months = mockFetch.mock.calls.map((c) => c[0])
+      expect(months).toContain('2026-05')
+    })
+    expect(mockSet).not.toHaveBeenCalled()
+
+    // Income lands as USD → NOW the seed fires, in USD (never the ARS fallback).
+    resolveIncome({
+      month: '2026-06',
+      amount: '600000.00',
+      currency: 'USD',
+      source: 'manual',
+      floor: null,
+    })
+
+    await waitFor(() => {
+      expect(mockSet).toHaveBeenCalledWith({
+        category: 'Food',
+        month: '2026-06',
+        amount: '120000.00',
+        currency: 'USD',
+      })
+    })
+    // Every seed write carries the income currency — none used the ARS fallback.
+    for (const [body] of mockSet.mock.calls) {
+      expect(body.currency).toBe('USD')
+    }
   })
 })

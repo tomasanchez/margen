@@ -47,3 +47,4 @@ def reprice_cap(cap, monthly_infl, step_up=0):
 ## Status History
 
 - 2026-06-30: accepted
+- 2026-08-03: refined by ADR-201 — exact copy-forward of last month's targets (no inflation) is now the default rollover behavior, auto-seeded on an empty current/future month; this reprice flow is preserved unchanged but becomes an explicit, opt-in adjust action taken on top of the copied budget rather than the default rollover mechanism

@@ -18,9 +18,9 @@
     "title": "Quick start",
     "applying": "Applying…",
     "fiftyThirtyTwenty": "50 / 30 / 20",
-    "matchAvg": "Match 3-mo avg",
-    "matchLastMonth": "Match last month",
-    "clearAll": "Clear all"
+    "copyLastMonth": "Copy last month",
+    "clearAll": "Clear all",
+    "seededNote": "Seeded from {{month}}'s budget — edit or clear."
   },
   "plan": {
     "title": "This month vs plan",

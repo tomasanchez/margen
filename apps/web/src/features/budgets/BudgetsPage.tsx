@@ -38,8 +38,10 @@ import { ErrorState } from '../../components/ErrorState'
 import { MonthSwitcher } from '../../components/MonthSwitcher'
 import {
   addMonths,
+  compareViewingMonths,
   currentViewingMonth,
   formatViewingMonth,
+  upperBoundMonth,
   type ViewingMonth,
 } from '../../components/months'
 import { toYearMonth } from '../home/queries'
@@ -55,11 +57,10 @@ import {
   deriveAllocationSegments,
   deriveBudgetTotals,
   deriveClearAllTargets,
+  deriveCopyLastMonthTargets,
   deriveFiftyThirtyTwentyTargets,
   deriveGroupAllocation,
   deriveLeftToAssign,
-  deriveMatchAvgTargets,
-  deriveMatchLastMonthTargets,
   derivePlanInsight,
   isRepriceRollover,
   PROFILE_SAVINGS_PCT,
@@ -187,6 +188,19 @@ export function BudgetsPage({ month: monthProp, onMonthChange }: BudgetsPageProp
   // Which quick-start template is applying, for the calm pending state (ADR-147).
   const [applyingTemplate, setApplyingTemplate] = useState<TemplateId | null>(null)
 
+  // The month we AUTO-SEEDED (ADR-201) + the prior-month label it copied from, or
+  // null when nothing was auto-filled. Stored WITH the seeded `yearMonth` so the
+  // note shows only on that month — navigating away hides it without a reset
+  // effect (which would trip react-hooks/set-state-in-effect).
+  const [seeded, setSeeded] = useState<{ yearMonth: string; label: string } | null>(
+    null,
+  )
+  // Guard so the one-shot auto-fill fires EXACTLY ONCE per viewed month: the ref
+  // records the `yearMonth` we've already handled so a re-render, a query
+  // refetch, or the invalidation that follows the seed can never re-fire it or
+  // fight an in-flight write (money-safety, ADR-201).
+  const autoFilledMonthRef = useRef<string | null>(null)
+
   // The period + income arrive ALREADY in the budget currency (ADR-156): the
   // fetch is keyed by `budgetCurrency`, spend comes from the per-transaction FX
   // snapshot (ADR-148/152), and income is stored/read in its own currency. There
@@ -248,11 +262,97 @@ export function BudgetsPage({ month: monthProp, onMonthChange }: BudgetsPageProp
   )
 
   // Reprice rollover: the current month has no spend targets while the prior one
-  // does (ADR-137). Never auto-applies — surfaces a prompt only.
+  // does (ADR-137). Never auto-applies — surfaces a prompt only. Since auto-fill
+  // (below) seeds the exact prior targets for a CURRENT/FUTURE empty month, this
+  // condition is only ever true afterward for a PAST empty month the user is just
+  // browsing — where the reprice prompt remains the explicit inflation path.
   const showReprice = useMemo(
     () => isRepriceRollover(period, priorQuery.data),
     [period, priorQuery.data],
   )
+
+  // "Copy last month's budget" (ADR-201): the prior month's exact targets, kept
+  // verbatim. Empty when the prior period is absent / budgeted nothing — the chip
+  // is then disabled (nothing to copy) and auto-fill never fires.
+  const copyLastTargets = useMemo(
+    () => deriveCopyLastMonthTargets(priorQuery.data),
+    [priorQuery.data],
+  )
+  const canCopyLast = Object.keys(copyLastTargets).length > 0
+
+  // Whether the VIEWED month has zero targets set (fully empty) — the only state
+  // the auto-fill may write into, so it can never overwrite a budget or an edit.
+  const currentHasNoTargets = useMemo(
+    () => period != null && !period.categories.some((c) => c.target != null),
+    [period],
+  )
+  // Auto-fill only into the CURRENT or a FUTURE month (never silently populate a
+  // past empty month the user is just browsing, ADR-201).
+  const isCurrentOrFutureMonth =
+    compareViewingMonths(month, upperBoundMonth()) >= 0
+
+  // AUTO-FILL DEFAULT (ADR-201): when the viewed month is empty AND the prior
+  // month has at least one target AND both reads have settled successfully, seed
+  // the EXACT prior targets ONCE via the same batch write, then let the normal
+  // invalidation refresh the surface. Guards (money-safety):
+  //  - only when the viewed month has ZERO targets (fully empty) — so it can
+  //    never overwrite an existing budget or user edits;
+  //  - only for the current or a future month (not a past browse);
+  //  - the DECISION is made exactly once per `yearMonth` (the ref is claimed the
+  //    first time the reads settle for that month, whether or not we seed) — so a
+  //    re-render, a refetch, the post-seed invalidation, OR a later manual
+  //    "Clear all" can never re-fire the seed or fight an in-flight write;
+  //  - only after budgets + prior + INCOME queries are all `isSuccess`. Income is
+  //    gated too because the write currency is `budgetCurrency`, which falls back
+  //    to `preferredCurrency` until income loads (ADR-156). Budgets/prior aren't
+  //    gated on income and can settle first, so without this the effect would
+  //    claim the month and seed in the FALLBACK currency — a wrong-denomination
+  //    write the later currency flip couldn't correct (the ref is claimed).
+  //    Deferring until income settles means the seed always writes in the
+  //    income's true currency.
+  useEffect(() => {
+    if (autoFilledMonthRef.current === yearMonth) return
+    // Wait until budgets + prior + income all settle for this month before
+    // deciding — a half-loaded state must not claim the month or seed, and the
+    // income gate guarantees `budgetCurrency` is the real income currency.
+    if (
+      !budgetsQuery.isSuccess ||
+      !priorQuery.isSuccess ||
+      !incomeQuery.isSuccess
+    )
+      return
+    // Claim the month NOW (decision made): this is the single evaluation point,
+    // so a subsequent manual clear that empties the month can't re-enter here.
+    autoFilledMonthRef.current = yearMonth
+    if (!currentHasNoTargets || !canCopyLast || !isCurrentOrFutureMonth) return
+    applyTemplate.mutate(
+      {
+        month: yearMonth,
+        targets: copyLastTargets,
+        currency: budgetCurrency,
+      },
+      {
+        onSuccess: () => setSeeded({ yearMonth, label: priorLabel }),
+      },
+    )
+  }, [
+    yearMonth,
+    budgetsQuery.isSuccess,
+    priorQuery.isSuccess,
+    incomeQuery.isSuccess,
+    currentHasNoTargets,
+    canCopyLast,
+    isCurrentOrFutureMonth,
+    copyLastTargets,
+    budgetCurrency,
+    priorLabel,
+    applyTemplate,
+  ])
+
+  // Show the seeded note only on the month it seeded — derived from the stored
+  // `{ yearMonth, label }` so navigating to another month hides it with no reset
+  // effect (avoids react-hooks/set-state-in-effect).
+  const seededFromLabel = seeded?.yearMonth === yearMonth ? seeded.label : null
 
   const handleCommitIncome = (amount: string) =>
     setIncome.mutate(
@@ -343,11 +443,9 @@ export function BudgetsPage({ month: monthProp, onMonthChange }: BudgetsPageProp
         // The 20% Savings leg of 50/30/20 is the Conservative preset (ADR-147/138).
         profile = 'conservative'
         break
-      case 'avg':
-        targets = deriveMatchAvgTargets(period, history)
-        break
-      case 'lastMonth':
-        targets = deriveMatchLastMonthTargets(period, history)
+      case 'copyLast':
+        // Carry the PRIOR month's exact targets forward, verbatim (ADR-201).
+        targets = deriveCopyLastMonthTargets(priorQuery.data)
         break
       case 'clear':
       default:
@@ -573,8 +671,18 @@ export function BudgetsPage({ month: monthProp, onMonthChange }: BudgetsPageProp
                   <QuickStartTemplates
                     applying={applyingTemplate}
                     disabled={templatesDisabled}
+                    disabledTemplates={canCopyLast ? [] : ['copyLast']}
                     onApply={handleApplyTemplate}
                   />
+                  {seededFromLabel ? (
+                    <Typography
+                      sx={{ fontSize: 12.5, mt: 1.25 }}
+                      color="text.secondary"
+                      role="status"
+                    >
+                      {t('templates.seededNote', { month: seededFromLabel })}
+                    </Typography>
+                  ) : null}
                 </Box>
               </>
             )}

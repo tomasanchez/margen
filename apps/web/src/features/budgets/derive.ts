@@ -511,36 +511,23 @@ function historyByCategory(
 }
 
 /**
- * "Match 3-mo avg" (ADR-147): each category's target = its trailing 3-month
- * average spend. Categories whose `avg3mo` is 0 (or missing from history) are
- * skipped — no point writing a zero target.
+ * "Copy last month's budget" (ADR-201): each category's target = the EXACT
+ * target the user set in the PRIOR month, copied VERBATIM (same Decimal string)
+ * — no inflation bump, no averaging, no spend history. This is the single
+ * carry-forward template + the auto-fill seed for an empty new month.
+ *
+ * Only categories the prior month actually budgeted (`target != null`) are
+ * carried; categories with no prior target are left unset (omitted from the map)
+ * so the batch only writes real caps. Returns an empty map when the prior period
+ * is absent or budgeted nothing — the caller then disables the chip.
  */
-export function deriveMatchAvgTargets(
-  period: BudgetPeriod,
-  history: BudgetHistoryLine[],
+export function deriveCopyLastMonthTargets(
+  prior: BudgetPeriod | undefined,
 ): TemplateTargets {
-  const byCategory = historyByCategory(history)
   const targets: TemplateTargets = {}
-  for (const category of period.categories) {
-    const avg = parseMoney(byCategory.get(category.category)?.avg3mo)
-    if (avg > 0) targets[category.category] = toMoneyString(avg)
-  }
-  return targets
-}
-
-/**
- * "Match last month" (ADR-147): each category's target = last month's actual
- * spend. Categories whose `lastMonth` is 0 (or missing) are skipped.
- */
-export function deriveMatchLastMonthTargets(
-  period: BudgetPeriod,
-  history: BudgetHistoryLine[],
-): TemplateTargets {
-  const byCategory = historyByCategory(history)
-  const targets: TemplateTargets = {}
-  for (const category of period.categories) {
-    const last = parseMoney(byCategory.get(category.category)?.lastMonth)
-    if (last > 0) targets[category.category] = toMoneyString(last)
+  if (!prior) return targets
+  for (const category of prior.categories) {
+    if (category.target != null) targets[category.category] = category.target
   }
   return targets
 }

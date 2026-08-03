@@ -1,15 +1,18 @@
 /**
- * <QuickStartTemplates> — the row of quick-start budget chips (ADR-147).
+ * <QuickStartTemplates> — the row of quick-start budget chips (ADR-147, ADR-201).
  *
- * Four one-tap templates that bulk-fill the zero-based allocation surface:
- * "50 / 30 / 20", "Match 3-mo avg", "Match last month", and "Clear all". Each
- * chip fires its callback; the page computes the target map (pure helpers in
- * `derive.ts`) and batches the existing per-category PUT/DELETE writes plus, for
- * 50/30/20, the Conservative saving profile (ADR-138).
+ * Three one-tap templates that bulk-fill the zero-based allocation surface:
+ * "50 / 30 / 20", "Copy last month" (the exact prior-month targets, carried
+ * verbatim — ADR-201), and "Clear all". Each chip fires its callback; the page
+ * computes the target map (pure helpers in `derive.ts`) and batches the existing
+ * per-category PUT/DELETE writes plus, for 50/30/20, the Conservative saving
+ * profile (ADR-138).
  *
  * Presentational + calm: while a template applies, all chips disable and the
  * applying one shows a quiet spinner (ADR-037). Chips are real buttons with
- * accessible names so keyboard + AT users can apply them.
+ * accessible names so keyboard + AT users can apply them. A chip can be
+ * INDIVIDUALLY disabled via `disabledTemplates` (e.g. "Copy last month" when
+ * there is no prior budget to copy).
  */
 
 import { useTranslation } from 'react-i18next'
@@ -18,28 +21,34 @@ import Button from '@mui/material/Button'
 import CircularProgress from '@mui/material/CircularProgress'
 import Typography from '@mui/material/Typography'
 
-/** The four quick-start templates (ADR-147). */
-export type TemplateId = '503020' | 'avg' | 'lastMonth' | 'clear'
+/** The three quick-start templates (ADR-147, ADR-201). */
+export type TemplateId = '503020' | 'copyLast' | 'clear'
 
 export interface QuickStartTemplatesProps {
   /** The template whose apply is in flight, or null when idle. */
   applying?: TemplateId | null
   /** Whether the templates are usable (an income base + categories exist). */
   disabled?: boolean
+  /**
+   * Templates disabled INDIVIDUALLY beyond the blanket `disabled` (e.g.
+   * "Copy last month" when there is no prior budget to copy). Applied on top of
+   * the global disable + the applying-busy state.
+   */
+  disabledTemplates?: readonly TemplateId[]
   /** Apply a template (the page computes + batches the writes). */
   onApply: (template: TemplateId) => void
 }
 
 const TEMPLATES: readonly { id: TemplateId; key: string }[] = [
   { id: '503020', key: 'templates.fiftyThirtyTwenty' },
-  { id: 'avg', key: 'templates.matchAvg' },
-  { id: 'lastMonth', key: 'templates.matchLastMonth' },
+  { id: 'copyLast', key: 'templates.copyLastMonth' },
   { id: 'clear', key: 'templates.clearAll' },
 ] as const
 
 export function QuickStartTemplates({
   applying = null,
   disabled = false,
+  disabledTemplates = [],
   onApply,
 }: QuickStartTemplatesProps) {
   const { t } = useTranslation('budgets')
@@ -70,7 +79,7 @@ export function QuickStartTemplates({
         <Button
           key={template.id}
           onClick={() => onApply(template.id)}
-          disabled={disabled || busy}
+          disabled={disabled || busy || disabledTemplates.includes(template.id)}
           size="small"
           variant="outlined"
           startIcon={
