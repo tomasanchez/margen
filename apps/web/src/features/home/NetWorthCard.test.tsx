@@ -556,6 +556,100 @@ describe('NetWorthCard', () => {
     ).toBeInTheDocument()
   })
 
+  describe('negative balances render signed + in the error color (ADR-019)', () => {
+    /**
+     * One institution (Galicia) whose single ARS account is overdrawn to
+     * −48.625,63, plus a separate positive institution (Deel USD 720) so the
+     * headline still resolves. The overdrawn account (and Galicia's subtotal,
+     * which equals it) must read with a leading minus AND the theme error color;
+     * the positive USD row stays neutral (no sign).
+     */
+    const WITH_NEGATIVE: NetWorth = {
+      total: '851374.37',
+      currency: 'ARS',
+      ...NO_LIABILITIES,
+      accounts: [
+        {
+          id: 'neg-ars',
+          institutionId: 'inst-1',
+          institutionName: 'Galicia',
+          type: 'bank',
+          currency: 'ARS',
+          balance: '-48625.63',
+          balanceConverted: '-48625.63',
+        },
+        {
+          id: 'pos-usd',
+          institutionId: 'inst-2',
+          institutionName: 'Deel',
+          type: 'wallet',
+          currency: 'USD',
+          balance: '720.00',
+          balanceConverted: '900000.00',
+        },
+      ],
+    }
+
+    test('a negative account balance shows the minus sign and the error color', async () => {
+      renderCard({ netWorth: WITH_NEGATIVE, loading: false })
+      await screen.findByText('ARS 851.374,37')
+      await expandDetails()
+
+      // The overdrawn ARS row reads with the Unicode minus (−), NOT a bare
+      // positive magnitude. Galicia has one account, so the same signed figure
+      // appears as both the row and its subtotal — both must be signed + red.
+      const signed = screen.getAllByText('−ARS 48.625,63')
+      expect(signed.length).toBeGreaterThanOrEqual(1)
+      // Never rendered as a plain positive black number.
+      expect(screen.queryByText('ARS 48.625,63')).not.toBeInTheDocument()
+      // The error color cue reinforces the sign: MUI `color="error.main"`
+      // resolves to the theme's error token (var(--mg-risk), see theme/index.ts).
+      for (const node of signed) {
+        expect(node).toHaveStyle({ color: 'var(--mg-risk)' })
+      }
+    })
+
+    test('a positive balance in the same card stays neutral with no sign', async () => {
+      renderCard({ netWorth: WITH_NEGATIVE, loading: false })
+      await screen.findByText('ARS 851.374,37')
+      await expandDetails()
+
+      // The positive USD account keeps its plain magnitude — no leading sign —
+      // and the neutral text color (var(--mg-text)), never the error token.
+      const positive = screen.getByText('USD 720')
+      expect(positive).toBeInTheDocument()
+      expect(screen.queryByText('−USD 720')).not.toBeInTheDocument()
+      expect(screen.queryByText('+USD 720')).not.toBeInTheDocument()
+      expect(positive).toHaveStyle({ color: 'var(--mg-text)' })
+    })
+
+    test('a negative institution subtotal is signed', async () => {
+      renderCard({ netWorth: WITH_NEGATIVE, loading: false })
+      await screen.findByText('ARS 851.374,37')
+      await expandDetails()
+
+      // Galicia's only account nets negative, so its subtotal is signed too and
+      // its accessible label spells out the negative for screen readers.
+      expect(
+        screen.getByLabelText('Galicia subtotal minus ARS 48.625,63'),
+      ).toBeInTheDocument()
+    })
+
+    test("the overdrawn row's drilldown link announces the negative to AT", async () => {
+      renderCard({ netWorth: WITH_NEGATIVE, loading: false })
+      await screen.findByText('ARS 851.374,37')
+      await expandDetails()
+
+      // The row link's accessible name appends the spelled-out signed balance
+      // when the balance is negative (ADR-019: never color alone).
+      expect(
+        screen.getByRole('link', {
+          name: 'View Galicia ARS transactions minus 48.625,63 Argentine pesos',
+        }),
+      ).toBeInTheDocument()
+    })
+  })
+
   describe('net-of-commitments layered line (ADR-180/183)', () => {
     /**
      * ARS-only assets of 1.050.000 with an ARS-only installment tail of 50.000

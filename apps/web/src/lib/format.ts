@@ -99,6 +99,60 @@ export function formatCurrency(
 }
 
 /**
+ * Sign-aware currency string for a BALANCE (ADR-019): a negative balance reads
+ * with a leading Unicode minus (`−ARS 48.625,63`); zero and positive balances
+ * read plainly by magnitude (no `+`, no sign) — accounts don't carry a positive
+ * sign the way signed transaction deltas do. Callers pair this with the theme's
+ * error color for the color cue, but the SIGN here is the primary, color-free
+ * signal that the balance is negative (ADR-019: never color alone).
+ *
+ * Distinct from {@link formatSignedAmount}, which is driven by transaction
+ * DIRECTION (income/expense) and always emits a sign; a balance's sign follows
+ * the number itself.
+ */
+export function formatSignedBalance(
+  n: number | null | undefined,
+  currency: Currency,
+): string {
+  const value = safe(n)
+  const body = formatCurrency(value, currency)
+  return value < 0 ? `${MINUS}${body}` : body
+}
+
+/**
+ * The MUI theme color token for a balance figure (ADR-019 reinforcement): the
+ * error color for a negative balance, the primary text color for zero/positive.
+ * Pairs with {@link formatSignedBalance} so the minus SIGN carries the meaning
+ * and the color merely reinforces it (never color alone).
+ */
+export function balanceColor(n: number | null | undefined): 'error.main' | 'text.primary' {
+  return safe(n) < 0 ? 'error.main' : 'text.primary'
+}
+
+/**
+ * Accessible label for a BALANCE amount, spelling out a NEGATIVE sign as a word
+ * so screen readers announce e.g. "minus 48.625,63 Argentine pesos" / "menos …
+ * pesos argentinos" (ADR-019, ADR-102). Zero/positive balances get no sign word
+ * (they read plainly). The sign + currency WORDS localize off the active UI
+ * language; the numeric body keeps es-AR grouping (domain constant).
+ */
+export function balanceAccessibleLabel(
+  n: number | null | undefined,
+  currency: Currency = 'ARS',
+): string {
+  const value = safe(n)
+  const currencyWord = i18n.t(
+    currency === 'USD' ? 'common:currency.usd' : 'common:currency.ars',
+  )
+  const body = currency === 'USD' ? formatUSD(value) : formatARS(value)
+  if (value < 0) {
+    const signWord = i18n.t('common:sign.minus')
+    return `${signWord} ${body} ${currencyWord}`
+  }
+  return `${body} ${currencyWord}`
+}
+
+/**
  * Sign-aware currency string driven by transaction direction:
  * income -> "+ARS 1.234", expense -> "−ARS 1.234". The amount is rendered by
  * magnitude; the sign comes from `type`. Display amounts are shown in ARS by

@@ -11,7 +11,13 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import { formatCompactAxis } from './format'
+import {
+  MINUS,
+  balanceAccessibleLabel,
+  balanceColor,
+  formatCompactAxis,
+  formatSignedBalance,
+} from './format'
 
 /** The es-AR compact reference the helper is built on (ADR-102 domain locale). */
 const ref = new Intl.NumberFormat('es-AR', {
@@ -53,5 +59,52 @@ describe('formatCompactAxis', () => {
     expect(formatCompactAxis(null)).toBe(`$${ref.format(0)}`)
     expect(formatCompactAxis(undefined)).toBe(`$${ref.format(0)}`)
     expect(formatCompactAxis(Number.NaN)).toBe(`$${ref.format(0)}`)
+  })
+})
+
+describe('formatSignedBalance', () => {
+  test('signs a negative balance with the Unicode minus + currency prefix', () => {
+    expect(formatSignedBalance(-48625.63, 'ARS')).toBe(`${MINUS}ARS 48.625,63`)
+    expect(formatSignedBalance(-720, 'USD')).toBe(`${MINUS}USD 720`)
+  })
+
+  test('renders a positive balance by plain magnitude — no sign', () => {
+    expect(formatSignedBalance(150000, 'ARS')).toBe('ARS 150.000')
+    expect(formatSignedBalance(720, 'USD')).toBe('USD 720')
+  })
+
+  test('renders zero neutrally — no sign, not signed as negative', () => {
+    expect(formatSignedBalance(0, 'ARS')).toBe('ARS 0')
+    expect(formatSignedBalance(-0, 'ARS')).toBe('ARS 0')
+  })
+
+  test('coerces nullish / non-finite input to a plain zero', () => {
+    expect(formatSignedBalance(null, 'ARS')).toBe('ARS 0')
+    expect(formatSignedBalance(undefined, 'USD')).toBe('USD 0')
+    expect(formatSignedBalance(Number.NaN, 'ARS')).toBe('ARS 0')
+  })
+})
+
+describe('balanceColor', () => {
+  test('maps a negative balance to the error token, else neutral text', () => {
+    expect(balanceColor(-1)).toBe('error.main')
+    expect(balanceColor(0)).toBe('text.primary')
+    expect(balanceColor(150000)).toBe('text.primary')
+    expect(balanceColor(null)).toBe('text.primary')
+  })
+})
+
+describe('balanceAccessibleLabel', () => {
+  test('spells out the negative sign word for a negative balance (en-pinned)', () => {
+    // i18n is pinned to English in the test setup (ADR-105): sign.minus → "minus".
+    expect(balanceAccessibleLabel(-48625.63, 'ARS')).toBe(
+      'minus 48.625,63 Argentine pesos',
+    )
+    expect(balanceAccessibleLabel(-720, 'USD')).toBe('minus 720 US dollars')
+  })
+
+  test('omits a sign word for a zero/positive balance', () => {
+    expect(balanceAccessibleLabel(150000, 'ARS')).toBe('150.000 Argentine pesos')
+    expect(balanceAccessibleLabel(0, 'ARS')).toBe('0 Argentine pesos')
   })
 })
