@@ -59,7 +59,14 @@ import Typography from '@mui/material/Typography'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import { SectionCard } from '../../components/SectionCard'
 import { ErrorState } from '../../components/ErrorState'
-import { formatARS, formatCurrency, maskAmount } from '../../lib/format'
+import {
+  balanceAccessibleLabel,
+  balanceColor,
+  formatARS,
+  formatCurrency,
+  formatSignedBalance,
+  maskAmount,
+} from '../../lib/format'
 import { MaskedAmount } from './MaskedAmount'
 import { useFxRates } from './queries'
 import {
@@ -439,10 +446,20 @@ function AccountRow({
     <Link
       to="/transactions"
       search={{ account: account.id, month: monthToken }}
-      aria-label={t('netWorth.drilldownAria', {
-        institution: account.institutionName,
-        currency: account.currency,
-      })}
+      // The drilldown's accessible name; when the native balance is negative we
+      // append the spelled-out signed balance ("… minus 48.625,63 …") so AT
+      // announces the negative — the sign/color are visual cues only (ADR-019).
+      aria-label={
+        native < 0
+          ? `${t('netWorth.drilldownAria', {
+              institution: account.institutionName,
+              currency: account.currency,
+            })} ${balanceAccessibleLabel(native, nativeCurrency)}`
+          : t('netWorth.drilldownAria', {
+              institution: account.institutionName,
+              currency: account.currency,
+            })
+      }
       className={breakdownRowLinkClass}
       style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
     >
@@ -460,18 +477,31 @@ function AccountRow({
       >
         <Box sx={{ textAlign: 'right', flex: 'none' }}>
           <Typography
-            sx={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
-            color="text.primary"
+            // A negative balance reads with a leading minus AND the theme error
+            // color; zero/positive stay neutral (ADR-019: sign is the color-free
+            // cue). The color goes through `sx` — Typography's `color` shorthand
+            // does NOT resolve dotted palette paths like "error.main".
+            sx={{
+              fontSize: 14,
+              fontWeight: 600,
+              fontVariantNumeric: 'tabular-nums',
+              color: balanceColor(native),
+            }}
           >
-            {formatCurrency(native, nativeCurrency)}
+            {formatSignedBalance(native, nativeCurrency)}
           </Typography>
           {showConverted ? (
             <Typography
-              sx={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}
-              color="text.secondary"
+              // The converted leg follows the native sign: negative native → the
+              // converted figure is negative too, so sign it + color it error.
+              sx={{
+                fontSize: 12,
+                fontVariantNumeric: 'tabular-nums',
+                color: balanceColor(converted),
+              }}
             >
               {t('netWorth.converted', {
-                amount: formatCurrency(converted ?? 0, displayCurrency),
+                amount: formatSignedBalance(converted ?? 0, displayCurrency),
               })}
             </Typography>
           ) : null}
@@ -552,14 +582,30 @@ function InstitutionBlock({
             {t('netWorth.subtotalLabel')}
           </Typography>
           <Typography
-            sx={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
-            color="text.primary"
+            // A subtotal can net negative when the institution's accounts sum
+            // below zero — sign it + color it error like the per-account rows.
+            // Via `sx` so the dotted palette path actually resolves.
+            sx={{
+              fontSize: 13,
+              fontWeight: 600,
+              fontVariantNumeric: 'tabular-nums',
+              color: balanceColor(group.subtotal),
+            }}
+            // The subtotal's spoken amount keeps the "ARS 1.234"-style figure
+            // (positive rows read unchanged); a negative prepends the localized
+            // sign word so AT announces the negative subtotal (ADR-019).
             aria-label={t('netWorth.subtotalAria', {
               institution: group.institutionName,
-              amount: formatCurrency(group.subtotal, displayCurrency),
+              amount:
+                group.subtotal < 0
+                  ? `${t('common:sign.minus')} ${formatCurrency(
+                      group.subtotal,
+                      displayCurrency,
+                    )}`
+                  : formatCurrency(group.subtotal, displayCurrency),
             })}
           >
-            {formatCurrency(group.subtotal, displayCurrency)}
+            {formatSignedBalance(group.subtotal, displayCurrency)}
           </Typography>
         </Box>
       ) : null}
