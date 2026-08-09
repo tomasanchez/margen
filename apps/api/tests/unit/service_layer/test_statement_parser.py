@@ -128,6 +128,129 @@ TOTAL A PAGAR
 """
 
 
+# --------------------------------------------------------------------------- #
+# Canonical SANITIZED MULTI-PAGE Galicia VISA fixture (ADR-081). Reproduces the  #
+# real PDF's page-break quirk: the detail table spills onto page 2, and PyMuPDF  #
+# REPRINTS the whole per-page header block (statement number, the "Tarjeta       #
+# Crédito VISA" header line, cardholder NAME + address, account, barcode,        #
+# "Página"/"N / N", a reprinted "DETALLE DEL CONSUMO" + column titles) INSIDE    #
+# the detail section, between the last page-1 row (COTO) and the first page-2    #
+# row (30-07-26). Two bugs live here: (1) the bare "TARJETA " boundary latched   #
+# onto the reprinted "Tarjeta Crédito VISA" and dropped every page-2 row;        #
+# (2) the reprinted NAME/address cells have no date and would append to COTO.    #
+# Fake name/address/statement-no; the exact structural quirks are preserved.     #
+# --------------------------------------------------------------------------- #
+
+_GALICIA_MULTIPAGE_TEXT = """\
+  Resumen N° VI00000000069436867
+ Tarjeta Crédito VISA
+JUAN PEREZ
+ Consumidor Final
+CUIT Banco: 30-50000173-5
+CALLE FALSA 123, CIUDAD AUTONOMA BUEN, C0000AAA
+ N° Cuenta: 0000000000
+Sucursal: 665
+Resumen de tarjeta de credito VISA
+20260611079436867H
+Página
+1 / 5
+1.315.846,68
+0,00
+07-May-26
+15-May-26
+11-Jun-26
+19-Jun-26
+08-Jul-26
+17-Jul-26
+ CONSOLIDADO
+PESOS
+DÓLARES
+DETALLE DEL CONSUMO
+FECHA
+REFERENCIA
+CUOTA
+COMPROBANTE
+PESOS
+DÓLARES
+25-07-26
+K
+MERPAGO*COTO
+271885
+35.750,55
+Resumen N° VI00000000069436867
+Tarjeta Crédito VISA
+JUAN PEREZ
+Consumidor Final
+CUIT Banco: 30-50000173-5
+CALLE FALSA 123, CIUDAD AUTONOMA BUEN, C0000AAA
+N° Cuenta: 0000000000
+Sucursal: 665
+Resumen de tarjeta de credito VISA
+20260806073731417H
+Página
+2 / 5
+DETALLE DEL CONSUMO
+FECHA
+REFERENCIA
+CUOTA
+COMPROBANTE
+PESOS
+DÓLARES
+30-07-26
+K
+SUBE VIAJES - BUSES
+501892
+1.824,50
+31-07-26
+K
+RAPANUI
+271886
+24.500,00
+04-08-26
+*
+CARDON
+01/06
+271887
+76.500,00
+04-08-26
+K
+SALVADOR
+271888
+25.500,00
+05-08-26
+K
+Express Av Cordoba 3721
+271889
+19.819,25
+05-08-26
+K
+AFRIKA
+271890
+11.000,00
+05-08-26
+K
+MERPAGO*OPEN25
+271891
+4.800,00
+06-08-26
+K
+SUBE VIAJES - BUSES
+271892
+1.895,42
+TARJETA 5771 Total Consumos de JUAN PEREZ
+1.315.846,68
+0,00
+06-08-26
+
+COM MANT CTA Y RENO
+25.206,00
+
+TOTAL A PAGAR
+1.315.846,68
+0,00
+"""
+
+
 def _by_name(parsed: ParsedStatement, name: str):
     """Return the single parsed line whose ``name`` matches, or ``None``."""
     matches = [line for line in parsed.lines if line.name == name]
@@ -310,6 +433,10 @@ class TestGuessCategory:
             ("SUBE VIAJES - BUSES", "Transport"),
             ("SUSHI CLUB", "Food"),
             ("Express Av Cordoba 3721", "Food"),
+            ("MERPAGO*COTO", "Food"),  # grocery chain by CONTAINS.
+            ("JUMBO ALMAGRO", "Food"),  # grocery chain with location suffix.
+            ("CARREFOUR EXPRESS", "Food"),  # matches "carrefour" first (both → Food).
+            ("Carrefour Online", "Food"),  # online variant.
         ],
     )
     def test_maps_each_known_keyword(self, merchant: str, expected: str):
@@ -937,6 +1064,87 @@ class TestRowGroupingNoise:
         line = parsed.lines[0]
         assert line.name == "Express Av Cordoba 3721"
         assert line.amount == Decimal("10180.00")
+
+
+class TestGaliciaMultiPageStatement:
+    """A multi-page Galicia statement parses BOTH pages, clean across the break."""
+
+    @pytest.fixture(name="parsed")
+    def fixture_parsed(self) -> ParsedStatement:
+        """Parse the canonical sanitized multi-page Galicia VISA text once."""
+        return GaliciaVisaParser().parse(_GALICIA_MULTIPAGE_TEXT)
+
+    def test_rows_from_both_pages_are_parsed(self, parsed: ParsedStatement):
+        """
+        GIVEN a Galicia statement whose detail table spans a page break
+        WHEN it is parsed
+        THEN the page-1 row AND every page-2 row are present (the reprinted
+             "Tarjeta Crédito VISA" header no longer closes the detail section)
+        """
+        # THEN — one page-1 row (COTO) + eight page-2 rows.
+        purchases = [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE]
+        assert len(purchases) == 9
+        names = {line.name for line in purchases}
+        # AND — the specific page-2 merchants all survived the page break.
+        for merchant in ("CARDON", "RAPANUI", "SALVADOR", "AFRIKA"):
+            assert merchant in names
+        assert any("OPEN25" in name for name in names)
+        assert any(name.startswith("SUBE") for name in names)
+
+    def test_last_page_one_row_name_is_not_polluted(self, parsed: ParsedStatement):
+        """
+        GIVEN the reprinted page-header block (cardholder NAME + address) sits right
+              after the last page-1 row (COTO) inside the detail section
+        WHEN the statement is parsed
+        THEN the COTO merchant name is clean — no NAME / address cells appended
+        """
+        # THEN — the page-break chrome (JUAN PEREZ / CALLE FALSA …) did not fold in.
+        coto = _by_name(parsed, "MERPAGO*COTO")
+        assert coto is not None
+        assert coto.amount == Decimal("35750.55")
+        assert "JUAN" not in coto.name.upper()
+        assert "CALLE" not in coto.name.upper()
+
+    def test_reprinted_header_is_not_the_total_boundary(self, parsed: ParsedStatement):
+        """
+        GIVEN the page-2 reprinted "Tarjeta Crédito VISA" header line
+        WHEN the statement is parsed
+        THEN it is NOT treated as the consumo-total boundary — the real
+             "TARJETA 5771 Total Consumos …" line closes the detail section
+        """
+        # THEN — proven by the total being read from the real total line, and by the
+        # page-2 rows (which sit AFTER the reprinted header) all being present.
+        assert parsed.total_amount == Decimal("1315846.68")
+        names = {line.name for line in parsed.lines}
+        assert "CARDON" in names  # a page-2 row, i.e. past the reprinted header.
+
+    def test_fee_section_still_nets_the_com_fee(self, parsed: ParsedStatement):
+        """
+        GIVEN the post-total COM fee row (no matching waiver) after the real total
+        WHEN the statement is parsed
+        THEN the fee section (started at the REAL total, not the reprinted header)
+             emits exactly that COM fee
+        """
+        # THEN
+        fees = [line for line in parsed.lines if line.line_kind is LineKind.FEE]
+        assert len(fees) == 1
+        assert fees[0].name == "COM MANT CTA Y RENO"
+        assert fees[0].amount == Decimal("25206.00")
+
+    def test_grocery_and_clothing_categories_are_guessed(self, parsed: ParsedStatement):
+        """
+        GIVEN the parsed multi-page statement
+        WHEN the grocery and clothing purchases are read
+        THEN COTO maps to Food and CARDON to Shopping (the category additions)
+        """
+        # THEN
+        coto = _by_name(parsed, "MERPAGO*COTO")
+        assert coto is not None
+        assert coto.category == "Food"
+        cardon = _by_name(parsed, "CARDON")
+        assert cardon is not None
+        assert cardon.category == "Shopping"
+        assert cardon.cuota == "01/06"
 
 
 class TestNativeBoundary:

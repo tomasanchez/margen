@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
@@ -219,6 +220,12 @@ _CATEGORY_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("vinia urbana", "Shopping"),
     ("sube", "Transport"),
     ("sushi", "Food"),
+    # Grocery / supermarket chains → Food, matched by CONTAINS so store-location
+    # suffixes and online variants map too ("MERPAGO*COTO", "JUMBO ALMAGRO",
+    # "Carrefour Express …"). "express" already maps Carrefour Express to Food.
+    ("coto", "Food"),
+    ("jumbo", "Food"),
+    ("carrefour", "Food"),
     ("express", "Food"),
 )
 
@@ -303,8 +310,21 @@ class GaliciaVisaParser(StatementParser):
 
     # Section anchors in the vertical token stream.
     _DETAIL_HEADER = "DETALLE DEL CONSUMO"  # purchases start after this header.
-    _CONSUMO_TOTAL_PREFIX = "TARJETA "  # "TARJETA 5771 Total Consumos…" ends purchases.
     _GRAND_TOTAL = "TOTAL A PAGAR"  # ends the fee/charges block.
+    # The REAL consumo-total line — "TARJETA 5771 Total Consumos de …". It ends the
+    # detail section and starts the fee section. A bare "TARJETA " prefix is NOT
+    # specific enough: page 2+ REPRINTS the header line "Tarjeta Crédito VISA", which
+    # also starts with "TARJETA " and would prematurely close the detail section (so
+    # every page-2+ row was dropped) and mislatch the fee section start. Anchoring on
+    # "TARJETA <digits> … TOTAL CONSUMOS" matches only the real total, never the
+    # reprinted "Tarjeta Crédito VISA" header (multi-page bug fix).
+    _CONSUMO_TOTAL_RE = re.compile(r"^\s*TARJETA\s+\d+\b.*TOTAL\s+CONSUMOS", re.IGNORECASE)
+    # The reprinted page-header block that precedes resumed data on page 2+ opens with
+    # a "Resumen N° …" line and closes with the reprinted "DÓLARES" column header; the
+    # cardholder-name and address lines it carries have no leading date and would
+    # otherwise append as stray cells to the last pre-break row (page-break chrome fix).
+    _PAGE_HEADER_START_RE = re.compile(r"^\s*RESUMEN\s+N", re.IGNORECASE)
+    _PAGE_HEADER_END_RE = re.compile(r"^\s*D[ÓO]LARES\s*$", re.IGNORECASE)
 
     # Rows that must never become transactions (payments / carryover — ADR-079).
     _SKIP_MARKERS = ("SU PAGO", "SALDO ANTERIOR")
@@ -426,20 +446,41 @@ class GaliciaVisaParser(StatementParser):
             return True
         return bool(self._PAGE_NUMBER.match(token) or self._BARCODE.match(token))
 
-    def _section(self, tokens: list[str], start_prefix: str, end_prefix: str) -> list[str]:
-        """Return the cells strictly between the first ``start_prefix`` cell and the
-        first following ``end_prefix`` cell (or end of stream)."""
-        start = next(
-            (i for i, t in enumerate(tokens) if t.upper().startswith(start_prefix)),
-            None,
-        )
-        if start is None:
+    @staticmethod
+    def _as_predicate(boundary: str | re.Pattern[str]) -> Callable[[str], bool]:
+        """Turn a boundary spec into a cell matcher.
+
+        A string boundary matches by case-insensitive prefix (the existing anchors);
+        a compiled pattern matches by search — so the real-total-line boundary can be
+        specific enough to skip the reprinted ``"Tarjeta Crédito VISA"`` header.
+        """
+        if isinstance(boundary, re.Pattern):
+            return lambda cell: boundary.search(cell) is not None
+        return lambda cell: cell.upper().startswith(boundary)
+
+    def _section(
+        self,
+        tokens: list[str],
+        start: str | re.Pattern[str],
+        end: str | re.Pattern[str],
+    ) -> list[str]:
+        """Return the cells strictly between the first ``start`` cell and the first
+        following ``end`` cell (or end of stream).
+
+        ``start`` and ``end`` are each either a case-insensitive prefix or a compiled
+        pattern (matched by ``search``), so a specific real-total matcher can bound
+        the section without a bare ``"TARJETA "`` prefix latching onto the reprinted
+        per-page ``"Tarjeta Crédito VISA"`` header.
+        """
+        starts, ends = self._as_predicate(start), self._as_predicate(end)
+        start_at = next((i for i, t in enumerate(tokens) if starts(t)), None)
+        if start_at is None:
             return []
-        end = next(
-            (i for i in range(start + 1, len(tokens)) if tokens[i].upper().startswith(end_prefix)),
+        end_at = next(
+            (i for i in range(start_at + 1, len(tokens)) if ends(tokens[i])),
             len(tokens),
         )
-        return tokens[start + 1 : end]
+        return tokens[start_at + 1 : end_at]
 
     def _line_items(self, tokens: list[str], pay_date: date | None) -> list[StatementLineDraft]:
         """Parse the DETALLE DEL CONSUMO purchase rows into drafts (ADR-079, ADR-089).
@@ -451,7 +492,7 @@ class GaliciaVisaParser(StatementParser):
         draft's ``occurred_on`` is the statement ``pay_date`` (ADR-089); ``pay_date``
         of ``None`` falls back to the row's own purchase date.
         """
-        detail = self._section(tokens, self._DETAIL_HEADER, self._CONSUMO_TOTAL_PREFIX)
+        detail = self._section(tokens, self._DETAIL_HEADER, self._CONSUMO_TOTAL_RE)
         drafts: list[StatementLineDraft] = []
         for group in self._row_groups(detail):
             draft = self._build_purchase(group, pay_date)
@@ -463,11 +504,29 @@ class GaliciaVisaParser(StatementParser):
         """Group a section's cells into rows, each starting at a date cell.
 
         Blank and page-chrome cells are dropped so a page break inside the section
-        never contaminates a row.
+        never contaminates a row. When the detail section spans a page break the
+        reprinted per-page header block (statement number, cardholder NAME, address,
+        account, "Página N / N", the barcode, the reprinted "DETALLE DEL CONSUMO" and
+        column titles) sits INSIDE the section, between the last pre-break row and the
+        first resumed date row. Its name/address cells carry no leading date and would
+        otherwise append as stray cells to the preceding row's merchant name. So the
+        WHOLE reprinted header is skipped as a unit: from its "Resumen N° …" opener
+        through the reprinted "DÓLARES" column-title terminator (page-break chrome fix).
         """
         groups: list[list[str]] = []
         current: list[str] | None = None
+        in_page_header = False
         for token in tokens:
+            if in_page_header:
+                # Inside a reprinted page-header block: skip everything (name, address,
+                # account, barcode, reprinted column titles) up to and including the
+                # "DÓLARES" terminator, then resume grouping at the next data row.
+                if self._PAGE_HEADER_END_RE.match(token):
+                    in_page_header = False
+                continue
+            if self._PAGE_HEADER_START_RE.match(token):
+                in_page_header = True
+                continue
             if self._is_noise(token):
                 continue
             if self._DATE_TOKEN.match(token):
@@ -580,7 +639,7 @@ class GaliciaVisaParser(StatementParser):
         ``purchase_date`` is the fee row's own date; ``pay_date`` of ``None`` falls
         back to that row date.
         """
-        region = self._section(tokens, self._CONSUMO_TOTAL_PREFIX, self._GRAND_TOTAL)
+        region = self._section(tokens, self._CONSUMO_TOTAL_RE, self._GRAND_TOTAL)
         sums: dict[str, Decimal] = {}
         dates: dict[str, date] = {}
         labels: dict[str, str] = {}
