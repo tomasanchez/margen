@@ -145,4 +145,30 @@ describe('ResponsiveModal', () => {
     )
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
+
+  // The app shell owns a single, fixed-viewport scroll model (ADR-017): `body`
+  // is `overflow: hidden` and the ONLY scroller is `<main>`. The modal MUST NOT
+  // engage MUI's default body scroll-lock — locking a never-scrolling `body`
+  // adds nothing and its restore-on-close can leave the page stuck (the dead
+  // block after opening + closing the Add sheet on mobile). `disableScrollLock`
+  // means MUI never writes the inline `overflow: hidden` / scrollbar-padding it
+  // uses to lock the body, on EITHER surface.
+  test.each([
+    ['mobile Drawer', true],
+    ['desktop Dialog', false],
+  ])('%s does not lock body scroll while open', (_label, isMobile) => {
+    mediaQueryMock.mockReturnValue(isMobile)
+    // Establish a known baseline: no inline body overflow before opening.
+    document.body.style.overflow = ''
+    renderModal(
+      <ResponsiveModal open onClose={vi.fn()} title="Add">
+        <p>Body</p>
+      </ResponsiveModal>,
+    )
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    // With scroll-lock disabled MUI leaves the body's inline overflow untouched
+    // (it would otherwise force it to `hidden` and add scrollbar padding).
+    expect(document.body.style.overflow).toBe('')
+    expect(document.body.style.paddingRight).toBe('')
+  })
 })

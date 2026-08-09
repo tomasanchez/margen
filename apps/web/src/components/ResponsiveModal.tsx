@@ -136,6 +136,14 @@ export function ResponsiveModal({
         anchor="bottom"
         open={open}
         onClose={onClose}
+        // The app shell owns a single, fixed-viewport scroll model (ADR-017):
+        // `body` is `overflow: hidden` and the ONLY scroller is `<main>`. MUI's
+        // default scroll-lock is built for body-scrolling pages — here it locks
+        // `body` (which never scrolls) and, on a mobile close, could leave the
+        // page unscrollable (the reported dead block after opening + closing the
+        // Add sheet). Disabling it is safe: body scroll is already prevented by
+        // the shell, so there is nothing to lock and nothing to restore/leak.
+        disableScrollLock
         slotProps={{
           paper: {
             // Make the Drawer paper a labelled dialog so AT + tests treat it like
@@ -181,6 +189,11 @@ export function ResponsiveModal({
       onClose={onClose}
       maxWidth={false}
       aria-labelledby={labelledBy}
+      // Same single-scroll shell rationale as the mobile Drawer above (ADR-017):
+      // `<main>` is the sole scroller and `body` is already `overflow: hidden`,
+      // so MUI's body scroll-lock is unnecessary and only risks leaving locked
+      // state behind. Keep desktop consistent with mobile.
+      disableScrollLock
       slotProps={{
         paper: {
           sx: {
