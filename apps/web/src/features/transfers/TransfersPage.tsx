@@ -35,7 +35,7 @@ import { formatCurrency } from '../../lib/format'
 import { activeIntlLocale } from '../../i18n/locale'
 import { todayIsoDate } from '../transactions/useAddEditFormState'
 import type { Account, Currency, Transfer } from '../../mock/types'
-import { useAccounts } from '../accounts/queries'
+import { useAccounts, useNetWorth } from '../accounts/queries'
 import {
   useCreateTransfer,
   useDeleteTransfer,
@@ -194,6 +194,7 @@ export function TransfersPage() {
   const { t } = useTranslation('transfers')
   const transfersQuery = useTransfers()
   const accountsQuery = useAccounts()
+  const netWorthQuery = useNetWorth()
   const createTransfer = useCreateTransfer()
   const deleteTransfer = useDeleteTransfer()
 
@@ -211,6 +212,19 @@ export function TransfersPage() {
     for (const account of accounts) map.set(account.id, account)
     return map
   }, [accounts])
+
+  // Current native balance per account (the same as-of-today figure Home shows,
+  // ADR-123/133) so the transfer form can surface each selected account's balance
+  // and offer a "bring a negative destination to 0" quick-fill. Degrades to an
+  // empty map while net worth loads — the form simply omits balances then.
+  const balanceByAccountId = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const account of netWorthQuery.data?.accounts ?? []) {
+      const value = Number(account.balance)
+      if (Number.isFinite(value)) map.set(account.id, value)
+    }
+    return map
+  }, [netWorthQuery.data])
 
   // Today as a local ISO date (ADR-041) so a scheduled transfer dated in the
   // future (ADR-191) reads as "Pending" until it takes effect (ADR-186). Pure
@@ -323,6 +337,7 @@ export function TransfersPage() {
         <TransferForm
           open
           accounts={accounts}
+          balanceByAccountId={balanceByAccountId}
           isSaving={createTransfer.isPending}
           saveError={createTransfer.isError}
           onSubmit={handleCreate}
