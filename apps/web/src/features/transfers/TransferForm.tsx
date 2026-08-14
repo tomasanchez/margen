@@ -240,7 +240,13 @@ export function TransferForm({
           </Typography>
 
           {saveError ? (
-            <Typography id={errorId} role="alert" sx={{ fontSize: 13 }} color="error.main">
+            <Typography
+              id={errorId}
+              role="alert"
+              // MUI v9 Typography's `color` prop ignores dotted palette paths
+              // ("error.main") and inherits primary text; route it through `sx`.
+              sx={{ fontSize: 13, color: 'error.main' }}
+            >
               {t('form.saveError')}
             </Typography>
           ) : null}

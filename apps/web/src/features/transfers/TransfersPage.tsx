@@ -358,7 +358,12 @@ export function TransfersPage() {
           {t('delete.body')}
         </Typography>
         {deleteTransfer.isError ? (
-          <Typography role="alert" sx={{ fontSize: 13, mt: 1.5 }} color="error.main">
+          <Typography
+            role="alert"
+            // MUI v9 Typography's `color` prop ignores dotted palette paths
+            // ("error.main") and inherits primary text; route it through `sx`.
+            sx={{ fontSize: 13, mt: 1.5, color: 'error.main' }}
+          >
             {t('delete.error')}
           </Typography>
         ) : null}
