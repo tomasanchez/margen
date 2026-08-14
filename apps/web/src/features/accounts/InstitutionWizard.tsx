@@ -249,8 +249,10 @@ export function InstitutionWizard({
               <Typography
                 id={errorId}
                 role="alert"
-                sx={{ fontSize: 13 }}
-                color="error.main"
+                // MUI v9 Typography's `color` prop ignores dotted palette paths
+                // ("error.main"), silently inheriting the primary text color;
+                // route the error color through `sx` so the token resolves.
+                sx={{ fontSize: 13, color: 'error.main' }}
               >
                 {t('wizard.institutionError')}
               </Typography>
@@ -466,8 +468,10 @@ export function InstitutionWizard({
                 {hasFailures ? (
                   <Typography
                     role="alert"
-                    sx={{ fontSize: 13 }}
-                    color="error.main"
+                    // MUI v9 Typography's `color` prop ignores dotted palette
+                    // paths ("error.main"), silently inheriting primary text;
+                    // route the error color through `sx` so the token resolves.
+                    sx={{ fontSize: 13, color: 'error.main' }}
                   >
                     {t('wizard.partialFailure')}
                   </Typography>

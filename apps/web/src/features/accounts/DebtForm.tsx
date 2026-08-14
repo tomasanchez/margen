@@ -114,8 +114,10 @@ export function DebtForm({
             <Typography
               id={errorId}
               role="alert"
-              sx={{ fontSize: 13 }}
-              color="error.main"
+              // MUI v9 Typography's `color` prop ignores dotted palette paths
+              // ("error.main"), silently inheriting the primary text color; the
+              // `sx` color path resolves the token, so put the error color there.
+              sx={{ fontSize: 13, color: 'error.main' }}
             >
               {t('debts.form.saveError')}
             </Typography>

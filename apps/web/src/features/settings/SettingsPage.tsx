@@ -176,8 +176,10 @@ export function SettingsPage() {
         <Typography
           id={errorId}
           role="alert"
-          sx={{ fontSize: 13, mb: 1.75 }}
-          color="error.main"
+          // MUI v9 Typography's `color` prop ignores dotted palette paths
+          // ("error.main"), silently inheriting primary text; route the error
+          // color through `sx` so the token resolves.
+          sx={{ fontSize: 13, mb: 1.75, color: 'error.main' }}
         >
           {saveError}
         </Typography>

@@ -103,8 +103,12 @@ export function AccountForm({
             <Typography
               id={errorId}
               role="alert"
-              sx={{ fontSize: 13 }}
-              color="error.main"
+              // MUI v9 Typography's `color` prop only maps the fixed token
+              // strings (`error`, `textSecondary`, …); a dotted palette path
+              // ("error.main") matches no variant and emits NO color, so the
+              // text silently inherits the primary text color instead of red.
+              // The `sx` color path resolves the palette token, so route it there.
+              sx={{ fontSize: 13, color: 'error.main' }}
             >
               {t('form.saveError')}
             </Typography>
