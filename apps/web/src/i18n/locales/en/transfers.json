@@ -23,6 +23,8 @@
     "from": { "label": "From account" },
     "to": { "label": "To account" },
     "sameAccountError": "Pick a different account to transfer to.",
+    "balance": "Balance: {{amount}}",
+    "topUp": "Top up to 0 ({{amount}})",
     "amountSent": {
       "label": "Amount sent",
       "labelCurrency": "Amount sent ({{currency}})"

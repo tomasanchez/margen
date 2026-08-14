@@ -23,6 +23,8 @@
     "from": { "label": "Cuenta de origen" },
     "to": { "label": "Cuenta de destino" },
     "sameAccountError": "Elegí una cuenta de destino distinta.",
+    "balance": "Saldo: {{amount}}",
+    "topUp": "Llevar a 0 ({{amount}})",
     "amountSent": {
       "label": "Monto enviado",
       "labelCurrency": "Monto enviado ({{currency}})"

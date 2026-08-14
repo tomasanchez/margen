@@ -114,7 +114,55 @@ const mockList = vi.mocked(transfersClient.list)
 const mockCreate = vi.mocked(transfersClient.create)
 const mockRemove = vi.mocked(transfersClient.remove)
 const mockAccountsList = vi.mocked(accountsClient.list)
+const mockNetWorth = vi.mocked(accountsClient.netWorth)
 const mockFetchRate = vi.mocked(fetchCurrentRate)
+
+/**
+ * A net-worth read model carrying a native balance per account so the form can
+ * show balances + the "bring to 0" quick-fill. `balance` is a Decimal string
+ * (ADR-025/034). Galicia positive, Brubank NEGATIVE (the reconcile case), Deel
+ * USD positive.
+ */
+const NET_WORTH = {
+  total: '199000.00',
+  currency: 'ARS',
+  accounts: [
+    {
+      id: 'acc-ars',
+      institutionId: 'inst-1',
+      institutionName: 'Galicia',
+      type: 'bank',
+      currency: 'ARS',
+      balance: '150000.00',
+      balanceConverted: '150000.00',
+    },
+    {
+      id: 'acc-ars-2',
+      institutionId: 'inst-2',
+      institutionName: 'Brubank',
+      type: 'bank',
+      currency: 'ARS',
+      balance: '-12000.00',
+      balanceConverted: '-12000.00',
+    },
+    {
+      id: 'acc-usd',
+      institutionId: 'inst-3',
+      institutionName: 'Deel',
+      type: 'wallet',
+      currency: 'USD',
+      balance: '1200.00',
+      balanceConverted: '1500000.00',
+    },
+  ],
+  liabilities: {
+    total: '0.00',
+    installments: { ars: '0.00', usd: '0.00' },
+    ccBalance: { ars: '0.00', usd: '0.00' },
+    otherDebts: { ars: '0.00', usd: '0.00' },
+  },
+  netAfterLiabilities: '199000.00',
+} as unknown as Awaited<ReturnType<typeof accountsClient.netWorth>>
 
 function renderTransfersPage() {
   const queryClient = new QueryClient({
@@ -162,6 +210,7 @@ describe('TransfersPage', () => {
   beforeEach(() => {
     mockList.mockResolvedValue(TRANSFERS)
     mockAccountsList.mockResolvedValue(ACCOUNTS)
+    mockNetWorth.mockResolvedValue(NET_WORTH)
     mockCreate.mockResolvedValue({
       transfer: TRANSFERS[0],
       feeTransactionIds: [],
@@ -368,5 +417,92 @@ describe('TransfersPage', () => {
 
     await user.click(dialog.getByRole('button', { name: 'Delete transfer' }))
     await waitFor(() => expect(mockRemove).toHaveBeenCalledWith('tr-1'))
+  })
+
+  test('shows the From and To account balances, a negative one signed + red', async () => {
+    const user = userEvent.setup()
+    renderTransfersPage()
+    await screen.findByText('Galicia')
+
+    const dialog = await openForm(user)
+    await selectOption(user, dialog, /From account/, 'Galicia · ARS')
+    await selectOption(user, dialog, /To account/, 'Brubank · ARS')
+
+    // From balance (Galicia, positive) renders plainly.
+    expect(dialog.getByText('Balance: ARS 150.000')).toBeInTheDocument()
+
+    // To balance (Brubank, NEGATIVE) reads with a leading Unicode minus (the
+    // color-free cue, ADR-019) AND carries the theme error color.
+    const negative = dialog.getByText('Balance: −ARS 12.000')
+    expect(negative).toBeInTheDocument()
+    // The signed balance is applied via sx color: it resolves to the theme's
+    // error token (the risk CSS var) on the rendered node — never inherit/default.
+    expect(negative).toHaveStyle({ color: 'var(--mg-risk)' })
+    // The positive From balance is NOT painted with the error token.
+    expect(dialog.getByText('Balance: ARS 150.000')).not.toHaveStyle({
+      color: 'var(--mg-risk)',
+    })
+  })
+
+  test('top-up chip fills the exact deficit and submits amountOut = |deficit|', async () => {
+    const user = userEvent.setup()
+    renderTransfersPage()
+    await screen.findByText('Galicia')
+
+    const dialog = await openForm(user)
+    // To = Brubank (−12.000 ARS). From same-currency → chip offered.
+    await selectOption(user, dialog, /To account/, 'Brubank · ARS')
+    await selectOption(user, dialog, /From account/, 'Galicia · ARS')
+
+    const topUp = dialog.getByRole('button', { name: 'Top up to 0 (ARS 12.000)' })
+    await user.click(topUp)
+
+    // The sent field now holds the deficit magnitude.
+    expect(dialog.getByLabelText(/Amount sent/)).toHaveValue('12000.00')
+
+    await user.click(dialog.getByRole('button', { name: 'Save transfer' }))
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1))
+    const body = mockCreate.mock.calls[0][0]
+    // Same-currency net-zero: transferring |deficit| into the negative To lands 0.
+    expect(body.amountOut).toBe('12000.00')
+    expect(body.amountIn).toBe('12000.00')
+  })
+
+  test('hides the top-up chip for a cross-currency transfer into the negative To', async () => {
+    const user = userEvent.setup()
+    renderTransfersPage()
+    await screen.findByText('Galicia')
+
+    const dialog = await openForm(user)
+    // To = Brubank (−12.000 ARS) but From = Deel (USD) → cross-currency, no chip
+    // (the exact-to-zero math doesn't hold when received ≠ sent).
+    await selectOption(user, dialog, /To account/, 'Brubank · ARS')
+    await selectOption(user, dialog, /From account/, 'Deel · USD')
+
+    expect(dialog.queryByRole('button', { name: /Top up to 0/ })).toBeNull()
+  })
+
+  test('hides the top-up chip when the To balance is non-negative', async () => {
+    const user = userEvent.setup()
+    renderTransfersPage()
+    await screen.findByText('Galicia')
+
+    const dialog = await openForm(user)
+    // To = Galicia (+150.000 ARS, non-negative) → nothing to reconcile.
+    await selectOption(user, dialog, /To account/, 'Galicia · ARS')
+    await selectOption(user, dialog, /From account/, 'Brubank · ARS')
+
+    expect(dialog.queryByRole('button', { name: /Top up to 0/ })).toBeNull()
+  })
+
+  test('hides the top-up chip when no To account is selected', async () => {
+    const user = userEvent.setup()
+    renderTransfersPage()
+    await screen.findByText('Galicia')
+
+    const dialog = await openForm(user)
+    await selectOption(user, dialog, /From account/, 'Galicia · ARS')
+
+    expect(dialog.queryByRole('button', { name: /Top up to 0/ })).toBeNull()
   })
 })

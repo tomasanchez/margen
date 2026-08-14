@@ -42,6 +42,11 @@ import { ResponsiveModal } from '../../components/ResponsiveModal'
 import type { Account, NewTransferInput, TransferFeeInput } from '../../mock/types'
 import { accountOptionLabel } from '../transactions/presentation'
 import { parseBalance, toDecimalString } from '../accounts/balance'
+import {
+  balanceColor,
+  formatCurrency,
+  formatSignedBalance,
+} from '../../lib/format'
 
 /** One fee row in the editable form state (raw text, validated on submit). */
 interface FeeDraft {
@@ -57,6 +62,13 @@ export interface TransferFormProps {
   open: boolean
   /** Owner's accounts (the selector options); from/to + fee accounts pick from these. */
   accounts: Account[]
+  /**
+   * Current NATIVE balance per account id (the as-of-today figure Home shows,
+   * ADR-123/133). Used to render each selected account's balance and to offer the
+   * "bring a negative destination to 0" quick-fill. Optional: while net worth is
+   * loading (or absent) the form simply omits balances — no crash.
+   */
+  balanceByAccountId?: ReadonlyMap<string, number>
   /** Whether a save mutation is in flight (disables the form / shows progress). */
   isSaving: boolean
   /** True when the last save failed — surfaces the calm inline error (ADR-037). */
@@ -82,6 +94,7 @@ function nextFeeKey(): string {
 export function TransferForm({
   open,
   accounts,
+  balanceByAccountId,
   isSaving,
   saveError,
   onSubmit,
@@ -113,6 +126,23 @@ export function TransferForm({
   // Cross-currency only when BOTH accounts are chosen and their currencies differ.
   const crossCurrency =
     !!fromAccount && !!toAccount && fromAccount.currency !== toAccount.currency
+
+  // Current native balances of the selected accounts (undefined while net worth
+  // is loading / absent, so the balance captions simply don't render).
+  const fromBalance = fromAccount
+    ? balanceByAccountId?.get(fromAccount.id)
+    : undefined
+  const toBalance = toAccount ? balanceByAccountId?.get(toAccount.id) : undefined
+
+  // "Bring to 0" quick-fill (the reconcile-negatives ask): only when the To
+  // account is selected, its native balance is NEGATIVE, and the transfer is
+  // same-currency (net-zero, amountIn := amountOut) so transferring exactly the
+  // deficit lands the destination on 0. Cross-currency breaks the exact-to-zero
+  // math (received ≠ sent), so it's hidden there.
+  const topUpDeficit =
+    toAccount && !crossCurrency && toBalance !== undefined && toBalance < 0
+      ? Math.abs(toBalance)
+      : null
 
   const sent = parseBalance(sentText)
   const received = parseBalance(receivedText)
@@ -236,6 +266,22 @@ export function TransferForm({
                 </MenuItem>
               ))}
             </Select>
+            {/* Current balance of the selected From account (ADR-019: a negative
+                reads with a leading minus AND red — sign is the color-free cue). */}
+            {fromAccount && fromBalance !== undefined ? (
+              <Typography
+                sx={{
+                  fontSize: 12.5,
+                  mt: 0.5,
+                  fontVariantNumeric: 'tabular-nums',
+                  color: balanceColor(fromBalance),
+                }}
+              >
+                {t('form.balance', {
+                  amount: formatSignedBalance(fromBalance, fromAccount.currency),
+                })}
+              </Typography>
+            ) : null}
           </FormControl>
 
           {/* To account */}
@@ -262,6 +308,21 @@ export function TransferForm({
             {sameAccount ? (
               <FormHelperText>{t('form.sameAccountError')}</FormHelperText>
             ) : null}
+            {/* Current balance of the selected To account (same sign+color cue). */}
+            {toAccount && toBalance !== undefined ? (
+              <Typography
+                sx={{
+                  fontSize: 12.5,
+                  mt: 0.5,
+                  fontVariantNumeric: 'tabular-nums',
+                  color: balanceColor(toBalance),
+                }}
+              >
+                {t('form.balance', {
+                  amount: formatSignedBalance(toBalance, toAccount.currency),
+                })}
+              </Typography>
+            ) : null}
           </FormControl>
 
           {/* Amount sent (always shown). */}
@@ -281,6 +342,26 @@ export function TransferForm({
             error={submitted && !sentValid}
             helperText={submitted && !sentValid ? t('form.amount.invalid') : ' '}
           />
+
+          {/* "Bring to 0" quick-fill: fills the sent amount with the destination's
+              deficit magnitude so a same-currency transfer lands the negative To
+              account on exactly 0 (net-zero, amountIn := amountOut). Only shown for
+              a same-currency, negative To account; the user can still edit after. */}
+          {topUpDeficit !== null && toAccount ? (
+            <Box sx={{ mt: -1 }}>
+              <Button
+                type="button"
+                size="small"
+                onClick={() => setSentText(toDecimalString(topUpDeficit))}
+                disabled={isSaving}
+                sx={{ textTransform: 'none', fontWeight: 600 }}
+              >
+                {t('form.topUp', {
+                  amount: formatCurrency(topUpDeficit, toAccount.currency),
+                })}
+              </Button>
+            </Box>
+          ) : null}
 
           {/* Amount received — shown ONLY when the two currencies differ (ADR-135).
               Same-currency transfers are net-zero, so amountIn := amountOut. */}
