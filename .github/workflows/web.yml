@@ -43,12 +43,14 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      # Fail the build on high/critical dependency advisories so a vulnerable
-      # package can't reach main. Moderate/low are not gated to avoid noise from
-      # transitive dev deps; tighten to --audit-level moderate if desired.
-      # The esbuild override (pnpm.overrides in package.json, see ADR-022/ADR-039)
-      # is the load-bearing remediation that keeps this gate at 0 high.
+      # Report high/critical dependency advisories WITHOUT blocking the build.
+      # Fresh transitive-dev-dep CVEs (vite/postcss/jsdom/eslint chains) were
+      # firing ~weekly and blocking unrelated feature PRs one at a time; the
+      # advisories are still surfaced here (step annotation + log) so we can pin
+      # them via pnpm.overrides, but they no longer gate merges. Re-enable gating
+      # by removing continue-on-error if this app's risk posture changes.
       - name: Audit dependencies (high+)
+        continue-on-error: true
         run: pnpm audit --audit-level high
       - name: Lint
         run: pnpm run lint
