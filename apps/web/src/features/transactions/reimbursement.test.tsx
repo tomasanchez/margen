@@ -27,14 +27,25 @@ import { buildReimbursementPrefill } from './filtering'
 import { TransactionRow } from './TransactionRow'
 import type { Transaction } from '../../mock/types'
 
-const { createMock, fxMock, currentRateMock, fetchSettingsMock, monotributoMock } =
-  vi.hoisted(() => ({
-    createMock: vi.fn(),
-    fxMock: vi.fn(),
-    currentRateMock: vi.fn(),
-    fetchSettingsMock: vi.fn(),
-    monotributoMock: vi.fn(),
-  }))
+const {
+  createMock,
+  fxMock,
+  currentRateMock,
+  fetchSettingsMock,
+  monotributoMock,
+  accountsListMock,
+  netWorthMock,
+  transfersListMock,
+} = vi.hoisted(() => ({
+  createMock: vi.fn(),
+  fxMock: vi.fn(),
+  currentRateMock: vi.fn(),
+  fetchSettingsMock: vi.fn(),
+  monotributoMock: vi.fn(),
+  accountsListMock: vi.fn(),
+  netWorthMock: vi.fn(),
+  transfersListMock: vi.fn(),
+}))
 
 vi.mock('../../api/transactionsClient', async () => {
   const actual = await vi.importActual<
@@ -65,6 +76,37 @@ vi.mock('../../api/settingsClient', async () => {
     typeof import('../../api/settingsClient')
   >('../../api/settingsClient')
   return { ...actual, fetchSettings: fetchSettingsMock }
+})
+
+vi.mock('../../api/accountsClient', async () => {
+  const actual =
+    await vi.importActual<typeof import('../../api/accountsClient')>(
+      '../../api/accountsClient',
+    )
+  return {
+    ...actual,
+    accountsClient: {
+      list: accountsListMock,
+      create: vi.fn(),
+      update: vi.fn(),
+      netWorth: netWorthMock,
+    },
+  }
+})
+
+vi.mock('../../api/transfersClient', async () => {
+  const actual =
+    await vi.importActual<typeof import('../../api/transfersClient')>(
+      '../../api/transfersClient',
+    )
+  return {
+    ...actual,
+    transfersClient: {
+      list: transfersListMock,
+      create: vi.fn(),
+      remove: vi.fn(),
+    },
+  }
 })
 
 vi.mock('@tanstack/react-router', async () => {
@@ -122,6 +164,28 @@ beforeEach(() => {
     scale: [],
     invoices: [],
   })
+  // One ARS + one USD account so we can assert the reimbursement selector offers
+  // only ARS options (a payback is ARS, ADR-160/162) plus the "no account" item.
+  accountsListMock.mockResolvedValue([
+    {
+      id: 'acc-1',
+      institutionId: 'inst-1',
+      institutionName: 'Galicia',
+      type: 'bank',
+      currency: 'ARS',
+      openingBalance: '0.00',
+    },
+    {
+      id: 'acc-2',
+      institutionId: 'inst-2',
+      institutionName: 'Deel',
+      type: 'wallet',
+      currency: 'USD',
+      openingBalance: '0.00',
+    },
+  ])
+  netWorthMock.mockResolvedValue({ total: 0, accounts: [] })
+  transfersListMock.mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -191,6 +255,73 @@ describe('Reimbursement create payload (ADR-158/159/161)', () => {
     expect(
       form.queryByText('Counts toward Monotributo'),
     ).not.toBeInTheDocument()
+    // The other strip-downs still hold: no expense/income type toggle, no
+    // category chips (a reimbursement's category is inherited server-side).
+    expect(
+      form.queryByRole('group', { name: 'Transaction type' }),
+    ).not.toBeInTheDocument()
+    expect(form.queryByText('Category')).not.toBeInTheDocument()
+  })
+
+  test('shows the account selector with ARS accounts + a "no account" option (ADR-162)', async () => {
+    const { user, dialog } = await openReimburseDialog()
+    const form = within(dialog)
+    await waitFor(() => expect(accountsListMock).toHaveBeenCalled())
+
+    // The receiving-account selector is present so the payback can credit a
+    // balance (ADR-162, real cash into the account).
+    await user.click(form.getByRole('combobox', { name: 'Account' }))
+    // A reimbursement is ARS (buildInput), so only ARS accounts + "No account"
+    // are offered; the USD account is filtered out (ADR-122/123).
+    expect(
+      await screen.findByRole('option', { name: /Galicia · ARS/ }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('option', { name: 'No account' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('option', { name: /Deel · USD/ }),
+    ).not.toBeInTheDocument()
+  })
+
+  test('picking a receiving account sends that accountId on the create body (ADR-162)', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openReimburseDialog()
+    const form = within(dialog)
+    await waitFor(() => expect(accountsListMock).toHaveBeenCalled())
+
+    await user.type(form.getByLabelText(/^Amount in /), '15000')
+    // Choose the ARS receiving account.
+    await user.click(form.getByRole('combobox', { name: 'Account' }))
+    await user.click(await screen.findByRole('option', { name: /Galicia · ARS/ }))
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    const [input] = createMock.mock.calls[0]
+    // The chosen account travels so the backend credits its balance (ADR-158/162).
+    expect(input.accountId).toBe('acc-1')
+    expect(input.kind).toBe('reimbursement')
+    // Still no FX of its own (ADR-161).
+    expect(input.fxRate).toBeUndefined()
+    expect(input.usd).toBeUndefined()
+    expect(input.rate).toBeUndefined()
+  })
+
+  test('choosing no receiving account sends accountId: null (ADR-162 default)', async () => {
+    createMock.mockResolvedValueOnce({})
+    const { user, dialog } = await openReimburseDialog()
+    const form = within(dialog)
+    await waitFor(() => expect(accountsListMock).toHaveBeenCalled())
+
+    // Amount only — leave the account on its "No account" default.
+    await user.type(form.getByLabelText(/^Amount in /), '15000')
+    await user.click(form.getByRole('button', { name: /^Save$/ }))
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    const [input] = createMock.mock.calls[0]
+    // No account chosen → explicit null (credits no balance, works as before).
+    expect(input.accountId).toBeNull()
+    expect(input.kind).toBe('reimbursement')
   })
 })
 
