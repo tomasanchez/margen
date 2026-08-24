@@ -215,8 +215,10 @@ export interface AddEditFormState {
    * True when this flow records a REIMBURSEMENT (a payback linked to an expense,
    * ADR-158/159). Set from a prefill's `kind='reimbursement'` + a bound
    * `offsetsTransactionId`. In this mode the form is a stripped-down ARS inflow:
-   * no type toggle, no category picker, no FX (ADR-161), no account/Monotributo —
-   * just amount + date + optional note, linked to the source expense.
+   * no type toggle, no category picker, no FX (ADR-161), no Monotributo — but the
+   * account picker IS shown so the payback can credit a receiving account's
+   * balance (ADR-162, real cash into the account). Just amount + date + optional
+   * receiving account + optional note, linked to the source expense.
    */
   readonly isReimbursement: boolean
   /** The source expense id a reimbursement offsets (ADR-159); undefined otherwise. */
@@ -425,8 +427,10 @@ export function useAddEditFormState(
   // Reimbursement mode (ADR-158/159): the flow was opened from an expense's "add
   // reimbursement" action, so the prefill carries `kind='reimbursement'` and the
   // `offsetsTransactionId` of the expense it pays back. The form then renders a
-  // stripped-down ARS inflow (no type/category/FX/account) and `buildInput`
-  // assembles the reimbursement create (ADR-160/161). The link is fixed for the
+  // stripped-down ARS inflow (no type/category/FX/Monotributo) but KEEPS the
+  // account picker so the payback can credit a chosen receiving account's balance
+  // (ADR-162), and `buildInput` assembles the reimbursement create (ADR-160/161,
+  // still no FX of its own). The link is fixed for the
   // life of the flow (this hook is remounted per open), so it is a plain const.
   const isReimbursement = prefill?.kind === 'reimbursement'
   const offsetsTransactionId =
@@ -958,9 +962,15 @@ export function useAddEditFormState(
         amountNum: round2(amountArs),
         countsTowardMonotributo: false,
         offsetsTransactionId,
-        // No account, no FX (ADR-161): the payback nets the expense, not a
-        // balance-attributed USD row.
-        accountId: null,
+        // The receiving account the user chose (ADR-162): a reimbursement is real
+        // cash entering that account, so the backend credits its balance exactly
+        // like a deposit when `account_id` is set (ADR-158/162 `_SIGNED_DELTA`).
+        // `''` (no account chosen) → null, so a reimbursement without an account
+        // still works and simply credits no balance. Still NO FX of its own
+        // (ADR-161): the backend derives USD from the linked expense's rate; the
+        // payback nets the expense's category spend and stays out of income +
+        // Monotributo turnover (ADR-162).
+        accountId: accountId === '' ? null : accountId,
         ...(notes.trim() ? { notes: notes.trim() } : {}),
       }
     }

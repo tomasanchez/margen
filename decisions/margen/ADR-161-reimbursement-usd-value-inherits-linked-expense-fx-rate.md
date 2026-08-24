@@ -56,3 +56,4 @@ The expense already carries a stable `fx_rate` and `usd_amount` (ADR-148). Ridin
 
 - 2026-07-01: accepted
 - 2026-07-01: amended — Decision section updated to make proportional form the primary (implemented) form with symmetric-exclusion rationale; Consequences updated to match and to add ADR-152 cross-link
+- 2026-08-24: superseded in part by ADR-202 — the "reimbursement carries no account" stance is superseded (a receiving account is now user-chosen and persisted); this ADR's FX-derivation rule (USD value inherits the linked expense's rate) is otherwise unchanged and remains in effect

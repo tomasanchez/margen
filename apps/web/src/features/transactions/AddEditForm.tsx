@@ -1025,9 +1025,11 @@ export function AddEditForm({
           attribution (ADR-136 extension: the legacy bank picker is retired — a
           manual entry no longer carries a bank tag, its source is the account).
           A "no account" option leaves the row unlinked. The selector is always
-          shown so a row can be attributed even before any FX/USD step. Hidden for
-          a reimbursement — a payback nets the linked expense, not an account. */}
-      {!isReimbursement ? (
+          shown so a row can be attributed even before any FX/USD step. Shown for
+          a reimbursement too: a payback is real cash entering the chosen receiving
+          account, so it credits that account's balance (ADR-162). A reimbursement's
+          currency is fixed to ARS (buildInput), so `accountOptions` filters to ARS
+          accounts + the "no account" option automatically. */}
       <Box sx={{ mt: 2.5 }}>
         <FormControl fullWidth size="small">
           <InputLabel id={`${accountSelectId}-label`}>
@@ -1101,7 +1103,6 @@ export function AddEditForm({
           </Select>
         </FormControl>
       </Box>
-      ) : null}
 
       {/* Date — a native date picker. Defaults to today for a new transaction
           and prefills from the row's occurredOn on edit; `max` is today so no
