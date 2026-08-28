@@ -32,6 +32,8 @@ from margen_api.adapters.queries import (
     SqlAlchemySummaryReader,
     SqlAlchemyTransactionReader,
 )
+from margen_api.adapters.receivable_matching_queries import SqlAlchemyReceivableMatchReader
+from margen_api.adapters.receivable_queries import SqlAlchemyReceivableReader
 from margen_api.adapters.reports_queries import SqlAlchemyReportsReader
 from margen_api.adapters.statement_store import SqlAlchemyStatementStore
 from margen_api.adapters.transfer_queries import SqlAlchemyTransferReader
@@ -48,6 +50,8 @@ from margen_api.service_layer.institution_reader import AbstractInstitutionReade
 from margen_api.service_layer.messagebus import MessageBus
 from margen_api.service_layer.monotributo_reader import AbstractMonotributoReader
 from margen_api.service_layer.reader import AbstractTransactionReader
+from margen_api.service_layer.receivable_match_reader import AbstractReceivableMatchReader
+from margen_api.service_layer.receivable_reader import AbstractReceivableReader
 from margen_api.service_layer.reports_reader import AbstractReportsReader
 from margen_api.service_layer.settings_reader import AbstractSettingsReader
 from margen_api.service_layer.statement_store import AbstractStatementStore
@@ -532,3 +536,37 @@ async def get_committed_reader(container: Container) -> AsyncIterator[AbstractCo
 
 
 CommittedReader = Annotated[AbstractCommittedReader, Depends(get_committed_reader)]
+
+
+async def get_receivable_reader(container: Container) -> AsyncIterator[AbstractReceivableReader]:
+    """Yield a receivables reader over a request-scoped read-only session (ADR-204, ADR-206).
+
+    Query paths bypass the unit of work by design (ADR-028); the session opened here is
+    closed when the request finishes. Receivables writes go through the message bus / unit
+    of work instead, keeping this reader read-only.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemyReceivableReader(session)
+    finally:
+        await session.close()
+
+
+ReceivableReader = Annotated[AbstractReceivableReader, Depends(get_receivable_reader)]
+
+
+async def get_receivable_match_reader(container: Container) -> AsyncIterator[AbstractReceivableMatchReader]:
+    """Yield a receivable income-match reader over a request-scoped read-only session (ADR-207).
+
+    Query paths bypass the unit of work by design (ADR-028); the session opened here is
+    closed when the request finishes. The match reader is read-only — it ranks candidate
+    incomes for review and never mutates state; confirming a match writes through the bus.
+    """
+    session = container.session_factory()
+    try:
+        yield SqlAlchemyReceivableMatchReader(session)
+    finally:
+        await session.close()
+
+
+ReceivableMatchReader = Annotated[AbstractReceivableMatchReader, Depends(get_receivable_match_reader)]

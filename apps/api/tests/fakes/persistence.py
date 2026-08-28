@@ -19,6 +19,12 @@ from margen_api.domain.models.budget import Budget
 from margen_api.domain.models.budget_income import BudgetIncome
 from margen_api.domain.models.debt import Debt
 from margen_api.domain.models.institution import Institution
+from margen_api.domain.models.receivable import (
+    Person,
+    ReceivableAllocation,
+    ReceivableItem,
+    ReceivablePayment,
+)
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.transfer import Transfer
 from margen_api.domain.models.value_objects import BudgetKind, Currency, Kind, TxType
@@ -59,6 +65,13 @@ from margen_api.service_layer.monotributo_repository import (
 )
 from margen_api.service_layer.read_models import TransactionReadModel
 from margen_api.service_layer.reader import AbstractTransactionReader
+from margen_api.service_layer.receivable_read_models import (
+    PersonDetailReadModel,
+    PersonReadModel,
+    ReceivableItemReadModel,
+)
+from margen_api.service_layer.receivable_reader import AbstractReceivableReader
+from margen_api.service_layer.receivable_repository import AbstractReceivableRepository
 from margen_api.service_layer.reports_overview_read_models import ReportsOverview
 from margen_api.service_layer.reports_read_models import NetWorthHistory
 from margen_api.service_layer.reports_reader import AbstractReportsReader
@@ -283,6 +296,167 @@ class FakeDebtRepository(AbstractDebtRepository):
         self._staged.pop(debt_id, None)
         self._committed.pop(debt_id, None)
         return True
+
+
+class FakeReceivableRepository(AbstractReceivableRepository):
+    """In-memory receivables cluster over committed stores and staging buffers (ADR-204).
+
+    Mirrors the SQLAlchemy adapter closely enough to drive the handlers without a
+    database: ``add_*``/``persist_*`` write to the staging buffers, ``commit`` promotes
+    them, ``rollback`` clears them, ownership always flows through the person's ``user_id``
+    (ADR-130), and ``delete_person``/``delete_item`` emulate the database ``ON DELETE
+    CASCADE`` subtree teardown (ADR-208) so the cascade is exercised in the unit tier.
+    ``item_remainders`` sums the person's items minus their allocations for the ADR-206
+    overpayment guard.
+    """
+
+    def __init__(
+        self,
+        committed_people: dict[UUID, Person],
+        staged_people: dict[UUID, Person],
+        committed_items: dict[UUID, ReceivableItem],
+        staged_items: dict[UUID, ReceivableItem],
+        committed_payments: dict[UUID, ReceivablePayment],
+        staged_payments: dict[UUID, ReceivablePayment],
+        committed_allocations: dict[UUID, ReceivableAllocation],
+        staged_allocations: dict[UUID, ReceivableAllocation],
+        committed_transactions: dict[UUID, Transaction],
+        staged_transactions: dict[UUID, Transaction],
+    ) -> None:
+        """Initialize the repository over the unit of work's four record stores.
+
+        Also takes the transaction stores so the confirm-match income validation
+        (``income_exists_for_owner``, ADR-207) can resolve a ``kind='income'`` row the same
+        way the SQLAlchemy adapter joins into the transactions table.
+        """
+        self._people = committed_people
+        self._staged_people = staged_people
+        self._items = committed_items
+        self._staged_items = staged_items
+        self._payments = committed_payments
+        self._staged_payments = staged_payments
+        self._allocations = committed_allocations
+        self._staged_allocations = staged_allocations
+        self._transactions = committed_transactions
+        self._staged_transactions = staged_transactions
+
+    def add_person(self, person: Person) -> None:
+        """Stage a new person until the unit of work commits (ADR-130)."""
+        self._staged_people[person.id] = person
+
+    async def get_person(self, person_id: UUID, user_id: str) -> Person | None:
+        """Return the owner's staged/committed person, or ``None`` (ADR-130, ADR-111)."""
+        person = self._staged_people.get(person_id) or self._people.get(person_id)
+        if person is None or person.user_id != user_id:
+            return None
+        return person
+
+    async def persist_person(self, person: Person) -> None:
+        """Stage a renamed person for the next commit."""
+        self._staged_people[person.id] = person
+
+    async def delete_person(self, person_id: UUID, user_id: str) -> bool:
+        """Hard-delete the owner's person and cascade their subtree (ADR-208, ADR-130)."""
+        person = self._staged_people.get(person_id) or self._people.get(person_id)
+        if person is None or person.user_id != user_id:
+            return False
+        self._staged_people.pop(person_id, None)
+        self._people.pop(person_id, None)
+        removed_item_ids = {item_id for item_id, item in self._all_items().items() if item.person_id == person_id}
+        removed_payment_ids = {
+            payment_id for payment_id, payment in self._all_payments().items() if payment.person_id == person_id
+        }
+        for item_id in removed_item_ids:
+            self._staged_items.pop(item_id, None)
+            self._items.pop(item_id, None)
+        for payment_id in removed_payment_ids:
+            self._staged_payments.pop(payment_id, None)
+            self._payments.pop(payment_id, None)
+        self._cascade_allocations(removed_item_ids, removed_payment_ids)
+        return True
+
+    def add_item(self, item: ReceivableItem) -> None:
+        """Stage a new item until the unit of work commits (ADR-204)."""
+        self._staged_items[item.id] = item
+
+    async def get_item(self, item_id: UUID, user_id: str) -> ReceivableItem | None:
+        """Return the owner's item (scoped through its person), or ``None`` (ADR-130, ADR-111)."""
+        item = self._staged_items.get(item_id) or self._items.get(item_id)
+        if item is None or self._owner_of(item.person_id) != user_id:
+            return None
+        return item
+
+    async def persist_item(self, item: ReceivableItem) -> None:
+        """Stage a mutated item for the next commit."""
+        self._staged_items[item.id] = item
+
+    async def delete_item(self, item_id: UUID, user_id: str) -> bool:
+        """Hard-delete the owner's item and cascade its allocations (ADR-208, ADR-130)."""
+        item = self._staged_items.get(item_id) or self._items.get(item_id)
+        if item is None or self._owner_of(item.person_id) != user_id:
+            return False
+        self._staged_items.pop(item_id, None)
+        self._items.pop(item_id, None)
+        self._cascade_allocations({item_id}, set())
+        return True
+
+    def add_payment(self, payment: ReceivablePayment) -> None:
+        """Stage a new payback event until the unit of work commits (ADR-204)."""
+        self._staged_payments[payment.id] = payment
+
+    def add_allocation(self, allocation: ReceivableAllocation) -> None:
+        """Stage one payment-to-item allocation until the unit of work commits."""
+        self._staged_allocations[allocation.id] = allocation
+
+    async def income_exists_for_owner(self, income_id: UUID, user_id: str) -> bool:
+        """Return whether the owner has a ``kind='income'`` transaction with that id (ADR-207)."""
+        transaction = self._staged_transactions.get(income_id) or self._transactions.get(income_id)
+        return transaction is not None and transaction.user_id == user_id and transaction.kind is Kind.INCOME
+
+    async def income_is_claimed(self, income_id: UUID, user_id: str) -> bool:
+        """Return whether an income already backs one of the owner's payments (ADR-207, ADR-130)."""
+        return any(
+            payment.matched_income_transaction_id == income_id and self._owner_of(payment.person_id) == user_id
+            for payment in self._all_payments().values()
+        )
+
+    async def item_remainders(self, person_id: UUID) -> dict[UUID, Decimal]:
+        """Return the person's items keyed to ``amount`` - Σ allocations (ADR-206)."""
+        allocations = self._all_allocations()
+        remainders: dict[UUID, Decimal] = {}
+        for item_id, item in self._all_items().items():
+            if item.person_id != person_id:
+                continue
+            allocated = sum(
+                (allocation.amount for allocation in allocations.values() if allocation.item_id == item_id),
+                Decimal(0),
+            )
+            remainders[item_id] = item.amount - allocated
+        return remainders
+
+    def _owner_of(self, person_id: UUID) -> str | None:
+        """Return the ``user_id`` of the item/payment's person, or ``None`` when absent."""
+        person = self._staged_people.get(person_id) or self._people.get(person_id)
+        return person.user_id if person is not None else None
+
+    def _all_items(self) -> dict[UUID, ReceivableItem]:
+        """Merge committed and staged items (staged wins)."""
+        return {**self._items, **self._staged_items}
+
+    def _all_payments(self) -> dict[UUID, ReceivablePayment]:
+        """Merge committed and staged payments (staged wins)."""
+        return {**self._payments, **self._staged_payments}
+
+    def _all_allocations(self) -> dict[UUID, ReceivableAllocation]:
+        """Merge committed and staged allocations (staged wins)."""
+        return {**self._allocations, **self._staged_allocations}
+
+    def _cascade_allocations(self, item_ids: set[UUID], payment_ids: set[UUID]) -> None:
+        """Drop allocations that referenced a removed item or payment (ADR-208)."""
+        for store in (self._staged_allocations, self._allocations):
+            for allocation_id, allocation in list(store.items()):
+                if allocation.item_id in item_ids or allocation.payment_id in payment_ids:
+                    store.pop(allocation_id, None)
 
 
 class FakeBudgetRepository(AbstractBudgetRepository):
@@ -699,6 +873,14 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_budget_income: dict[UUID, BudgetIncome] = {}
         self.committed_debts: dict[UUID, Debt] = {}
         self._staged_debts: dict[UUID, Debt] = {}
+        self.committed_people: dict[UUID, Person] = {}
+        self._staged_people: dict[UUID, Person] = {}
+        self.committed_receivable_items: dict[UUID, ReceivableItem] = {}
+        self._staged_receivable_items: dict[UUID, ReceivableItem] = {}
+        self.committed_receivable_payments: dict[UUID, ReceivablePayment] = {}
+        self._staged_receivable_payments: dict[UUID, ReceivablePayment] = {}
+        self.committed_receivable_allocations: dict[UUID, ReceivableAllocation] = {}
+        self._staged_receivable_allocations: dict[UUID, ReceivableAllocation] = {}
         self.snapshots: dict[tuple[str, date], MonotributoStanding] = {}
         self.config: dict[str, str | bool] = {}
         self.used_by_window: dict[tuple[str, date, date], Decimal] = {}
@@ -717,6 +899,18 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.budgets = FakeBudgetRepository(self.committed_budgets, self._staged_budgets)
         self.budget_income = FakeBudgetIncomeRepository(self.committed_budget_income, self._staged_budget_income)
         self.debts = FakeDebtRepository(self.committed_debts, self._staged_debts)
+        self.receivables = FakeReceivableRepository(
+            self.committed_people,
+            self._staged_people,
+            self.committed_receivable_items,
+            self._staged_receivable_items,
+            self.committed_receivable_payments,
+            self._staged_receivable_payments,
+            self.committed_receivable_allocations,
+            self._staged_receivable_allocations,
+            self.committed_aggregates,
+            self._staged,
+        )
         self.committed = False
 
     async def __aenter__(self) -> FakeUnitOfWork:
@@ -729,6 +923,10 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_budgets = {}
         self._staged_budget_income = {}
         self._staged_debts = {}
+        self._staged_people = {}
+        self._staged_receivable_items = {}
+        self._staged_receivable_payments = {}
+        self._staged_receivable_allocations = {}
         self.transactions = FakeTransactionRepository(self.committed_aggregates, self._staged)
         self.monotributo_snapshots = FakeMonotributoSnapshotRepository(self.snapshots, self.config, self.used_by_window)
         self.settings = FakeSettingsRepository(self.config)
@@ -740,6 +938,18 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.budgets = FakeBudgetRepository(self.committed_budgets, self._staged_budgets)
         self.budget_income = FakeBudgetIncomeRepository(self.committed_budget_income, self._staged_budget_income)
         self.debts = FakeDebtRepository(self.committed_debts, self._staged_debts)
+        self.receivables = FakeReceivableRepository(
+            self.committed_people,
+            self._staged_people,
+            self.committed_receivable_items,
+            self._staged_receivable_items,
+            self.committed_receivable_payments,
+            self._staged_receivable_payments,
+            self.committed_receivable_allocations,
+            self._staged_receivable_allocations,
+            self.committed_aggregates,
+            self._staged,
+        )
         return self
 
     async def __aexit__(
@@ -760,6 +970,10 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.committed_budgets.update(self._staged_budgets)
         self.committed_budget_income.update(self._staged_budget_income)
         self.committed_debts.update(self._staged_debts)
+        self.committed_people.update(self._staged_people)
+        self.committed_receivable_items.update(self._staged_receivable_items)
+        self.committed_receivable_payments.update(self._staged_receivable_payments)
+        self.committed_receivable_allocations.update(self._staged_receivable_allocations)
         self._staged.clear()
         self._staged_accounts.clear()
         self._staged_institutions.clear()
@@ -767,6 +981,10 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_budgets.clear()
         self._staged_budget_income.clear()
         self._staged_debts.clear()
+        self._staged_people.clear()
+        self._staged_receivable_items.clear()
+        self._staged_receivable_payments.clear()
+        self._staged_receivable_allocations.clear()
         self.committed = True
 
     async def flush(self) -> None:
@@ -780,6 +998,10 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.committed_budgets.update(self._staged_budgets)
         self.committed_budget_income.update(self._staged_budget_income)
         self.committed_debts.update(self._staged_debts)
+        self.committed_people.update(self._staged_people)
+        self.committed_receivable_items.update(self._staged_receivable_items)
+        self.committed_receivable_payments.update(self._staged_receivable_payments)
+        self.committed_receivable_allocations.update(self._staged_receivable_allocations)
 
     async def rollback(self) -> None:
         """Discard staged aggregates."""
@@ -790,6 +1012,10 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self._staged_budgets.clear()
         self._staged_budget_income.clear()
         self._staged_debts.clear()
+        self._staged_people.clear()
+        self._staged_receivable_items.clear()
+        self._staged_receivable_payments.clear()
+        self._staged_receivable_allocations.clear()
 
 
 class FakeTransactionReader(AbstractTransactionReader):
@@ -962,6 +1188,84 @@ class FakeDebtReader(AbstractDebtReader):
             )
             for debt in ordered
         ]
+
+
+class FakeReceivableReader(AbstractReceivableReader):
+    """In-memory receivables reader projecting committed people/items/allocations (ADR-206).
+
+    Mirrors the SQLAlchemy reader: the people list is owner-scoped and newest-first by
+    creation with each person's Σ-item-remainder outstanding, and the detail carries the
+    person's items with their per-item allocated/remaining roll-ups newest-first by
+    ``occurred_on`` (ADR-206). Backed by a unit of work's committed stores so it reflects
+    what the handlers committed.
+    """
+
+    def __init__(
+        self,
+        people: dict[UUID, Person],
+        items: dict[UUID, ReceivableItem],
+        allocations: dict[UUID, ReceivableAllocation],
+    ) -> None:
+        """Initialize over committed people/item/allocation stores.
+
+        Args:
+            people: The people to project, keyed by id.
+            items: The receivable items to project, keyed by id.
+            allocations: The allocations feeding the remainder roll-ups, keyed by id.
+        """
+        self._people = people
+        self._items = items
+        self._allocations = allocations
+
+    async def list_people(self, user_id: str) -> list[PersonReadModel]:
+        """List the owner's people with outstanding totals, newest-first by creation (ADR-130)."""
+        owned = [person for person in self._people.values() if person.user_id == user_id]
+        ordered = sorted(owned, key=lambda person: (person.created_at, person.id), reverse=True)
+        return [
+            PersonReadModel(
+                id=person.id,
+                name=person.name,
+                created_at=person.created_at,
+                outstanding=sum((model.remaining for model in self._item_models(person.id)), Decimal(0)),
+            )
+            for person in ordered
+        ]
+
+    async def get_person(self, person_id: UUID, user_id: str) -> PersonDetailReadModel | None:
+        """Return the owner's person with per-item remainders, or ``None`` (ADR-206, ADR-111)."""
+        person = self._people.get(person_id)
+        if person is None or person.user_id != user_id:
+            return None
+        items = self._item_models(person_id)
+        return PersonDetailReadModel(
+            id=person.id,
+            name=person.name,
+            created_at=person.created_at,
+            outstanding=sum((model.remaining for model in items), Decimal(0)),
+            items=tuple(items),
+        )
+
+    def _item_models(self, person_id: UUID) -> list[ReceivableItemReadModel]:
+        """Project the person's items with allocated/remaining roll-ups, newest-first."""
+        owned = [item for item in self._items.values() if item.person_id == person_id]
+        ordered = sorted(owned, key=lambda item: (item.occurred_on, item.id), reverse=True)
+        models: list[ReceivableItemReadModel] = []
+        for item in ordered:
+            allocated = sum(
+                (allocation.amount for allocation in self._allocations.values() if allocation.item_id == item.id),
+                Decimal(0),
+            )
+            models.append(
+                ReceivableItemReadModel(
+                    id=item.id,
+                    occurred_on=item.occurred_on,
+                    amount=item.amount,
+                    detail=item.detail,
+                    allocated=allocated,
+                    remaining=item.amount - allocated,
+                )
+            )
+        return models
 
 
 class FakeTransferReader(AbstractTransferReader):

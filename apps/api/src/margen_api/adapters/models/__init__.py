@@ -13,6 +13,12 @@ from margen_api.adapters.models.debt import DebtRecord
 from margen_api.adapters.models.institution import InstitutionRecord
 from margen_api.adapters.models.invoice_document import InvoiceDocumentRecord
 from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotRecord
+from margen_api.adapters.models.receivable import (
+    PersonRecord,
+    ReceivableAllocationRecord,
+    ReceivableItemRecord,
+    ReceivablePaymentRecord,
+)
 from margen_api.adapters.models.statement_document import StatementDocumentRecord
 from margen_api.adapters.models.transaction import TransactionRecord
 from margen_api.adapters.models.transfer import TransferRecord
@@ -27,6 +33,10 @@ __all__ = [
     "InstitutionRecord",
     "InvoiceDocumentRecord",
     "MonotributoSnapshotRecord",
+    "PersonRecord",
+    "ReceivableAllocationRecord",
+    "ReceivableItemRecord",
+    "ReceivablePaymentRecord",
     "StatementDocumentRecord",
     "TransactionRecord",
     "TransferRecord",

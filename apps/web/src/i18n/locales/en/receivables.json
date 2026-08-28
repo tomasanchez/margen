@@ -1,0 +1,131 @@
+{
+  "title": "Money owed to me",
+  "subtitle": "People who owe you, and what's still outstanding.",
+  "addPerson": "Add person",
+  "empty": "No one owes you yet. Add a person to start tracking money owed to you.",
+  "error": {
+    "title": "Can't load money owed to you",
+    "description": "We couldn't reach the server to load who owes you. Check your connection and try again."
+  },
+  "person": {
+    "outstandingLabel": "Outstanding",
+    "outstandingAria": "{{name}} owes you {{amount}}",
+    "expandAria": "Show {{name}}'s items",
+    "collapseAria": "Hide {{name}}'s items",
+    "renameAria": "Rename {{name}}",
+    "deleteAria": "Delete {{name}}"
+  },
+  "items": {
+    "empty": "No items yet. Add a debt to track what this person owes you.",
+    "remaining": "{{amount}} remaining",
+    "add": "Add item",
+    "recordPayment": "Record payment",
+    "editAria": "Edit item from {{date}}",
+    "deleteAria": "Delete item from {{date}}",
+    "loadingAria": "Loading items",
+    "errorTitle": "Can't load these items",
+    "errorDescription": "We couldn't load this person's items. Check your connection and try again."
+  },
+  "personForm": {
+    "addTitle": "Add person",
+    "editTitle": "Rename person",
+    "name": {
+      "label": "Name"
+    },
+    "cancel": "Cancel",
+    "save": "Save",
+    "saveError": "We couldn't save this person. Check your connection and try again."
+  },
+  "itemForm": {
+    "addTitle": "Add item",
+    "editTitle": "Edit item",
+    "date": {
+      "label": "Date"
+    },
+    "amount": {
+      "label": "Amount",
+      "helper": "How much this person owes you for this item."
+    },
+    "detail": {
+      "label": "Detail (optional)",
+      "helper": "A note about what this debt is for."
+    },
+    "cancel": "Cancel",
+    "save": "Save",
+    "saveError": "We couldn't save this item. Check your connection and try again."
+  },
+  "deletePerson": {
+    "title": "Delete person",
+    "body": "Delete \"{{name}}\"? Their items and payments will be removed too. This can't be undone.",
+    "cancel": "Cancel",
+    "confirm": "Delete",
+    "error": "We couldn't delete this person. Check your connection and try again."
+  },
+  "deleteItem": {
+    "title": "Delete item",
+    "body": "Delete the item from {{date}}? This can't be undone.",
+    "cancel": "Cancel",
+    "confirm": "Delete",
+    "error": "We couldn't delete this item. Check your connection and try again."
+  },
+  "payment": {
+    "title": "Record payment",
+    "subtitle": "Apply a payment across {{name}}'s open items.",
+    "date": {
+      "label": "Date"
+    },
+    "allocationAria": "Amount applied to the item from {{date}}",
+    "remainingHint": "{{amount}} remaining",
+    "totalLabel": "Total payment",
+    "noOpenItems": "Nothing is outstanding — every item is already settled.",
+    "cancel": "Cancel",
+    "save": "Record payment",
+    "saveError": "We couldn't record this payment. Check your connection and try again.",
+    "overpayment": {
+      "title": "More than owed",
+      "body": "This payment of {{requested}} is more than the {{outstanding}} still owed. Record it anyway as a credit?",
+      "cancel": "Go back",
+      "confirm": "Record anyway"
+    }
+  },
+  "match": {
+    "title": "Suggested payments",
+    "subtitle": "Incomes that look like they came from {{name}}. Nothing is applied until you review and confirm.",
+    "loadingAria": "Loading suggested payments",
+    "errorTitle": "Can't load suggestions",
+    "errorDescription": "We couldn't load payment suggestions for this person. Check your connection and try again.",
+    "empty": "No suggested payments right now. We'll surface incomes that look like they came from this person.",
+    "review": "Review",
+    "reviewAria": "Review the {{amount}} income from {{name}} on {{date}}",
+    "relevance": {
+      "strong": "Strong match",
+      "likely": "Likely match",
+      "possible": "Possible match"
+    }
+  },
+  "confirmMatch": {
+    "title": "Confirm payment",
+    "subtitle": "Apply this income across {{name}}'s open items.",
+    "incomeLabel": "Matched income",
+    "incomeSummary": "{{amount}} on {{date}}",
+    "noOpenItems": "Nothing is outstanding — every item is already settled.",
+    "allocationAria": "Amount applied to the item from {{date}}",
+    "remainingHint": "{{amount}} remaining",
+    "totalLabel": "Total applied",
+    "cancel": "Cancel",
+    "save": "Confirm payment",
+    "saveError": "We couldn't confirm this payment. Check your connection and try again.",
+    "overpayment": {
+      "title": "More than owed",
+      "body": "This payment of {{requested}} is more than the {{outstanding}} still owed. Record it anyway as a credit?",
+      "cancel": "Go back",
+      "confirm": "Record anyway"
+    }
+  },
+  "pdf": {
+    "export": "Export PDF",
+    "exporting": "Preparing PDF…",
+    "aria": "Export {{name}}'s receivables as a PDF",
+    "error": "We couldn't create the PDF. Check your connection and try again."
+  }
+}

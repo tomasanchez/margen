@@ -19,6 +19,15 @@ from margen_api.domain.commands.budget import (
 from margen_api.domain.commands.debt import CreateDebt, DeleteDebt, UpdateDebt
 from margen_api.domain.commands.institution import CreateInstitution, UpdateInstitution
 from margen_api.domain.commands.monotributo import CaptureMonotributoSnapshot
+from margen_api.domain.commands.receivable import (
+    AddReceivableItem,
+    CreatePerson,
+    DeletePerson,
+    DeleteReceivableItem,
+    EditReceivableItem,
+    RecordReceivablePayment,
+    RenamePerson,
+)
 from margen_api.domain.commands.settings import UpdateSettings
 from margen_api.domain.commands.statement import ImportStatement
 from margen_api.domain.commands.transaction import (
@@ -47,6 +56,15 @@ from margen_api.service_layer.handlers import (
 from margen_api.service_layer.institution_handlers import create_institution, update_institution
 from margen_api.service_layer.messagebus import CommandHandler, EventHandler
 from margen_api.service_layer.monotributo_handlers import capture_monotributo_snapshot
+from margen_api.service_layer.receivables import (
+    add_receivable_item,
+    create_person,
+    delete_person,
+    delete_receivable_item,
+    edit_receivable_item,
+    record_receivable_payment,
+    rename_person,
+)
 from margen_api.service_layer.settings_handlers import update_settings
 from margen_api.service_layer.transfer_handlers import create_transfer, delete_transfer
 
@@ -72,6 +90,13 @@ COMMAND_HANDLERS: dict[type, CommandHandler] = {
     CreateDebt: create_debt,
     UpdateDebt: update_debt,
     DeleteDebt: delete_debt,
+    CreatePerson: create_person,
+    RenamePerson: rename_person,
+    DeletePerson: delete_person,
+    AddReceivableItem: add_receivable_item,
+    EditReceivableItem: edit_receivable_item,
+    DeleteReceivableItem: delete_receivable_item,
+    RecordReceivablePayment: record_receivable_payment,
 }
 
 EVENT_HANDLERS: dict[type, list[EventHandler]] = {}

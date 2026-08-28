@@ -14,6 +14,7 @@ from margen_api.service_layer.debt_repository import AbstractDebtRepository
 from margen_api.service_layer.document_store import AbstractDocumentStore
 from margen_api.service_layer.institution_repository import AbstractInstitutionRepository
 from margen_api.service_layer.monotributo_repository import AbstractMonotributoSnapshotRepository
+from margen_api.service_layer.receivable_repository import AbstractReceivableRepository
 from margen_api.service_layer.repository import AbstractTransactionRepository
 from margen_api.service_layer.settings_repository import AbstractSettingsRepository
 from margen_api.service_layer.statement_store import AbstractStatementStore
@@ -59,6 +60,10 @@ class AbstractUnitOfWork(ABC):
         debts: Repository for the ``Debt`` aggregate, written by the debt
             create/update/delete handlers; its balances feed the net-worth
             ``liabilities.other`` leg (ADR-187).
+        receivables: Repository for the receivables cluster (``Person`` root plus
+            its items, payments and allocations), written by the person/item and
+            record-payment handlers; it carries no ``account_id`` so receivables
+            never enter net worth (ADR-204, ADR-205, ADR-206).
     """
 
     transactions: AbstractTransactionRepository
@@ -72,6 +77,7 @@ class AbstractUnitOfWork(ABC):
     budgets: AbstractBudgetRepository
     budget_income: AbstractBudgetIncomeRepository
     debts: AbstractDebtRepository
+    receivables: AbstractReceivableRepository
 
     async def __aenter__(self) -> AbstractUnitOfWork:
         """Enter the transaction boundary."""

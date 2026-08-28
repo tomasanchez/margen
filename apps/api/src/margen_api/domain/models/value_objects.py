@@ -16,6 +16,7 @@ from margen_api.domain.models.exceptions import (
     UnknownCurrencyError,
     UnknownInstitutionTypeError,
     UnknownKindError,
+    UnknownPaymentSourceError,
 )
 
 
@@ -214,6 +215,41 @@ class BudgetKind(StrEnum):
             return cls(value)
         except ValueError as exc:
             raise UnknownBudgetKindError(value) from exc
+
+
+class PaymentSource(StrEnum):
+    """How a receivable payback payment was recorded (ADR-204, ADR-207).
+
+    A closed enum — unknown members are domain errors (like :class:`Kind` /
+    :class:`Currency`). ``MANUAL`` is a payback the owner typed in by hand;
+    ``MATCHED_INCOME`` is created when the owner confirms a fuzzy income match
+    (ADR-207), which also sets the payment's ``matched_income_transaction_id`` to the
+    linked ``kind='income'`` transaction. The value is persisted as a plain validated
+    string, so adding a future source needs no migration.
+    """
+
+    MANUAL = "manual"
+    MATCHED_INCOME = "matched_income"
+
+    @classmethod
+    def parse(cls, value: object) -> PaymentSource:
+        """Coerce a value to a ``PaymentSource`` or raise ``UnknownPaymentSourceError``.
+
+        Args:
+            value: A ``PaymentSource`` member or a string such as ``"manual"``.
+
+        Returns:
+            The matching ``PaymentSource`` member.
+
+        Raises:
+            UnknownPaymentSourceError: When ``value`` is not a known payment source.
+        """
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(value)
+        except ValueError as exc:
+            raise UnknownPaymentSourceError(value) from exc
 
 
 class FxRateType(StrEnum):

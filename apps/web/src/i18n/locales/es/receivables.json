@@ -1,0 +1,131 @@
+{
+  "title": "Dinero que me deben",
+  "subtitle": "Quiénes te deben y cuánto queda pendiente.",
+  "addPerson": "Agregar persona",
+  "empty": "Nadie te debe todavía. Agregá una persona para empezar a registrar lo que te deben.",
+  "error": {
+    "title": "No se pudo cargar el dinero que te deben",
+    "description": "No pudimos contactar al servidor para cargar quiénes te deben. Revisá tu conexión e intentá de nuevo."
+  },
+  "person": {
+    "outstandingLabel": "Pendiente",
+    "outstandingAria": "{{name}} te debe {{amount}}",
+    "expandAria": "Mostrar los ítems de {{name}}",
+    "collapseAria": "Ocultar los ítems de {{name}}",
+    "renameAria": "Renombrar a {{name}}",
+    "deleteAria": "Eliminar a {{name}}"
+  },
+  "items": {
+    "empty": "Todavía no hay ítems. Agregá una deuda para registrar lo que esta persona te debe.",
+    "remaining": "{{amount}} pendiente",
+    "add": "Agregar ítem",
+    "recordPayment": "Registrar pago",
+    "editAria": "Editar el ítem del {{date}}",
+    "deleteAria": "Eliminar el ítem del {{date}}",
+    "loadingAria": "Cargando ítems",
+    "errorTitle": "No se pudieron cargar estos ítems",
+    "errorDescription": "No pudimos cargar los ítems de esta persona. Revisá tu conexión e intentá de nuevo."
+  },
+  "personForm": {
+    "addTitle": "Agregar persona",
+    "editTitle": "Renombrar persona",
+    "name": {
+      "label": "Nombre"
+    },
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "saveError": "No pudimos guardar esta persona. Revisá tu conexión e intentá de nuevo."
+  },
+  "itemForm": {
+    "addTitle": "Agregar ítem",
+    "editTitle": "Editar ítem",
+    "date": {
+      "label": "Fecha"
+    },
+    "amount": {
+      "label": "Monto",
+      "helper": "Cuánto te debe esta persona por este ítem."
+    },
+    "detail": {
+      "label": "Detalle (opcional)",
+      "helper": "Una nota sobre el motivo de esta deuda."
+    },
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "saveError": "No pudimos guardar este ítem. Revisá tu conexión e intentá de nuevo."
+  },
+  "deletePerson": {
+    "title": "Eliminar persona",
+    "body": "¿Eliminar a \"{{name}}\"? También se eliminarán sus ítems y pagos. Esto no se puede deshacer.",
+    "cancel": "Cancelar",
+    "confirm": "Eliminar",
+    "error": "No pudimos eliminar esta persona. Revisá tu conexión e intentá de nuevo."
+  },
+  "deleteItem": {
+    "title": "Eliminar ítem",
+    "body": "¿Eliminar el ítem del {{date}}? Esto no se puede deshacer.",
+    "cancel": "Cancelar",
+    "confirm": "Eliminar",
+    "error": "No pudimos eliminar este ítem. Revisá tu conexión e intentá de nuevo."
+  },
+  "payment": {
+    "title": "Registrar pago",
+    "subtitle": "Aplicá un pago entre los ítems abiertos de {{name}}.",
+    "date": {
+      "label": "Fecha"
+    },
+    "allocationAria": "Monto aplicado al ítem del {{date}}",
+    "remainingHint": "{{amount}} pendiente",
+    "totalLabel": "Pago total",
+    "noOpenItems": "No hay nada pendiente — todos los ítems ya están saldados.",
+    "cancel": "Cancelar",
+    "save": "Registrar pago",
+    "saveError": "No pudimos registrar este pago. Revisá tu conexión e intentá de nuevo.",
+    "overpayment": {
+      "title": "Más de lo que se debe",
+      "body": "Este pago de {{requested}} supera los {{outstanding}} que aún se deben. ¿Registrarlo igual como crédito?",
+      "cancel": "Volver",
+      "confirm": "Registrar igual"
+    }
+  },
+  "match": {
+    "title": "Pagos sugeridos",
+    "subtitle": "Ingresos que parecen provenir de {{name}}. No se aplica nada hasta que lo revises y confirmes.",
+    "loadingAria": "Cargando pagos sugeridos",
+    "errorTitle": "No se pudieron cargar las sugerencias",
+    "errorDescription": "No pudimos cargar los pagos sugeridos para esta persona. Revisá tu conexión e intentá de nuevo.",
+    "empty": "No hay pagos sugeridos por ahora. Vamos a mostrar los ingresos que parezcan provenir de esta persona.",
+    "review": "Revisar",
+    "reviewAria": "Revisar el ingreso de {{amount}} de {{name}} del {{date}}",
+    "relevance": {
+      "strong": "Coincidencia fuerte",
+      "likely": "Coincidencia probable",
+      "possible": "Coincidencia posible"
+    }
+  },
+  "confirmMatch": {
+    "title": "Confirmar pago",
+    "subtitle": "Aplicá este ingreso entre los ítems abiertos de {{name}}.",
+    "incomeLabel": "Ingreso vinculado",
+    "incomeSummary": "{{amount}} del {{date}}",
+    "noOpenItems": "No hay nada pendiente — todos los ítems ya están saldados.",
+    "allocationAria": "Monto aplicado al ítem del {{date}}",
+    "remainingHint": "{{amount}} pendiente",
+    "totalLabel": "Total aplicado",
+    "cancel": "Cancelar",
+    "save": "Confirmar pago",
+    "saveError": "No pudimos confirmar este pago. Revisá tu conexión e intentá de nuevo.",
+    "overpayment": {
+      "title": "Más de lo que se debe",
+      "body": "Este pago de {{requested}} supera los {{outstanding}} que aún se deben. ¿Registrarlo igual como crédito?",
+      "cancel": "Volver",
+      "confirm": "Registrar igual"
+    }
+  },
+  "pdf": {
+    "export": "Exportar PDF",
+    "exporting": "Preparando PDF…",
+    "aria": "Exportar el detalle de {{name}} en PDF",
+    "error": "No pudimos crear el PDF. Revisá tu conexión e intentá de nuevo."
+  }
+}

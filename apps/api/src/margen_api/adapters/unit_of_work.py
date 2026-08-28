@@ -14,6 +14,7 @@ from margen_api.adapters.debt_repository import SqlAlchemyDebtRepository
 from margen_api.adapters.document_store import SqlAlchemyDocumentStore
 from margen_api.adapters.institution_repository import SqlAlchemyInstitutionRepository
 from margen_api.adapters.monotributo_repository import SqlAlchemyMonotributoSnapshotRepository
+from margen_api.adapters.receivable_queries import SqlAlchemyReceivableRepository
 from margen_api.adapters.repository import SqlAlchemyTransactionRepository
 from margen_api.adapters.settings_repository import SqlAlchemySettingsRepository
 from margen_api.adapters.statement_store import SqlAlchemyStatementStore
@@ -46,6 +47,7 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
         self.budgets = SqlAlchemyBudgetRepository(self.session)
         self.budget_income = SqlAlchemyBudgetIncomeRepository(self.session)
         self.debts = SqlAlchemyDebtRepository(self.session)
+        self.receivables = SqlAlchemyReceivableRepository(self.session)
         return self
 
     async def __aexit__(
