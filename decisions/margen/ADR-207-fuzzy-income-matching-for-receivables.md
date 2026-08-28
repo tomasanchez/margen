@@ -37,3 +37,4 @@ Matching is **SUGGESTION-ONLY**, mirroring the statement-reconcile UX (ADR-084/0
 ## Status History
 
 - 2026-08-28: accepted
+- 2026-08-28: scope note — v1 implements the **claimed** half of the resolution semantics only (a confirmed income is linked via `matched_income_transaction_id`, enforced server-side at confirm-time as owner-scoped + `kind='income'` + not-already-claimed, and excluded from every person's suggestions). Explicit **dismissal** of a suggestion that was NOT confirmed (persisting a dismissed `(person, income)` pair so it never resurfaces) is **DEFERRED** to a follow-up — v1 has no dismiss action; unconfirmed suggestions simply remain until claimed. Recorded so the ADR and the shipped code agree.

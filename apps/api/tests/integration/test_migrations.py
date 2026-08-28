@@ -76,6 +76,11 @@ _DEBTS = "e6f7a8b9c0d1"
 # NULLABLE ``institutions.card_brand`` / ``card_last4`` columns. No data migration.
 _CARD_IDENTITY = "f8a9b0c1d2e3"
 
+# The receivables migration (ADR-204/207): chains after card-identity. It creates the four
+# receivables tables and the PARTIAL UNIQUE index enforcing the ADR-207 claimed invariant on
+# ``receivable_payment.matched_income_transaction_id``. No data migration is involved.
+_RECEIVABLES = "a9b0c1d2e3f4"
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
 # A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
@@ -579,6 +584,43 @@ class TestMigrations:
         finally:
             asyncio.run(_drop_everything(integration_database_url))
 
+    def test_receivables_migration_enforces_claimed_income_partial_unique(self, integration_database_url: str):
+        """
+        GIVEN a database at the card-identity revision (no receivables tables)
+        WHEN Alembic upgrades through the receivables migration (ADR-204/207)
+        THEN the four tables exist, the partial UNIQUE index on
+             receivable_payment.matched_income_transaction_id exists, a second payment
+             claiming the SAME income is rejected while unlimited NULL (manual) paybacks
+             coexist, and the downgrade cleanly drops the tables again
+
+        Proves the ADR-207 "claimed" invariant is enforced at the database as defense-in-depth
+        on the production PostgreSQL dialect: one confirmed income backs at most one payment,
+        but the partial ``WHERE ... IS NOT NULL`` leaves manual paybacks (NULL) unconstrained.
+        """
+        # GIVEN — upgrade to the card-identity revision (the head before ADR-204).
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _CARD_IDENTITY)
+        try:
+            # WHEN
+            command.upgrade(config, _RECEIVABLES)
+
+            # THEN — the receivables tables and the partial unique index exist.
+            tables = asyncio.run(_table_names(integration_database_url))
+            assert {"person", "receivable_item", "receivable_payment", "receivable_allocation"} <= set(tables)
+            indexes = asyncio.run(_index_names(integration_database_url, "receivable_payment"))
+            assert "uq_receivable_payment_matched_income_transaction_id" in indexes
+
+            # THEN — a second payment claiming the same income is rejected, while multiple
+            # NULL (manual) paybacks coexist under the partial WHERE.
+            assert asyncio.run(_duplicate_claimed_income_is_rejected(integration_database_url)) is True
+
+            # THEN — the downgrade cleanly drops the receivables tables again.
+            command.downgrade(config, _CARD_IDENTITY)
+            assert "receivable_payment" not in asyncio.run(_table_names(integration_database_url))
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
     def test_head_matches_orm_metadata_no_drift(self, integration_database_url: str):
         """
         GIVEN a database migrated to head
@@ -762,6 +804,87 @@ async def _offset_link_survives_expense_delete(
         value = result.scalar_one()
     await engine.dispose()
     return value
+
+
+async def _duplicate_claimed_income_is_rejected(url: str) -> bool:
+    """Claim one income twice and confirm the 2nd fails while NULL paybacks coexist (ADR-207).
+
+    Seeds a person and a ``kind='income'`` transaction, links a first matched-income payment
+    to it (succeeds), then links a second payment to the SAME income (must raise on the partial
+    UNIQUE index). Also inserts two manual (NULL matched income) payments to prove the partial
+    ``WHERE ... IS NOT NULL`` leaves them unconstrained. Returns whether the claim was rejected.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    engine = create_async_engine(url)
+    person_id = uuid.uuid4()
+    income_id = uuid.uuid4()
+    insert_person = text("INSERT INTO person (id, user_id, name) VALUES (:id, :user_id, :name)")
+    insert_income = text(
+        "INSERT INTO transactions (id, user_id, occurred_on, name, kind, amount, currency) "
+        "VALUES (:id, :user_id, :occurred_on, :name, :kind, :amount, :currency)"
+    )
+    insert_payment = text(
+        "INSERT INTO receivable_payment (id, person_id, occurred_on, amount, source, matched_income_transaction_id) "
+        "VALUES (:id, :person_id, :occurred_on, :amount, :source, :matched)"
+    )
+    async with engine.begin() as connection:
+        await connection.execute(insert_person, {"id": person_id, "user_id": uuid.UUID(_OWNER), "name": "Ana"})
+        await connection.execute(
+            insert_income,
+            {
+                "id": income_id,
+                "user_id": uuid.UUID(_OWNER),
+                "occurred_on": datetime.date(2026, 8, 5),
+                "name": "Ana",
+                "kind": "income",
+                "amount": Decimal("1000.00"),
+                "currency": "ARS",
+            },
+        )
+        # Two manual paybacks (NULL matched income) must both persist under the partial index.
+        for _ in range(2):
+            await connection.execute(
+                insert_payment,
+                {
+                    "id": uuid.uuid4(),
+                    "person_id": person_id,
+                    "occurred_on": datetime.date(2026, 8, 5),
+                    "amount": Decimal("100.00"),
+                    "source": "manual",
+                    "matched": None,
+                },
+            )
+        # The first claim of the income succeeds.
+        await connection.execute(
+            insert_payment,
+            {
+                "id": uuid.uuid4(),
+                "person_id": person_id,
+                "occurred_on": datetime.date(2026, 8, 5),
+                "amount": Decimal("1000.00"),
+                "source": "matched_income",
+                "matched": income_id,
+            },
+        )
+    rejected = False
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                insert_payment,
+                {
+                    "id": uuid.uuid4(),
+                    "person_id": person_id,
+                    "occurred_on": datetime.date(2026, 8, 5),
+                    "amount": Decimal("1000.00"),
+                    "source": "matched_income",
+                    "matched": income_id,
+                },
+            )
+    except IntegrityError:
+        rejected = True
+    await engine.dispose()
+    return rejected
 
 
 async def _duplicate_income_is_rejected(url: str) -> bool:

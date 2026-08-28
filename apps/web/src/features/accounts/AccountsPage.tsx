@@ -70,6 +70,7 @@ import {
 import { accountTypeLabel } from './presentation'
 import { AccountForm } from './AccountForm'
 import { DebtsSection } from './DebtsSection'
+import { ReceivablesSection } from '../receivables/ReceivablesSection'
 import { InstitutionForm } from './InstitutionForm'
 import {
   InstitutionWizard,
@@ -576,6 +577,13 @@ export function AccountsPage() {
           Its balances feed the net-worth "other debts" leg (ADR-187/183). */}
       <Box sx={{ mt: 2 }}>
         <DebtsSection />
+      </Box>
+
+      {/* Money owed TO the owner — the inverse of Debts, sitting beside it as its
+          own peer section, no new nav (ADR-208). Structurally out of net worth
+          (ADR-205), so it doesn't feed any net-worth leg. */}
+      <Box sx={{ mt: 2 }}>
+        <ReceivablesSection />
       </Box>
 
       {/* Onboarding wizard for a NEW institution (+ optional accounts).

@@ -270,6 +270,123 @@ class DebtNotFoundError(TransactionError):
         super().__init__(f"debt not found: {debt_id!r}")
 
 
+class UnknownPaymentSourceError(TransactionError):
+    """Raised when a receivable payment source is not one of the known sources (ADR-204, ADR-207).
+
+    A :class:`~margen_api.domain.models.receivable.ReceivablePayment` originates either
+    from a manually recorded payback (``manual``) or from a confirmed income match
+    (``matched_income``, ADR-207). Any other value is a true invariant violation the
+    boundary maps to ``422`` (ADR-031). The carried ``source`` lets the entrypoint build
+    a meaningful message.
+    """
+
+    def __init__(self, source: object) -> None:
+        self.source = source
+        super().__init__(f"unknown receivable payment source: {source!r} (expected one of manual, matched_income)")
+
+
+class PersonNotFoundError(TransactionError):
+    """Raised when no person matches a referenced identity for the owner (ADR-204, ADR-130).
+
+    The rename/delete-person, add-item and record-payment handlers raise this when the
+    :class:`~margen_api.domain.models.receivable.Person` they target does not exist for
+    the owner — either no such row or one owned by another user (a cross-owner reach,
+    ADR-130). Mirrors :class:`DebtNotFoundError`; the boundary maps it to a ``404``
+    (ADR-111). The carried ``person_id`` lets the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, person_id: object) -> None:
+        self.person_id = person_id
+        super().__init__(f"person not found: {person_id!r}")
+
+
+class ReceivableItemNotFoundError(TransactionError):
+    """Raised when no receivable item matches a referenced identity for the owner (ADR-204, ADR-130).
+
+    The edit/delete-item handlers raise this when the
+    :class:`~margen_api.domain.models.receivable.ReceivableItem` they target does not
+    exist for the owner (scoped through its person's ``user_id``), and the record-payment
+    handler raises it when an allocation references an item that is not one of the paying
+    person's items (ADR-206). The boundary maps it to a ``404`` (ADR-111). The carried
+    ``item_id`` lets the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, item_id: object) -> None:
+        self.item_id = item_id
+        super().__init__(f"receivable item not found: {item_id!r}")
+
+
+class AllocationExceedsPaymentError(TransactionError):
+    """Raised when a payment's allocations sum to more than the payment itself (ADR-206).
+
+    A :class:`~margen_api.domain.models.receivable.ReceivablePayment` can only be applied
+    to items up to its own ``amount`` — allocating more money than was received is a true
+    invariant violation (not the overpayment *warning*, which is about the person's
+    outstanding balance). The boundary maps it to a ``422`` (ADR-031). The carried
+    ``payment_amount`` and ``allocated`` totals let the entrypoint build a meaningful
+    message.
+    """
+
+    def __init__(self, payment_amount: object, allocated: object) -> None:
+        self.payment_amount = payment_amount
+        self.allocated = allocated
+        super().__init__(f"payment allocations total {allocated!r} but the payment is only {payment_amount!r}")
+
+
+class ReceivableOverpaymentError(TransactionError):
+    """Raised when a payment would allocate more than a person currently owes (ADR-206).
+
+    ADR-206's overpayment guard: when the total allocated to a person would exceed that
+    person's current outstanding balance, the system MUST NOT silently clamp the amount
+    nor silently drive the outstanding negative. The record-payment handler raises this so
+    the API layer can surface a **confirm-time warning**; the caller may then retry with
+    ``allow_overpayment=True`` to record a genuine good-faith credit (which drives the
+    outstanding negative on purpose). The carried ``outstanding`` and ``requested`` totals
+    let the boundary build the warning payload the UI confirms against.
+    """
+
+    def __init__(self, person_id: object, outstanding: object, requested: object) -> None:
+        self.person_id = person_id
+        self.outstanding = outstanding
+        self.requested = requested
+        super().__init__(
+            f"payment for person {person_id!r} allocates {requested!r} but only {outstanding!r} is outstanding"
+        )
+
+
+class MatchedIncomeNotFoundError(TransactionError):
+    """Raised when a confirm-match links an income that is missing, foreign or not income (ADR-207).
+
+    The record-payment handler raises this when a ``matched_income_transaction_id`` supplied
+    by the confirm-match flow (ADR-207) does not resolve to a usable income for the caller —
+    either no such transaction, one owned by another user (a cross-owner reach, ADR-130), or
+    one whose ``kind`` is not ``income``. All three collapse to a single not-found so the
+    boundary answers ``404`` without leaking which case applies (existence never leaked,
+    ADR-111). Mirrors :class:`OffsetTargetNotFoundError`; the carried ``transaction_id`` lets
+    the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, transaction_id: object) -> None:
+        self.transaction_id = transaction_id
+        super().__init__(f"matched income transaction not found: {transaction_id!r}")
+
+
+class IncomeAlreadyClaimedError(TransactionError):
+    """Raised when a confirm-match links an income already settled onto a payment (ADR-207).
+
+    A confirmed income is "claimed": once it backs a ``receivable_payment`` it must not be
+    re-used to settle a second debt, or one real income would settle two (ADR-207). The
+    claimed invariant was previously enforced only in the suggestion reader; the record-
+    payment handler now re-checks it inside the write transaction so two people matching the
+    same income cannot both confirm it. The boundary maps this to ``409 Conflict``. The
+    carried ``transaction_id`` lets the entrypoint build a meaningful message.
+    """
+
+    def __init__(self, transaction_id: object) -> None:
+        self.transaction_id = transaction_id
+        super().__init__(f"income transaction already claimed by a receivable payment: {transaction_id!r}")
+
+
 class MergeTargetNotFoundError(TransactionError):
     """Raised when a ``MERGE`` import line points at a missing transaction (ADR-085).
 
