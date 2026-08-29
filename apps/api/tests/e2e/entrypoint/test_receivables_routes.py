@@ -614,7 +614,7 @@ class TestPersonPdf:
     async def test_returns_pdf_attachment(self, test_client: httpx.AsyncClient):
         """
         GIVEN a person with an outstanding item
-        WHEN the person's PDF is requested
+        WHEN the person's PDF is requested with no lang (Spanish default)
         THEN it returns 200 with an application/pdf attachment carrying a %PDF payload
         """
         # GIVEN
@@ -629,6 +629,25 @@ class TestPersonPdf:
         assert response.headers["content-type"] == "application/pdf"
         disposition = response.headers["content-disposition"]
         assert disposition == 'attachment; filename="receivable-Ana_Perez.pdf"'
+        assert response.content.startswith(b"%PDF")
+
+    @pytest.mark.parametrize("lang", ["es", "en", "fr"])
+    async def test_renders_for_each_lang_and_unknown_falls_back(self, lang: str, test_client: httpx.AsyncClient):
+        """
+        GIVEN a person with an outstanding item
+        WHEN the PDF is requested with ?lang=es, ?lang=en, or an unknown tag
+        THEN each returns 200 with a %PDF payload (unknown normalizes to the es default)
+        """
+        # GIVEN
+        person = await _create_person(test_client, name="Ana Perez")
+        await _add_item(test_client, person["id"], amount="1234.56", detail="lunch")
+
+        # WHEN
+        response = await test_client.get(f"{PEOPLE}/{person['id']}/pdf", params={"lang": lang})
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK, response.text
+        assert response.headers["content-type"] == "application/pdf"
         assert response.content.startswith(b"%PDF")
 
     async def test_missing_person_returns_404(self, test_client: httpx.AsyncClient):

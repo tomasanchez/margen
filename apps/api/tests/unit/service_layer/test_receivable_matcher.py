@@ -61,6 +61,25 @@ class TestNameMatchScore:
         # WHEN / THEN
         assert name_match_score("José Pérez", "jose perez") == 1.0
 
+    @pytest.mark.parametrize(
+        ("person", "candidate"),
+        [
+            ("María", "Maria"),  # accented vowel folds to its plain form
+            ("Peña", "Pena"),  # ñ folds to n
+            ("Muñoz", "munoz"),  # ñ fold + case fold together
+            ("José Peña", "jose pena"),  # accent + ñ across multiple tokens
+            ("Iñíguez", "iniguez"),  # ñ and accented í in one token
+        ],
+    )
+    def test_spanish_accents_and_enye_fold_to_a_perfect_match(self, person: str, candidate: str):
+        """
+        GIVEN two names differing only by Spanish accents and/or ñ (and case)
+        WHEN the score is computed
+        THEN NFKD accent/ñ folding makes them an exact 1.0 match
+        """
+        # WHEN / THEN
+        assert name_match_score(person, candidate) == 1.0
+
     def test_person_name_embedded_in_noisy_description_scores_one(self):
         """
         GIVEN a clean person name that appears inside a noisy bank description

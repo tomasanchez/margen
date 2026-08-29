@@ -138,13 +138,18 @@ const PILL_ITEM_SX = {
 } as const
 
 /**
- * The slim set of pill destinations (ADR-172): just the three most-used peers.
- * The rest of navigation (Accounts, Budgets, Transfers, Import, and the optional
- * Monotributo module) moves into the mobile {@link NavDrawer} so the pill stays
- * uncrowded — a comfortable three ~44px touch targets.
+ * The slim set of pill destinations (ADR-172, ADR-208): the most-used peers plus
+ * the "Owed" receivables tab. The rest of navigation (Accounts, Budgets,
+ * Transfers, Import, and the optional Monotributo module) lives in the mobile
+ * {@link NavDrawer} so the pill stays uncrowded — four ~44px touch targets that
+ * still hug their content and stay centered on mobile.
  */
-const PILL_NAV_ITEMS: NavItem[] = PRIMARY_NAV_ITEMS.filter((item) =>
-  item.to === '/' || item.to === '/transactions' || item.to === '/reports',
+const PILL_NAV_ITEMS: NavItem[] = PRIMARY_NAV_ITEMS.filter(
+  (item) =>
+    item.to === '/' ||
+    item.to === '/transactions' ||
+    item.to === '/reports' ||
+    item.to === '/receivables',
 )
 
 /**
@@ -152,8 +157,8 @@ const PILL_NAV_ITEMS: NavItem[] = PRIMARY_NAV_ITEMS.filter((item) =>
  *
  * Detached from every screen edge and centered near the bottom, it hugs its
  * content (capsule, soft shadow, subtle blur) rather than spanning the width.
- * It carries only the three most-used peers (Home / Transactions / Reports);
- * the full navigation lives in the {@link NavDrawer} opened from the top-left
+ * It carries the most-used peers (Home / Transactions / Reports / Owed); the
+ * full navigation lives in the {@link NavDrawer} opened from the top-left
  * hamburger. Each destination is a ~44px touch target with an `aria-label` (no
  * text label) and `aria-current="page"` when active. The active item is conveyed
  * beyond hue (ADR-019): a gold-tinted rounded highlight behind the icon PLUS the

@@ -82,6 +82,11 @@ function buildTestRouter() {
     path: '/reports',
     component: () => <div>reports route</div>,
   })
+  const receivablesRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/receivables',
+    component: () => <div>receivables route</div>,
+  })
   const transfersRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/transfers',
@@ -99,6 +104,7 @@ function buildTestRouter() {
     accountsRoute,
     budgetsRoute,
     reportsRoute,
+    receivablesRoute,
     transfersRoute,
     importRoute,
   ])
@@ -402,6 +408,30 @@ test('the mobile pill no longer carries Accounts or Budgets (ADR-172)', async ()
   expect(inPill.getByRole('link', { name: 'Reports' })).toBeInTheDocument()
 })
 
+test('the mobile pill carries the "Owed" receivables tab (ADR-208)', async () => {
+  const user = userEvent.setup()
+  renderShell(settings(true))
+  await screen.findByRole('heading', { name: 'Your command center' })
+
+  // Locate the pill (the Primary nav with Home but NOT Accounts) and assert it
+  // now exposes the receivables tab with the localized "Owed" label + route.
+  const primaryNavs = screen.getAllByRole('navigation', { name: 'Primary' })
+  const pillNav = primaryNavs.find(
+    (nav) =>
+      within(nav).queryByRole('link', { name: 'Home' }) !== null &&
+      within(nav).queryByRole('link', { name: 'Accounts' }) === null,
+  )
+  expect(pillNav).toBeDefined()
+  const owedLink = within(pillNav as HTMLElement).getByRole('link', {
+    name: 'Owed',
+  })
+  expect(owedLink).toHaveAttribute('href', '/receivables')
+
+  // Tapping it swaps the routed content to the receivables destination.
+  await user.click(owedLink)
+  expect(await screen.findByText('receivables route')).toBeInTheDocument()
+})
+
 test('the desktop sidebar still carries the full navigation (unchanged)', async () => {
   renderShell(settings(true))
   await screen.findByRole('heading', { name: 'Your command center' })
@@ -420,6 +450,7 @@ test('the desktop sidebar still carries the full navigation (unchanged)', async 
     'Accounts',
     'Budgets',
     'Reports',
+    'Owed',
     'Transfers',
     'Import statement',
     'Monotributo',

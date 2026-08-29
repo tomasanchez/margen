@@ -13,6 +13,7 @@ import { BudgetsRoute } from './features/budgets/BudgetsRoute'
 import { validateBudgetsSearch } from './features/budgets/budgetsSearch'
 import { ReportsRoute } from './features/reports/ReportsRoute'
 import { validateReportsSearch } from './features/reports/reportsSearch'
+import { ReceivablesPage } from './features/receivables/ReceivablesPage'
 import { TransfersPage } from './features/transfers/TransfersPage'
 import { ImportStatement } from './features/statements/ImportStatement'
 import { MonotributoRoute } from './features/monotributo/MonotributoRoute'
@@ -138,6 +139,14 @@ const reportsRoute = createRoute({
   component: ReportsRoute,
 })
 
+const receivablesRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: '/receivables',
+  // Money owed to the owner, promoted to its own destination (ADR-208
+  // amendment). The page is a thin host for the ReceivablesSection.
+  component: ReceivablesPage,
+})
+
 const transfersRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: '/transfers',
@@ -172,6 +181,7 @@ const routeTree = rootRoute.addChildren([
     accountsRoute,
     budgetsRoute,
     reportsRoute,
+    receivablesRoute,
     transfersRoute,
     importStatementRoute,
     monotributoRoute,

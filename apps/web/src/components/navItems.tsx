@@ -14,6 +14,8 @@ import PieChartIcon from '@mui/icons-material/PieChart'
 import PieChartOutlinedIcon from '@mui/icons-material/PieChartOutlined'
 import BarChartIcon from '@mui/icons-material/BarChart'
 import BarChartOutlinedIcon from '@mui/icons-material/BarChartOutlined'
+import HandshakeIcon from '@mui/icons-material/Handshake'
+import HandshakeOutlinedIcon from '@mui/icons-material/HandshakeOutlined'
 
 /** A navigable destination wired to a router route. */
 export interface NavRoute {
@@ -24,6 +26,7 @@ export interface NavRoute {
     | '/accounts'
     | '/budgets'
     | '/reports'
+    | '/receivables'
     | '/transfers'
     | '/monotributo'
     | '/import-statement'
@@ -84,6 +87,16 @@ export const PRIMARY_NAV_ITEMS: NavItem[] = [
     shortLabelKey: 'nav.reportsShort',
     icon: <BarChartOutlinedIcon fontSize="small" />,
     activeIcon: <BarChartIcon fontSize="small" />,
+  },
+  {
+    // Money owed to the owner — its own first-class destination (ADR-208
+    // amendment): a dedicated route + nav tab, no longer nested under Accounts.
+    kind: 'route',
+    to: '/receivables',
+    labelKey: 'nav.owed',
+    shortLabelKey: 'nav.owedShort',
+    icon: <HandshakeOutlinedIcon fontSize="small" />,
+    activeIcon: <HandshakeIcon fontSize="small" />,
   },
 ]
 

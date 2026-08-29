@@ -8,6 +8,7 @@
     "accounts": "Cuentas",
     "budgets": "Presupuestos",
     "reports": "Reportes",
+    "owed": "Deudores",
     "transfers": "Transferencias",
     "monotributo": "Monotributo",
     "import": "Importar resumen",
@@ -17,6 +18,7 @@
     "accountsShort": "Cuentas",
     "budgetsShort": "Presupuestos",
     "reportsShort": "Reportes",
+    "owedShort": "Deudores",
     "transfersShort": "Transferencias",
     "monotributoShort": "Mono",
     "importShort": "Importar"

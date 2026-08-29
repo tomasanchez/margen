@@ -70,7 +70,6 @@ import {
 import { accountTypeLabel } from './presentation'
 import { AccountForm } from './AccountForm'
 import { DebtsSection } from './DebtsSection'
-import { ReceivablesSection } from '../receivables/ReceivablesSection'
 import { InstitutionForm } from './InstitutionForm'
 import {
   InstitutionWizard,
@@ -574,16 +573,11 @@ export function AccountsPage() {
       </CollapsibleSection>
 
       {/* Manual debts — a peer section on this page, no new nav (ADR-127/172/187).
-          Its balances feed the net-worth "other debts" leg (ADR-187/183). */}
+          Its balances feed the net-worth "other debts" leg (ADR-187/183).
+          Money owed TO the owner (receivables) used to sit beside this section,
+          but was promoted to its own "Owed" nav tab / route (ADR-208 amendment). */}
       <Box sx={{ mt: 2 }}>
         <DebtsSection />
-      </Box>
-
-      {/* Money owed TO the owner — the inverse of Debts, sitting beside it as its
-          own peer section, no new nav (ADR-208). Structurally out of net worth
-          (ADR-205), so it doesn't feed any net-worth leg. */}
-      <Box sx={{ mt: 2 }}>
-        <ReceivablesSection />
       </Box>
 
       {/* Onboarding wizard for a NEW institution (+ optional accounts).
