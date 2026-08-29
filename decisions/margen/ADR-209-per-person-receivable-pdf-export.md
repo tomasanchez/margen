@@ -37,3 +37,4 @@ The PDF is rendered in **English (en-US)** — both labels and number formatting
 
 - 2026-08-28: accepted
 - 2026-08-28: AMENDED — the fixed **English (en-US)** decision is superseded at owner request. The PDF now **follows the active app language (es-AR or en-US)**: localized labels + locale-appropriate number/date formatting (es-AR `1.234,56` + `DD/MM/YYYY`; en-US `1,234.56` + `MM/DD/YYYY`), ARS amounts either way. The frontend passes the active i18n locale to the export endpoint. Also per owner: the document should read **plainly and informally**, include simple **icons** next to fields (so an informal recipient reads it easily), and contain **no em-dashes**. Still outstanding-only (paid history remains deferred).
+- 2026-08-29: AMENDED by ADR-210 — adds a "Covered by you" ("Cubierto por vos") section below the outstanding section, listing pardoned items and their total covered amount, following the same language/icon/no-em-dash rules.

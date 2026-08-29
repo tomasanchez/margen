@@ -48,6 +48,8 @@ vi.mock('../../api/receivablesClient', async (importOriginal) => {
       addItem: vi.fn(),
       editItem: vi.fn(),
       deleteItem: vi.fn(),
+      pardonItem: vi.fn(),
+      unpardonItem: vi.fn(),
       recordPayment: vi.fn(),
       matchSuggestions: vi.fn(),
       confirmMatch: vi.fn(),
@@ -64,6 +66,8 @@ const mockDeletePerson = vi.mocked(receivablesClient.deletePerson)
 const mockAddItem = vi.mocked(receivablesClient.addItem)
 const mockEditItem = vi.mocked(receivablesClient.editItem)
 const mockDeleteItem = vi.mocked(receivablesClient.deleteItem)
+const mockPardonItem = vi.mocked(receivablesClient.pardonItem)
+const mockUnpardonItem = vi.mocked(receivablesClient.unpardonItem)
 const mockRecordPayment = vi.mocked(receivablesClient.recordPayment)
 const mockMatchSuggestions = vi.mocked(receivablesClient.matchSuggestions)
 
@@ -85,6 +89,7 @@ const ANA_DETAIL: PersonDetail = {
       detail: 'Dinner',
       allocated: '0.00',
       remaining: '300000.00',
+      pardoned: false,
     },
     {
       id: 'i2',
@@ -93,7 +98,19 @@ const ANA_DETAIL: PersonDetail = {
       detail: null,
       allocated: '0.00',
       remaining: '200000.00',
+      pardoned: false,
     },
+  ],
+}
+
+// Ana with her first item (Dinner) FORGIVEN (ADR-210): it no longer counts
+// toward outstanding, so only the second item's 200.000 remains.
+const ANA_PARDONED: PersonDetail = {
+  ...ANA_DETAIL,
+  outstanding: '200000.00',
+  items: [
+    { ...ANA_DETAIL.items[0], pardoned: true },
+    ANA_DETAIL.items[1],
   ],
 }
 
@@ -110,6 +127,7 @@ const BRUNO_DETAIL: PersonDetail = {
       allocated: '2500.00',
       // Overpaid item → negative remainder.
       remaining: '-1500.00',
+      pardoned: false,
     },
   ],
 }
@@ -140,6 +158,8 @@ describe('ReceivablesSection', () => {
     mockAddItem.mockResolvedValue(ANA_DETAIL.items[0])
     mockEditItem.mockResolvedValue(ANA_DETAIL.items[0])
     mockDeleteItem.mockResolvedValue(undefined)
+    mockPardonItem.mockResolvedValue(ANA_PARDONED)
+    mockUnpardonItem.mockResolvedValue(ANA_DETAIL)
     mockRecordPayment.mockResolvedValue({
       id: 'pay1',
       occurredOn: '2026-08-24',
@@ -333,6 +353,97 @@ describe('ReceivablesSection', () => {
     await waitFor(() =>
       expect(mockDeleteItem).toHaveBeenCalledWith('p1', 'i1'),
     )
+  })
+
+  test('pardoning an item confirms, calls pardon, then shows the Covered badge + Un-pardon action', async () => {
+    const user = userEvent.setup()
+    // First load: nothing pardoned. After the pardon the refetch returns the
+    // item flagged covered (invalidation-driven, task 7).
+    mockGetPerson.mockResolvedValueOnce(ANA_DETAIL).mockResolvedValue(ANA_PARDONED)
+
+    renderSection()
+    await screen.findByText('Ana')
+    await user.click(screen.getByRole('button', { name: "Show Ana's items" }))
+    await screen.findByText('Dinner')
+
+    // Forgive the first item — a confirm distinct from delete (ADR-210).
+    await user.click(
+      screen.getByRole('button', { name: 'Forgive the item from 2026-08-01' }),
+    )
+    const dialog = within(await screen.findByRole('dialog'))
+    // The confirm copy explains it shows as covered on the PDF (not deleted).
+    expect(dialog.getByText(/covered by you/i)).toBeInTheDocument()
+    await user.click(dialog.getByRole('button', { name: 'Forgive' }))
+
+    await waitFor(() =>
+      expect(mockPardonItem).toHaveBeenCalledWith('p1', 'i1'),
+    )
+    // Delete was never touched — pardon is a separate path.
+    expect(mockDeleteItem).not.toHaveBeenCalled()
+
+    // The refreshed row reads visibly distinct: the action swaps to Un-pardon
+    // (findByRole waits for the confirm to close so the row is accessible again).
+    expect(
+      await screen.findByRole('button', {
+        name: 'Restore the item from 2026-08-01 as owed',
+      }),
+    ).toBeInTheDocument()
+    // …and the covered badge is shown; the pardon affordance for it is gone.
+    expect(screen.getByText('Covered')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Forgive the item from 2026-08-01' }),
+    ).not.toBeInTheDocument()
+  })
+
+  test('un-pardoning restores the item as owed directly (no confirm)', async () => {
+    const user = userEvent.setup()
+    // Ana loads with her first item already forgiven.
+    mockGetPerson.mockResolvedValue(ANA_PARDONED)
+
+    renderSection()
+    await screen.findByText('Ana')
+    await user.click(screen.getByRole('button', { name: "Show Ana's items" }))
+    await screen.findByText('Dinner')
+    // The covered badge is present up front.
+    expect(screen.getByText('Covered')).toBeInTheDocument()
+
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Restore the item from 2026-08-01 as owed',
+      }),
+    )
+
+    // Restore is non-destructive → it fires immediately, no confirm dialog.
+    await waitFor(() =>
+      expect(mockUnpardonItem).toHaveBeenCalledWith('p1', 'i1'),
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(mockDeleteItem).not.toHaveBeenCalled()
+  })
+
+  test('a pardoned item is excluded from the payment allocation list', async () => {
+    const user = userEvent.setup()
+    // i1 (2026-08-01) is forgiven; only i2 (2026-08-10) remains allocatable.
+    mockGetPerson.mockResolvedValue(ANA_PARDONED)
+
+    renderSection()
+    await screen.findByText('Ana')
+    await user.click(screen.getByRole('button', { name: "Show Ana's items" }))
+    await screen.findByText('Dinner')
+
+    await user.click(screen.getByRole('button', { name: 'Record payment' }))
+    const dialog = within(await screen.findByRole('dialog'))
+
+    // The open item is allocatable…
+    expect(
+      await dialog.findByLabelText(
+        'Amount applied to the item from 2026-08-10',
+      ),
+    ).toBeInTheDocument()
+    // …but the forgiven item is NOT a payment target (ADR-210).
+    expect(
+      dialog.queryByLabelText('Amount applied to the item from 2026-08-01'),
+    ).not.toBeInTheDocument()
   })
 
   test('recording a payment allocates across open items', async () => {

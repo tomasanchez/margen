@@ -51,7 +51,11 @@ class ReceivableItemResponse(CamelCaseModel):
     allocated: Decimal = Field(description="Sum of payment allocations applied to this item so far; a string.")
     remaining: Decimal = Field(
         description="The item's outstanding remainder (amount - allocated); a string, may be negative "
-        "after a confirmed overpayment (ADR-206).",
+        "after a confirmed overpayment (ADR-206). For a pardoned item this is the amount covered by you.",
+    )
+    pardoned: bool = Field(
+        description="Whether the owner has forgiven this item (ADR-210). A pardoned item is excluded from the "
+        "person's outstanding and cannot be paid, but is shown as covered by you.",
     )
 
     @classmethod
@@ -64,6 +68,7 @@ class ReceivableItemResponse(CamelCaseModel):
             detail=model.detail,
             allocated=model.allocated,
             remaining=model.remaining,
+            pardoned=model.pardoned,
         )
 
 

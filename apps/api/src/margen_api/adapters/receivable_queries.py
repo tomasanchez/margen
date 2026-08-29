@@ -20,7 +20,7 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Numeric, cast, func, select
+from sqlalchemy import Numeric, and_, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from margen_api.adapters.models.receivable import (
@@ -67,6 +67,7 @@ def _item_to_domain(record: ReceivableItemRecord) -> ReceivableItem:
         amount=record.amount,
         detail=record.detail,
         created_at=record.created_at,
+        pardoned_at=record.pardoned_at,
     )
 
 
@@ -98,6 +99,7 @@ def _item_record(item: ReceivableItem) -> ReceivableItemRecord:
     record.amount = item.amount
     record.detail = item.detail
     record.created_at = item.created_at
+    record.pardoned_at = item.pardoned_at
     return record
 
 
@@ -200,6 +202,7 @@ class SqlAlchemyReceivableRepository(AbstractReceivableRepository):
         record.occurred_on = item.occurred_on
         record.amount = item.amount
         record.detail = item.detail
+        record.pardoned_at = item.pardoned_at
 
     async def delete_item(self, item_id: UUID, user_id: str) -> bool:
         """Hard-delete the owner's item row (scoped through person), cascading allocations."""
@@ -247,7 +250,14 @@ class SqlAlchemyReceivableRepository(AbstractReceivableRepository):
         return (await self.session.execute(statement)).first() is not None
 
     async def item_remainders(self, person_id: UUID) -> dict[UUID, Decimal]:
-        """Return each of the person's items keyed to its outstanding remainder (ADR-206)."""
+        """Return each of the person's NON-pardoned items keyed to its remainder (ADR-206, ADR-210).
+
+        Pardoned items (``pardoned_at IS NOT NULL``) are excluded so they neither count
+        toward the person's outstanding nor appear as valid allocation targets — the
+        record-payment handler uses this both for the overpayment guard and for allocation
+        membership, so a forgiven item can no longer be paid or allocated to (amending
+        ADR-206).
+        """
         allocated = func.coalesce(cast(func.sum(ReceivableAllocationRecord.amount), Numeric(18, 2)), _ZERO)
         statement = (
             select(ReceivableItemRecord.id, ReceivableItemRecord.amount, allocated.label("allocated"))
@@ -256,7 +266,10 @@ class SqlAlchemyReceivableRepository(AbstractReceivableRepository):
                 ReceivableAllocationRecord,
                 ReceivableAllocationRecord.item_id == ReceivableItemRecord.id,
             )
-            .where(ReceivableItemRecord.person_id == person_id)
+            .where(
+                ReceivableItemRecord.person_id == person_id,
+                ReceivableItemRecord.pardoned_at.is_(None),
+            )
             .group_by(ReceivableItemRecord.id, ReceivableItemRecord.amount)
         )
         rows = (await self.session.execute(statement)).all()
@@ -300,7 +313,16 @@ class SqlAlchemyReceivableReader(AbstractReceivableReader):
                 outstanding.label("outstanding"),
             )
             .select_from(PersonRecord)
-            .outerjoin(ReceivableItemRecord, ReceivableItemRecord.person_id == PersonRecord.id)
+            # Pardoned items are excluded from the outstanding sum via the JOIN condition (not
+            # a WHERE) so a person whose only items are all pardoned still appears in the list
+            # with a zero outstanding rather than dropping out entirely (ADR-210).
+            .outerjoin(
+                ReceivableItemRecord,
+                and_(
+                    ReceivableItemRecord.person_id == PersonRecord.id,
+                    ReceivableItemRecord.pardoned_at.is_(None),
+                ),
+            )
             .outerjoin(allocated_sub, allocated_sub.c.item_id == ReceivableItemRecord.id)
             .where(PersonRecord.user_id == owner)
             .group_by(PersonRecord.id, PersonRecord.name, PersonRecord.created_at)
@@ -330,7 +352,9 @@ class SqlAlchemyReceivableReader(AbstractReceivableReader):
         if person is None:
             return None
         items = await self._items_with_remainders(person_id)
-        outstanding = sum((item.remaining for item in items), _ZERO)
+        # A pardoned item is forgiven, so it is excluded from the authoritative outstanding
+        # even though it is still returned (flagged) for the "covered by you" surface (ADR-210).
+        outstanding = sum((item.remaining for item in items if not item.pardoned), _ZERO)
         return PersonDetailReadModel(
             id=person.id,
             name=person.name,
@@ -348,6 +372,7 @@ class SqlAlchemyReceivableReader(AbstractReceivableReader):
                 ReceivableItemRecord.occurred_on,
                 ReceivableItemRecord.amount,
                 ReceivableItemRecord.detail,
+                ReceivableItemRecord.pardoned_at,
                 allocated.label("allocated"),
             )
             .select_from(ReceivableItemRecord)
@@ -361,6 +386,7 @@ class SqlAlchemyReceivableReader(AbstractReceivableReader):
                 ReceivableItemRecord.occurred_on,
                 ReceivableItemRecord.amount,
                 ReceivableItemRecord.detail,
+                ReceivableItemRecord.pardoned_at,
             )
             .order_by(ReceivableItemRecord.occurred_on.desc(), ReceivableItemRecord.id.desc())
         )
@@ -377,6 +403,7 @@ class SqlAlchemyReceivableReader(AbstractReceivableReader):
                     detail=row.detail,
                     allocated=allocated_amount,
                     remaining=amount - allocated_amount,
+                    pardoned=row.pardoned_at is not None,
                 )
             )
         return models

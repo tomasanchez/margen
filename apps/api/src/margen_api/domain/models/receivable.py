@@ -76,6 +76,15 @@ class ReceivableItem:
     ``account_id`` (ADR-205). Its outstanding remainder (``amount`` minus the sum of its
     allocations) is a query-side roll-up, not stored here (ADR-206).
 
+    A pardon is a **reversible** per-item state (ADR-210): when the owner forgives the item,
+    ``pardoned_at`` is stamped with the moment of forgiveness; un-pardoning clears it back to
+    ``None``. A pardoned item drops out of what the person owes (it is excluded from the
+    person's outstanding roll-up and is no longer a valid allocation target, amending
+    ADR-206) yet is retained so it can be shown on the shareable statement as "covered by
+    you" (ADR-209 amend). It carries no ``account_id`` either way (ADR-205), so forgiving a
+    debt still never touches a balance. Whether an item is pardoned is derived by
+    :attr:`pardoned`; the timestamp is a plain carried fact, not a domain invariant.
+
     Attributes:
         id: Stable UUID identity (ADR-026).
         person_id: The owning :class:`Person`'s id; the consistency parent (ADR-204).
@@ -84,6 +93,8 @@ class ReceivableItem:
         amount: The positive ARS magnitude owed for this item (ADR-025).
         detail: Optional free-text justification; ``None`` when unset or blank.
         created_at: Server-managed creation timestamp.
+        pardoned_at: When the owner forgave this item, or ``None`` when it is not pardoned
+            (the reversible pardon state, ADR-210).
     """
 
     id: UUID
@@ -92,6 +103,7 @@ class ReceivableItem:
     amount: Decimal
     detail: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    pardoned_at: datetime | None = None
 
     def __post_init__(self) -> None:
         """Normalize and enforce invariants on construction."""
@@ -103,6 +115,16 @@ class ReceivableItem:
         # ``detail`` is an optional free-form justification; trim it, blank means absent.
         if isinstance(self.detail, str):
             self.detail = self.detail.strip() or None
+
+    @property
+    def pardoned(self) -> bool:
+        """Report whether the owner has forgiven this item (ADR-210).
+
+        A pardoned item is excluded from the person's outstanding and rejected as an
+        allocation target; un-pardoning restores it. Derived from ``pardoned_at`` so the two
+        can never disagree.
+        """
+        return self.pardoned_at is not None
 
 
 @dataclass(eq=False)
@@ -222,6 +244,7 @@ def build_receivable_item(
     detail: str | None = None,
     item_id: UUID | None = None,
     created_at: datetime | None = None,
+    pardoned_at: datetime | None = None,
 ) -> ReceivableItem:
     """Construct a valid :class:`ReceivableItem`, generating identity and timestamp.
 
@@ -235,6 +258,8 @@ def build_receivable_item(
         detail: Optional free-text justification; ``None`` when unset.
         item_id: Optional identity; generated when omitted.
         created_at: Optional creation timestamp; defaults to now (UTC).
+        pardoned_at: When the item was forgiven, or ``None`` when it is not pardoned
+            (the reversible pardon state, ADR-210).
 
     Returns:
         A validated, normalized ``ReceivableItem``.
@@ -249,6 +274,7 @@ def build_receivable_item(
         amount=amount,
         detail=detail,
         created_at=created_at if created_at is not None else datetime.now(UTC),
+        pardoned_at=pardoned_at,
     )
 
 

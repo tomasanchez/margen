@@ -81,6 +81,11 @@ _CARD_IDENTITY = "f8a9b0c1d2e3"
 # ``receivable_payment.matched_income_transaction_id``. No data migration is involved.
 _RECEIVABLES = "a9b0c1d2e3f4"
 
+# The receivable-item pardon migration (ADR-210): chains after receivables. It adds the
+# nullable ``receivable_item.pardoned_at`` timestamptz backing the reversible pardon state.
+# No data migration is involved (existing items start un-pardoned, pardoned_at NULL).
+_PARDON = "b0c1d2e3f4a5"
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
 # A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
@@ -621,6 +626,44 @@ class TestMigrations:
         finally:
             asyncio.run(_drop_everything(integration_database_url))
 
+    def test_pardon_migration_adds_nullable_pardoned_at(self, integration_database_url: str):
+        """
+        GIVEN a database at the receivables revision with a seeded person + item
+        WHEN Alembic upgrades through the receivable-item pardon migration (ADR-210)
+        THEN receivable_item gains a NULLABLE pardoned_at, the seeded item reads back NULL,
+             the item can be pardoned and un-pardoned, and the downgrade drops the column
+
+        Proves the additive, non-destructive column add on the production PostgreSQL
+        dialect: ``pardoned_at`` is nullable with no backfill (existing items start
+        un-pardoned), and the reversible pardon toggle round-trips a timestamp / NULL.
+        """
+        # GIVEN — upgrade to the receivables revision (the head before ADR-210) and seed a
+        # person + item the additive column must not break.
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _RECEIVABLES)
+        item_id = uuid.uuid4()
+        try:
+            asyncio.run(_seed_receivable_item(integration_database_url, item_id))
+
+            # WHEN
+            command.upgrade(config, _PARDON)
+
+            # THEN — the column exists and is nullable, and the seeded item reads NULL.
+            columns = asyncio.run(_column_map(integration_database_url, "receivable_item"))
+            assert "pardoned_at" in columns
+            assert columns["pardoned_at"] is True  # nullable, no backfill
+            assert asyncio.run(_read_pardoned_at(integration_database_url, item_id)) is None
+
+            # THEN — the item can be pardoned (timestamp) and un-pardoned (NULL) again.
+            assert asyncio.run(_pardon_round_trips(integration_database_url, item_id)) is True
+
+            # THEN — the downgrade cleanly drops the column again.
+            command.downgrade(config, _RECEIVABLES)
+            assert "pardoned_at" not in asyncio.run(_columns(integration_database_url, "receivable_item"))
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
     def test_head_matches_orm_metadata_no_drift(self, integration_database_url: str):
         """
         GIVEN a database migrated to head
@@ -683,6 +726,66 @@ async def _card_identity_round_trips(
         rows = {row.id: (row.card_brand, row.card_last4) for row in result}
     await engine.dispose()
     return rows[card_id], rows[bank_id]
+
+
+async def _seed_receivable_item(url: str, item_id: uuid.UUID) -> None:
+    """Insert a person + one receivable item before the pardoned_at column exists (ADR-210)."""
+    engine = create_async_engine(url)
+    person_id = uuid.uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("INSERT INTO person (id, user_id, name) VALUES (:id, :user_id, :name)"),
+            {"id": person_id, "user_id": uuid.UUID(_OWNER), "name": "Ana"},
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO receivable_item (id, person_id, occurred_on, amount) "
+                "VALUES (:id, :person_id, :occurred_on, :amount)"
+            ),
+            {
+                "id": item_id,
+                "person_id": person_id,
+                "occurred_on": datetime.date(2026, 8, 1),
+                "amount": Decimal("1000.00"),
+            },
+        )
+    await engine.dispose()
+
+
+async def _read_pardoned_at(url: str, item_id: uuid.UUID) -> datetime.datetime | None:
+    """Return the ``pardoned_at`` of the seeded receivable item after the column add."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        result = await connection.execute(
+            text("SELECT pardoned_at FROM receivable_item WHERE id = :id"),
+            {"id": item_id},
+        )
+        value = result.scalar_one()
+    await engine.dispose()
+    return value
+
+
+async def _pardon_round_trips(url: str, item_id: uuid.UUID) -> bool:
+    """Stamp then clear ``pardoned_at`` on the item; confirm the reversible toggle (ADR-210)."""
+    engine = create_async_engine(url)
+    moment = datetime.datetime(2026, 8, 29, tzinfo=datetime.UTC)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE receivable_item SET pardoned_at = :moment WHERE id = :id"),
+            {"moment": moment, "id": item_id},
+        )
+        pardoned = (
+            await connection.execute(text("SELECT pardoned_at FROM receivable_item WHERE id = :id"), {"id": item_id})
+        ).scalar_one()
+        await connection.execute(
+            text("UPDATE receivable_item SET pardoned_at = NULL WHERE id = :id"),
+            {"id": item_id},
+        )
+        cleared = (
+            await connection.execute(text("SELECT pardoned_at FROM receivable_item WHERE id = :id"), {"id": item_id})
+        ).scalar_one()
+    await engine.dispose()
+    return pardoned is not None and cleared is None
 
 
 async def _owned_debt_persists(url: str) -> bool:

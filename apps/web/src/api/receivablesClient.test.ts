@@ -38,6 +38,7 @@ const item: ReceivableItem = {
   detail: 'Dinner split',
   allocated: '2500.00',
   remaining: '7500.00',
+  pardoned: false,
 }
 
 /** A full person detail. */
@@ -171,6 +172,49 @@ describe('receivablesClient writes', () => {
       `/api/v1/receivables/people/${person.id}/confirm-match`,
     )
     expect(JSON.parse(String(init?.body)).matchedIncomeTransactionId).toBe('tx-1')
+  })
+
+  test('pardonItem POSTs to /items/{id}/pardon and returns the refreshed detail', async () => {
+    // The API returns the person with the item now flagged pardoned + a lower
+    // outstanding (it no longer counts as owed, ADR-210).
+    const pardonedDetail: PersonDetail = {
+      ...personDetail,
+      outstanding: '0.00',
+      items: [{ ...item, pardoned: true }],
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: pardonedDetail }), { status: 200 }),
+    )
+    const detail = await receivablesClient.pardonItem(person.id, item.id)
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain(
+      `/api/v1/receivables/people/${person.id}/items/${item.id}/pardon`,
+    )
+    expect(init?.method).toBe('POST')
+    expect(detail.items[0].pardoned).toBe(true)
+    expect(detail.outstanding).toBe('0.00')
+  })
+
+  test('unpardonItem POSTs to /items/{id}/unpardon and restores the item', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: personDetail }), { status: 200 }),
+    )
+    const detail = await receivablesClient.unpardonItem(person.id, item.id)
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain(
+      `/api/v1/receivables/people/${person.id}/items/${item.id}/unpardon`,
+    )
+    expect(init?.method).toBe('POST')
+    expect(detail.items[0].pardoned).toBe(false)
+  })
+
+  test('pardonItem surfaces a 404 as a status-carrying ReceivablesApiError', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response('not found', { status: 404 }),
+    )
+    await expect(
+      receivablesClient.pardonItem(person.id, 'missing'),
+    ).rejects.toMatchObject({ status: 404 })
   })
 
   test('deletePerson DELETEs /people/{id} (204, no body)', async () => {

@@ -190,6 +190,35 @@ class TestReceivableItem:
         assert item.id == item_id
         assert item.created_at == moment
 
+    async def test_new_item_is_not_pardoned_by_default(self):
+        """
+        GIVEN a build request without a pardon timestamp
+        WHEN the item is built
+        THEN it is not pardoned (pardoned_at is None, pardoned is False) (ADR-210)
+        """
+        # WHEN
+        item = build_receivable_item(person_id=uuid4(), occurred_on=A_DATE, amount=Decimal("10"))
+
+        # THEN
+        assert item.pardoned_at is None
+        assert item.pardoned is False
+
+    async def test_pardoned_at_marks_the_item_pardoned(self):
+        """
+        GIVEN a build request carrying a pardon timestamp
+        WHEN the item is built
+        THEN pardoned_at is preserved and pardoned is derived True (ADR-210)
+        """
+        # GIVEN
+        moment = datetime(2026, 8, 29, tzinfo=UTC)
+
+        # WHEN
+        item = build_receivable_item(person_id=uuid4(), occurred_on=A_DATE, amount=Decimal("10"), pardoned_at=moment)
+
+        # THEN
+        assert item.pardoned_at == moment
+        assert item.pardoned is True
+
 
 class TestReceivablePayment:
     """A payment is a positive-amount payback with a source and optional income link (ADR-204, ADR-207)."""

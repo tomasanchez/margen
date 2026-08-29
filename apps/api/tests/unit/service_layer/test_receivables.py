@@ -27,6 +27,7 @@ from margen_api.domain.commands.receivable import (
     EditReceivableItem,
     RecordReceivablePayment,
     RenamePerson,
+    SetReceivableItemPardon,
 )
 from margen_api.domain.models.exceptions import (
     AllocationExceedsPaymentError,
@@ -52,6 +53,7 @@ from margen_api.service_layer.receivables import (
     edit_receivable_item,
     record_receivable_payment,
     rename_person,
+    set_receivable_item_pardon,
 )
 from tests.fakes.persistence import FakeUnitOfWork
 
@@ -75,6 +77,7 @@ def _seed_item(
     amount: str,
     occurred_on: date = A_DATE,
     detail: str | None = None,
+    pardoned_at: datetime | None = None,
 ) -> UUID:
     """Place a committed receivable item directly in the store and return its id."""
     item = build_receivable_item(
@@ -84,6 +87,7 @@ def _seed_item(
         amount=Decimal(amount),
         detail=detail,
         created_at=A_TIME,
+        pardoned_at=pardoned_at,
     )
     uow.committed_receivable_items[item.id] = item
     return item.id
@@ -469,6 +473,83 @@ class TestDeleteReceivableItem:
         assert item_id in uow.committed_receivable_items
 
 
+class TestSetReceivableItemPardon:
+    """The pardon toggle forgives/restores an item, reversibly and owner-scoped (ADR-210)."""
+
+    async def test_pardon_stamps_pardoned_at_and_preserves_fields(self):
+        """
+        GIVEN an existing owned, un-pardoned item
+        WHEN it is pardoned
+        THEN pardoned_at is stamped and person_id/amount/detail/created_at are preserved
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        person_id = _seed_person(uow)
+        item_id = _seed_item(uow, person_id=person_id, amount="1000", detail="lunch")
+
+        # WHEN
+        await set_receivable_item_pardon(SetReceivableItemPardon(id=item_id, user_id=A_USER, pardoned=True), uow)
+
+        # THEN
+        stored = uow.committed_receivable_items[item_id]
+        assert stored.pardoned is True
+        assert stored.pardoned_at is not None
+        assert stored.amount == Decimal("1000")
+        assert stored.detail == "lunch"
+        assert stored.person_id == person_id
+        assert stored.created_at == A_TIME
+
+    async def test_unpardon_clears_pardoned_at(self):
+        """
+        GIVEN an already-pardoned item
+        WHEN it is un-pardoned
+        THEN pardoned_at is cleared back to None (the reversible toggle, ADR-210)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        person_id = _seed_person(uow)
+        item_id = _seed_item(uow, person_id=person_id, amount="1000", pardoned_at=A_TIME)
+
+        # WHEN
+        await set_receivable_item_pardon(SetReceivableItemPardon(id=item_id, user_id=A_USER, pardoned=False), uow)
+
+        # THEN
+        stored = uow.committed_receivable_items[item_id]
+        assert stored.pardoned is False
+        assert stored.pardoned_at is None
+
+    async def test_missing_item_raises_not_found(self):
+        """
+        GIVEN no item with the requested id
+        WHEN the pardon handler runs
+        THEN ReceivableItemNotFoundError is raised (mapped to 404)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+
+        # WHEN / THEN
+        with pytest.raises(ReceivableItemNotFoundError):
+            await set_receivable_item_pardon(SetReceivableItemPardon(id=uuid4(), user_id=A_USER, pardoned=True), uow)
+
+    async def test_cross_tenant_pardon_is_not_found(self):
+        """
+        GIVEN an item under a person owned by user A
+        WHEN user B pardons it
+        THEN ReceivableItemNotFoundError is raised and the item stays un-pardoned (ADR-111)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        person_id = _seed_person(uow, user_id=A_USER)
+        item_id = _seed_item(uow, person_id=person_id, amount="1000")
+
+        # WHEN / THEN
+        with pytest.raises(ReceivableItemNotFoundError):
+            await set_receivable_item_pardon(
+                SetReceivableItemPardon(id=item_id, user_id=ANOTHER_USER, pardoned=True), uow
+            )
+        assert uow.committed_receivable_items[item_id].pardoned is False
+
+
 class TestRecordReceivablePayment:
     """The record-payment handler enforces the ADR-206 settlement rules (partial, warn)."""
 
@@ -671,6 +752,58 @@ class TestRecordReceivablePayment:
                 ),
                 uow,
             )
+
+    async def test_allocation_to_pardoned_item_is_not_found(self):
+        """
+        GIVEN a person whose only item has been pardoned
+        WHEN a payment tries to allocate to that pardoned item
+        THEN ReceivableItemNotFoundError is raised, a forgiven item is not payable (ADR-210)
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        person_id = _seed_person(uow)
+        item_id = _seed_item(uow, person_id=person_id, amount="1000", pardoned_at=A_TIME)
+
+        # WHEN / THEN — the pardoned item is excluded from item_remainders, so it is not a
+        # valid allocation target and the allocation misses (ADR-210, amending ADR-206).
+        with pytest.raises(ReceivableItemNotFoundError):
+            await record_receivable_payment(
+                RecordReceivablePayment(
+                    user_id=A_USER,
+                    person_id=person_id,
+                    occurred_on=A_DATE,
+                    amount=Decimal("100"),
+                    allocations=(AllocationInput(item_id=item_id, amount=Decimal("100")),),
+                ),
+                uow,
+            )
+        assert uow.committed_receivable_payments == {}
+
+    async def test_pardoned_item_is_excluded_from_outstanding_overpayment_guard(self):
+        """
+        GIVEN a person with a live 1000 item and a pardoned 5000 item
+        WHEN a 1200 payment allocates to the live item
+        THEN it overpays (outstanding is only the live 1000, not 6000), so the guard warns
+        """
+        # GIVEN
+        uow = FakeUnitOfWork()
+        person_id = _seed_person(uow)
+        live = _seed_item(uow, person_id=person_id, amount="1000")
+        _seed_item(uow, person_id=person_id, amount="5000", pardoned_at=A_TIME)
+
+        # WHEN / THEN — the pardoned item does not inflate outstanding (ADR-210), so 1200 > 1000.
+        with pytest.raises(ReceivableOverpaymentError) as excinfo:
+            await record_receivable_payment(
+                RecordReceivablePayment(
+                    user_id=A_USER,
+                    person_id=person_id,
+                    occurred_on=A_DATE,
+                    amount=Decimal("1200"),
+                    allocations=(AllocationInput(item_id=live, amount=Decimal("1200")),),
+                ),
+                uow,
+            )
+        assert excinfo.value.outstanding == Decimal("1000")
 
     async def test_allocation_to_foreign_item_is_not_found(self):
         """

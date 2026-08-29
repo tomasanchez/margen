@@ -37,3 +37,4 @@ If a payment/allocation would cause the total allocated to a person to exceed th
 ## Status History
 
 - 2026-08-28: accepted
+- 2026-08-29: AMENDED by ADR-210 — outstanding calculation now excludes pardoned items (Σ remainders of non-pardoned items only); a pardoned item is not a valid allocation target.

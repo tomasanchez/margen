@@ -105,6 +105,26 @@ class DeleteReceivableItem(Command):
     user_id: str
 
 
+class SetReceivableItemPardon(Command):
+    """Request to pardon or un-pardon a receivable item (ADR-210, ADR-130).
+
+    A single reversible toggle: ``pardoned=True`` forgives the item (stamping
+    ``pardoned_at`` with the moment of forgiveness) so it drops out of the person's
+    outstanding and is no longer a valid allocation target (amending ADR-206), while
+    ``pardoned=False`` restores it (clearing ``pardoned_at``). Distinct from
+    :class:`DeleteReceivableItem`, which permanently removes the row — a pardon keeps the
+    item so the shareable statement can show it as "covered by you" (amending ADR-209).
+
+    The handler loads the item by ``id`` **scoped to the owner** through its person (a
+    foreign owner's id is not found, ADR-111), sets or clears the pardon, and preserves
+    ``person_id``, ``occurred_on``, ``amount``, ``detail``, identity and ``created_at``.
+    """
+
+    id: UUID
+    user_id: str
+    pardoned: bool
+
+
 class AllocationInput(Message):
     """One slice of a payment applied to a specific item, as supplied by the caller (ADR-206).
 

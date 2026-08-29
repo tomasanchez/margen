@@ -28,6 +28,7 @@ from margen_api.domain.commands.receivable import (
     EditReceivableItem,
     RecordReceivablePayment,
     RenamePerson,
+    SetReceivableItemPardon,
 )
 from margen_api.domain.models.exceptions import (
     PersonNotFoundError,
@@ -43,6 +44,7 @@ from margen_api.service_layer.receivables import (
     edit_receivable_item,
     record_receivable_payment,
     rename_person,
+    set_receivable_item_pardon,
 )
 from tests.conftest import STUB_USER_ID, STUB_USER_ID_B
 
@@ -201,6 +203,76 @@ class TestPersonAndItemPersistence:
 
         # THEN
         assert await _list_outstanding(container, STUB_USER_ID) == {}
+
+
+class TestPardonExclusion:
+    """Pardoning an item drops it from outstanding over real SQL, reversibly (ADR-210)."""
+
+    async def test_pardon_excludes_from_outstanding_and_flags_item_then_unpardon_restores(
+        self, container: ApplicationContainer
+    ):
+        """
+        GIVEN a person with a live 1000 item and a 5000 item
+        WHEN the 5000 item is pardoned
+        THEN the person's outstanding drops to 1000, the item is flagged pardoned, and the
+             people-list outstanding excludes it too; un-pardoning restores 6000
+        """
+        # GIVEN
+        person_id = await create_person(CreatePerson(user_id=STUB_USER_ID, name="Deb"), container.uow_factory())
+        await add_receivable_item(
+            AddReceivableItem(user_id=STUB_USER_ID, person_id=person_id, occurred_on=A_DATE, amount=Decimal("1000")),
+            container.uow_factory(),
+        )
+        big = await add_receivable_item(
+            AddReceivableItem(user_id=STUB_USER_ID, person_id=person_id, occurred_on=A_DATE, amount=Decimal("5000")),
+            container.uow_factory(),
+        )
+
+        # WHEN — the 5000 item is forgiven.
+        await set_receivable_item_pardon(
+            SetReceivableItemPardon(id=big, user_id=STUB_USER_ID, pardoned=True), container.uow_factory()
+        )
+
+        # THEN — the person now owes only the live 1000; the pardoned item is flagged and kept.
+        detail = await _detail(container, person_id, STUB_USER_ID)
+        assert detail is not None
+        assert detail.outstanding == Decimal("1000.00")
+        pardoned = {item.id: item.pardoned for item in detail.items}
+        assert pardoned[big] is True
+        # AND — the people-list roll-up excludes the pardoned item as well.
+        assert await _list_outstanding(container, STUB_USER_ID) == {"Deb": Decimal("1000.00")}
+
+        # WHEN — the pardon is reversed.
+        await set_receivable_item_pardon(
+            SetReceivableItemPardon(id=big, user_id=STUB_USER_ID, pardoned=False), container.uow_factory()
+        )
+
+        # THEN — the full 6000 is owed again and the flag clears.
+        restored = await _detail(container, person_id, STUB_USER_ID)
+        assert restored is not None
+        assert restored.outstanding == Decimal("6000.00")
+        assert all(item.pardoned is False for item in restored.items)
+
+    async def test_person_with_only_pardoned_items_still_lists_with_zero(self, container: ApplicationContainer):
+        """
+        GIVEN a person whose only item is pardoned
+        WHEN the people list is read
+        THEN the person still appears with a zero outstanding (not dropped, ADR-210)
+        """
+        # GIVEN
+        person_id = await create_person(CreatePerson(user_id=STUB_USER_ID, name="Solo"), container.uow_factory())
+        only = await add_receivable_item(
+            AddReceivableItem(user_id=STUB_USER_ID, person_id=person_id, occurred_on=A_DATE, amount=Decimal("2000")),
+            container.uow_factory(),
+        )
+
+        # WHEN
+        await set_receivable_item_pardon(
+            SetReceivableItemPardon(id=only, user_id=STUB_USER_ID, pardoned=True), container.uow_factory()
+        )
+
+        # THEN — the person is retained in the list with a zero outstanding.
+        assert await _list_outstanding(container, STUB_USER_ID) == {"Solo": Decimal("0.00")}
 
 
 class TestOwnerScoping:

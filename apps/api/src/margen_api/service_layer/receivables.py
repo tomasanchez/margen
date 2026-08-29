@@ -24,6 +24,7 @@ from margen_api.domain.commands.receivable import (
     EditReceivableItem,
     RecordReceivablePayment,
     RenamePerson,
+    SetReceivableItemPardon,
 )
 from margen_api.domain.models.exceptions import (
     AllocationExceedsPaymentError,
@@ -187,6 +188,47 @@ async def edit_receivable_item(command: EditReceivableItem, uow: AbstractUnitOfW
     return patched.id
 
 
+async def set_receivable_item_pardon(command: SetReceivableItemPardon, uow: AbstractUnitOfWork) -> UUID:
+    """Pardon or un-pardon one of the caller's items, reversibly (ADR-210, ADR-130).
+
+    Loads the item scoped to the owner through its person (a foreign owner's id is not
+    found, ADR-111), then stamps ``pardoned_at`` with the moment of forgiveness when
+    ``command.pardoned`` is set, or clears it back to ``None`` when it is not, rebuilding the
+    item through the factory so invariants re-run and identity/``person_id``/``created_at``/
+    the other fields are preserved (ADR-026, ADR-031). A pardoned item drops out of the
+    person's outstanding and is rejected as an allocation target (amending ADR-206), while
+    staying persisted so it can be shown as "covered by you" (amending ADR-209). This never
+    touches a balance (ADR-205). Toggling is idempotent — pardoning an already-pardoned item
+    simply re-stamps the moment.
+
+    Args:
+        command: The validated pardon toggle, addressing one item by ``id``.
+        uow: The unit of work providing the receivables repository.
+
+    Returns:
+        The UUID identity of the toggled item.
+
+    Raises:
+        ReceivableItemNotFoundError: When no item matches ``command.id`` for the owner.
+    """
+    async with uow:
+        existing = await uow.receivables.get_item(command.id, command.user_id)
+        if existing is None:
+            raise ReceivableItemNotFoundError(command.id)
+        toggled = build_receivable_item(
+            item_id=existing.id,
+            person_id=existing.person_id,
+            occurred_on=existing.occurred_on,
+            amount=existing.amount,
+            detail=existing.detail,
+            created_at=existing.created_at,
+            pardoned_at=datetime.now(UTC) if command.pardoned else None,
+        )
+        await uow.receivables.persist_item(toggled)
+        await uow.commit()
+    return toggled.id
+
+
 async def delete_receivable_item(command: DeleteReceivableItem, uow: AbstractUnitOfWork) -> None:
     """Hard-delete a receivable item by identity (ADR-204, ADR-208).
 
@@ -313,8 +355,9 @@ def _apply_item_patch(existing: ReceivableItem, command: EditReceivableItem) -> 
     """Rebuild an item overlaying the patch's present fields (ADR-204, ADR-028).
 
     Rebuilding through :func:`build_receivable_item` re-runs the domain invariants so the
-    patched state is validated and normalized, while preserving identity, ``person_id``
-    and ``created_at`` (ADR-026, ADR-031). ``None`` fields leave the current value intact.
+    patched state is validated and normalized, while preserving identity, ``person_id``,
+    ``created_at`` and the pardon state (ADR-026, ADR-031, ADR-210). ``None`` fields leave
+    the current value intact.
     """
     return build_receivable_item(
         item_id=existing.id,
@@ -323,4 +366,5 @@ def _apply_item_patch(existing: ReceivableItem, command: EditReceivableItem) -> 
         amount=command.amount if command.amount is not None else existing.amount,
         detail=command.detail if command.detail is not None else existing.detail,
         created_at=existing.created_at,
+        pardoned_at=existing.pardoned_at,
     )

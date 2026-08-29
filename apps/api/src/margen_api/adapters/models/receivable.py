@@ -67,6 +67,13 @@ class ReceivableItemRecord(Base):
     ``detail`` is the nullable free-text justification (ADR-204). Scoped to its owner
     through ``person_id`` (indexed FK, ``ON DELETE CASCADE`` so deleting the person
     removes their items, ADR-208). No ``account_id`` (ADR-205).
+
+    ``pardoned_at`` is the nullable timestamp of the owner forgiving this item (ADR-210): a
+    non-NULL value marks the item as "covered by you" so it drops out of the person's
+    outstanding and is rejected as an allocation target, yet stays on the shareable
+    statement; NULL means the item is a normal, still-owed debt. Reversible — un-pardoning
+    resets it to NULL. No ``account_id`` here either, so a pardon never moves a balance
+    (ADR-205).
     """
 
     __tablename__ = "receivable_item"
@@ -89,6 +96,10 @@ class ReceivableItemRecord(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+    pardoned_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
 

@@ -18,6 +18,7 @@
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
+import Chip from '@mui/material/Chip'
 import IconButton from '@mui/material/IconButton'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
@@ -25,6 +26,8 @@ import AddIcon from '@mui/icons-material/Add'
 import PaymentsOutlinedIcon from '@mui/icons-material/PaymentsOutlined'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlineOutlined'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
+import VolunteerActivismOutlinedIcon from '@mui/icons-material/VolunteerActivismOutlined'
+import RestoreOutlinedIcon from '@mui/icons-material/RestoreOutlined'
 import { ErrorState } from '../../components/ErrorState'
 import { balanceColor, formatCurrency, formatSignedBalance } from '../../lib/format'
 import type { ReceivableItem } from '../../api/receivablesClient'
@@ -38,18 +41,31 @@ function num(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-/** One item row: date + optional detail, its amount, remaining, edit + delete. */
+/**
+ * One item row: date + optional detail, its amount, remaining, and its actions.
+ *
+ * A PARDONED item (ADR-210) reads visibly distinct: a calm "Covered" badge, its
+ * remaining amount de-emphasized + struck (it no longer counts as owed — the
+ * strike is the non-color cue, ADR-019), and its forgive action swapped to
+ * "Un-pardon" (restore as owed). Delete is unchanged in both states — it stays
+ * the separate "this was an error" path.
+ */
 function ItemRow({
   item,
   onEdit,
   onDelete,
+  onPardon,
+  onUnpardon,
 }: {
   item: ReceivableItem
   onEdit: () => void
   onDelete: () => void
+  onPardon: () => void
+  onUnpardon: () => void
 }) {
   const { t } = useTranslation('receivables')
   const remaining = num(item.remaining)
+  const { pardoned } = item
   return (
     <Box
       sx={{
@@ -62,13 +78,37 @@ function ItemRow({
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography
-          sx={{ fontSize: 14, fontWeight: 600 }}
-          color="text.primary"
-          noWrap
-        >
-          {item.detail ?? item.occurredOn}
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+          <Typography
+            sx={{
+              fontSize: 14,
+              fontWeight: 600,
+              minWidth: 0,
+              // A covered debt is de-emphasized — it no longer counts as owed.
+              color: pardoned ? 'text.secondary' : 'text.primary',
+            }}
+            noWrap
+          >
+            {item.detail ?? item.occurredOn}
+          </Typography>
+          {pardoned ? (
+            <Chip
+              label={t('items.coveredBadge')}
+              size="small"
+              variant="outlined"
+              icon={<VolunteerActivismOutlinedIcon />}
+              sx={{
+                flex: 'none',
+                height: 20,
+                fontSize: 11,
+                fontWeight: 600,
+                color: 'text.secondary',
+                borderColor: 'var(--mg-border-2)',
+                '& .MuiChip-icon': { fontSize: 13, color: 'text.secondary' },
+              }}
+            />
+          ) : null}
+        </Box>
         <Typography sx={{ fontSize: 12.5, mt: 0.25 }} color="text.secondary">
           {item.detail
             ? `${item.occurredOn} · ${formatCurrency(num(item.amount), 'ARS')}`
@@ -81,9 +121,18 @@ function ItemRow({
           fontWeight: 600,
           fontVariantNumeric: 'tabular-nums',
           flex: 'none',
-          // A negative remainder (overpaid, ADR-206) reads red; the SIGN carries
-          // the meaning and the color merely reinforces it (never color alone).
-          color: balanceColor(remaining),
+          ...(pardoned
+            ? {
+                // Covered → de-emphasized + struck (the strike is the non-color
+                // cue, ADR-019); it no longer reads as an owed balance.
+                color: 'text.disabled',
+                textDecoration: 'line-through',
+              }
+            : {
+                // A negative remainder (overpaid, ADR-206) reads red; the SIGN
+                // carries the meaning and color merely reinforces it (ADR-019).
+                color: balanceColor(remaining),
+              }),
         }}
       >
         {t('items.remaining', {
@@ -98,6 +147,25 @@ function ItemRow({
       >
         <EditOutlinedIcon fontSize="small" />
       </IconButton>
+      {pardoned ? (
+        <IconButton
+          size="small"
+          onClick={onUnpardon}
+          aria-label={t('items.unpardonAria', { date: item.occurredOn })}
+          sx={{ flex: 'none' }}
+        >
+          <RestoreOutlinedIcon fontSize="small" />
+        </IconButton>
+      ) : (
+        <IconButton
+          size="small"
+          onClick={onPardon}
+          aria-label={t('items.pardonAria', { date: item.occurredOn })}
+          sx={{ flex: 'none' }}
+        >
+          <VolunteerActivismOutlinedIcon fontSize="small" />
+        </IconButton>
+      )}
       <IconButton
         size="small"
         onClick={onDelete}
@@ -121,6 +189,10 @@ export interface PersonItemsProps {
   onEditItem: (item: ReceivableItem) => void
   /** Delete an item (goes through a confirm at the section level). */
   onDeleteItem: (item: ReceivableItem) => void
+  /** Forgive an item (ADR-210) — goes through a confirm at the section level. */
+  onPardonItem: (item: ReceivableItem) => void
+  /** Restore a forgiven item as owed (ADR-210) — the un-pardon toggle. */
+  onUnpardonItem: (item: ReceivableItem) => void
   /** Open the record-payment flow for this person. */
   onRecordPayment: () => void
 }
@@ -131,6 +203,8 @@ export function PersonItems({
   onAddItem,
   onEditItem,
   onDeleteItem,
+  onPardonItem,
+  onUnpardonItem,
   onRecordPayment,
 }: PersonItemsProps) {
   const { t } = useTranslation('receivables')
@@ -175,6 +249,8 @@ export function PersonItems({
         item={item}
         onEdit={() => onEditItem(item)}
         onDelete={() => onDeleteItem(item)}
+        onPardon={() => onPardonItem(item)}
+        onUnpardon={() => onUnpardonItem(item)}
       />
     ))
   }
