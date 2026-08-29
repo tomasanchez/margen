@@ -777,6 +777,27 @@ class TestPersonPdf:
         assert response.headers["content-type"] == "application/pdf"
         assert response.content.startswith(b"%PDF")
 
+    async def test_person_with_payments_pdf_still_downloads(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a person with an outstanding item that has received a partial payback
+        WHEN the person's PDF is requested in each locale
+        THEN it returns 200 with a %PDF payload (the "Payments received" section renders)
+        """
+        # GIVEN — an item paid down partially so the person has a real payback on record.
+        person = await _create_person(test_client, name="Ana Perez")
+        item_id = (await _add_item(test_client, person["id"], amount="1000", detail="rent"))["items"][0]["id"]
+        payment = await test_client.post(
+            f"{PEOPLE}/{person['id']}/payments",
+            json={"occurredOn": A_DATE, "amount": "600", "allocations": [{"itemId": item_id, "amount": "600"}]},
+        )
+        assert payment.status_code == status.HTTP_201_CREATED, payment.text
+
+        # WHEN / THEN
+        for lang in ("es", "en"):
+            response = await test_client.get(f"{PEOPLE}/{person['id']}/pdf", params={"lang": lang})
+            assert response.status_code == status.HTTP_200_OK, response.text
+            assert response.content.startswith(b"%PDF")
+
     async def test_missing_person_returns_404(self, test_client: httpx.AsyncClient):
         """
         GIVEN no person with the requested id

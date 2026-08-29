@@ -154,6 +154,12 @@ export function ConfirmMatchForm({
     try {
       await confirmMatch.mutateAsync({
         personId,
+        // The API's ConfirmMatchRequest REQUIRES both — omitting them 422s every
+        // confirm (the bug fixed here). `occurredOn` is the matched income's date
+        // (the payback date); `amount` is the allocation sum, so `amount == Σ
+        // allocations` exactly as the manual RecordPaymentForm sets it.
+        occurredOn: suggestion.occurredOn,
+        amount: toDecimalString(total),
         matchedIncomeTransactionId: suggestion.transactionId,
         allocations: buildAllocations(),
         ...(allowOverpayment ? { allowOverpayment: true } : {}),
@@ -318,11 +324,18 @@ export function ConfirmMatchForm({
                     }))
                   }
                   size="small"
-                  inputMode="decimal"
+                  type="number"
                   disabled={isSaving}
                   sx={{ width: '120px', flex: 'none' }}
                   slotProps={{
                     htmlInput: {
+                      // `type="number"` gives a clean mobile numeric keypad;
+                      // `inputMode="decimal"` + `step="any"` keep decimals, and
+                      // `min={0}` rejects negatives. Money still flows as a
+                      // Decimal string via parseBalance/toDecimalString (ADR-025).
+                      min: 0,
+                      step: 'any',
+                      inputMode: 'decimal',
                       'aria-label': t('confirmMatch.allocationAria', {
                         date: item.occurredOn,
                       }),

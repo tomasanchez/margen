@@ -192,6 +192,10 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
       expect.objectContaining({
         matchedIncomeTransactionId: 't-strong',
         allocations: [{ itemId: 'i1', amount: '300000.00' }],
+        // The API REQUIRES occurredOn (the matched income's payback date) and
+        // amount (= Σ allocations); omitting them 422'd every confirm-match.
+        occurredOn: '2026-08-12',
+        amount: '300000.00',
       }),
     )
     // Suggestion-only: the first confirm carries no overpayment override.
@@ -363,13 +367,14 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
     )
     const dialog = within(await screen.findByRole('dialog'))
 
-    // First item filled to the hilt, the overflow seeded into the second.
+    // First item filled to the hilt, the overflow seeded into the second. The
+    // inputs are now `type="number"`, so toHaveValue reads the numeric value.
     expect(
       dialog.getByLabelText('Amount applied to the item from 2026-08-01'),
-    ).toHaveValue('300000.00')
+    ).toHaveValue(300000)
     expect(
       dialog.getByLabelText('Amount applied to the item from 2026-08-10'),
-    ).toHaveValue('100000.00')
+    ).toHaveValue(100000)
 
     await user.click(dialog.getByRole('button', { name: 'Confirm payment' }))
 
@@ -410,10 +415,11 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
     )
     const dialog = within(await screen.findByRole('dialog'))
 
-    // Only the open item is allocatable, seeded up to its remaining.
+    // Only the open item is allocatable, seeded up to its remaining. The input
+    // is now `type="number"`, so toHaveValue reads the numeric value.
     expect(
       dialog.getByLabelText('Amount applied to the item from 2026-08-10'),
-    ).toHaveValue('200000.00')
+    ).toHaveValue(200000)
     // The forgiven item is not a match target.
     expect(
       dialog.queryByLabelText('Amount applied to the item from 2026-08-01'),
@@ -447,7 +453,8 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
     const firstItem = dialog.getByLabelText(
       'Amount applied to the item from 2026-08-01',
     )
-    expect(firstItem).toHaveValue('300000.00')
+    // `type="number"` input → toHaveValue reads the numeric value.
+    expect(firstItem).toHaveValue(300000)
     await user.clear(firstItem)
     await user.type(firstItem, '250000')
 

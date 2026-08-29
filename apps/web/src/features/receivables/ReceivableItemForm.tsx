@@ -131,10 +131,17 @@ export function ReceivableItemForm({
             fullWidth
             size="small"
             disabled={isSaving}
-            inputMode="decimal"
+            type="number"
             helperText={t('itemForm.amount.helper')}
             slotProps={{
               htmlInput: {
+                // `type="number"` gives a clean mobile numeric keypad;
+                // `inputMode="decimal"` + `step="any"` keep decimals, and
+                // `min={0}` rejects negatives. Money still flows as a Decimal
+                // string via parseBalance/toDecimalString (ADR-025).
+                min: 0,
+                step: 'any',
+                inputMode: 'decimal',
                 'aria-describedby': saveError ? errorId : undefined,
               },
             }}
