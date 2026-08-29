@@ -29,11 +29,17 @@ from margen_api.service_layer.receivable_pdf import (
 from margen_api.service_layer.receivable_read_models import (
     PersonDetailReadModel,
     ReceivableItemReadModel,
+    ReceivablePaymentReadModel,
 )
 
 _PERSON_ID = UUID("11111111-1111-4111-8111-111111111111")
 _ITEM_ID = UUID("22222222-2222-4222-8222-222222222222")
 _CREATED = datetime(2026, 1, 1)
+
+
+def _payment(*, occurred_on: date = date(2026, 8, 20), amount: str = "300.00") -> ReceivablePaymentReadModel:
+    """Build a payback read model with a sensible default amount."""
+    return ReceivablePaymentReadModel(occurred_on=occurred_on, amount=Decimal(amount))
 
 
 def _item(
@@ -62,14 +68,16 @@ def _person(
     name: str = "Ana Perez",
     outstanding: str = "1000.00",
     items: tuple[ReceivableItemReadModel, ...] = (),
+    payments: tuple[ReceivablePaymentReadModel, ...] = (),
 ) -> PersonDetailReadModel:
-    """Build a person-detail read model wrapping the given items."""
+    """Build a person-detail read model wrapping the given items and payments."""
     return PersonDetailReadModel(
         id=_PERSON_ID,
         name=name,
         created_at=_CREATED,
         outstanding=Decimal(outstanding),
         items=items,
+        payments=payments,
     )
 
 
@@ -356,20 +364,99 @@ class TestCoveredSection:
         # THEN
         assert content.covered_rows == ()
 
-    def test_localized_covered_labels(self):
+    def test_covered_labels_use_the_owner_name(self):
         """
-        GIVEN a person with a pardoned item
+        GIVEN a person with a pardoned item and a known owner name
         WHEN the content is assembled in each locale
-        THEN the covered section title and total label use the localized copy (ADR-210)
+        THEN the covered title and total carry the OWNER'S name, not "you" (ADR-209 amended)
         """
         # GIVEN
         person = _person(outstanding="0.00", items=(_item(remaining="500.00", pardoned=True),))
 
+        # WHEN
+        es = build_content(person, "es", "Tomas Sanchez")
+        en = build_content(person, "en", "Tomas Sanchez")
+
+        # THEN
+        assert (es.covered_title, es.covered_total_label) == (
+            "Cubierto por Tomas Sanchez",
+            "Total cubierto por Tomas Sanchez:",
+        )
+        assert (en.covered_title, en.covered_total_label) == (
+            "Covered by Tomas Sanchez",
+            "Tomas Sanchez covered:",
+        )
+
+    @pytest.mark.parametrize("owner_name", ["", "   "])
+    def test_covered_labels_drop_suffix_when_owner_unknown(self, owner_name: str):
+        """
+        GIVEN a person with a pardoned item but no derivable owner name
+        WHEN the content is assembled in each locale
+        THEN the "by {owner}" suffix is dropped gracefully (ADR-209 amended)
+        """
+        # GIVEN
+        person = _person(outstanding="0.00", items=(_item(remaining="500.00", pardoned=True),))
+
+        # WHEN
+        es = build_content(person, "es", owner_name)
+        en = build_content(person, "en", owner_name)
+
+        # THEN
+        assert (es.covered_title, es.covered_total_label) == ("Cubierto", "Total cubierto:")
+        assert (en.covered_title, en.covered_total_label) == ("Covered", "Covered:")
+
+
+class TestPaymentsContent:
+    """The "Payments received" content for the person's paybacks (ADR-209)."""
+
+    def test_payment_rows_are_localized_date_and_amount(self):
+        """
+        GIVEN a payback of 1.234,56 on 2026-08-24
+        WHEN the content is assembled in each locale
+        THEN the payment row date + amount use the locale's formatting (ADR-209)
+        """
+        # GIVEN
+        person = _person(
+            outstanding="0.00",
+            items=(),
+            payments=(_payment(occurred_on=date(2026, 8, 24), amount="1234.56"),),
+        )
+
         # WHEN / THEN
         es = build_content(person, "es")
         en = build_content(person, "en")
-        assert (es.covered_title, es.covered_total_label) == ("Cubierto por vos", "Total cubierto:")
-        assert (en.covered_title, en.covered_total_label) == ("Covered by you", "You covered:")
+        assert (es.payment_rows[0].occurred_on, es.payment_rows[0].amount) == ("24/08/2026", "ARS 1.234,56")
+        assert (en.payment_rows[0].occurred_on, en.payment_rows[0].amount) == ("08/24/2026", "ARS 1,234.56")
+
+    def test_payments_total_sums_all_payments_localized(self):
+        """
+        GIVEN two paybacks (300 + 500) regardless of source
+        WHEN the content is assembled in each locale
+        THEN the payments total is their sum, formatted for the locale (ADR-209)
+        """
+        # GIVEN
+        person = _person(outstanding="0.00", items=(), payments=(_payment(amount="300.00"), _payment(amount="500.00")))
+
+        # WHEN / THEN
+        assert build_content(person, "en").payments_total == "ARS 800.00"
+        assert build_content(person, "es").payments_total == "ARS 800,00"
+
+    def test_payment_column_headers_are_date_and_amount(self):
+        """
+        GIVEN any person
+        WHEN the content is assembled in each locale
+        THEN the payment section has just the localized date + amount column headers
+        """
+        assert build_content(_person(), "es").payment_column_headers == ("Fecha", "Monto")
+        assert build_content(_person(), "en").payment_column_headers == ("Date", "Amount")
+
+    def test_no_payments_yields_no_payment_rows(self):
+        """
+        GIVEN a person with no paybacks
+        WHEN the content is assembled
+        THEN there are no payment rows (the section is omitted downstream, ADR-209)
+        """
+        assert build_content(_person(items=(_item(),)), "en").payment_rows == ()
 
 
 class TestBuildLayout:
@@ -450,15 +537,15 @@ class TestBuildLayout:
     @pytest.mark.parametrize(
         ("locale", "title", "total"),
         [
-            ("es", "Cubierto por vos", "Total cubierto: ARS 1.500,00"),
-            ("en", "Covered by you", "You covered: ARS 1,500.00"),
+            ("es", "Cubierto por Tomas Sanchez", "Total cubierto por Tomas Sanchez: ARS 1.500,00"),
+            ("en", "Covered by Tomas Sanchez", "Tomas Sanchez covered: ARS 1,500.00"),
         ],
     )
-    def test_covered_section_renders_title_and_total(self, locale: Locale, title: str, total: str):
+    def test_covered_section_renders_owner_title_and_total(self, locale: Locale, title: str, total: str):
         """
         GIVEN a person with an outstanding item and two pardoned items (500 + 1000)
-        WHEN the layout is built in each locale
-        THEN the page carries the localized "Covered by you" title and covered total
+        WHEN the layout is built in each locale with a known owner name
+        THEN the page carries the owner-named covered title and covered total (ADR-209 amended)
         """
         # GIVEN
         person = _person(
@@ -472,7 +559,7 @@ class TestBuildLayout:
         )
 
         # WHEN
-        pages = build_layout(person, locale)
+        pages = build_layout(person, locale, "Tomas Sanchez")
 
         # THEN
         texts = self._texts(pages[0])
@@ -489,12 +576,75 @@ class TestBuildLayout:
         person = _person(outstanding="1000.00", items=(_item(remaining="1000.00"),))
 
         # WHEN
+        pages = build_layout(person, "en", "Tomas Sanchez")
+
+        # THEN
+        all_texts = [text for page in pages for text in self._texts(page)]
+        assert not any("Covered" in text for text in all_texts)
+
+    @pytest.mark.parametrize(
+        ("locale", "title", "total"),
+        [
+            ("es", "Pagos recibidos", "Total pagado: ARS 800,00"),
+            ("en", "Payments received", "Total paid: ARS 800.00"),
+        ],
+    )
+    def test_payments_section_renders_title_and_total(self, locale: Locale, title: str, total: str):
+        """
+        GIVEN a person with an outstanding item and two paybacks (300 + 500)
+        WHEN the layout is built in each locale
+        THEN the page carries the localized "Payments received" title and total paid (ADR-209)
+        """
+        # GIVEN
+        person = _person(
+            name="Ana Perez",
+            outstanding="1000.00",
+            items=(_item(remaining="1000.00", detail="rent"),),
+            payments=(_payment(amount="300.00"), _payment(amount="500.00")),
+        )
+
+        # WHEN
+        pages = build_layout(person, locale)
+
+        # THEN
+        texts = self._texts(pages[0])
+        assert title in texts
+        assert total in texts
+
+    def test_payments_section_omitted_when_no_payments(self):
+        """
+        GIVEN a person with items but no paybacks
+        WHEN the layout is built
+        THEN neither the payments title nor total label appears anywhere (ADR-209)
+        """
+        # GIVEN
+        person = _person(outstanding="1000.00", items=(_item(remaining="1000.00"),))
+
+        # WHEN
         pages = build_layout(person, "en")
 
         # THEN
         all_texts = [text for page in pages for text in self._texts(page)]
-        assert not any("Covered by you" in text for text in all_texts)
-        assert not any("You covered" in text for text in all_texts)
+        assert not any("Payments received" in text for text in all_texts)
+        assert not any("Total paid" in text for text in all_texts)
+
+    def test_payments_rows_paginate_across_pages(self):
+        """
+        GIVEN a person with many paybacks (more than fit on one page)
+        WHEN the layout is built
+        THEN the payment rows spill onto a second page repeating the column headers (ADR-209)
+        """
+        # GIVEN — 60 paybacks overflow the single-page row budget.
+        payments = tuple(_payment(amount=f"{i + 1}.00") for i in range(60))
+        person = _person(outstanding="0.00", items=(), payments=payments)
+
+        # WHEN
+        pages = build_layout(person, "en")
+
+        # THEN — the payment rows span two pages, each carrying the Date column header.
+        assert len(pages) == 2
+        assert "Payments received" in self._texts(pages[0])
+        assert "Date" in self._texts(pages[1])
 
     def test_covered_rows_paginate_across_pages(self):
         """
@@ -507,11 +657,11 @@ class TestBuildLayout:
         person = _person(outstanding="0.00", items=items)
 
         # WHEN
-        pages = build_layout(person, "en")
+        pages = build_layout(person, "en", "Tomas Sanchez")
 
         # THEN — the covered rows span two pages, each carrying the Date column header.
         assert len(pages) == 2
-        assert "Covered by you" in self._texts(pages[0])
+        assert "Covered by Tomas Sanchez" in self._texts(pages[0])
         assert "Date" in self._texts(pages[1])
 
 
@@ -525,8 +675,10 @@ class TestNoDashes:
         WHEN every text span across the layout is inspected
         THEN not a single string contains an em-dash or an en-dash
         """
-        # GIVEN — a realistic person including a null-detail row AND a pardoned item, so the
-        # new "Covered by you" section strings are inspected by the guard too (ADR-210).
+        # GIVEN — a realistic person including a null-detail row, a pardoned item AND paybacks,
+        # so the owner-named covered section AND the "Payments received" section strings are
+        # inspected by the guard too (ADR-209 amended, ADR-210). An owner name is supplied so
+        # the covered heading/total (which now interpolate it) are inspected as well.
         person = _person(
             name="María Peña",
             outstanding="9999.99",
@@ -535,10 +687,11 @@ class TestNoDashes:
                 _item(detail=None, remaining="9499.99"),
                 _item(detail="Préstamo", remaining="750.00", pardoned=True),
             ),
+            payments=(_payment(amount="300.00"), _payment(amount="250.50")),
         )
 
         # WHEN
-        pages = build_layout(person, locale)
+        pages = build_layout(person, locale, "Tomás Núñez")
 
         # THEN - no em-dash (U+2014) and no en-dash (U+2013) in any placed string.
         em_dash, en_dash = chr(0x2014), chr(0x2013)

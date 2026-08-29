@@ -238,6 +238,10 @@ export function useRecordPayment() {
  */
 export interface ConfirmMatchInput {
   personId: string
+  /** The matched income's date (payback date), required by the API (ADR-207). */
+  occurredOn: string
+  /** The total settled (= Σ allocations), a Decimal string, required by the API. */
+  amount: string
   matchedIncomeTransactionId: string
   allocations: PaymentAllocationInput[]
   allowOverpayment?: boolean

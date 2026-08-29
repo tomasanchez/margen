@@ -188,8 +188,17 @@ export interface RecordPaymentBody {
  * Request body for `POST /people/{id}/confirm-match` — settle from a matched
  * income transaction (ADR-207), allocated across items (ADR-206). Same
  * overpayment semantics as {@link RecordPaymentBody}.
+ *
+ * `occurredOn` (the matched income's date — the payback date) and `amount` (the
+ * total settled, a Decimal string) are BOTH required by the API's
+ * `ConfirmMatchRequest`; omitting them makes every confirm-match 422 (the bug
+ * fixed here). `amount` must equal the sum of `allocations` — the same invariant
+ * {@link RecordPaymentBody} enforces — so the overpayment/allocation contract
+ * stays consistent between the manual and matched flows.
  */
 export interface ConfirmMatchBody {
+  occurredOn: string
+  amount: string
   matchedIncomeTransactionId: string
   allocations: PaymentAllocationInput[]
   allowOverpayment?: boolean
@@ -524,12 +533,16 @@ async function matchSuggestions(personId: string): Promise<MatchSuggestion[]> {
 async function confirmMatch(
   personId: string,
   input: {
+    occurredOn: string
+    amount: string
     matchedIncomeTransactionId: string
     allocations: PaymentAllocationInput[]
     allowOverpayment?: boolean
   },
 ): Promise<ReceivablePayment> {
   const body: ConfirmMatchBody = {
+    occurredOn: input.occurredOn,
+    amount: input.amount,
     matchedIncomeTransactionId: input.matchedIncomeTransactionId,
     allocations: input.allocations,
   }

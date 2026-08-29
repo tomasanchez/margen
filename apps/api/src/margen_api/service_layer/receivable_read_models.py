@@ -47,6 +47,24 @@ class ReceivableItemReadModel:
 
 
 @dataclass(frozen=True, slots=True)
+class ReceivablePaymentReadModel:
+    """Query-optimized projection of one payback received from a person (ADR-206, ADR-209).
+
+    Backs the shareable statement's "Payments received" section: the real money the person
+    has paid back, both manual paybacks and confirmed income matches alike (no ``source``
+    distinction, since both are money actually received). Deliberately minimal, carrying only
+    what the paid-history section renders.
+
+    Attributes:
+        occurred_on: The calendar date the payback was received.
+        amount: The positive ARS magnitude received (ADR-025).
+    """
+
+    occurred_on: date
+    amount: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class PersonReadModel:
     """Query-optimized projection of a person and their outstanding total (ADR-204, ADR-206).
 
@@ -82,6 +100,9 @@ class PersonDetailReadModel:
         items: The person's itemized debts with their per-item settlement roll-ups and
             pardon flag, newest-first by ``occurred_on`` (pardoned items included so the
             "covered by you" surface can render them, ADR-210).
+        payments: The paybacks the person has made, newest-first by ``occurred_on`` — both
+            manual and matched-income paybacks (ADR-206). Backs the statement's "Payments
+            received" paid-history section (ADR-209); empty when the person has never paid.
     """
 
     id: UUID
@@ -89,3 +110,4 @@ class PersonDetailReadModel:
     created_at: datetime
     outstanding: Decimal
     items: tuple[ReceivableItemReadModel, ...]
+    payments: tuple[ReceivablePaymentReadModel, ...] = ()

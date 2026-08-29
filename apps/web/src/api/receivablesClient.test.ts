@@ -159,11 +159,17 @@ describe('receivablesClient writes', () => {
     expect(JSON.parse(String(init?.body)).allowOverpayment).toBe(true)
   })
 
-  test('confirmMatch POSTs the matched transaction id', async () => {
+  test('confirmMatch POSTs the FULL required body (occurredOn + amount + tx id + allocations)', async () => {
+    // Guard against the contract drift that shipped a 422 on every confirm-match:
+    // the API's ConfirmMatchRequest REQUIRES occurredOn (date) and amount
+    // (Decimal string) alongside the matched id + allocations. Assert the actual
+    // serialized body — the mock-the-boundary tests missed this exact mismatch.
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response(JSON.stringify({ data: { id: 'p1' } }), { status: 201 }),
     )
     await receivablesClient.confirmMatch(person.id, {
+      occurredOn: '2026-08-20',
+      amount: '7500.00',
       matchedIncomeTransactionId: 'tx-1',
       allocations: [{ itemId: item.id, amount: '7500.00' }],
     })
@@ -171,7 +177,15 @@ describe('receivablesClient writes', () => {
     expect(String(url)).toContain(
       `/api/v1/receivables/people/${person.id}/confirm-match`,
     )
-    expect(JSON.parse(String(init?.body)).matchedIncomeTransactionId).toBe('tx-1')
+    const body = JSON.parse(String(init?.body))
+    expect(body).toEqual({
+      occurredOn: '2026-08-20',
+      amount: '7500.00',
+      matchedIncomeTransactionId: 'tx-1',
+      allocations: [{ itemId: item.id, amount: '7500.00' }],
+    })
+    // Money stays a Decimal STRING end-to-end (ADR-025).
+    expect(typeof body.amount).toBe('string')
   })
 
   test('pardonItem POSTs to /items/{id}/pardon and returns the refreshed detail', async () => {
@@ -274,6 +288,8 @@ describe('overpayment 409 → typed error (ADR-206)', () => {
     )
     await expect(
       receivablesClient.confirmMatch(person.id, {
+        occurredOn: '2026-08-20',
+        amount: '250.00',
         matchedIncomeTransactionId: 'tx-1',
         allocations: [{ itemId: item.id, amount: '250.00' }],
       }),

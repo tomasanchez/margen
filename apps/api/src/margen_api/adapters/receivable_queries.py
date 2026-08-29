@@ -41,6 +41,7 @@ from margen_api.service_layer.receivable_read_models import (
     PersonDetailReadModel,
     PersonReadModel,
     ReceivableItemReadModel,
+    ReceivablePaymentReadModel,
 )
 from margen_api.service_layer.receivable_reader import AbstractReceivableReader
 from margen_api.service_layer.receivable_repository import AbstractReceivableRepository
@@ -352,6 +353,7 @@ class SqlAlchemyReceivableReader(AbstractReceivableReader):
         if person is None:
             return None
         items = await self._items_with_remainders(person_id)
+        payments = await self._payments(person_id)
         # A pardoned item is forgiven, so it is excluded from the authoritative outstanding
         # even though it is still returned (flagged) for the "covered by you" surface (ADR-210).
         outstanding = sum((item.remaining for item in items if not item.pardoned), _ZERO)
@@ -361,7 +363,24 @@ class SqlAlchemyReceivableReader(AbstractReceivableReader):
             created_at=person.created_at,
             outstanding=outstanding,
             items=tuple(items),
+            payments=tuple(payments),
         )
+
+    async def _payments(self, person_id: UUID) -> list[ReceivablePaymentReadModel]:
+        """Project the person's paybacks (date + amount), newest-first (ADR-206, ADR-209).
+
+        Returns ALL of the person's payments regardless of ``source`` — manual paybacks and
+        confirmed income matches alike, since both are real money received. The person was
+        already owner-scoped by :meth:`get_person`, so scoping by ``person_id`` here keeps the
+        query owner-safe (ADR-130) without re-joining ownership.
+        """
+        statement = (
+            select(ReceivablePaymentRecord.occurred_on, ReceivablePaymentRecord.amount)
+            .where(ReceivablePaymentRecord.person_id == person_id)
+            .order_by(ReceivablePaymentRecord.occurred_on.desc(), ReceivablePaymentRecord.id.desc())
+        )
+        rows = (await self.session.execute(statement)).all()
+        return [ReceivablePaymentReadModel(occurred_on=row.occurred_on, amount=row.amount) for row in rows]
 
     async def _items_with_remainders(self, person_id: UUID) -> list[ReceivableItemReadModel]:
         """Project the person's items with their allocated/remaining roll-ups, newest-first."""

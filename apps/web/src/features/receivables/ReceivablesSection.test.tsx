@@ -324,7 +324,8 @@ describe('ReceivablesSection', () => {
     )
     const dialog = within(await screen.findByRole('dialog'))
     const amount = dialog.getByLabelText(/Amount/)
-    expect(amount).toHaveValue('300000.00')
+    // The amount field is now `type="number"`, so toHaveValue reads the number.
+    expect(amount).toHaveValue(300000)
     await user.clear(amount)
     await user.type(amount, '250000')
     await user.click(dialog.getByRole('button', { name: 'Save' }))

@@ -43,6 +43,7 @@ from margen_api.domain.models.exceptions import (
 )
 from margen_api.entrypoint.dependencies import (
     AuthUser,
+    AuthUserModel,
     Bus,
     ReceivableMatchReader,
     ReceivableReader,
@@ -74,6 +75,38 @@ _INCOME_ALREADY_CLAIMED_CODE = "income_already_claimed"
 
 # The generated per-person receivable document's content type (ADR-209).
 _PDF_MEDIA_TYPE = "application/pdf"
+
+# The verified-JWT claim carrying the user's profile metadata (name, avatar, ...), from which
+# the owner's display name is derived for the PDF's covered section (ADR-092, ADR-209).
+_USER_METADATA_CLAIM = "user_metadata"
+
+
+def _owner_display_name(user: AuthUserModel) -> str:
+    """Derive the current owner's display name for the covered section (ADR-209 amended).
+
+    The statement is handed to the debtor, so the covered section reads with the OWNER'S name
+    rather than an ambiguous "you". This mirrors the web ``AccountMenu`` identity chain: the
+    verified JWT's ``user_metadata.full_name``, then ``user_metadata.name``, then the email
+    local-part. When none yields a non-empty value the empty string is returned so the PDF
+    drops the "by {owner}" suffix gracefully rather than rendering a blank name.
+
+    Args:
+        user: The authenticated owner resolved from the verified Supabase JWT (ADR-092).
+
+    Returns:
+        The owner's display name, or the empty string when it cannot be derived.
+    """
+    metadata = user.claims.get(_USER_METADATA_CLAIM)
+    if isinstance(metadata, dict):
+        for key in ("full_name", "name"):
+            candidate = metadata.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+    if user.email:
+        local_part = user.email.split("@")[0].strip()
+        if local_part:
+            return local_part
+    return ""
 
 
 def _person_not_found(person_id: UUID) -> HTTPException:
@@ -227,12 +260,13 @@ async def export_person_pdf(
 
     The document follows the app language via the ``lang`` query param (``es`` or ``en``);
     unknown or omitted values normalize to Spanish, the app default (ADR-209, ADR-102). The
-    person's name is slugified into the download filename.
+    covered section is headed with the OWNER'S name derived from the auth user (ADR-209
+    amended); the person's name is slugified into the download filename.
     """
     detail = await reader.get_person(person_id, user.id)
     if detail is None:
         raise _person_not_found(person_id)
-    pdf_bytes = build_person_pdf(detail, normalize_locale(lang))
+    pdf_bytes = build_person_pdf(detail, normalize_locale(lang), _owner_display_name(user))
     filename = pdf_filename(detail.name)
     return Response(
         content=pdf_bytes,

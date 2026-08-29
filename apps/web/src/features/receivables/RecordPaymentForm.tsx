@@ -275,11 +275,18 @@ export function RecordPaymentForm({
                     }))
                   }
                   size="small"
-                  inputMode="decimal"
+                  type="number"
                   disabled={isSaving}
                   sx={{ width: '120px', flex: 'none' }}
                   slotProps={{
                     htmlInput: {
+                      // `type="number"` gives a clean mobile numeric keypad;
+                      // `inputMode="decimal"` + `step="any"` keep decimals, and
+                      // `min={0}` rejects negatives. Money still flows as a
+                      // Decimal string via parseBalance/toDecimalString (ADR-025).
+                      min: 0,
+                      step: 'any',
+                      inputMode: 'decimal',
                       'aria-label': t('payment.allocationAria', {
                         date: item.occurredOn,
                       }),
