@@ -56,6 +56,14 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      # WeasyPrint (ADR-211) renders the receivable statement PDF and wraps native
+      # Pango/Cairo/HarfBuzz/gdk-pixbuf/ffi. The e2e tier imports the render module, so the
+      # libs must be present for `make cover` to collect. Mirrors the Dockerfile runtime deps.
+      - name: Install native render libs (WeasyPrint)
+        run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 libffi8
+          shared-mime-info fonts-dejavu-core
       - name: Install dependencies
         run: make dev
       # Report known advisories in the locked dependency tree WITHOUT blocking the

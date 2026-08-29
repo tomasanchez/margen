@@ -30,6 +30,21 @@ A_DATE = "2026-08-01"
 _MISSING_ID = "00000000-0000-4000-8000-0000000000aa"
 
 
+@pytest.fixture(autouse=True)
+def _stub_weasyprint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the single native WeasyPrint boundary so the PDF route runs on any OS (ADR-211).
+
+    GIVEN WeasyPrint's GTK/Pango stack is absent on a bare dev box (and its one call is
+    ``# pragma: no cover``), the pure view model AND the template-to-HTML rendering still run
+    for real here; only the HTML-to-PDF rasterization is swapped for a ``%PDF`` sentinel so the
+    route's status, ``application/pdf`` media type and attachment headers are exercised end to
+    end without the native libraries.
+    """
+    from margen_api.service_layer import receivable_statement
+
+    monkeypatch.setattr(receivable_statement, "_html_to_pdf", lambda html: b"%PDF-1.7 stub\n")
+
+
 async def _create_person(client: httpx.AsyncClient, name: str = "Ana") -> dict:
     """POST a person and return the created detail resource, asserting 201."""
     response = await client.post(PEOPLE, json={"name": name})

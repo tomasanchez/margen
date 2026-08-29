@@ -43,11 +43,22 @@ ENV PYTHONUNBUFFERED=1 \
     UVICORN_HOST=0.0.0.0 \
     UVICORN_RELOAD=0
 
-# Native runtime dependency for QR decoding: pyzbar wraps the system zbar shared
-# library (ADR-069). PyMuPDF needs no apt deps (manylinux wheels). Installed as
-# root before dropping privileges, then the apt lists are pruned to keep slim.
+# Native runtime dependencies. pyzbar wraps the system zbar shared library for QR
+# decoding (ADR-069). WeasyPrint renders the receivable statement PDF and wraps
+# Pango/Cairo/HarfBuzz/gdk-pixbuf/ffi + shared-mime-info; DejaVu is a fallback font
+# family (the Archivo TTFs ship as package data, ADR-211). PyMuPDF needs no apt deps
+# (manylinux wheels). Installed as root before dropping privileges, then the apt lists
+# are pruned to keep the image slim.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libzbar0 \
+    && apt-get install -y --no-install-recommends \
+        libzbar0 \
+        libpango-1.0-0 \
+        libpangocairo-1.0-0 \
+        libcairo2 \
+        libgdk-pixbuf-2.0-0 \
+        libffi8 \
+        shared-mime-info \
+        fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Create an unprivileged application user.

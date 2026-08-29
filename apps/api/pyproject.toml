@@ -27,6 +27,14 @@ dependencies = [
     "python-multipart>=0.0.18",
     "pyjwt[crypto]>=2.13.0",
     "asyncer>=0.0.17",
+    # Receivable statement PDF (ADR-211): the "Estado de cuenta entre amigos" document is an
+    # HTML/CSS Jinja2 template rasterized to PDF by WeasyPrint. WeasyPrint wraps native
+    # Pango/Cairo/HarfBuzz/gdk-pixbuf, which must be present at runtime (installed via apt in
+    # the Dockerfile and the CI job); they are absent on a bare Windows dev box, so the single
+    # HTML-to-PDF call is isolated behind a `# pragma: no cover` adapter. PyMuPDF (above) stays
+    # ONLY for statement PARSING; it no longer draws this document.
+    "weasyprint>=69.0",
+    "jinja2>=3.1.6",
 ]
 
 [dependency-groups]
@@ -49,10 +57,23 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Ship the receivable-statement template and Archivo TTF fonts as package data (ADR-211).
+# Hatchling includes non-Python files under the package by default; the explicit package +
+# artifacts patterns guarantee the .jinja template and .ttf fonts land in the built wheel so
+# `render_statement_html` (PackageLoader) and WeasyPrint's font resolution work in the image.
+[tool.hatch.build.targets.wheel]
+packages = ["src/margen_api"]
+artifacts = ["src/margen_api/assets/**/*.jinja", "src/margen_api/assets/**/*.ttf"]
+
 [tool.ruff]
 line-length = 120
 
 [tool.ruff.lint]
+# The receivable statement deliberately uses the real Unicode minus (U+2212) for payment
+# amounts (ADR-211), and its guard test references the forbidden em-dash/en-dash as literals to
+# assert they never reach the output. Allow these confusables so RUF001/RUF002 don't flag the
+# intentional glyphs; the "no em/en dash in the output" invariant is enforced by the guard test.
+allowed-confusables = ["−", "–", "—"]
 select = [
     # flake8-2020
     "YTT",

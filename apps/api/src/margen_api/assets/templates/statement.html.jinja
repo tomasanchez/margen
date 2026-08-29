@@ -1,0 +1,184 @@
+{#- Receivable statement "Estado de cuenta entre amigos" — HTML/CSS design rendered to PDF by
+    WeasyPrint (ADR-211). Consumes the pure StatementView (all strings pre-formatted). Palette:
+    bg #f3f2f2, ink #201e1d, red #ec3013 / #ae1800, gray #605d5d / #444141, divider #d7d3d3.
+    No em/en dashes anywhere; the only U+2212 minus is a payment row's negative amount. -#}
+{%- set page_parts = view.footer_page_template.split('{page}') -%}
+{%- set page_tail = page_parts[1].split('{pages}') -%}
+<!DOCTYPE html>
+<html lang="{{ view.lang }}">
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face { font-family:'Archivo'; font-weight:400; font-style:normal; src:url('fonts/Archivo-Regular.ttf'); }
+  @font-face { font-family:'Archivo'; font-weight:500; font-style:normal; src:url('fonts/Archivo-Medium.ttf'); }
+  @font-face { font-family:'Archivo'; font-weight:600; font-style:normal; src:url('fonts/Archivo-SemiBold.ttf'); }
+  @font-face { font-family:'Archivo'; font-weight:800; font-style:normal; src:url('fonts/Archivo-ExtraBold.ttf'); }
+
+  @page {
+    size: A4;
+    margin: 40px 46px 74px;
+    background: #f3f2f2;
+    @bottom-left {
+      content: element(footerLeft);
+      border-top: 2px solid #201e1d;
+      padding-top: 12px;
+      vertical-align: top;
+    }
+    @bottom-center {
+      content: "";
+      border-top: 2px solid #201e1d;
+    }
+    @bottom-right {
+      content: "{{ page_parts[0] }}" counter(page) "{{ page_tail[0] }}" counter(pages);
+      border-top: 2px solid #201e1d;
+      padding-top: 12px;
+      vertical-align: top;
+      font: 600 11px 'Archivo';
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #605d5d;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { font-family:'Archivo', system-ui, sans-serif; color:#201e1d; font-variant-numeric: tabular-nums; }
+  body { margin:0; font-size:15px; }
+
+  .eyebrow { font-size:11px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; }
+
+  .head { display:flex; justify-content:space-between; align-items:baseline; }
+  .head .date { color:#605d5d; }
+  .rule { height:2px; background:#201e1d; }
+  .rule.head-rule { margin:10px 0 30px; }
+
+  .account { display:flex; flex-direction:column; gap:10px; }
+  .account .of { color:#ae1800; }
+  .account .name { font-size:56px; font-weight:800; line-height:0.95; letter-spacing:-0.03em; }
+  .account .tagline { font-size:16px; color:#444141; }
+
+  .hero { margin-top:30px; background:#ec3013; color:#f3f2f2; padding:28px 30px 26px;
+          display:flex; justify-content:space-between; align-items:flex-end; gap:24px; }
+  .hero .label { font-size:11px; font-weight:600; letter-spacing:0.16em; text-transform:uppercase; }
+  .hero .amount { font-size:76px; font-weight:800; line-height:0.9; letter-spacing:-0.04em; margin-top:8px; }
+  .hero .amount .frac { font-size:34px; letter-spacing:0; }
+  .hero .ccy { font-size:13px; font-weight:600; letter-spacing:0.16em; text-transform:uppercase; padding-bottom:10px; }
+
+  .stats { display:flex; border:2px solid #201e1d; border-top:0; }
+  .stat { flex:1; padding:14px 16px; display:flex; flex-direction:column; gap:4px; }
+  .stat + .stat { border-left:2px solid #201e1d; }
+  .stat .k { font-size:10px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:#605d5d; }
+  .stat .v { font-size:20px; font-weight:800; letter-spacing:-0.02em; }
+  .stat.pending .v { color:#ae1800; }
+
+  .ledger-head { margin-top:34px; font-size:19px; font-weight:800; letter-spacing:-0.02em; }
+  .rule.ledger-rule { margin-top:10px; }
+
+  table.ledger { width:100%; border-collapse:collapse; }
+  table.ledger th { font-size:10px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase;
+                    color:#605d5d; text-align:left; padding:9px 0; border-bottom:1px solid #d7d3d3; }
+  table.ledger td { padding:16px 0; border-bottom:1px solid #d7d3d3; font-size:15px; vertical-align:baseline; }
+  .c-date { width:84px; color:#605d5d; }
+  .c-detail { font-weight:500; }
+  .c-amt { width:116px; text-align:right; }
+  .c-bal { width:116px; text-align:right; color:#605d5d; }
+  tr.last td { border-bottom:2px solid #201e1d; }
+  tr.pay .c-detail, tr.pay .c-amt { color:#ae1800; }
+  tr.pay .c-bal { color:#201e1d; font-weight:800; }
+  tr.close td { border-bottom:0; padding:12px 0; }
+  tr.close .lbl { font-size:11px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; }
+  tr.close .total { font-size:17px; font-weight:800; }
+
+  .covered { margin-top:30px; border:2px solid #201e1d; padding:18px 20px;
+             display:flex; flex-direction:column; gap:10px; }
+  .covered .title { color:#ae1800; }
+  .covered .row { display:flex; justify-content:space-between; align-items:baseline; font-size:15px; }
+  .covered .row .when { color:#605d5d; }
+  .covered .row .amt { font-weight:800; }
+  .covered .note { font-size:12px; color:#605d5d; line-height:1.45; }
+
+  .footer-left { position: running(footerLeft); font-size:11px; font-weight:600; letter-spacing:0.1em;
+                 text-transform:uppercase; color:#605d5d; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="eyebrow">{{ view.eyebrow }}</div>
+    <div class="eyebrow date">{{ view.date_line }}</div>
+  </div>
+  <div class="rule head-rule"></div>
+
+  <div class="account">
+    <div class="eyebrow of">{{ view.account_of }}</div>
+    <div class="name">{{ view.debtor_name }}</div>
+    <div class="tagline">{{ view.tagline }}</div>
+  </div>
+
+  <div class="hero">
+    <div>
+      <div class="label">{{ view.hero_label }}</div>
+      <div class="amount">{{ view.hero_amount_main }}<span class="frac">{{ view.hero_amount_frac }}</span></div>
+    </div>
+    <div class="ccy">{{ view.currency }}</div>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="k">{{ view.stat_total_label }}</div>
+      <div class="v">{{ view.stat_total_value }}</div>
+    </div>
+    <div class="stat">
+      <div class="k">{{ view.stat_paid_label }}</div>
+      <div class="v">{{ view.stat_paid_value }}</div>
+    </div>
+    <div class="stat pending">
+      <div class="k">{{ view.stat_pending_label }}</div>
+      <div class="v">{{ view.stat_pending_value }}</div>
+    </div>
+  </div>
+
+  <div class="ledger-head">{{ view.details_title }}</div>
+  <div class="rule ledger-rule"></div>
+
+  <table class="ledger">
+    <thead>
+      <tr>
+        <th class="c-date">{{ view.col_date }}</th>
+        <th class="c-detail">{{ view.col_detail }}</th>
+        <th class="c-amt">{{ view.col_amount }}</th>
+        <th class="c-bal">{{ view.col_balance }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {%- for row in view.ledger_rows %}
+      <tr class="{{ 'pay' if row.is_payment else 'charge' }}{{ ' last' if loop.last else '' }}">
+        <td class="c-date">{{ row.occurred_on }}</td>
+        <td class="c-detail">{{ row.detail }}</td>
+        <td class="c-amt">{{ row.amount }}</td>
+        <td class="c-bal">{{ row.balance }}</td>
+      </tr>
+      {%- endfor %}
+      <tr class="close">
+        <td class="c-date"></td>
+        <td class="c-detail lbl">{{ view.balance_to_date_label }}</td>
+        <td class="c-amt"></td>
+        <td class="c-bal total">{{ view.balance_to_date_value }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  {%- if view.show_covered %}
+  <div class="covered">
+    <div class="eyebrow title">{{ view.covered_title }}</div>
+    {%- for row in view.covered_rows %}
+    <div class="row">
+      <div><span class="when">{{ row.occurred_on }}</span>&nbsp;&nbsp;{{ row.detail }}</div>
+      <div class="amt">{{ row.amount }}</div>
+    </div>
+    {%- endfor %}
+    <div class="note">{{ view.covered_note }}</div>
+  </div>
+  {%- endif %}
+
+  <div class="footer-left">{{ view.footer_issued }} &middot; {{ view.footer_complaints }}</div>
+</body>
+</html>
