@@ -23,6 +23,7 @@ rules are translated to HTTP here:
 
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response, status
@@ -60,8 +61,8 @@ from margen_api.entrypoint.receivables_schemas import (
     ReceivableItemPatchRequest,
 )
 from margen_api.entrypoint.schemas import ResponseModel
-from margen_api.service_layer.receivable_pdf import build_person_pdf, normalize_locale, pdf_filename
 from margen_api.service_layer.receivable_reader import AbstractReceivableReader
+from margen_api.service_layer.receivable_statement import build_statement_pdf, normalize_locale, pdf_filename
 
 router = APIRouter(prefix="/receivables", tags=["Receivables"])
 
@@ -250,23 +251,29 @@ async def export_person_pdf(
     user: AuthUser,
     lang: str = "es",
 ) -> Response:
-    """Download a person's outstanding-balance statement as a PDF (ADR-209, ADR-111).
+    """Download a person's outstanding-balance statement as a PDF (ADR-209/211, ADR-111).
 
     Loads the caller's person detail through the owner-scoped reader (ADR-108/130): a
     missing or cross-tenant id answers ``404`` without leaking existence (ADR-111). It then
-    renders the localized document (friendly title + intro, total outstanding, itemized
-    outstanding entries, simple icons) server-side with PyMuPDF and returns it as an
+    renders the "Estado de cuenta entre amigos" statement (header, red outstanding hero, the
+    3-stat bar, the running-balance ledger, the optional covered box, footer) from an HTML/CSS
+    Jinja2 template rasterized with WeasyPrint (ADR-211) and returns it as an
     ``application/pdf`` attachment, mirroring the CSV export response pattern (ADR-165).
 
     The document follows the app language via the ``lang`` query param (``es`` or ``en``);
-    unknown or omitted values normalize to Spanish, the app default (ADR-209, ADR-102). The
-    covered section is headed with the OWNER'S name derived from the auth user (ADR-209
-    amended); the person's name is slugified into the download filename.
+    unknown or omitted values normalize to Spanish, the app default (ADR-209/211, ADR-102).
+    The footer is signed with the OWNER'S name derived from the auth user (ADR-209 amended);
+    the person's name is slugified into the download filename.
     """
     detail = await reader.get_person(person_id, user.id)
     if detail is None:
         raise _person_not_found(person_id)
-    pdf_bytes = build_person_pdf(detail, normalize_locale(lang), _owner_display_name(user))
+    pdf_bytes = build_statement_pdf(
+        detail,
+        owner_name=_owner_display_name(user),
+        lang=normalize_locale(lang),
+        today=date.today(),
+    )
     filename = pdf_filename(detail.name)
     return Response(
         content=pdf_bytes,
