@@ -8,6 +8,7 @@
     "accounts": "Accounts",
     "budgets": "Budgets",
     "reports": "Reports",
+    "owed": "Owed",
     "transfers": "Transfers",
     "monotributo": "Monotributo",
     "import": "Import statement",
@@ -17,6 +18,7 @@
     "accountsShort": "Accounts",
     "budgetsShort": "Budgets",
     "reportsShort": "Reports",
+    "owedShort": "Owed",
     "transfersShort": "Transfers",
     "monotributoShort": "Mono",
     "importShort": "Import"

@@ -27,7 +27,7 @@ export interface PersonPdfButtonProps {
 }
 
 export function PersonPdfButton({ personId, personName }: PersonPdfButtonProps) {
-  const { t } = useTranslation('receivables')
+  const { t, i18n } = useTranslation('receivables')
   const [pending, setPending] = useState(false)
   const [failed, setFailed] = useState(false)
   // The fetch can outlive the expanded panel; guard against a post-unmount update.
@@ -39,12 +39,17 @@ export function PersonPdfButton({ personId, personName }: PersonPdfButtonProps) 
     }
   }, [])
 
+  // The PDF follows the app locale: send the active UI language ('en' / 'es') so
+  // the document renders in the language the user is viewing. `resolvedLanguage`
+  // collapses region variants (es-AR → es) to a supported base (ADR-101).
+  const lang = i18n.resolvedLanguage ?? i18n.language
+
   const onExport = useCallback(() => {
     setFailed(false)
     setPending(true)
     void (async () => {
       try {
-        await receivablesClient.downloadPersonPdf(personId, personName)
+        await receivablesClient.downloadPersonPdf(personId, personName, lang)
       } catch {
         // Never throw into render — surface a calm, dismissible message (ADR-037).
         if (mountedRef.current) setFailed(true)
@@ -52,7 +57,7 @@ export function PersonPdfButton({ personId, personName }: PersonPdfButtonProps) 
         if (mountedRef.current) setPending(false)
       }
     })()
-  }, [personId, personName])
+  }, [personId, personName, lang])
 
   return (
     <Box sx={{ mt: 1 }}>

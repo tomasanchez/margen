@@ -1,10 +1,12 @@
-"""Unit tests for the pure receivable-PDF content assembly and layout (ADR-209).
+"""Unit tests for the pure, localized receivable-PDF builders (ADR-209).
 
-These exercise the I/O-free builders with no ``fitz``: the deliberate English (en-US)
-labels and number formatting (``ARS 1,234.56``), the en-US ``MM/DD/YYYY`` dates, the
-authoritative outstanding total, the v1 outstanding-only filtering (zero- and
-negative-remainder items excluded), null detail rendering, pagination across pages, and
-the download filename slug. Rendering to PDF bytes is covered end-to-end by the route.
+These exercise the I/O-free builders with no ``fitz``: the locale normalization contract,
+the two-language labels and number/date formatting (es-AR ``1.234,56`` + ``DD/MM/YYYY``
+vs. en-US ``1,234.56`` + ``MM/DD/YYYY``, ARS either way), the authoritative outstanding
+total, the v1 outstanding-only filtering (zero- and negative-remainder items excluded),
+null detail rendering, the icons attached to the layout, pagination, the absolute absence
+of em/en dashes in every rendered string, and the download filename slug. Rendering to PDF
+bytes (and the vector icons) is covered end-to-end by the route.
 """
 
 from __future__ import annotations
@@ -13,9 +15,15 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
+import pytest
+
 from margen_api.service_layer.receivable_pdf import (
+    IconKind,
+    Locale,
+    PdfPage,
     build_content,
     build_layout,
+    normalize_locale,
     pdf_filename,
 )
 from margen_api.service_layer.receivable_read_models import (
@@ -63,57 +71,138 @@ def _person(
     )
 
 
-class TestBuildContent:
-    """The pure en-US content model backing the PDF (ADR-209)."""
+class TestNormalizeLocale:
+    """normalize_locale maps a raw ``lang`` query value to a supported locale (ADR-209)."""
 
-    def test_formats_amounts_en_us_with_ars_prefix(self):
+    @pytest.mark.parametrize("raw", ["en", "EN", "en-US", "  en_us  ", "English"])
+    def test_english_tags_resolve_to_en(self, raw: str):
         """
-        GIVEN an item whose remaining is 1234.56 and a matching outstanding total
+        GIVEN a raw value that starts with an English tag (any case / whitespace)
+        WHEN it is normalized
+        THEN it resolves to 'en'
+        """
+        # WHEN / THEN
+        assert normalize_locale(raw) == "en"
+
+    @pytest.mark.parametrize("raw", ["es", "es-AR", "ES", "", "fr", "xx", None])
+    def test_spanish_and_unknown_fall_back_to_es(self, raw: str | None):
+        """
+        GIVEN a Spanish tag, an unknown language, empty, or None
+        WHEN it is normalized
+        THEN it falls back to the 'es' default (ADR-102)
+        """
+        # WHEN / THEN
+        assert normalize_locale(raw) == "es"
+
+
+class TestBuildContentSpanish:
+    """The pure es-AR content model backing the PDF (ADR-209, amended)."""
+
+    def test_labels_are_spanish_and_friendly(self):
+        """
+        GIVEN a person and the Spanish locale
         WHEN the content is assembled
-        THEN both render as 'ARS 1,234.56' — en-US grouping with the ARS prefix
+        THEN the title, intro and labels use plain, informal es-AR copy with the name
         """
-        # GIVEN
-        person = _person(
-            outstanding="1234.56",
-            items=(_item(amount="1234.56", remaining="1234.56"),),
-        )
-
         # WHEN
-        content = build_content(person)
+        content = build_content(_person(name="María Emilia"), "es")
 
         # THEN
-        assert content.outstanding_amount == "ARS 1,234.56"
-        assert content.rows[0].amount == "ARS 1,234.56"
+        assert content.title == "Cuenta de María Emilia"
+        assert content.intro == "Hola María Emilia, este es un resumen de lo que quedó pendiente."
+        assert content.total_label == "Total adeudado:"
+        assert content.column_headers == ("Fecha", "Monto", "Detalle")
 
-    def test_formats_thousands_and_labels_are_english(self):
+    def test_amounts_use_es_ar_grouping_with_ars_prefix(self):
         """
-        GIVEN a large outstanding total
+        GIVEN a large amount and the Spanish locale
         WHEN the content is assembled
-        THEN the labels are English and the total groups thousands with commas
+        THEN amounts render as 'ARS 1.234.567,89' (dot thousands, comma decimal)
         """
         # GIVEN
-        person = _person(outstanding="1500000.00", items=(_item(remaining="1500000.00"),))
+        person = _person(outstanding="1234567.89", items=(_item(remaining="1234567.89"),))
 
         # WHEN
-        content = build_content(person)
+        content = build_content(person, "es")
 
         # THEN
-        assert content.title == "Outstanding Balance Statement"
-        assert content.outstanding_label == "Total outstanding:"
+        assert content.total_amount == "ARS 1.234.567,89"
+        assert content.rows[0].amount == "ARS 1.234.567,89"
+
+    def test_dates_are_es_ar_day_month_year(self):
+        """
+        GIVEN an item incurred on 2026-08-24 and the Spanish locale
+        WHEN the content is assembled
+        THEN its row date is the es-AR 'DD/MM/YYYY' string
+        """
+        # WHEN
+        content = build_content(_person(items=(_item(occurred_on=date(2026, 8, 24)),)), "es")
+
+        # THEN
+        assert content.rows[0].occurred_on == "24/08/2026"
+
+    def test_spanish_is_the_default_locale(self):
+        """
+        GIVEN no explicit locale
+        WHEN the content is assembled
+        THEN it defaults to Spanish (ADR-102)
+        """
+        # WHEN
+        content = build_content(_person(name="Ana"))
+
+        # THEN
+        assert content.title == "Cuenta de Ana"
+
+
+class TestBuildContentEnglish:
+    """The pure en-US content model backing the PDF (ADR-209, amended)."""
+
+    def test_labels_are_english_and_friendly(self):
+        """
+        GIVEN a person and the English locale
+        WHEN the content is assembled
+        THEN the title, intro and labels use plain, informal en-US copy with the name
+        """
+        # WHEN
+        content = build_content(_person(name="María Emilia"), "en")
+
+        # THEN
+        assert content.title == "What María Emilia owes"
+        assert content.intro == "Hi María Emilia, here is a quick summary of what is still pending."
+        assert content.total_label == "Total owed:"
         assert content.column_headers == ("Date", "Amount", "Detail")
-        assert content.outstanding_amount == "ARS 1,500,000.00"
+
+    def test_amounts_use_en_us_grouping_with_ars_prefix(self):
+        """
+        GIVEN a large amount and the English locale
+        WHEN the content is assembled
+        THEN amounts render as 'ARS 1,234,567.89' (comma thousands, dot decimal)
+        """
+        # GIVEN
+        person = _person(outstanding="1234567.89", items=(_item(remaining="1234567.89"),))
+
+        # WHEN
+        content = build_content(person, "en")
+
+        # THEN
+        assert content.total_amount == "ARS 1,234,567.89"
+        assert content.rows[0].amount == "ARS 1,234,567.89"
 
     def test_dates_are_en_us_month_day_year(self):
         """
-        GIVEN an item incurred on 2026-08-24
+        GIVEN an item incurred on 2026-08-24 and the English locale
         WHEN the content is assembled
         THEN its row date is the en-US 'MM/DD/YYYY' string
         """
         # WHEN
-        content = build_content(_person(items=(_item(occurred_on=date(2026, 8, 24)),)))
+        content = build_content(_person(items=(_item(occurred_on=date(2026, 8, 24)),)), "en")
 
         # THEN
         assert content.rows[0].occurred_on == "08/24/2026"
+
+
+class TestBuildContentBehavior:
+    """Locale-independent content behavior: filtering, authority, null detail (ADR-209)."""
 
     def test_uses_item_remaining_as_the_row_amount(self):
         """
@@ -128,7 +217,7 @@ class TestBuildContent:
         )
 
         # WHEN
-        content = build_content(person)
+        content = build_content(person, "en")
 
         # THEN
         assert content.rows[0].amount == "ARS 400.00"
@@ -140,7 +229,7 @@ class TestBuildContent:
         THEN its row detail is the empty string (never the literal 'None')
         """
         # WHEN
-        content = build_content(_person(items=(_item(detail=None),)))
+        content = build_content(_person(items=(_item(detail=None),)), "es")
 
         # THEN
         assert content.rows[0].detail == ""
@@ -158,7 +247,7 @@ class TestBuildContent:
         person = _person(outstanding="650.00", items=(settled, overpaid, live))
 
         # WHEN
-        content = build_content(person)
+        content = build_content(person, "en")
 
         # THEN — only the positive-remainder row survives.
         assert [row.detail for row in content.rows] == ["live"]
@@ -176,10 +265,10 @@ class TestBuildContent:
         person = _person(outstanding="650.00", items=(overpaid, live))
 
         # WHEN
-        content = build_content(person)
+        content = build_content(person, "es")
 
         # THEN
-        assert content.outstanding_amount == "ARS 650.00"
+        assert content.total_amount == "ARS 650,00"
         assert len(content.rows) == 1
 
     def test_empty_person_has_no_rows(self):
@@ -188,22 +277,25 @@ class TestBuildContent:
         WHEN the content is assembled
         THEN there are no rows and the total still renders
         """
-        content = build_content(_person(outstanding="0.00", items=()))
+        content = build_content(_person(outstanding="0.00", items=()), "en")
         assert content.rows == ()
-        assert content.outstanding_amount == "ARS 0.00"
+        assert content.total_amount == "ARS 0.00"
 
 
 class TestBuildLayout:
-    """Pagination and positioning of the content into pages (pure, ADR-209)."""
+    """Pagination, positioning and icons of the content into pages (pure, ADR-209)."""
 
-    def _texts(self, page) -> list[str]:
+    def _texts(self, page: PdfPage) -> list[str]:
         return [span.text for span in page.spans]
+
+    def _icon_kinds(self, page: PdfPage) -> list[IconKind]:
+        return [icon.kind for icon in page.icons]
 
     def test_single_page_carries_header_block_and_rows(self):
         """
-        GIVEN a person with a couple of outstanding items
+        GIVEN a person with a couple of outstanding items and the Spanish locale
         WHEN the layout is built
-        THEN a single page holds the title, debtor line, total and the rows
+        THEN a single page holds the title, intro, total and the rows
         """
         # GIVEN
         person = _person(
@@ -213,36 +305,84 @@ class TestBuildLayout:
         )
 
         # WHEN
-        pages = build_layout(person)
+        pages = build_layout(person, "es")
 
         # THEN
         assert len(pages) == 1
         texts = self._texts(pages[0])
-        assert "Outstanding Balance Statement" in texts
-        assert "Debtor: Ana Perez" in texts
-        assert "Total outstanding: ARS 1,500.00" in texts
-        assert "Date" in texts  # column headers present
+        assert "Cuenta de Ana Perez" in texts
+        assert "Hola Ana Perez, este es un resumen de lo que quedó pendiente." in texts
+        assert "Total adeudado: ARS 1.500,00" in texts
+        assert "Fecha" in texts  # column headers present
 
-    def test_paginates_long_item_lists_repeating_headers(self):
+    def test_layout_attaches_field_icons(self):
+        """
+        GIVEN a person with an outstanding item
+        WHEN the layout is built
+        THEN the page carries the person, money, calendar and note icons beside the fields
+        """
+        # GIVEN
+        person = _person(items=(_item(),))
+
+        # WHEN
+        pages = build_layout(person, "en")
+
+        # THEN — every field icon is present (person + total + the three column icons).
+        kinds = self._icon_kinds(pages[0])
+        assert IconKind.PERSON in kinds
+        assert IconKind.MONEY in kinds
+        assert IconKind.CALENDAR in kinds
+        assert IconKind.NOTE in kinds
+
+    def test_paginates_long_item_lists_repeating_headers_and_icons(self):
         """
         GIVEN a person with many outstanding items (more than fit on one page)
         WHEN the layout is built
-        THEN the rows spill onto a second page and the column headers repeat there
+        THEN the rows spill onto a second page and the column headers + icons repeat there
         """
         # GIVEN — 40 items overflow the single-page row budget.
         items = tuple(_item(remaining=f"{i + 1}.00", detail=f"item {i}") for i in range(40))
         person = _person(outstanding="820.00", items=items)
 
         # WHEN
-        pages = build_layout(person)
+        pages = build_layout(person, "en")
 
-        # THEN — two pages, each carrying its own 'Date' column header row.
+        # THEN — two pages, each carrying its own 'Date' column header + calendar icon.
         assert len(pages) == 2
         assert "Date" in self._texts(pages[0])
         assert "Date" in self._texts(pages[1])
-        # AND — the title only appears on the first page.
-        assert "Outstanding Balance Statement" in self._texts(pages[0])
-        assert "Outstanding Balance Statement" not in self._texts(pages[1])
+        assert IconKind.CALENDAR in self._icon_kinds(pages[1])
+        # AND — the title / person icon only appears on the first page.
+        assert "What Ana Perez owes" in self._texts(pages[0])
+        assert "What Ana Perez owes" not in self._texts(pages[1])
+        assert IconKind.PERSON not in self._icon_kinds(pages[1])
+
+
+class TestNoDashes:
+    """The rendered document contains no em-dashes or en-dashes anywhere (ADR-209)."""
+
+    @pytest.mark.parametrize("locale", ["es", "en"])
+    def test_no_em_or_en_dashes_in_any_rendered_string(self, locale: Locale):
+        """
+        GIVEN a person with a null-detail item, rendered in each locale
+        WHEN every text span across the layout is inspected
+        THEN not a single string contains an em-dash or an en-dash
+        """
+        # GIVEN — a realistic person including a null-detail row.
+        person = _person(
+            name="María Peña",
+            outstanding="9999.99",
+            items=(_item(detail="Café", remaining="500.00"), _item(detail=None, remaining="9499.99")),
+        )
+
+        # WHEN
+        pages = build_layout(person, locale)
+
+        # THEN - no em-dash (U+2014) and no en-dash (U+2013) in any placed string.
+        em_dash, en_dash = chr(0x2014), chr(0x2013)
+        for page in pages:
+            for span in page.spans:
+                assert em_dash not in span.text and en_dash not in span.text
 
 
 class TestPdfFilename:
@@ -250,7 +390,7 @@ class TestPdfFilename:
 
     def test_slugifies_spaces_and_punctuation(self):
         """
-        GIVEN a debtor name with spaces and punctuation
+        GIVEN a person name with spaces and punctuation
         WHEN the filename is built
         THEN unsafe runs collapse to single underscores inside a receivable-*.pdf name
         """

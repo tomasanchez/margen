@@ -520,11 +520,24 @@ function pdfFilename(name: string): string {
  * the URL (mirrors {@link useReportDownload}). Throws {@link ReceivablesApiError}
  * on a non-2xx so the caller can surface a calm error (ADR-037).
  *
+ * The PDF follows the app locale: the active UI language is sent as a `?lang=`
+ * query param (`en` / `es`) so the backend renders the document in the same
+ * language the user is viewing (the param name is reconciled with the API).
+ *
  * @param id   The person whose PDF to download.
  * @param name The person's display name, used to build the saved filename.
+ * @param lang Optional UI language (`en` / `es`) to render the PDF in; when
+ *             omitted the backend falls back to its own default.
  */
-async function downloadPersonPdf(id: string, name: string): Promise<void> {
-  const response = await authedFetch(apiUrl(`/receivables/people/${id}/pdf`), {
+async function downloadPersonPdf(
+  id: string,
+  name: string,
+  lang?: string,
+): Promise<void> {
+  const path = lang
+    ? `/receivables/people/${id}/pdf?lang=${encodeURIComponent(lang)}`
+    : `/receivables/people/${id}/pdf`
+  const response = await authedFetch(apiUrl(path), {
     headers: { Accept: PDF_CONTENT_TYPE },
   })
   await ensureOk(response)

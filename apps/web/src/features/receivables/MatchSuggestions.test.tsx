@@ -260,8 +260,10 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
       }),
     )
 
+    // The PDF follows the app locale (ADR-208 amendment): the active UI language
+    // is passed through as the 3rd arg. The suite is en-pinned (ADR-105).
     await waitFor(() =>
-      expect(mockDownloadPdf).toHaveBeenCalledWith('p1', 'Ana'),
+      expect(mockDownloadPdf).toHaveBeenCalledWith('p1', 'Ana', 'en'),
     )
   })
 

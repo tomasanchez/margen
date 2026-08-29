@@ -58,7 +58,7 @@ from margen_api.entrypoint.receivables_schemas import (
     ReceivableItemPatchRequest,
 )
 from margen_api.entrypoint.schemas import ResponseModel
-from margen_api.service_layer.receivable_pdf import build_person_pdf, pdf_filename
+from margen_api.service_layer.receivable_pdf import build_person_pdf, normalize_locale, pdf_filename
 from margen_api.service_layer.receivable_reader import AbstractReceivableReader
 
 router = APIRouter(prefix="/receivables", tags=["Receivables"])
@@ -210,20 +210,28 @@ async def get_person(person_id: UUID, reader: ReceivableReader, user: AuthUser) 
         }
     },
 )
-async def export_person_pdf(person_id: UUID, reader: ReceivableReader, user: AuthUser) -> Response:
+async def export_person_pdf(
+    person_id: UUID,
+    reader: ReceivableReader,
+    user: AuthUser,
+    lang: str = "es",
+) -> Response:
     """Download a person's outstanding-balance statement as a PDF (ADR-209, ADR-111).
 
-    Loads the caller's person detail through the owner-scoped reader (ADR-108/130) — a
-    missing or cross-tenant id answers ``404`` without leaking existence (ADR-111) — then
-    renders the deliberate English (en-US) document (name, total outstanding, itemized
-    outstanding entries) server-side with PyMuPDF and returns it as an
+    Loads the caller's person detail through the owner-scoped reader (ADR-108/130): a
+    missing or cross-tenant id answers ``404`` without leaking existence (ADR-111). It then
+    renders the localized document (friendly title + intro, total outstanding, itemized
+    outstanding entries, simple icons) server-side with PyMuPDF and returns it as an
     ``application/pdf`` attachment, mirroring the CSV export response pattern (ADR-165).
-    The debtor name is slugified into the download filename.
+
+    The document follows the app language via the ``lang`` query param (``es`` or ``en``);
+    unknown or omitted values normalize to Spanish, the app default (ADR-209, ADR-102). The
+    person's name is slugified into the download filename.
     """
     detail = await reader.get_person(person_id, user.id)
     if detail is None:
         raise _person_not_found(person_id)
-    pdf_bytes = build_person_pdf(detail)
+    pdf_bytes = build_person_pdf(detail, normalize_locale(lang))
     filename = pdf_filename(detail.name)
     return Response(
         content=pdf_bytes,

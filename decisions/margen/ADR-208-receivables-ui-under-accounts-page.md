@@ -41,3 +41,4 @@ Deleting a person cascades the deletion of their items and payments, gated behin
 ## Status History
 
 - 2026-08-28: accepted
+- 2026-08-28: AMENDED — placement changed at owner request from a collapsible section on the Accounts page to a **dedicated bottom-nav tab** labelled **"Owed"** (en) / **"Deudores"** (es), its own route with a `ReceivablesPage`. Reason: the owner wants it as a first-class destination, not nested under Accounts. Everything else (full CRUD, per-person outstanding, match review, PDF, es/en i18n) is unchanged; the section component is simply hosted by the new page/route instead of AccountsPage.
