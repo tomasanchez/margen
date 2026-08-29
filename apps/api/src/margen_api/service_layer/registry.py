@@ -27,6 +27,7 @@ from margen_api.domain.commands.receivable import (
     EditReceivableItem,
     RecordReceivablePayment,
     RenamePerson,
+    SetReceivableItemPardon,
 )
 from margen_api.domain.commands.settings import UpdateSettings
 from margen_api.domain.commands.statement import ImportStatement
@@ -64,6 +65,7 @@ from margen_api.service_layer.receivables import (
     edit_receivable_item,
     record_receivable_payment,
     rename_person,
+    set_receivable_item_pardon,
 )
 from margen_api.service_layer.settings_handlers import update_settings
 from margen_api.service_layer.transfer_handlers import create_transfer, delete_transfer
@@ -96,6 +98,7 @@ COMMAND_HANDLERS: dict[type, CommandHandler] = {
     AddReceivableItem: add_receivable_item,
     EditReceivableItem: edit_receivable_item,
     DeleteReceivableItem: delete_receivable_item,
+    SetReceivableItemPardon: set_receivable_item_pardon,
     RecordReceivablePayment: record_receivable_payment,
 }
 

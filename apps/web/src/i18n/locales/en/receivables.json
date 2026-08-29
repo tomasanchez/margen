@@ -20,8 +20,11 @@
     "remaining": "{{amount}} remaining",
     "add": "Add item",
     "recordPayment": "Record payment",
+    "coveredBadge": "Covered",
     "editAria": "Edit item from {{date}}",
     "deleteAria": "Delete item from {{date}}",
+    "pardonAria": "Forgive the item from {{date}}",
+    "unpardonAria": "Restore the item from {{date}} as owed",
     "loadingAria": "Loading items",
     "errorTitle": "Can't load these items",
     "errorDescription": "We couldn't load this person's items. Check your connection and try again."
@@ -67,6 +70,13 @@
     "cancel": "Cancel",
     "confirm": "Delete",
     "error": "We couldn't delete this item. Check your connection and try again."
+  },
+  "pardonItem": {
+    "title": "Forgive this debt",
+    "body": "Forgive this debt? It stops counting as owed but will show as \"covered by you\" on the PDF. You can restore it later.",
+    "cancel": "Cancel",
+    "confirm": "Forgive",
+    "error": "We couldn't forgive this item. Check your connection and try again."
   },
   "payment": {
     "title": "Record payment",

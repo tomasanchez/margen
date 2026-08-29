@@ -17,11 +17,17 @@ en-dashes** anywhere in the rendered output (commas, colons and parentheses only
 sit beside the name, the total, and each column header so an informal recipient reads it
 easily.
 
-**v1 shows outstanding items only** (ADR-209): fully-settled / overpaid items (item
-``remaining`` <= 0) are excluded, settled/paid history is a deferred extension. The
-person-level ``outstanding`` total is taken authoritatively from the read model
-(ADR-204/206), even when it differs from the sum of the displayed rows (e.g. after a
-confirmed overpayment credit).
+**Outstanding items** are shown first (ADR-209): fully-settled / overpaid items (item
+``remaining`` <= 0) and pardoned items are excluded from that section, settled/paid history
+is a deferred extension. The person-level ``outstanding`` total is taken authoritatively
+from the read model (ADR-204/206), even when it differs from the sum of the displayed rows
+(e.g. after a confirmed overpayment credit).
+
+Below the outstanding section, a dedicated **"Covered by you"** section (es "Cubierto por
+vos") lists the person's **pardoned** items (ADR-210) with the amount each was forgiven for
+(``remaining`` at pardon = ``amount`` minus its allocations) and a **"You covered"** / es
+**"Total cubierto"** total summing them. The section is omitted entirely when the person has
+no pardoned items, and, like the rest of the document, contains no em/en dashes.
 
 The pure content assembly (:func:`build_content`), the layout/pagination
 (:func:`build_layout`) and the filename slug (:func:`pdf_filename`) are I/O-free and
@@ -69,6 +75,8 @@ class _LocaleStrings:
         intro_template: Warm, informal one-line intro, ``{name}`` interpolated.
         total_label: The label preceding the authoritative outstanding total.
         column_headers: The ``(date, amount, detail)`` table column labels.
+        covered_title: The "Covered by you" section header (ADR-210).
+        covered_total_label: The label preceding the total covered/forgiven (ADR-210).
         date_format: ``strftime`` pattern for row dates (locale month/day order).
         es_grouping: Whether to reformat amounts into es-AR ``1.234,56`` grouping.
     """
@@ -77,6 +85,8 @@ class _LocaleStrings:
     intro_template: str
     total_label: str
     column_headers: tuple[str, str, str]
+    covered_title: str
+    covered_total_label: str
     date_format: str
     es_grouping: bool
 
@@ -89,6 +99,8 @@ _STRINGS: dict[Locale, _LocaleStrings] = {
         intro_template="Hola {name}, este es un resumen de lo que quedó pendiente.",
         total_label="Total adeudado:",
         column_headers=("Fecha", "Monto", "Detalle"),
+        covered_title="Cubierto por vos",
+        covered_total_label="Total cubierto:",
         date_format="%d/%m/%Y",  # es-AR day/month/year.
         es_grouping=True,  # 1.234,56 (dot thousands, comma decimal).
     ),
@@ -97,6 +109,8 @@ _STRINGS: dict[Locale, _LocaleStrings] = {
         intro_template="Hi {name}, here is a quick summary of what is still pending.",
         total_label="Total owed:",
         column_headers=("Date", "Amount", "Detail"),
+        covered_title="Covered by you",
+        covered_total_label="You covered:",
         date_format="%m/%d/%Y",  # en-US month/day/year.
         es_grouping=False,  # 1,234.56 (comma thousands, dot decimal).
     ),
@@ -114,6 +128,7 @@ _INTRO_GAP = 26.0
 _TOTAL_GAP = 34.0
 _COLUMN_HEADER_GAP = 22.0
 _ROW_HEIGHT = 18.0
+_SECTION_GAP = 30.0  # Space between the outstanding rows and the "Covered by you" section.
 
 _COL_DATE_X = 50.0
 _COL_AMOUNT_X = 170.0
@@ -200,7 +215,13 @@ class ReceivablePdfContent:
         total_label: The label preceding the total (e.g. ``Total adeudado:``).
         total_amount: The authoritative person-level total, locale-formatted with ``ARS``.
         column_headers: The ``(date, amount, detail)`` table column labels.
-        rows: One row per OUTSTANDING item (remaining > 0), newest-first as supplied.
+        rows: One row per OUTSTANDING item (not pardoned, remaining > 0), newest-first.
+        covered_title: The "Covered by you" section header (ADR-210).
+        covered_total_label: The label preceding the total covered/forgiven (ADR-210).
+        covered_total: The total covered, locale-formatted with ``ARS`` (Σ covered rows).
+        covered_rows: One row per PARDONED item (remaining > 0) with its covered amount,
+            newest-first as supplied; empty when the person has no pardoned items so the
+            section is omitted (ADR-210).
     """
 
     title: str
@@ -209,6 +230,10 @@ class ReceivablePdfContent:
     total_amount: str
     column_headers: tuple[str, str, str]
     rows: tuple[ReceivablePdfRow, ...]
+    covered_title: str
+    covered_total_label: str
+    covered_total: str
+    covered_rows: tuple[ReceivablePdfRow, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,12 +299,23 @@ def _format_date(value: date, strings: _LocaleStrings) -> str:
 
 
 def _is_outstanding(item: ReceivableItemReadModel) -> bool:
-    """Report whether an item still carries a positive remainder (ADR-209 v1).
+    """Report whether an item is a live, still-owed debt for the outstanding section (ADR-209, ADR-210).
 
-    Fully-settled (``remaining == 0``) and overpaid (``remaining < 0``) items are
-    excluded, v1 shows outstanding items only; settled history is deferred.
+    Fully-settled (``remaining == 0``) and overpaid (``remaining < 0``) items are excluded
+    (settled history is deferred), and so are pardoned items, which move to the dedicated
+    "Covered by you" section instead (ADR-210).
     """
-    return item.remaining > Decimal(0)
+    return not item.pardoned and item.remaining > Decimal(0)
+
+
+def _is_covered(item: ReceivableItemReadModel) -> bool:
+    """Report whether a pardoned item should appear in the "Covered by you" section (ADR-210).
+
+    A pardoned item is shown as covered when it still had something to forgive, i.e. its
+    remainder at pardon (``amount`` minus its allocations) is positive. A pardoned item that
+    was already fully paid (or overpaid) has nothing to cover and is omitted.
+    """
+    return item.pardoned and item.remaining > Decimal(0)
 
 
 def build_content(person: PersonDetailReadModel, locale: Locale = _DEFAULT_LOCALE) -> ReceivablePdfContent:
@@ -308,6 +344,17 @@ def build_content(person: PersonDetailReadModel, locale: Locale = _DEFAULT_LOCAL
         for item in person.items
         if _is_outstanding(item)
     )
+    covered_items = [item for item in person.items if _is_covered(item)]
+    covered_rows = tuple(
+        ReceivablePdfRow(
+            occurred_on=_format_date(item.occurred_on, strings),
+            # A pardoned item's covered amount is its remainder at pardon (ADR-210).
+            amount=_format_amount(item.remaining, strings),
+            detail=item.detail if item.detail is not None else _EMPTY_DETAIL,
+        )
+        for item in covered_items
+    )
+    covered_total = sum((item.remaining for item in covered_items), Decimal(0))
     return ReceivablePdfContent(
         title=strings.title_template.format(name=person.name),
         intro=strings.intro_template.format(name=person.name),
@@ -315,6 +362,10 @@ def build_content(person: PersonDetailReadModel, locale: Locale = _DEFAULT_LOCAL
         total_amount=_format_amount(person.outstanding, strings),
         column_headers=strings.column_headers,
         rows=rows,
+        covered_title=strings.covered_title,
+        covered_total_label=strings.covered_total_label,
+        covered_total=_format_amount(covered_total, strings),
+        covered_rows=covered_rows,
     )
 
 
@@ -341,15 +392,44 @@ def _append_column_headers(
     return y + _COLUMN_HEADER_GAP
 
 
+def _emit_rows(
+    pages: list[tuple[list[TextSpan], list[IconSpan]]],
+    spans: list[TextSpan],
+    icons: list[IconSpan],
+    y: float,
+    rows: Sequence[ReceivablePdfRow],
+    headers: tuple[str, str, str],
+) -> tuple[list[TextSpan], list[IconSpan], float]:
+    """Place each table row, breaking to a fresh page past :data:`_MAX_Y` (pure, ADR-209).
+
+    The single page-break point shared by the outstanding and "Covered by you" sections
+    (ADR-210): whenever the next row would fall below the bottom margin, the accumulated page
+    is flushed and the icon-led column headers repeat atop the new one. Returns the current
+    ``spans``/``icons`` accumulators (reassigned on a break) and the next baseline ``y``.
+    """
+    for row in rows:
+        if y > _MAX_Y:
+            pages.append((spans, icons))
+            spans, icons = [], []
+            y = _append_column_headers(spans, icons, _MARGIN_TOP, headers)
+        spans.append(TextSpan(_COL_DATE_X, y, row.occurred_on, _BODY_SIZE, _FONT_NORMAL))
+        spans.append(TextSpan(_COL_AMOUNT_X, y, row.amount, _BODY_SIZE, _FONT_NORMAL))
+        spans.append(TextSpan(_COL_DETAIL_X, y, row.detail, _BODY_SIZE, _FONT_NORMAL))
+        y += _ROW_HEIGHT
+    return spans, icons, y
+
+
 def build_layout(person: PersonDetailReadModel, locale: Locale = _DEFAULT_LOCALE) -> tuple[PdfPage, ...]:
-    """Lay the content out into positioned, paginated pages (pure, ADR-209).
+    """Lay the content out into positioned, paginated pages (pure, ADR-209, ADR-210).
 
     The first page carries the icon-led title, the friendly intro line and the outstanding
     total; every page then repeats the icon-led table column headers and its share of the
-    item rows. A new page begins whenever the next row would fall below :data:`_MAX_Y`, so
-    an arbitrarily long list of items paginates cleanly. Keeping pagination here (not in
-    the renderer) leaves :func:`render_pdf` branchless and makes the page-break logic
-    unit-testable without ``fitz``.
+    item rows. When the person has pardoned items, a dedicated icon-led "Covered by you"
+    section follows the outstanding rows with its own column headers, the covered rows and a
+    covered total (ADR-210); it is omitted entirely otherwise. A new page begins whenever the
+    next row would fall below :data:`_MAX_Y`, so an arbitrarily long list paginates cleanly.
+    Keeping pagination here (not in the renderer) leaves :func:`render_pdf` branchless and
+    makes the page-break logic unit-testable without ``fitz``.
 
     Args:
         person: The person-detail read model to render.
@@ -375,15 +455,28 @@ def build_layout(person: PersonDetailReadModel, locale: Locale = _DEFAULT_LOCALE
     y += _TOTAL_GAP
     y = _append_column_headers(spans, icons, y, content.column_headers)
 
-    for row in content.rows:
-        if y > _MAX_Y:
-            pages.append((spans, icons))
-            spans, icons = [], []
-            y = _append_column_headers(spans, icons, _MARGIN_TOP, content.column_headers)
-        spans.append(TextSpan(_COL_DATE_X, y, row.occurred_on, _BODY_SIZE, _FONT_NORMAL))
-        spans.append(TextSpan(_COL_AMOUNT_X, y, row.amount, _BODY_SIZE, _FONT_NORMAL))
-        spans.append(TextSpan(_COL_DETAIL_X, y, row.detail, _BODY_SIZE, _FONT_NORMAL))
-        y += _ROW_HEIGHT
+    spans, icons, y = _emit_rows(pages, spans, icons, y, content.rows, content.column_headers)
+
+    if content.covered_rows:
+        # The "Covered by you" section (pardoned items), only when there is something to show
+        # (ADR-210): an icon-led section title, repeated column headers, the covered rows and
+        # a covered total. The section title stays on the current page (it can never spill
+        # past the page height) and the rows paginate through the shared _emit_rows.
+        y += _SECTION_GAP
+        icons.append(IconSpan(kind=IconKind.MONEY, x=_COL_DATE_X, top=y - _TOTAL_ICON, size=_TOTAL_ICON))
+        spans.append(
+            TextSpan(_COL_DATE_X + _TOTAL_ICON + _ICON_TEXT_GAP, y, content.covered_title, _TOTAL_SIZE, _FONT_BOLD)
+        )
+        y += _TOTAL_GAP
+        y = _append_column_headers(spans, icons, y, content.column_headers)
+        spans, icons, y = _emit_rows(pages, spans, icons, y, content.covered_rows, content.column_headers)
+        y += _ROW_HEIGHT  # A little breathing room between the last covered row and the total.
+        icons.append(IconSpan(kind=IconKind.MONEY, x=_COL_DATE_X, top=y - _TOTAL_ICON, size=_TOTAL_ICON))
+        covered_total_text = f"{content.covered_total_label} {content.covered_total}"
+        spans.append(
+            TextSpan(_COL_DATE_X + _TOTAL_ICON + _ICON_TEXT_GAP, y, covered_total_text, _TOTAL_SIZE, _FONT_BOLD)
+        )
+        y += _TOTAL_GAP
 
     pages.append((spans, icons))
     return tuple(PdfPage(spans=tuple(page_spans), icons=tuple(page_icons)) for page_spans, page_icons in pages)

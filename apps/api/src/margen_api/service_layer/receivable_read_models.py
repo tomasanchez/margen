@@ -31,7 +31,10 @@ class ReceivableItemReadModel:
         allocated: The sum of the payment allocations applied to this item so far.
         remaining: ``amount`` - ``allocated`` — the item's outstanding remainder; may be
             negative once a confirmed overpayment credits the item beyond its amount
-            (ADR-206).
+            (ADR-206). For a pardoned item this is the amount "covered by you" (ADR-210).
+        pardoned: Whether the owner has forgiven this item (ADR-210). A pardoned item is
+            excluded from the person's ``outstanding`` and is no longer a valid allocation
+            target, but is retained so it can be shown as "covered by you".
     """
 
     id: UUID
@@ -40,6 +43,7 @@ class ReceivableItemReadModel:
     detail: str | None
     allocated: Decimal
     remaining: Decimal
+    pardoned: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,9 +77,11 @@ class PersonDetailReadModel:
         id: Stable UUID identity.
         name: The debtor's display label.
         created_at: Server-managed creation timestamp.
-        outstanding: Σ of ``items`` remainders — the person's overall outstanding (ADR-206).
-        items: The person's itemized debts with their per-item settlement roll-ups,
-            newest-first by ``occurred_on``.
+        outstanding: Σ of the NON-pardoned ``items`` remainders — the person's overall
+            outstanding (ADR-206); pardoned items are excluded (ADR-210).
+        items: The person's itemized debts with their per-item settlement roll-ups and
+            pardon flag, newest-first by ``occurred_on`` (pardoned items included so the
+            "covered by you" surface can render them, ADR-210).
     """
 
     id: UUID

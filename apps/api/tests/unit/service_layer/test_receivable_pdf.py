@@ -43,6 +43,7 @@ def _item(
     detail: str | None = "lunch",
     allocated: str = "0.00",
     remaining: str = "1000.00",
+    pardoned: bool = False,
 ) -> ReceivableItemReadModel:
     """Build a receivable item read model with sensible outstanding defaults."""
     return ReceivableItemReadModel(
@@ -52,6 +53,7 @@ def _item(
         detail=detail,
         allocated=Decimal(allocated),
         remaining=Decimal(remaining),
+        pardoned=pardoned,
     )
 
 
@@ -282,6 +284,94 @@ class TestBuildContentBehavior:
         assert content.total_amount == "ARS 0.00"
 
 
+class TestCoveredSection:
+    """The "Covered by you" content for pardoned items (ADR-210)."""
+
+    def test_pardoned_items_move_to_covered_rows_out_of_outstanding(self):
+        """
+        GIVEN a live item and a pardoned item
+        WHEN the content is assembled
+        THEN the live one is an outstanding row and the pardoned one is a covered row
+        """
+        # GIVEN
+        live = _item(remaining="1000.00", detail="rent")
+        forgiven = _item(remaining="500.00", detail="loan", pardoned=True)
+        person = _person(outstanding="1000.00", items=(live, forgiven))
+
+        # WHEN
+        content = build_content(person, "en")
+
+        # THEN
+        assert [row.detail for row in content.rows] == ["rent"]
+        assert [row.detail for row in content.covered_rows] == ["loan"]
+
+    def test_covered_total_sums_covered_amounts_localized(self):
+        """
+        GIVEN two pardoned items covering 500 and 1500
+        WHEN the content is assembled in each locale
+        THEN the covered total is their sum, formatted for the locale (ADR-210)
+        """
+        # GIVEN
+        person = _person(
+            outstanding="0.00",
+            items=(
+                _item(remaining="500.00", detail="a", pardoned=True),
+                _item(remaining="1500.00", detail="b", pardoned=True),
+            ),
+        )
+
+        # WHEN / THEN
+        assert build_content(person, "en").covered_total == "ARS 2,000.00"
+        assert build_content(person, "es").covered_total == "ARS 2.000,00"
+
+    def test_covered_row_amount_is_the_covered_remainder(self):
+        """
+        GIVEN a partially-paid then pardoned item (amount 1000, remaining 400)
+        WHEN the content is assembled
+        THEN its covered row shows the 400 still forgiven, not the original amount
+        """
+        # GIVEN
+        forgiven = _item(amount="1000.00", allocated="600.00", remaining="400.00", pardoned=True)
+        person = _person(outstanding="0.00", items=(forgiven,))
+
+        # WHEN
+        content = build_content(person, "en")
+
+        # THEN
+        assert content.covered_rows[0].amount == "ARS 400.00"
+
+    def test_fully_paid_pardoned_item_has_nothing_to_cover(self):
+        """
+        GIVEN a pardoned item that was already fully paid (remaining 0)
+        WHEN the content is assembled
+        THEN it is not shown as covered (nothing to forgive, ADR-210)
+        """
+        # GIVEN
+        settled = _item(amount="1000.00", allocated="1000.00", remaining="0.00", pardoned=True)
+        person = _person(outstanding="0.00", items=(settled,))
+
+        # WHEN
+        content = build_content(person, "en")
+
+        # THEN
+        assert content.covered_rows == ()
+
+    def test_localized_covered_labels(self):
+        """
+        GIVEN a person with a pardoned item
+        WHEN the content is assembled in each locale
+        THEN the covered section title and total label use the localized copy (ADR-210)
+        """
+        # GIVEN
+        person = _person(outstanding="0.00", items=(_item(remaining="500.00", pardoned=True),))
+
+        # WHEN / THEN
+        es = build_content(person, "es")
+        en = build_content(person, "en")
+        assert (es.covered_title, es.covered_total_label) == ("Cubierto por vos", "Total cubierto:")
+        assert (en.covered_title, en.covered_total_label) == ("Covered by you", "You covered:")
+
+
 class TestBuildLayout:
     """Pagination, positioning and icons of the content into pages (pure, ADR-209)."""
 
@@ -357,6 +447,73 @@ class TestBuildLayout:
         assert "What Ana Perez owes" not in self._texts(pages[1])
         assert IconKind.PERSON not in self._icon_kinds(pages[1])
 
+    @pytest.mark.parametrize(
+        ("locale", "title", "total"),
+        [
+            ("es", "Cubierto por vos", "Total cubierto: ARS 1.500,00"),
+            ("en", "Covered by you", "You covered: ARS 1,500.00"),
+        ],
+    )
+    def test_covered_section_renders_title_and_total(self, locale: Locale, title: str, total: str):
+        """
+        GIVEN a person with an outstanding item and two pardoned items (500 + 1000)
+        WHEN the layout is built in each locale
+        THEN the page carries the localized "Covered by you" title and covered total
+        """
+        # GIVEN
+        person = _person(
+            name="Ana Perez",
+            outstanding="700.00",
+            items=(
+                _item(remaining="700.00", detail="live"),
+                _item(remaining="500.00", detail="a", pardoned=True),
+                _item(remaining="1000.00", detail="b", pardoned=True),
+            ),
+        )
+
+        # WHEN
+        pages = build_layout(person, locale)
+
+        # THEN
+        texts = self._texts(pages[0])
+        assert title in texts
+        assert total in texts
+
+    def test_covered_section_omitted_when_no_pardoned_items(self):
+        """
+        GIVEN a person with only outstanding items
+        WHEN the layout is built
+        THEN neither the covered title nor total label appears anywhere (ADR-210)
+        """
+        # GIVEN
+        person = _person(outstanding="1000.00", items=(_item(remaining="1000.00"),))
+
+        # WHEN
+        pages = build_layout(person, "en")
+
+        # THEN
+        all_texts = [text for page in pages for text in self._texts(page)]
+        assert not any("Covered by you" in text for text in all_texts)
+        assert not any("You covered" in text for text in all_texts)
+
+    def test_covered_rows_paginate_across_pages(self):
+        """
+        GIVEN a person with many pardoned items (more than fit on one page)
+        WHEN the layout is built
+        THEN the covered rows spill onto a second page repeating the column headers
+        """
+        # GIVEN — 60 pardoned items overflow the single-page row budget.
+        items = tuple(_item(remaining=f"{i + 1}.00", detail=f"forgiven {i}", pardoned=True) for i in range(60))
+        person = _person(outstanding="0.00", items=items)
+
+        # WHEN
+        pages = build_layout(person, "en")
+
+        # THEN — the covered rows span two pages, each carrying the Date column header.
+        assert len(pages) == 2
+        assert "Covered by you" in self._texts(pages[0])
+        assert "Date" in self._texts(pages[1])
+
 
 class TestNoDashes:
     """The rendered document contains no em-dashes or en-dashes anywhere (ADR-209)."""
@@ -368,11 +525,16 @@ class TestNoDashes:
         WHEN every text span across the layout is inspected
         THEN not a single string contains an em-dash or an en-dash
         """
-        # GIVEN — a realistic person including a null-detail row.
+        # GIVEN — a realistic person including a null-detail row AND a pardoned item, so the
+        # new "Covered by you" section strings are inspected by the guard too (ADR-210).
         person = _person(
             name="María Peña",
             outstanding="9999.99",
-            items=(_item(detail="Café", remaining="500.00"), _item(detail=None, remaining="9499.99")),
+            items=(
+                _item(detail="Café", remaining="500.00"),
+                _item(detail=None, remaining="9499.99"),
+                _item(detail="Préstamo", remaining="750.00", pardoned=True),
+            ),
         )
 
         # WHEN

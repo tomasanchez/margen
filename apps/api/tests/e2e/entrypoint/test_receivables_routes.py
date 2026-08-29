@@ -298,6 +298,133 @@ class TestItemsCrud:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
+class TestPardon:
+    """Pardon / un-pardon a receivable item over the HTTP edge (ADR-210, ADR-130)."""
+
+    async def test_pardon_flags_item_and_excludes_from_outstanding(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a person with a live 1000 item and a 500 item
+        WHEN the 500 item is pardoned
+        THEN it returns 200, the item is flagged pardoned and outstanding drops to 1000
+        """
+        # GIVEN
+        person = await _create_person(test_client)
+        keep = (await _add_item(test_client, person["id"], amount="1000"))["items"][0]["id"]
+        forgive = (await _add_item(test_client, person["id"], amount="500", occurredOn="2026-09-01"))["items"]
+        forgive_id = next(item["id"] for item in forgive if item["id"] != keep)
+
+        # WHEN
+        response = await test_client.post(f"{PEOPLE}/{person['id']}/items/{forgive_id}/pardon")
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK, response.text
+        detail = response.json()["data"]
+        assert detail["outstanding"] == "1000.00"
+        flags = {item["id"]: item["pardoned"] for item in detail["items"]}
+        assert flags[forgive_id] is True
+        assert flags[keep] is False
+
+    async def test_unpardon_restores_outstanding(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a pardoned item
+        WHEN it is un-pardoned
+        THEN it returns 200, the flag clears and the amount is owed again (ADR-210)
+        """
+        # GIVEN
+        person = await _create_person(test_client)
+        item_id = (await _add_item(test_client, person["id"], amount="500"))["items"][0]["id"]
+        await test_client.post(f"{PEOPLE}/{person['id']}/items/{item_id}/pardon")
+
+        # WHEN
+        response = await test_client.post(f"{PEOPLE}/{person['id']}/items/{item_id}/unpardon")
+
+        # THEN
+        assert response.status_code == status.HTTP_200_OK, response.text
+        detail = response.json()["data"]
+        assert detail["outstanding"] == "500.00"
+        assert detail["items"][0]["pardoned"] is False
+
+    async def test_pardoned_item_rejects_payment_allocation_404(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a pardoned item
+        WHEN a payment tries to allocate to it
+        THEN it returns 404, a forgiven item is not payable (ADR-210, amending ADR-206)
+        """
+        # GIVEN
+        person = await _create_person(test_client)
+        item_id = (await _add_item(test_client, person["id"], amount="1000"))["items"][0]["id"]
+        await test_client.post(f"{PEOPLE}/{person['id']}/items/{item_id}/pardon")
+
+        # WHEN
+        response = await test_client.post(
+            f"{PEOPLE}/{person['id']}/payments",
+            json={"occurredOn": A_DATE, "amount": "100", "allocations": [{"itemId": item_id, "amount": "100"}]},
+        )
+
+        # THEN
+        assert response.status_code == status.HTTP_404_NOT_FOUND, response.text
+
+    async def test_pardon_missing_item_returns_404(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a person but no item with the requested id
+        WHEN the item is pardoned
+        THEN it returns 404 (ADR-111)
+        """
+        person = await _create_person(test_client)
+        response = await test_client.post(f"{PEOPLE}/{person['id']}/items/{_MISSING_ID}/pardon")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_unpardon_missing_item_returns_404(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a person but no item with the requested id
+        WHEN the item is un-pardoned
+        THEN it returns 404 (ADR-111)
+        """
+        person = await _create_person(test_client)
+        response = await test_client.post(f"{PEOPLE}/{person['id']}/items/{_MISSING_ID}/unpardon")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_cross_tenant_pardon_returns_404(
+        self,
+        container: ApplicationContainer,
+        test_client: httpx.AsyncClient,
+        client_for_user,
+    ):
+        """
+        GIVEN user A owns a person with an item
+        WHEN user B pardons that item
+        THEN it returns 404 without leaking existence (ADR-130, ADR-111)
+        """
+        # GIVEN — user A (default stub) owns the person + item.
+        person = await _create_person(test_client)
+        item_id = (await _add_item(test_client, person["id"], amount="1000"))["items"][0]["id"]
+
+        # WHEN / THEN — user B cannot pardon A's item.
+        async with client_for_user(container, STUB_AUTH_USER_B) as client_b:
+            foreign = await client_b.post(f"{PEOPLE}/{person['id']}/items/{item_id}/pardon")
+            assert foreign.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_pardoned_person_pdf_still_downloads(self, test_client: httpx.AsyncClient):
+        """
+        GIVEN a person with an outstanding item and a pardoned item
+        WHEN the person's PDF is requested in each locale
+        THEN it returns 200 with a %PDF payload (the "Covered by you" section renders)
+        """
+        # GIVEN
+        person = await _create_person(test_client, name="Ana Perez")
+        await _add_item(test_client, person["id"], amount="1000", detail="rent")
+        forgive_id = (await _add_item(test_client, person["id"], amount="500", detail="loan", occurredOn="2026-09-01"))[
+            "items"
+        ][0]["id"]
+        await test_client.post(f"{PEOPLE}/{person['id']}/items/{forgive_id}/pardon")
+
+        # WHEN / THEN
+        for lang in ("es", "en"):
+            response = await test_client.get(f"{PEOPLE}/{person['id']}/pdf", params={"lang": lang})
+            assert response.status_code == status.HTTP_200_OK, response.text
+            assert response.content.startswith(b"%PDF")
+
+
 class TestPayments:
     """Record a manual payback allocated across items, incl. the ADR-206 settlement rules."""
 

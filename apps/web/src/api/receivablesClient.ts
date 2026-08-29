@@ -55,6 +55,14 @@ export interface Person {
  * {@link PersonDetail}. `allocated` is Σ of payments applied to this item and
  * `remaining` = `amount` − `allocated`; all three are Decimal strings. `detail`
  * is the free-text justification (null when the owner left it blank).
+ *
+ * `pardoned` (ADR-210) is true when the owner has FORGIVEN the item — covering it
+ * out of pocket rather than collecting. A pardoned item is excluded server-side
+ * from the person's `outstanding` and cannot receive payments/allocations; it
+ * still surfaces here (with its historical `allocated` / `remaining`) so the UI
+ * can render it as "covered by you". Pardon is a reversible toggle — un-pardon
+ * clears the flag and restores the item as owed. This is DISTINCT from delete
+ * (which removes an item entered in error entirely).
  */
 export interface ReceivableItem {
   id: string
@@ -68,6 +76,8 @@ export interface ReceivableItem {
   allocated: string
   /** Amount still owed (`amount` − `allocated`), as a Decimal string. */
   remaining: string
+  /** True when the item has been forgiven (ADR-210): excluded from outstanding. */
+  pardoned: boolean
 }
 
 /**
@@ -423,6 +433,44 @@ async function deleteItem(personId: string, itemId: string): Promise<void> {
 }
 
 /**
+ * POST to FORGIVE an item (ADR-210): the item stops counting toward the person's
+ * outstanding and can no longer receive payments, but is preserved and shown as
+ * "covered by you". Reversible via {@link unpardonItem}. Returns the refreshed
+ * {@link PersonDetail} (its `outstanding` moved). 404 for a foreign/unknown id.
+ */
+async function pardonItem(
+  personId: string,
+  itemId: string,
+): Promise<PersonDetail> {
+  const response = await authedFetch(
+    apiUrl(`/receivables/people/${personId}/items/${itemId}/pardon`),
+    { method: 'POST', headers: JSON_ACCEPT },
+  )
+  await ensureOk(response)
+  const envelope = (await response.json()) as ResponseEnvelope<PersonDetail>
+  return envelope.data
+}
+
+/**
+ * POST to UN-FORGIVE an item (ADR-210): clears the pardon so the item counts as
+ * owed again and can once more receive payments. The inverse of
+ * {@link pardonItem}. Returns the refreshed {@link PersonDetail}. 404 for a
+ * foreign/unknown id.
+ */
+async function unpardonItem(
+  personId: string,
+  itemId: string,
+): Promise<PersonDetail> {
+  const response = await authedFetch(
+    apiUrl(`/receivables/people/${personId}/items/${itemId}/unpardon`),
+    { method: 'POST', headers: JSON_ACCEPT },
+  )
+  await ensureOk(response)
+  const envelope = (await response.json()) as ResponseEnvelope<PersonDetail>
+  return envelope.data
+}
+
+/**
  * POST a manual payment allocated across one or more items (201). `allowOverpayment`
  * is included only when true; omitting it lets the API 409 with a typed
  * {@link ReceivableOverpaymentError} the caller can catch and retry (ADR-206).
@@ -568,6 +616,8 @@ export const receivablesClient = {
   addItem,
   editItem,
   deleteItem,
+  pardonItem,
+  unpardonItem,
   recordPayment,
   matchSuggestions,
   confirmMatch,

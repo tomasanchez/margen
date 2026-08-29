@@ -20,8 +20,11 @@
     "remaining": "{{amount}} pendiente",
     "add": "Agregar ítem",
     "recordPayment": "Registrar pago",
+    "coveredBadge": "Cubierto",
     "editAria": "Editar el ítem del {{date}}",
     "deleteAria": "Eliminar el ítem del {{date}}",
+    "pardonAria": "Perdonar el ítem del {{date}}",
+    "unpardonAria": "Volver a adeudar el ítem del {{date}}",
     "loadingAria": "Cargando ítems",
     "errorTitle": "No se pudieron cargar estos ítems",
     "errorDescription": "No pudimos cargar los ítems de esta persona. Revisá tu conexión e intentá de nuevo."
@@ -67,6 +70,13 @@
     "cancel": "Cancelar",
     "confirm": "Eliminar",
     "error": "No pudimos eliminar este ítem. Revisá tu conexión e intentá de nuevo."
+  },
+  "pardonItem": {
+    "title": "Perdonar esta deuda",
+    "body": "¿Perdonar esta deuda? Deja de contar como adeudada pero aparecerá como \"cubierto por vos\" en el PDF. Podés restaurarla más tarde.",
+    "cancel": "Cancelar",
+    "confirm": "Perdonar",
+    "error": "No pudimos perdonar este ítem. Revisá tu conexión e intentá de nuevo."
   },
   "payment": {
     "title": "Registrar pago",

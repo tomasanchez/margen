@@ -48,6 +48,8 @@ vi.mock('../../api/receivablesClient', async (importOriginal) => {
       addItem: vi.fn(),
       editItem: vi.fn(),
       deleteItem: vi.fn(),
+      pardonItem: vi.fn(),
+      unpardonItem: vi.fn(),
       recordPayment: vi.fn(),
       matchSuggestions: vi.fn(),
       confirmMatch: vi.fn(),
@@ -76,6 +78,7 @@ const ANA_DETAIL: PersonDetail = {
       detail: 'Dinner',
       allocated: '0.00',
       remaining: '300000.00',
+      pardoned: false,
     },
     {
       id: 'i2',
@@ -84,6 +87,7 @@ const ANA_DETAIL: PersonDetail = {
       detail: null,
       allocated: '0.00',
       remaining: '200000.00',
+      pardoned: false,
     },
   ],
 }
@@ -378,6 +382,51 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
           { itemId: 'i1', amount: '300000.00' },
           { itemId: 'i2', amount: '100000.00' },
         ],
+      }),
+    )
+  })
+
+  test('excludes a pardoned item from the confirm-match allocation list (ADR-210)', async () => {
+    // Ana's first item (2026-08-01) is forgiven, so only the second (2026-08-10,
+    // 200.000 remaining) is a valid match target: the 300.000 income seeds it to
+    // 200.000 and the pardoned item never appears.
+    mockGetPerson.mockResolvedValue({
+      ...ANA_DETAIL,
+      outstanding: '200000.00',
+      items: [
+        { ...ANA_DETAIL.items[0], pardoned: true },
+        ANA_DETAIL.items[1],
+      ],
+    })
+    const user = userEvent.setup()
+    renderSection()
+    await expandAna(user)
+    await screen.findByText('Ana Perez')
+
+    await user.click(
+      screen.getByRole('button', {
+        name: /Review the ARS 300\.000 income from Ana Perez on 2026-08-12/,
+      }),
+    )
+    const dialog = within(await screen.findByRole('dialog'))
+
+    // Only the open item is allocatable, seeded up to its remaining.
+    expect(
+      dialog.getByLabelText('Amount applied to the item from 2026-08-10'),
+    ).toHaveValue('200000.00')
+    // The forgiven item is not a match target.
+    expect(
+      dialog.queryByLabelText('Amount applied to the item from 2026-08-01'),
+    ).not.toBeInTheDocument()
+
+    await user.click(dialog.getByRole('button', { name: 'Confirm payment' }))
+
+    await waitFor(() => expect(mockConfirmMatch).toHaveBeenCalledTimes(1))
+    expect(mockConfirmMatch).toHaveBeenCalledWith(
+      'p1',
+      expect.objectContaining({
+        matchedIncomeTransactionId: 't-strong',
+        allocations: [{ itemId: 'i2', amount: '200000.00' }],
       }),
     )
   })

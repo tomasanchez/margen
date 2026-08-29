@@ -47,7 +47,9 @@ import { RecordPaymentForm } from './RecordPaymentForm'
 import {
   useDeletePerson,
   useDeleteReceivableItem,
+  usePardonItem,
   useReceivablePeople,
+  useUnpardonItem,
 } from './queries'
 
 /** Parse a Decimal string to a number for the display edge (0 on a bad value). */
@@ -56,8 +58,8 @@ function num(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-/** An item delete target carries its owning person (delete needs both ids). */
-interface ItemDeleteTarget {
+/** An item write target carries its owning person (item ops need both ids). */
+interface ItemTarget {
   personId: string
   item: ReceivableItem
 }
@@ -76,6 +78,8 @@ function PersonRow({
   onAddItem,
   onEditItem,
   onDeleteItem,
+  onPardonItem,
+  onUnpardonItem,
   onRecordPayment,
 }: {
   person: Person
@@ -86,6 +90,8 @@ function PersonRow({
   onAddItem: () => void
   onEditItem: (item: ReceivableItem) => void
   onDeleteItem: (item: ReceivableItem) => void
+  onPardonItem: (item: ReceivableItem) => void
+  onUnpardonItem: (item: ReceivableItem) => void
   onRecordPayment: () => void
 }) {
   const { t } = useTranslation('receivables')
@@ -190,6 +196,8 @@ function PersonRow({
           onAddItem={onAddItem}
           onEditItem={onEditItem}
           onDeleteItem={onDeleteItem}
+          onPardonItem={onPardonItem}
+          onUnpardonItem={onUnpardonItem}
           onRecordPayment={onRecordPayment}
         />
       ) : null}
@@ -202,6 +210,8 @@ export function ReceivablesSection() {
   const peopleQuery = useReceivablePeople()
   const deletePerson = useDeletePerson()
   const deleteItem = useDeleteReceivableItem()
+  const pardonItem = usePardonItem()
+  const unpardonItem = useUnpardonItem()
 
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
@@ -223,7 +233,11 @@ export function ReceivablesSection() {
     null,
   )
   const [pendingDeleteItem, setPendingDeleteItem] =
-    useState<ItemDeleteTarget | null>(null)
+    useState<ItemTarget | null>(null)
+
+  // Pardon (forgive) confirm — un-pardon is a calm direct toggle, no confirm.
+  const [pendingPardonItem, setPendingPardonItem] =
+    useState<ItemTarget | null>(null)
 
   const people = peopleQuery.data ?? []
 
@@ -273,6 +287,27 @@ export function ReceivablesSection() {
       },
       { onSuccess: () => setPendingDeleteItem(null) },
     )
+  }
+
+  const openPardonItem = (personId: string, item: ReceivableItem) => {
+    pardonItem.reset()
+    setPendingPardonItem({ personId, item })
+  }
+  const confirmPardonItem = () => {
+    if (!pendingPardonItem) return
+    pardonItem.mutate(
+      {
+        personId: pendingPardonItem.personId,
+        itemId: pendingPardonItem.item.id,
+      },
+      { onSuccess: () => setPendingPardonItem(null) },
+    )
+  }
+
+  // Un-pardon is non-destructive (it simply restores the item as owed), so it
+  // fires directly — no confirm — for a calm one-tap toggle (ADR-210).
+  const handleUnpardonItem = (personId: string, item: ReceivableItem) => {
+    unpardonItem.mutate({ personId, itemId: item.id })
   }
 
   const addAction = (
@@ -330,6 +365,8 @@ export function ReceivablesSection() {
         onAddItem={() => openAddItem(person.id)}
         onEditItem={(item) => openEditItem(person.id, item)}
         onDeleteItem={(item) => openDeleteItem(person.id, item)}
+        onPardonItem={(item) => openPardonItem(person.id, item)}
+        onUnpardonItem={(item) => handleUnpardonItem(person.id, item)}
         onRecordPayment={() => setPaymentTarget(person)}
       />
     ))
@@ -454,6 +491,47 @@ export function ReceivablesSection() {
             sx={{ textTransform: 'none', fontWeight: 600 }}
           >
             {t('deleteItem.confirm')}
+          </Button>
+        </Box>
+      </ResponsiveModal>
+
+      {/* Calm pardon (forgive) confirm — distinct from delete (ADR-210). */}
+      <ResponsiveModal
+        open={pendingPardonItem !== null}
+        onClose={() => setPendingPardonItem(null)}
+        title={t('pardonItem.title')}
+        maxWidth={420}
+      >
+        <Typography sx={{ fontSize: 14 }} color="text.secondary">
+          {t('pardonItem.body', {
+            date: pendingPardonItem?.item.occurredOn ?? '',
+          })}
+        </Typography>
+        {pardonItem.isError ? (
+          <Typography
+            role="alert"
+            sx={{ fontSize: 13, mt: 1.5, color: 'error.main' }}
+          >
+            {t('pardonItem.error')}
+          </Typography>
+        ) : null}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 3 }}>
+          <Button
+            type="button"
+            onClick={() => setPendingPardonItem(null)}
+            color="secondary"
+            sx={{ textTransform: 'none' }}
+          >
+            {t('pardonItem.cancel')}
+          </Button>
+          <Button
+            type="button"
+            onClick={confirmPardonItem}
+            variant="contained"
+            disabled={pardonItem.isPending}
+            sx={{ textTransform: 'none', fontWeight: 600 }}
+          >
+            {t('pardonItem.confirm')}
           </Button>
         </Box>
       </ResponsiveModal>

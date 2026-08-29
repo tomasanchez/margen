@@ -421,11 +421,13 @@ class FakeReceivableRepository(AbstractReceivableRepository):
         )
 
     async def item_remainders(self, person_id: UUID) -> dict[UUID, Decimal]:
-        """Return the person's items keyed to ``amount`` - Σ allocations (ADR-206)."""
+        """Return the person's NON-pardoned items keyed to ``amount`` - Σ allocations (ADR-206, ADR-210)."""
         allocations = self._all_allocations()
         remainders: dict[UUID, Decimal] = {}
         for item_id, item in self._all_items().items():
-            if item.person_id != person_id:
+            # Pardoned items are excluded so they neither count toward outstanding nor act as
+            # valid allocation targets, mirroring the SQLAlchemy adapter (ADR-210).
+            if item.person_id != person_id or item.pardoned:
                 continue
             allocated = sum(
                 (allocation.amount for allocation in allocations.values() if allocation.item_id == item_id),
@@ -1226,7 +1228,10 @@ class FakeReceivableReader(AbstractReceivableReader):
                 id=person.id,
                 name=person.name,
                 created_at=person.created_at,
-                outstanding=sum((model.remaining for model in self._item_models(person.id)), Decimal(0)),
+                outstanding=sum(
+                    (model.remaining for model in self._item_models(person.id) if not model.pardoned),
+                    Decimal(0),
+                ),
             )
             for person in ordered
         ]
@@ -1241,7 +1246,7 @@ class FakeReceivableReader(AbstractReceivableReader):
             id=person.id,
             name=person.name,
             created_at=person.created_at,
-            outstanding=sum((model.remaining for model in items), Decimal(0)),
+            outstanding=sum((model.remaining for model in items if not model.pardoned), Decimal(0)),
             items=tuple(items),
         )
 
@@ -1263,6 +1268,7 @@ class FakeReceivableReader(AbstractReceivableReader):
                     detail=item.detail,
                     allocated=allocated,
                     remaining=item.amount - allocated,
+                    pardoned=item.pardoned,
                 )
             )
         return models

@@ -108,9 +108,14 @@ export function ConfirmMatchForm({
   const [saveError, setSaveError] = useState(false)
   const seededRef = useRef(false)
 
-  // Only OPEN items (something still owed) can take an allocation (ADR-206).
+  // Only OPEN items (something still owed AND not forgiven) can take an
+  // allocation: a pardoned item (ADR-210) is no longer a valid payment target
+  // (the API would 404 it), so it never seeds nor appears in the allocation list.
   const openItems = useMemo<ReceivableItem[]>(
-    () => (personQuery.data?.items ?? []).filter((it) => num(it.remaining) > 0),
+    () =>
+      (personQuery.data?.items ?? []).filter(
+        (it) => !it.pardoned && num(it.remaining) > 0,
+      ),
     [personQuery.data?.items],
   )
 

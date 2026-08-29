@@ -31,6 +31,7 @@ from margen_api.domain.commands.receivable import (
     DeletePerson,
     DeleteReceivableItem,
     RecordReceivablePayment,
+    SetReceivableItemPardon,
 )
 from margen_api.domain.models.exceptions import (
     AllocationExceedsPaymentError,
@@ -331,6 +332,76 @@ async def edit_item(
     except ReceivableItemNotFoundError as error:
         raise _item_not_found(item_id) from error
     return ResponseModel(data=await _reload_person(reader, person_id, user.id))
+
+
+async def _set_item_pardon(
+    person_id: UUID,
+    item_id: UUID,
+    *,
+    pardoned: bool,
+    bus: Bus,
+    reader: AbstractReceivableReader,
+    user_id: str,
+) -> ResponseModel[PersonDetailResponse]:
+    """Dispatch a pardon toggle and return the owning person's refreshed detail (ADR-210).
+
+    Shared by the pardon and un-pardon endpoints so both surface the same HTTP contract: a
+    missing or cross-tenant ``item_id`` surfaces :class:`ReceivableItemNotFoundError` mapped
+    to ``404`` (ADR-111). On success the person's detail is re-read so the item's new
+    ``pardoned`` flag and the recomputed ``outstanding`` are returned (pardoning drops the
+    item out of what is owed, un-pardoning restores it).
+    """
+    try:
+        await bus.handle(SetReceivableItemPardon(id=item_id, user_id=user_id, pardoned=pardoned))
+    except ReceivableItemNotFoundError as error:
+        raise _item_not_found(item_id) from error
+    return ResponseModel(data=await _reload_person(reader, person_id, user_id))
+
+
+@router.post(
+    "/people/{person_id}/items/{item_id}/pardon",
+    name="Pardon receivable item",
+    status_code=status.HTTP_200_OK,
+    response_model=ResponseModel[PersonDetailResponse],
+)
+async def pardon_item(
+    person_id: UUID,
+    item_id: UUID,
+    bus: Bus,
+    reader: ReceivableReader,
+    user: AuthUser,
+) -> ResponseModel[PersonDetailResponse]:
+    """Forgive one of the caller's items, dropping it from what is owed (ADR-210, ADR-130).
+
+    Reversible (see :func:`unpardon_item`) and distinct from delete: the item is kept so it
+    can be shown as "covered by you" on the statement. A missing or cross-tenant ``item_id``
+    returns ``404`` (ADR-111). Returns the owning person's refreshed detail with the item now
+    flagged ``pardoned`` and excluded from ``outstanding``.
+    """
+    return await _set_item_pardon(person_id, item_id, pardoned=True, bus=bus, reader=reader, user_id=user.id)
+
+
+@router.post(
+    "/people/{person_id}/items/{item_id}/unpardon",
+    name="Un-pardon receivable item",
+    status_code=status.HTTP_200_OK,
+    response_model=ResponseModel[PersonDetailResponse],
+)
+async def unpardon_item(
+    person_id: UUID,
+    item_id: UUID,
+    bus: Bus,
+    reader: ReceivableReader,
+    user: AuthUser,
+) -> ResponseModel[PersonDetailResponse]:
+    """Restore a previously pardoned item back into what the person owes (ADR-210, ADR-130).
+
+    The inverse of :func:`pardon_item`: clears the pardon so the item counts toward the
+    person's ``outstanding`` again and becomes a valid allocation target once more. A missing
+    or cross-tenant ``item_id`` returns ``404`` (ADR-111). Returns the person's refreshed
+    detail.
+    """
+    return await _set_item_pardon(person_id, item_id, pardoned=False, bus=bus, reader=reader, user_id=user.id)
 
 
 @router.delete(

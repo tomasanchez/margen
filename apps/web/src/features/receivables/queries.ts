@@ -176,6 +176,35 @@ export function useDeleteReceivableItem() {
 }
 
 /**
+ * Forgive an item (ADR-210), then refresh the list + that person's detail + their
+ * match suggestions. Pardoning drops the item from the person's `outstanding` and
+ * removes it as a payment/match target, so all three reads can move — reuse the
+ * same person-wide invalidation as the other item writes.
+ */
+export function usePardonItem() {
+  const invalidate = useInvalidatePerson()
+  return useMutation<PersonDetail, Error, { personId: string; itemId: string }>({
+    mutationFn: ({ personId, itemId }) =>
+      receivablesClient.pardonItem(personId, itemId),
+    onSuccess: (_data, { personId }) => invalidate(personId),
+  })
+}
+
+/**
+ * Un-forgive an item (ADR-210) — the inverse of {@link usePardonItem}. Restores
+ * the item as owed (back in `outstanding` + eligible for payment/match), so the
+ * same person-wide invalidation applies.
+ */
+export function useUnpardonItem() {
+  const invalidate = useInvalidatePerson()
+  return useMutation<PersonDetail, Error, { personId: string; itemId: string }>({
+    mutationFn: ({ personId, itemId }) =>
+      receivablesClient.unpardonItem(personId, itemId),
+    onSuccess: (_data, { personId }) => invalidate(personId),
+  })
+}
+
+/**
  * Input for a manual payment. Omit `allowOverpayment` to get the typed
  * {@link ReceivableOverpaymentError} on a 409 (the UI warns, then retries with
  * `allowOverpayment: true`, ADR-206). `source` defaults to `'manual'`.
