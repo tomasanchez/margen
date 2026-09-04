@@ -287,3 +287,185 @@ class TestRealSantanderVisaUsdDecode:
         assert "CUOTAS" not in names
         assert "PLAN" not in names
         assert "SALDO" not in names
+
+
+# --------------------------------------------------------------------------- #
+# SANITIZED NEW-FORMAT Santander VISA statement (ADR-081). Santander redesigned    #
+# its VISA resumen: PyMuPDF now emits a VERTICAL token stream (one cell per line)   #
+# and it prints the DASHED CUIT (30-50000845-4), so the legacy flat-text            #
+# Santander fingerprints (spaced CUIT) all missed it. Rendering each cell on its    #
+# own line round-trips the same vertical stream the parser expects. All identifiers #
+# and figures are fabricated (fake cardholder / statement number / last-4).         #
+# The cells preserve the real quirks: the anterior/actual/próximo period pairs, a   #
+# cuota row, the "Copia fiel …" + "N de 6" page footer that collides with a cuota   #
+# shape, a USD "dolares" row, reprinted page-2 headers, the Pago-anterior block     #
+# (skipped) and the Impuestos tax section (one FEE).                                #
+# --------------------------------------------------------------------------- #
+_NEW_VISA_CELLS: tuple[str, ...] = (
+    "Resumen Visa",
+    "N° 000000001",
+    "Juan Perez",
+    "CUIT: 30-50000845-4",
+    "Total a pagar",
+    "En pesos",
+    " pesos 185.000,00",
+    "En dólares",
+    " dolares 50,00",
+    "Período",
+    "Cierre",
+    "anterior",
+    "30/06/26",
+    "Vencimiento",
+    "anterior",
+    "07/07/26",
+    "Cierre",
+    "actual",
+    "27/08/26",
+    "Vencimiento",
+    "actual",
+    "04/09/26",
+    "Próximo",
+    "cierre",
+    "01/10/26",
+    "Próximo",
+    "vencimiento",
+    "09/10/26",
+    "Copia fiel de carácter informativo",
+    "1 de 6",
+    # Pago anterior y devoluciones — payments, skipped (they precede the movimientos):
+    "Pago anterior y devoluciones",
+    "07/07/26",
+    "Saldo anterior",
+    " 1.000.000,00 pesos",
+    "Su pago en pesos",
+    " menos 1.000.000,00 pesos",
+    # Movimientos — the date-grouped purchase rows:
+    "Movimientos de Juan Perez",
+    "Visa crédito terminada en 9999",
+    "Fecha",
+    "Descripción",
+    "Cuota",
+    "Comprobante",
+    "Monto en pesos",
+    "Monto en dólares",
+    "10/05/26",
+    "Tienda uno",
+    "4 de 6",
+    "007490",
+    " 68.750,00 pesos",
+    "31/07/26",
+    "Merpago*coto",
+    "162853",
+    " 100.000,00 pesos",
+    # page footer that collides with a cuota shape (M=6), dropped by position:
+    "Copia fiel de carácter informativo",
+    "2 de 6",
+    # reprinted page-2 column header (dropped):
+    "Fecha",
+    "Descripción",
+    "Cuota",
+    "Comprobante",
+    "Monto en pesos",
+    "Monto en dólares",
+    "01/08/26",
+    "Apple store",
+    "444186",
+    " 50,00 dolares",
+    "02/08/26",
+    "Sube viajes - buses",
+    "000270",
+    " 250,00 pesos",
+    "Subtotal de Juan Perez",
+    " Subtotal en pesos. 169.000,00.",
+    # Impuestos — the tax section (one FEE):
+    "Impuestos, intereses y percepciones",
+    "Fecha",
+    "Descripción",
+    "Monto en pesos",
+    "Monto en dólares",
+    "27/08/26",
+    "Impuesto de sellos $",
+    " 16.000,00 pesos",
+    "Total a pagar",
+    " Total en pesos. 185.000,00.",
+)
+
+
+def _new_visa_statement_pdf() -> bytes:
+    """Render the sanitized new-format cells to a real multi-page PDF.
+
+    One cell per line, breaking to a new page before the text runs off the bottom
+    margin — the real statement is six pages, and pagination keeps every cell on
+    the page (a single page would silently drop the cells past its height).
+    """
+    document = fitz.open()
+    page = document.new_page()
+    y = 40.0
+    for cell in _NEW_VISA_CELLS:
+        if y > 760.0:  # break to a new page before overflowing the bottom margin.
+            page = document.new_page()
+            y = 40.0
+        page.insert_text((40, y), cell, fontsize=9)
+        y += 11
+    pdf = document.tobytes()
+    document.close()
+    return bytes(pdf)
+
+
+class TestRealSantanderNewVisaDecode:
+    """The unmocked parser reads a genuine rendered NEW-format Santander VISA PDF."""
+
+    def test_parses_identity_period_and_total(self):
+        """
+        GIVEN a real rendered sanitized new-format Santander VISA statement PDF
+        WHEN parsed through the unmocked PyMuPDF stack (extract_text → parse)
+        THEN the bank identity, the CURRENT (actual) period and the total are read
+        """
+        parsed = parse_statement(_new_visa_statement_pdf())
+
+        assert parsed.status is ParseStatus.OK
+        assert parsed.bank_name == "Santander"
+        assert parsed.network == "VISA"
+        assert parsed.card_last4 == "9999"
+        assert parsed.card == "VISA ·9999"  # card detail split from the bank (ADR-117).
+        assert parsed.issuer_cuit == "30-50000845-4"
+        assert parsed.statement_number == "000000001"
+        assert parsed.period_close == date(2026, 8, 27)
+        assert parsed.period_due == date(2026, 9, 4)
+        assert parsed.total_amount == Decimal("185000.00")
+
+    def test_extracts_the_purchases_the_usd_row_and_the_tax_clean(self):
+        """
+        GIVEN the real rendered new-format statement
+        WHEN parsed
+        THEN the four purchases (incl. the cuota + USD rows) and the one tax come
+             back clean — no page-footer / header / cuota pollution — and reconcile
+        """
+        parsed = parse_statement(_new_visa_statement_pdf())
+
+        purchases = [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE]
+        assert {line.name for line in purchases} == {
+            "Tienda uno",
+            "Merpago*coto",
+            "Apple store",
+            "Sube viajes - buses",
+        }
+        # The installment row carries its cuota; the "2 de 6" page footer did not.
+        tienda = next(line for line in purchases if line.name == "Tienda uno")
+        assert tienda.cuota == "4 de 6"
+        # The "dolares" row is a USD line with no fabricated peso amount.
+        apple = next(line for line in purchases if line.name == "Apple store")
+        assert apple.currency is Currency.USD
+        assert apple.usd_amount == Decimal("50.00")
+        assert apple.amount == Decimal("0")
+        # The ARS purchases plus the one tax reconcile to the total.
+        ars = sum(line.amount for line in purchases if line.currency is Currency.ARS)
+        fees = [line for line in parsed.lines if line.line_kind is LineKind.FEE]
+        assert ars == Decimal("169000.00")
+        assert len(fees) == 1
+        assert fees[0].name == "Impuesto de sellos"
+        assert fees[0].amount == Decimal("16000.00")
+        assert ars + fees[0].amount == parsed.total_amount
+        # No payment / carryover row leaked in from the Pago-anterior block.
+        assert not any("SALDO" in line.name.upper() for line in parsed.lines)
+        assert not any("SU PAGO" in line.name.upper() for line in parsed.lines)
