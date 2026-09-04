@@ -179,6 +179,28 @@ def _parse_dmy(value: str) -> date | None:
         return None
 
 
+def _parse_dmy_slash(value: str) -> date | None:
+    """Parse a ``DD/MM/YY`` statement date into a :class:`date` (PURE).
+
+    The new-format Santander VISA statement prints its period dates with slash
+    separators (e.g. ``27/08/26``); the two-digit year is interpreted as ``20YY``.
+
+    Args:
+        value: The date token (e.g. ``"27/08/26"``).
+
+    Returns:
+        The parsed :class:`date`, or ``None`` when malformed or not a real date.
+    """
+    match = re.fullmatch(r"(\d{2})/(\d{2})/(\d{2})", value.strip())
+    if match is None:
+        return None
+    day, month, year = (int(group) for group in match.groups())
+    try:
+        return date(2000 + year, month, day)
+    except ValueError:
+        return None
+
+
 def _parse_d_mon_y(value: str) -> date | None:
     """Parse a ``DD-Mon-YY`` statement date (Spanish month) into a :class:`date`.
 
@@ -1234,9 +1256,328 @@ class SantanderVisaParser(_SantanderBaseParser):
         return "30 50000845 4" in text and "visa" in lowered and "american  express" not in lowered
 
 
+class SantanderVisaNewFormatParser(StatementParser):
+    """Parser for Santander's REDESIGNED VISA credit-card statement (ADR-076, ADR-089).
+
+    Santander reissued its VISA resumen in a new layout that the legacy flat-text
+    :class:`SantanderVisaParser` cannot read: PyMuPDF emits it as a VERTICAL token
+    stream (one cell per line, like Galicia) and it prints the DASHED issuer CUIT
+    (``30-50000845-4``) rather than the legacy spaced form (``30 50000845 4``) — so
+    every legacy Santander fingerprint missed it and the document fell through to
+    ``UNSUPPORTED``.
+
+    The layout: a header carrying ``Total a pagar`` and a ``Período`` block of
+    ``anterior``/``actual``/``próximo`` date pairs (the current statement uses the
+    ``actual`` pair); a ``Pago anterior y devoluciones`` block (skipped — payments,
+    not purchases); a ``Movimientos de {name}`` section of DATE-GROUPED purchase rows
+    (Description / optional Cuota ``N de M`` / Comprobante / a ``<amount> pesos|dolares``
+    money cell), closed by ``Subtotal``; and an ``Impuestos, intereses y percepciones``
+    section of tax rows (Description / money cell, no cuota/comprobante), closed by
+    ``Total a pagar``. Works entirely off the flat text layer so it stays pure and
+    unit-testable.
+    """
+
+    # A standalone DD/MM/YY date cell — it opens a date group; rows without a
+    # leading date reuse the group's date (ADR-076 layout).
+    _SLASH_DATE = re.compile(r"^\d{2}/\d{2}/\d{2}$")
+    # A cuota cell such as "4 de 6". Structurally identical to the page-footer
+    # counter ("2 de 6"); the two are told apart by POSITION in :meth:`_denoise`
+    # (the footer always immediately follows the "Copia fiel …" line, a cuota never
+    # does), so by the time a "N de M" cell reaches a row it is unambiguously a cuota.
+    _CUOTA = re.compile(r"^\d+ de \d+$")
+    # The per-page footer counter ("1 de 6") — same shape as a cuota, dropped only
+    # when it immediately follows the "Copia fiel …" marker (see :meth:`_denoise`).
+    _PAGE_FOOTER = re.compile(r"^\d+ de \d+$")
+    # A standalone comprobante (voucher) reference cell — 4-6 bare digits.
+    _COMPROBANTE = re.compile(r"^\d{4,6}$")
+    # A money cell: an es-AR amount then its currency word, e.g. "68.750,00 pesos"
+    # or "12,34 dolares" (a leading space is stripped before matching). The currency
+    # word selects ARS vs USD.
+    _AMOUNT = re.compile(r"^(-?\d{1,3}(?:\.\d{3})*,\d{2})\s+(pesos|dolares)$")
+
+    # Statement number line, e.g. "N° 001090070" (the "Cuenta N° …" line starts with
+    # "Cuenta", so the ^N anchor never mismatches it).
+    _STATEMENT_NO = re.compile(r"(?m)^N\D{0,3}(\d{6,})\s*$")
+    # Card last-4, from "Visa crédito terminada en 1041".
+    _LAST4 = re.compile(r"terminada en (\d{4})\b", re.IGNORECASE)
+    # The grand total, from the page-3 " Total en pesos. 1.156.019,82." line
+    # (case-sensitive "Total" so it never matches "Subtotal en pesos.").
+    _TOTAL = re.compile(r"Total en pesos\.\s*(\d{1,3}(?:\.\d{3})*,\d{2})")
+    # Header fallback for the total: the " pesos 1.156.019,82" cell under "Total a
+    # pagar" → "En pesos" (the first such cell is the amount due).
+    _TOTAL_HEADER = re.compile(r"(?m)^\s*pesos\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s*$")
+
+    def fingerprint(self, text: str) -> bool:
+        """Detect the redesigned Santander VISA statement (ADR-076).
+
+        Requires the new-layout markers (``Resumen Visa`` header plus a
+        ``Movimientos de``/``Subtotal en pesos`` section) AND a Santander issuer
+        signal (the dashed CUIT or the ``santander`` word). The legacy Santander
+        parsers key on the SPACED CUIT and lack these section markers, so they and
+        this parser are mutually exclusive.
+        """
+        lowered = text.lower()
+        has_issuer = _SANTANDER_CUIT in text or "santander" in lowered
+        has_new_layout = "movimientos de" in lowered or "subtotal en pesos" in lowered
+        return "resumen visa" in lowered and has_issuer and has_new_layout
+
+    def parse(self, text: str) -> ParsedStatement:
+        """Extract the redesigned Santander VISA metadata and line drafts (ADR-089)."""
+        tokens = [raw.strip() for raw in text.splitlines()]
+        period_close, period_due = self._periods(tokens)
+        card_last4 = self._first_group(self._LAST4, text)
+        statement_number = self._first_group(self._STATEMENT_NO, text)
+        total_amount = self._total(text)
+
+        # ADR-089: every line counts on the statement due date; purchases fall back
+        # to their own FECHA when no due date parsed, fees to the closing date.
+        purchases = self._purchases(tokens, period_due)
+        fee_date = period_due if period_due is not None else period_close
+        fees = self._fees(tokens, fee_date)
+        lines = purchases + fees
+
+        suffix = f" {_MIDDOT}{card_last4}" if card_last4 else ""
+        natural_key = StatementNaturalKey(
+            issuer_cuit=_SANTANDER_CUIT,
+            card_last4=card_last4,
+            statement_number=statement_number,
+        )
+        status = ParseStatus.OK if lines else ParseStatus.UNPARSEABLE
+        return ParsedStatement(
+            status=status,
+            extracted_text=text,
+            bank_name="Santander",
+            network="VISA",
+            card_last4=card_last4,
+            card=f"VISA{suffix}",
+            statement_number=statement_number,
+            issuer_cuit=_SANTANDER_CUIT,
+            period_close=period_close,
+            period_due=period_due,
+            total_amount=total_amount,
+            natural_key=natural_key,
+            lines=lines,
+        )
+
+    @staticmethod
+    def _first_group(pattern: re.Pattern[str], text: str) -> str | None:
+        """Return the first capture group of ``pattern`` in ``text``, or ``None``."""
+        match = pattern.search(text)
+        return match.group(1) if match is not None else None
+
+    def _periods(self, tokens: list[str]) -> tuple[date | None, date | None]:
+        """Pull the CURRENT (``actual``) close and due dates from the Período block.
+
+        The block prints ``Cierre``/``Vencimiento`` each followed by an
+        ``anterior``/``actual`` qualifier and a ``DD/MM/YY`` date; the current
+        statement is the ``actual`` pair. Parsed defensively — absent pairs stay
+        ``None``.
+        """
+        close = due = None
+        for index in range(len(tokens) - 2):
+            if tokens[index + 1] != "actual":
+                continue
+            if tokens[index] == "Cierre":
+                close = _parse_dmy_slash(tokens[index + 2])
+            elif tokens[index] == "Vencimiento":
+                due = _parse_dmy_slash(tokens[index + 2])
+        return close, due
+
+    def _total(self, text: str) -> Decimal | None:
+        """Read the pesos grand total, preferring the total line over the header."""
+        token = self._first_group(self._TOTAL, text)
+        if token is None:
+            token = self._first_group(self._TOTAL_HEADER, text)
+        return _parse_ar_decimal(token) if token is not None else None
+
+    @staticmethod
+    def _slice(
+        tokens: list[str],
+        starts: Callable[[str], bool],
+        ends: Callable[[str], bool],
+    ) -> list[str]:
+        """Return the cells strictly between the first ``starts`` cell and the first
+        following ``ends`` cell (or end of stream)."""
+        start_at = next((i for i, token in enumerate(tokens) if starts(token)), None)
+        if start_at is None:
+            return []
+        end_at = next(
+            (i for i in range(start_at + 1, len(tokens)) if ends(tokens[i])),
+            len(tokens),
+        )
+        return tokens[start_at + 1 : end_at]
+
+    def _denoise(self, section: list[str]) -> list[str]:
+        """Drop reprinted page chrome from a section's cells (ADR-076).
+
+        Each page reprints the column-title header (``Fecha``/``Descripción``/…) and
+        ends with a ``Copia fiel …`` line followed by a ``N de M`` page counter. The
+        counter is shape-identical to a cuota, so it is dropped ONLY when it
+        immediately follows the ``Copia fiel …`` marker (a cuota never does); a
+        surviving ``N de M`` cell is therefore always a genuine cuota.
+        """
+        cleaned: list[str] = []
+        expect_footer = False
+        for token in section:
+            if expect_footer:
+                expect_footer = False
+                if self._PAGE_FOOTER.match(token):
+                    continue  # the per-page counter after "Copia fiel …" — drop it.
+            if token.startswith("Copia fiel"):
+                expect_footer = True
+                continue
+            if self._is_header_noise(token):
+                continue
+            cleaned.append(token)
+        return cleaned
+
+    def _is_header_noise(self, token: str) -> bool:
+        """Return whether a cell is a reprinted column title / card-line to ignore."""
+        if token.startswith("Visa cr"):  # the "Visa crédito terminada en …" reprint.
+            return True
+        return (
+            token in {"Fecha", "Cuota", "Comprobante"} or token.startswith("Descripci") or token.startswith("Monto en")
+        )
+
+    def _rows(self, cleaned: list[str]) -> list[tuple[date | None, list[str], str, str]]:
+        """Group denoised cells into ``(row_date, buffer, amount, currency)`` rows.
+
+        A ``DD/MM/YY`` cell sets the current group date; other cells buffer until a
+        money cell closes the row. Each row inherits the current group date.
+        """
+        rows: list[tuple[date | None, list[str], str, str]] = []
+        current_date: date | None = None
+        buffer: list[str] = []
+        for token in cleaned:
+            if self._SLASH_DATE.match(token):
+                current_date = _parse_dmy_slash(token)
+                continue
+            amount = self._AMOUNT.match(token)
+            if amount is not None:
+                rows.append((current_date, buffer, amount.group(1), amount.group(2)))
+                buffer = []
+                continue
+            buffer.append(token)
+        return rows
+
+    def _purchases(self, tokens: list[str], pay_date: date | None) -> list[StatementLineDraft]:
+        """Parse the ``Movimientos de …`` purchase rows into drafts (ADR-089)."""
+        section = self._denoise(
+            self._slice(tokens, lambda t: t.startswith("Movimientos de"), lambda t: t.startswith("Subtotal"))
+        )
+        drafts: list[StatementLineDraft] = []
+        for row_date, buffer, amount, currency in self._rows(section):
+            draft = self._build_purchase(row_date, buffer, amount, currency, pay_date)
+            if draft is not None:
+                drafts.append(draft)
+        return drafts
+
+    def _build_purchase(
+        self,
+        purchase_date: date | None,
+        buffer: list[str],
+        amount_token: str,
+        currency: str,
+        pay_date: date | None,
+    ) -> StatementLineDraft | None:
+        """Build one purchase draft from a grouped row, or ``None`` when incomplete."""
+        if purchase_date is None:
+            return None
+        amount = _parse_ar_decimal(amount_token)
+        if amount is None:  # pragma: no cover - _AMOUNT pre-filter guarantees a parseable amount
+            return None
+        occurred_on = pay_date if pay_date is not None else purchase_date
+        cuota = next((cell for cell in buffer if self._CUOTA.match(cell)), None)
+        name = " ".join(
+            cell for cell in buffer if not self._CUOTA.match(cell) and not self._COMPROBANTE.match(cell)
+        ).strip()
+        if not name:
+            return None
+
+        # A "dolares" money cell is a USD line billed only in dollars: carry
+        # amount=0 (no fabricated peso figure) and leave FX for the review UI (ADR-079).
+        if currency == "dolares":
+            return StatementLineDraft(
+                occurred_on=occurred_on,
+                purchase_date=purchase_date,
+                name=name,
+                amount=Decimal("0"),
+                currency=Currency.USD,
+                line_kind=LineKind.PURCHASE,
+                usd_amount=abs(amount),
+                fx_rate=None,
+                fx_rate_type=None,
+                category=guess_category(name),
+                cuota=cuota,
+            )
+        return StatementLineDraft(
+            occurred_on=occurred_on,
+            purchase_date=purchase_date,
+            name=name,
+            amount=abs(amount),
+            currency=Currency.ARS,
+            line_kind=LineKind.PURCHASE,
+            category=guess_category(name),
+            cuota=cuota,
+        )
+
+    def _fees(self, tokens: list[str], pay_date: date | None) -> list[StatementLineDraft]:
+        """Parse the ``Impuestos, intereses y percepciones`` tax rows as FEE drafts.
+
+        Each tax row is DATE / Description / money cell (no cuota, no comprobante);
+        these are NOT netted (unlike Galicia's COM/BONI pairs). ``pay_date`` is the
+        due date, falling back to the closing date; a wholly date-less statement
+        (``pay_date`` still ``None``) emits no fees.
+        """
+        section = self._denoise(
+            self._slice(
+                tokens,
+                lambda t: t.startswith("Impuestos, intereses"),
+                lambda t: t.startswith("Total a pagar"),
+            )
+        )
+        drafts: list[StatementLineDraft] = []
+        for row_date, buffer, amount, _currency in self._rows(section):
+            draft = self._build_fee(row_date, buffer, amount, pay_date)
+            if draft is not None:
+                drafts.append(draft)
+        return drafts
+
+    def _build_fee(
+        self,
+        fee_date: date | None,
+        buffer: list[str],
+        amount_token: str,
+        pay_date: date | None,
+    ) -> StatementLineDraft | None:
+        """Build one FEE draft from a tax row, or ``None`` when it is not chargeable."""
+        if fee_date is None or pay_date is None:
+            return None
+        amount = _parse_ar_decimal(amount_token)
+        if amount is None or amount <= Decimal("0"):
+            return None
+        name = " ".join(" ".join(buffer).replace("$", " ").split())
+        if not name:
+            return None
+        return StatementLineDraft(
+            occurred_on=pay_date,
+            purchase_date=fee_date,
+            name=name,
+            amount=abs(amount),
+            currency=Currency.ARS,
+            line_kind=LineKind.FEE,
+            category=None,
+            cuota=None,
+        )
+
+
 # Module-level registry of bank parsers. New banks are additive (ADR-076).
 BANK_PARSERS: list[StatementParser] = [
     GaliciaVisaParser(),
+    # The redesigned Santander VISA (dashed CUIT + vertical layout) — checked before
+    # the legacy Santander parsers; their fingerprints are mutually exclusive (the
+    # legacy ones key on the spaced CUIT and lack the new section markers).
+    SantanderVisaNewFormatParser(),
     SantanderAmexParser(),  # checked before VISA — AMEX statements also mention "visa"
     SantanderVisaParser(),
 ]

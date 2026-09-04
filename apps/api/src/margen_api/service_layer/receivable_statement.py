@@ -557,7 +557,7 @@ def _html_to_pdf(html: str) -> bytes:  # pragma: no cover - native WeasyPrint bo
 
     pdf = weasyprint.HTML(string=html, base_url=str(_ASSETS_DIR)).write_pdf()
     if pdf is None:  # write_pdf() returns bytes when no target path is given; defensive only.
-        raise RuntimeError("WeasyPrint returned no PDF bytes.")
+        raise RuntimeError("WeasyPrint returned no PDF bytes.")  # noqa: TRY003
     return pdf
 
 

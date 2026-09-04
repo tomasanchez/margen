@@ -30,10 +30,12 @@ from margen_api.service_layer.statement_parser import (
     BANK_PARSERS,
     GaliciaVisaParser,
     SantanderAmexParser,
+    SantanderVisaNewFormatParser,
     SantanderVisaParser,
     _parse_ar_decimal,
     _parse_d_mon_y,
     _parse_dmy,
+    _parse_dmy_slash,
     extract_text,
     extract_words,
     guess_category,
@@ -2252,3 +2254,716 @@ class TestSantanderVisaFlatEdgeCases:
         # THEN
         assert parsed.status is ParseStatus.UNPARSEABLE
         assert parsed.lines == []
+
+
+# --------------------------------------------------------------------------- #
+# SANITIZED NEW-FORMAT Santander VISA fixture (ADR-081). Santander redesigned    #
+# its VISA resumen: PyMuPDF now emits a VERTICAL token stream (one cell per line, #
+# like Galicia) and it prints the DASHED CUIT (30-50000845-4), so the legacy      #
+# flat-text Santander fingerprints (spaced CUIT) all missed it. This fixture is    #
+# one PyMuPDF cell per line and reproduces the real quirks with FAKE data (no PII):#
+#   - the Período block's anterior/actual/próximo pairs (the CURRENT statement is  #
+#     the "actual" pair: close 27/08/26, due 04/09/26);                            #
+#   - date-grouped rows (a bare date sets the group; later rows reuse it);          #
+#   - a cuota row ("4 de 6");                                                       #
+#   - the "Copia fiel …" + "N de 6" page footer that COLLIDES with a cuota shape    #
+#     (here M=6 too) — disambiguated by position (the footer follows "Copia fiel");#
+#   - a USD "dolares" row (proves currency handling);                              #
+#   - reprinted column headers atop page 2;                                        #
+#   - the "Pago anterior y devoluciones" block (payments — skipped);              #
+#   - the "Impuestos, intereses y percepciones" tax section (one FEE).            #
+# --------------------------------------------------------------------------- #
+
+_SANTANDER_NEW_VISA_TEXT = """\
+Resumen Visa
+N° 000000001
+Juan Perez
+Calle Falsa 123, CP1000
+Ciudad Test, Buenos Aires
+Cuenta N° 0000000000
+Sucursal Test (000)
+CUIT: 30-50000845-4
+Total a pagar
+En pesos
+ pesos 185.000,00
+En dólares
+ dolares 50,00
+Mínimo a pagar
+ pesos 20.000,00
+Período
+Período de consumos
+Cierre
+anterior
+30/06/26
+Vencimiento
+anterior
+07/07/26
+Cierre
+actual
+27/08/26
+Vencimiento
+actual
+04/09/26
+Próximo
+cierre
+01/10/26
+Próximo
+vencimiento
+09/10/26
+Copia fiel de carácter informativo
+1 de 6
+Tarjetas incluidas en el resumen
+Tarjeta Terminada
+ en 9999 de Juan
+Perez
+Total consumido
+169.000,00 p
+esos, 50,00 dólares
+Pago anterior y devoluciones
+Fecha
+Descripción
+Monto en pesos
+Monto en dólares
+07/07/26
+Saldo anterior
+ 1.000.000,00 pesos
+Su pago en pesos
+ menos 1.000.000,00 pesos
+Saldo del resumen anterior
+ Saldo en pesos. 0,00.
+ Saldo en dolares. 0,00.
+Movimientos de Juan Perez
+Visa crédito terminada en 9999
+Fecha
+Descripción
+Cuota
+Comprobante
+Monto en pesos
+Monto en dólares
+10/05/26
+Tienda uno
+4 de 6
+007490
+ 68.750,00 pesos
+31/07/26
+Merpago*coto
+162853
+ 100.000,00 pesos
+Copia fiel de carácter informativo
+2 de 6
+Fecha
+Descripción
+Cuota
+Comprobante
+Monto en pesos
+Monto en dólares
+01/08/26
+Apple store
+444186
+ 50,00 dolares
+02/08/26
+Sube viajes - buses
+000270
+ 250,00 pesos
+Subtotal de Juan Perez
+ Subtotal en pesos. 169.000,00.
+ Subtotal en dolares. 50,00.
+Impuestos, intereses y percepciones
+Fecha
+Descripción
+Monto en pesos
+Monto en dólares
+27/08/26
+Impuesto de sellos $
+ 16.000,00 pesos
+Copia fiel de carácter informativo
+3 de 6
+Total a pagar
+ Total en pesos. 185.000,00.
+ Total en dolares. 50,00.
+"""
+
+
+def _new_visa_header(*, with_period: bool = True) -> list[str]:
+    """The minimal fingerprinting new-format header cells, optional period pair.
+
+    Carries the "Resumen Visa" marker and the dashed CUIT so the fingerprint
+    engages; the "actual" close/due pair is included unless a test wants a
+    period-less (pay-date-None) statement.
+    """
+    header = ["Resumen Visa", "CUIT: 30-50000845-4"]
+    if with_period:
+        header += ["Cierre", "actual", "27/08/26", "Vencimiento", "actual", "04/09/26"]
+    return header
+
+
+class TestSantanderNewVisaFullFixture:
+    """The new-format Santander VISA parser reads the redesigned statement end to end."""
+
+    @pytest.fixture(name="parsed")
+    def fixture_parsed(self) -> ParsedStatement:
+        """Parse the canonical sanitized new-format Santander VISA text once."""
+        return SantanderVisaNewFormatParser().parse(_SANTANDER_NEW_VISA_TEXT)
+
+    def test_extracts_statement_metadata(self, parsed: ParsedStatement):
+        """
+        GIVEN the sanitized redesigned Santander VISA statement text
+        WHEN it is parsed
+        THEN every statement-level field is extracted with its expected value
+        """
+        # THEN — the CURRENT period is the "actual" pair, never the anterior/próximo.
+        assert parsed.status is ParseStatus.OK
+        assert parsed.bank_name == "Santander"
+        assert parsed.network == "VISA"
+        assert parsed.card_last4 == "9999"
+        assert parsed.card == "VISA ·9999"  # card detail split from the bank (ADR-117).
+        assert parsed.statement_number == "000000001"
+        assert parsed.issuer_cuit == "30-50000845-4"
+        assert parsed.period_close == date(2026, 8, 27)
+        assert parsed.period_due == date(2026, 9, 4)
+        assert parsed.total_amount == Decimal("185000.00")
+
+    def test_derives_the_natural_key(self, parsed: ParsedStatement):
+        """
+        GIVEN the parsed statement
+        WHEN its natural key is read
+        THEN it carries the dashed issuer CUIT, the card last-4 and statement number
+        """
+        # THEN
+        assert parsed.natural_key is not None
+        assert parsed.natural_key.issuer_cuit == "30-50000845-4"
+        assert parsed.natural_key.card_last4 == "9999"
+        assert parsed.natural_key.statement_number == "000000001"
+
+    def test_extracts_the_four_purchase_lines_clean(self, parsed: ParsedStatement):
+        """
+        GIVEN the parsed statement
+        WHEN the purchase lines are read
+        THEN exactly the four movimientos rows are present with clean names — no
+             page-footer, reprinted-header or cuota pollution, payments skipped
+        """
+        # THEN
+        purchases = [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE]
+        assert len(purchases) == 4
+        assert {line.name for line in purchases} == {
+            "Tienda uno",
+            "Merpago*coto",
+            "Apple store",
+            "Sube viajes - buses",
+        }
+        # AND — no page-footer / header / cuota token leaked into any name.
+        joined = " ".join(line.name for line in purchases)
+        assert "de 6" not in joined
+        assert "Fecha" not in joined
+        assert "Monto" not in joined
+        assert "Comprobante" not in joined
+
+    def test_installment_row_carries_its_cuota_not_the_page_footer(self, parsed: ParsedStatement):
+        """
+        GIVEN the "Tienda uno" row prints a cuota "4 de 6" while a page footer
+              "2 de 6" (same shape, same M) sits after "Copia fiel …" mid-section
+        WHEN it is parsed
+        THEN the row carries the cuota "4 de 6" and the footer was dropped, not
+             mistaken for a cuota (the position-based disambiguation)
+        """
+        # THEN
+        line = _by_name(parsed, "Tienda uno")
+        assert line is not None
+        assert line.cuota == "4 de 6"
+        assert line.amount == Decimal("68750.00")
+        assert line.currency is Currency.ARS
+        assert line.occurred_on == date(2026, 9, 4)  # the statement due date (ADR-089).
+        assert line.purchase_date == date(2026, 5, 10)  # the row's own FECHA.
+
+    def test_maps_the_dolares_row_as_a_usd_line(self, parsed: ParsedStatement):
+        """
+        GIVEN the "Apple store" row whose money cell ends in "dolares"
+        WHEN it is parsed
+        THEN it is a USD line with usd_amount set, no fabricated peso amount, FX left
+             for the review UI (ADR-079)
+        """
+        # THEN
+        line = _by_name(parsed, "Apple store")
+        assert line is not None
+        assert line.currency is Currency.USD
+        assert line.amount == Decimal("0")
+        assert line.usd_amount == Decimal("50.00")
+        assert line.fx_rate is None
+        assert line.fx_rate_type is None
+
+    def test_ars_rows_carry_their_peso_amounts(self, parsed: ParsedStatement):
+        """
+        GIVEN the ordinary "pesos" rows
+        WHEN they are parsed
+        THEN each is an ARS line carrying its peso amount and guessed category
+        """
+        # THEN
+        coto = _by_name(parsed, "Merpago*coto")
+        assert coto is not None
+        assert coto.currency is Currency.ARS
+        assert coto.amount == Decimal("100000.00")
+        assert coto.category == "Food"  # grocery chain by CONTAINS.
+        sube = _by_name(parsed, "Sube viajes - buses")
+        assert sube is not None
+        assert sube.amount == Decimal("250.00")
+        assert sube.category == "Transport"
+
+    def test_captures_exactly_the_one_tax_as_a_fee(self, parsed: ParsedStatement):
+        """
+        GIVEN the "Impuestos, intereses y percepciones" section's single tax
+        WHEN it is parsed
+        THEN exactly one FEE line is emitted, the trailing "$" stripped, dated on the
+             due date with its own row date as purchase_date (ADR-089)
+        """
+        # THEN
+        fees = [line for line in parsed.lines if line.line_kind is LineKind.FEE]
+        assert len(fees) == 1
+        assert fees[0].name == "Impuesto de sellos"
+        assert fees[0].amount == Decimal("16000.00")
+        assert fees[0].currency is Currency.ARS
+        assert fees[0].occurred_on == date(2026, 9, 4)
+        assert fees[0].purchase_date == date(2026, 8, 27)
+        assert fees[0].category is None
+
+    def test_reconciles_purchases_plus_fee_to_the_total(self, parsed: ParsedStatement):
+        """
+        GIVEN the parsed statement
+        WHEN the ARS purchases and the fee are summed
+        THEN they reconcile to the printed total (the fixture mirrors the real PDF's
+             purchases + taxes = total identity)
+        """
+        # THEN
+        ars_purchases = sum(
+            line.amount
+            for line in parsed.lines
+            if line.line_kind is LineKind.PURCHASE and line.currency is Currency.ARS
+        )
+        fees = sum(line.amount for line in parsed.lines if line.line_kind is LineKind.FEE)
+        assert ars_purchases == Decimal("169000.00")
+        assert ars_purchases + fees == parsed.total_amount
+
+    def test_skips_the_pago_anterior_block(self, parsed: ParsedStatement):
+        """
+        GIVEN the "Pago anterior y devoluciones" block precedes the movimientos
+        WHEN the statement is parsed
+        THEN none of its Saldo / Su pago rows became a line (they are not purchases)
+        """
+        # THEN
+        names = [line.name.upper() for line in parsed.lines]
+        assert not any("SALDO" in name for name in names)
+        assert not any("SU PAGO" in name for name in names)
+
+
+class TestSantanderNewVisaFingerprint:
+    """The new-format fingerprint matches only the redesigned layout (ADR-076)."""
+
+    def test_matches_the_new_format_text(self):
+        """GIVEN the new-format fixture WHEN fingerprinted THEN it matches."""
+        assert SantanderVisaNewFormatParser().fingerprint(_SANTANDER_NEW_VISA_TEXT) is True
+
+    def test_matches_on_the_santander_word_without_the_dashed_cuit(self):
+        """
+        GIVEN new-layout markers plus the "santander" word but not the dashed CUIT
+        WHEN fingerprinted
+        THEN it still matches (either issuer signal satisfies the issuer half)
+        """
+        text = "Resumen Visa\nBanco Santander\nMovimientos de Juan\n"
+        assert SantanderVisaNewFormatParser().fingerprint(text) is True
+
+    def test_rejects_the_legacy_flat_santander_visa_text(self):
+        """
+        GIVEN the LEGACY flat-text Santander VISA fixture (spaced CUIT, no new markers)
+        WHEN the new-format fingerprint runs
+        THEN it does NOT match — the two Santander parsers are mutually exclusive
+        """
+        assert SantanderVisaNewFormatParser().fingerprint(_SANTANDER_VISA_TEXT) is False
+        assert SantanderVisaNewFormatParser().fingerprint(_SANTANDER_VISA_FLAT_TEXT) is False
+
+    def test_rejects_the_galicia_text(self):
+        """GIVEN the Galicia fixture WHEN fingerprinted THEN the new format rejects it."""
+        assert SantanderVisaNewFormatParser().fingerprint(_GALICIA_VISA_TEXT) is False
+
+    def test_requires_the_resumen_visa_marker(self):
+        """
+        GIVEN issuer + section markers but NO "Resumen Visa" header
+        WHEN fingerprinted
+        THEN it does not match (the header marker is required)
+        """
+        text = "CUIT: 30-50000845-4\nMovimientos de Juan\n"
+        assert SantanderVisaNewFormatParser().fingerprint(text) is False
+
+    def test_requires_a_section_marker(self):
+        """
+        GIVEN the header + issuer but NEITHER "Movimientos de" NOR "Subtotal en pesos"
+        WHEN fingerprinted
+        THEN it does not match (a section marker is required)
+        """
+        text = "Resumen Visa\nCUIT: 30-50000845-4\n"
+        assert SantanderVisaNewFormatParser().fingerprint(text) is False
+
+    def test_legacy_santander_fingerprints_reject_the_new_format(self):
+        """
+        GIVEN the new-format text (dashed CUIT, no double-space AMEX header)
+        WHEN the LEGACY Santander fingerprints run
+        THEN neither matches — the legacy parsers key on the SPACED CUIT
+        """
+        assert SantanderAmexParser().fingerprint(_SANTANDER_NEW_VISA_TEXT) is False
+        assert SantanderVisaParser().fingerprint(_SANTANDER_NEW_VISA_TEXT) is False
+
+
+class TestSantanderNewVisaEdgeCases:
+    """Defensive branches of the new-format vertical-stream parser."""
+
+    def test_period_less_purchase_falls_back_to_its_own_date(self):
+        """
+        GIVEN a fingerprinting statement WITHOUT the Período block AND no Subtotal
+              terminator (the movimientos section runs to end of stream)
+        WHEN it is parsed (so period_due is None)
+        THEN the purchase's occurred_on falls back to its own FECHA, and the section
+             finder tolerates the missing terminator
+        """
+        # GIVEN — no period pair, no Subtotal close.
+        text = "\n".join(
+            [
+                *_new_visa_header(with_period=False),
+                "Movimientos de Juan",
+                "10/05/26",
+                "Tienda uno",
+                "007490",
+                " 68.750,00 pesos",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaNewFormatParser().parse(text)
+
+        # THEN — no due date parsed → occurred_on == purchase_date; the row still parsed.
+        assert parsed.period_close is None
+        assert parsed.period_due is None
+        assert parsed.total_amount is None
+        line = _by_name(parsed, "Tienda uno")
+        assert line is not None
+        assert line.occurred_on == date(2026, 5, 10)
+        assert line.purchase_date == date(2026, 5, 10)
+
+    def test_total_falls_back_to_the_header_amount(self):
+        """
+        GIVEN a statement with NO "Total en pesos." line but a header "pesos …" cell
+        WHEN the total is read
+        THEN it falls back to the header amount (the first amount-due cell)
+        """
+        # GIVEN — only the header total cell, no page-3 "Total en pesos." line.
+        text = "\n".join(
+            [
+                "Resumen Visa",
+                "CUIT: 30-50000845-4",
+                "Total a pagar",
+                "En pesos",
+                " pesos 99.999,00",
+                "Movimientos de Juan",
+                "10/05/26",
+                "Tienda uno",
+                "007490",
+                " 68.750,00 pesos",
+                "Subtotal de Juan",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaNewFormatParser().parse(text)
+
+        # THEN
+        assert parsed.total_amount == Decimal("99999.00")
+
+    def test_amount_before_any_date_yields_no_purchase(self):
+        """
+        GIVEN a movimientos money cell that appears before any date cell
+        WHEN it is parsed
+        THEN the row has no date and produces no purchase line (the date guard)
+        """
+        # GIVEN — an amount with no preceding date in the section.
+        text = "\n".join(
+            [
+                *_new_visa_header(),
+                "Movimientos de Juan",
+                " 68.750,00 pesos",
+                "Subtotal de Juan",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaNewFormatParser().parse(text)
+
+        # THEN
+        assert parsed.status is ParseStatus.UNPARSEABLE
+        assert [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE] == []
+
+    def test_row_with_only_a_comprobante_has_no_name_and_is_dropped(self):
+        """
+        GIVEN a dated row whose only non-money cell is a comprobante number
+        WHEN it is parsed
+        THEN the empty merchant name drops the row
+        """
+        # GIVEN — date / comprobante / money, no description.
+        text = "\n".join(
+            [
+                *_new_visa_header(),
+                "Movimientos de Juan",
+                "10/05/26",
+                "007490",
+                " 68.750,00 pesos",
+                "Subtotal de Juan",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaNewFormatParser().parse(text)
+
+        # THEN
+        assert [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE] == []
+
+    def test_copia_fiel_not_followed_by_a_footer_does_not_swallow_a_row(self):
+        """
+        GIVEN a "Copia fiel …" cell NOT immediately followed by a "N de M" counter
+        WHEN it is parsed
+        THEN the non-footer cell is kept (the footer-drop only fires on the counter),
+             and the preceding purchase still parses
+        """
+        # GIVEN — "Copia fiel …" then a plain trailing cell (not a page counter).
+        text = "\n".join(
+            [
+                *_new_visa_header(),
+                "Movimientos de Juan",
+                "10/05/26",
+                "Tienda uno",
+                "007490",
+                " 68.750,00 pesos",
+                "Copia fiel de carácter informativo",
+                "some trailing note",
+                "Subtotal de Juan",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaNewFormatParser().parse(text)
+
+        # THEN — the purchase survives; the parser did not treat the note as a footer.
+        line = _by_name(parsed, "Tienda uno")
+        assert line is not None
+        assert line.amount == Decimal("68750.00")
+
+    def test_zero_amount_fee_is_skipped(self):
+        """
+        GIVEN an "Impuesto de sellos" tax row whose amount is 0,00
+        WHEN it is parsed
+        THEN no FEE line is emitted (non-positive fees are dropped)
+        """
+        # GIVEN
+        text = "\n".join(
+            [
+                *_new_visa_header(),
+                "Movimientos de Juan",
+                "10/05/26",
+                "Tienda uno",
+                "007490",
+                " 68.750,00 pesos",
+                "Subtotal de Juan",
+                "Impuestos, intereses y percepciones",
+                "27/08/26",
+                "Impuesto de sellos $",
+                " 0,00 pesos",
+                "Total a pagar",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaNewFormatParser().parse(text)
+
+        # THEN
+        assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
+
+    def test_fee_row_with_only_a_dollar_sign_has_no_name_and_is_skipped(self):
+        """
+        GIVEN a tax row whose only description cell is the bare "$" separator
+        WHEN it is parsed
+        THEN the empty cleaned name drops the fee
+        """
+        # GIVEN
+        text = "\n".join(
+            [
+                *_new_visa_header(),
+                "Movimientos de Juan",
+                "10/05/26",
+                "Tienda uno",
+                "007490",
+                " 68.750,00 pesos",
+                "Subtotal de Juan",
+                "Impuestos, intereses y percepciones",
+                "27/08/26",
+                "$",
+                " 16.000,00 pesos",
+                "Total a pagar",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaNewFormatParser().parse(text)
+
+        # THEN
+        assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
+
+    def test_undated_fee_row_is_skipped(self):
+        """
+        GIVEN a tax section whose fee cell has no preceding date cell (row date None)
+        WHEN it is parsed
+        THEN the fee is dropped (there is no date to place it on)
+        """
+        # GIVEN — the fee amount appears before any date in the impuestos section.
+        text = "\n".join(
+            [
+                *_new_visa_header(),
+                "Movimientos de Juan",
+                "10/05/26",
+                "Tienda uno",
+                "007490",
+                " 68.750,00 pesos",
+                "Subtotal de Juan",
+                "Impuestos, intereses y percepciones",
+                "Impuesto de sellos $",
+                " 16.000,00 pesos",
+                "Total a pagar",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaNewFormatParser().parse(text)
+
+        # THEN
+        assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
+
+    def test_period_less_statement_skips_the_fee_section(self):
+        """
+        GIVEN a fingerprinting statement with NO Período block carrying a tax row
+        WHEN it is parsed (so the pay/fee date is None)
+        THEN the fee section is skipped (no date to place the fee on)
+        """
+        # GIVEN — no period pair, but a well-formed tax row.
+        text = "\n".join(
+            [
+                *_new_visa_header(with_period=False),
+                "Movimientos de Juan",
+                "10/05/26",
+                "Tienda uno",
+                "007490",
+                " 68.750,00 pesos",
+                "Subtotal de Juan",
+                "Impuestos, intereses y percepciones",
+                "27/08/26",
+                "Impuesto de sellos $",
+                " 16.000,00 pesos",
+                "Total a pagar",
+            ]
+        )
+
+        # WHEN
+        parsed = SantanderVisaNewFormatParser().parse(text)
+
+        # THEN — no fee date at all, so the tax is not emitted (a purchase remains).
+        assert parsed.period_due is None
+        assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
+        assert [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE] != []
+
+    def test_period_actual_qualifier_after_an_unrelated_token_is_ignored(self):
+        """
+        GIVEN an "actual" qualifier whose preceding cell is neither "Cierre" nor
+              "Vencimiento" (a decoy), alongside the real close/due pairs
+        WHEN the period is read
+        THEN the decoy is ignored and only the real Cierre/Vencimiento pairs are taken
+        """
+        # GIVEN — a stray "Otro" + "actual" pair precedes the genuine period pairs.
+        tokens = [
+            "Otro",
+            "actual",
+            "01/01/26",
+            "Cierre",
+            "actual",
+            "27/08/26",
+            "Vencimiento",
+            "actual",
+            "04/09/26",
+        ]
+
+        # WHEN
+        close, due = SantanderVisaNewFormatParser()._periods(tokens)
+
+        # THEN — the decoy did not set either date.
+        assert close == date(2026, 8, 27)
+        assert due == date(2026, 9, 4)
+
+    def test_empty_markers_only_text_is_unparseable(self):
+        """
+        GIVEN a fingerprinting text with a section marker but NO rows
+        WHEN it is parsed
+        THEN the status is UNPARSEABLE (matched, nothing extracted)
+        """
+        # GIVEN — the "Subtotal en pesos" marker satisfies the fingerprint, no rows.
+        text = "Resumen Visa\nCUIT: 30-50000845-4\nSubtotal en pesos.\n"
+
+        # WHEN
+        parsed = SantanderVisaNewFormatParser().parse(text)
+
+        # THEN
+        assert parsed.status is ParseStatus.UNPARSEABLE
+        assert parsed.lines == []
+
+
+class TestSantanderNewVisaRegistryAndOrchestration:
+    """The new-format parser is wired into the registry and picked by parse_statement."""
+
+    def test_registry_contains_the_new_format_parser_before_the_legacy_ones(self):
+        """
+        GIVEN the module-level BANK_PARSERS registry
+        WHEN it is inspected
+        THEN it carries the new-format parser, ordered before the legacy Santander ones
+        """
+        # THEN
+        types = [type(parser) for parser in BANK_PARSERS]
+        assert SantanderVisaNewFormatParser in types
+        assert types.index(SantanderVisaNewFormatParser) < types.index(SantanderVisaParser)
+        assert types.index(SantanderVisaNewFormatParser) < types.index(SantanderAmexParser)
+
+    def test_parse_statement_routes_the_new_format_to_it(self, monkeypatch: pytest.MonkeyPatch):
+        """
+        GIVEN extracted text that fingerprints as the new-format Santander VISA
+        WHEN parse_statement runs (extract_text monkeypatched)
+        THEN it returns the new-format parser's OK result, not UNSUPPORTED
+        """
+        # GIVEN
+        monkeypatch.setattr(statement_parser, "extract_text", lambda _pdf: _SANTANDER_NEW_VISA_TEXT)
+
+        # WHEN
+        parsed = parse_statement(b"%PDF-fake")
+
+        # THEN
+        assert parsed.status is ParseStatus.OK
+        assert parsed.bank_name == "Santander"
+        assert parsed.network == "VISA"
+        assert parsed.card_last4 == "9999"
+        purchases = [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE]
+        assert len(purchases) == 4
+
+
+class TestParseDmySlash:
+    """_parse_dmy_slash parses the new-format DD/MM/YY period dates defensively."""
+
+    def test_parses_a_slash_date_as_20yy(self):
+        """GIVEN a DD/MM/YY token WHEN parsed THEN the year resolves to 20YY."""
+        assert _parse_dmy_slash("27/08/26") == date(2026, 8, 27)
+
+    def test_malformed_token_returns_none(self):
+        """GIVEN a token that is not DD/MM/YY WHEN parsed THEN None comes back."""
+        assert _parse_dmy_slash("2026-08-27") is None
+
+    def test_impossible_calendar_date_returns_none(self):
+        """GIVEN a shape-valid but impossible date WHEN parsed THEN None comes back."""
+        assert _parse_dmy_slash("99/99/99") is None
