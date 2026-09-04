@@ -1256,15 +1256,23 @@ class SantanderVisaParser(_SantanderBaseParser):
         return "30 50000845 4" in text and "visa" in lowered and "american  express" not in lowered
 
 
-class SantanderVisaNewFormatParser(StatementParser):
-    """Parser for Santander's REDESIGNED VISA credit-card statement (ADR-076, ADR-089).
+class SantanderNewFormatParser(StatementParser):
+    """Parser for Santander's REDESIGNED credit-card statement — VISA and AMEX (ADR-076, ADR-089).
 
-    Santander reissued its VISA resumen in a new layout that the legacy flat-text
-    :class:`SantanderVisaParser` cannot read: PyMuPDF emits it as a VERTICAL token
-    stream (one cell per line, like Galicia) and it prints the DASHED issuer CUIT
-    (``30-50000845-4``) rather than the legacy spaced form (``30 50000845 4``) — so
-    every legacy Santander fingerprint missed it and the document fell through to
-    ``UNSUPPORTED``.
+    Santander reissued its resumen in a new layout that the legacy flat-text
+    :class:`SantanderVisaParser` / :class:`SantanderAmexParser` cannot read: PyMuPDF
+    emits it as a VERTICAL token stream (one cell per line, like Galicia) and it
+    prints the DASHED issuer CUIT (``30-50000845-4``) rather than the legacy spaced
+    form (``30 50000845 4``) — so every legacy Santander fingerprint missed it and the
+    document fell through to ``UNSUPPORTED``.
+
+    Both the VISA and the AMEX resúmenes share this layout BYTE-FOR-BYTE; they differ
+    only in the header title (``Resumen Visa`` vs ``Resumen American Express``) and the
+    card-line marker (``Visa crédito terminada en 1041`` vs
+    ``American Express crédito terminada en 3735``). The parser is therefore ONE
+    network-aware reader: it derives the ``network`` (VISA / AMEX) from the title and
+    is otherwise identical for both — the CUIT, the period pairs, the date-grouped
+    rows, the fee section and the totals are all network-agnostic.
 
     The layout: a header carrying ``Total a pagar`` and a ``Período`` block of
     ``anterior``/``actual``/``próximo`` date pairs (the current statement uses the
@@ -1298,7 +1306,9 @@ class SantanderVisaNewFormatParser(StatementParser):
     # Statement number line, e.g. "N° 001090070" (the "Cuenta N° …" line starts with
     # "Cuenta", so the ^N anchor never mismatches it).
     _STATEMENT_NO = re.compile(r"(?m)^N\D{0,3}(\d{6,})\s*$")
-    # Card last-4, from "Visa crédito terminada en 1041".
+    # Card last-4, from the card-line marker "Visa crédito terminada en 1041" or
+    # "American Express crédito terminada en 3735" — the "terminada en" anchor is
+    # network-agnostic (both layouts print it identically).
     _LAST4 = re.compile(r"terminada en (\d{4})\b", re.IGNORECASE)
     # The grand total, from the page-3 " Total en pesos. 1.156.019,82." line
     # (case-sensitive "Total" so it never matches "Subtotal en pesos.").
@@ -1308,22 +1318,35 @@ class SantanderVisaNewFormatParser(StatementParser):
     _TOTAL_HEADER = re.compile(r"(?m)^\s*pesos\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s*$")
 
     def fingerprint(self, text: str) -> bool:
-        """Detect the redesigned Santander VISA statement (ADR-076).
+        """Detect the redesigned Santander statement — VISA or AMEX (ADR-076).
 
-        Requires the new-layout markers (``Resumen Visa`` header plus a
-        ``Movimientos de``/``Subtotal en pesos`` section) AND a Santander issuer
-        signal (the dashed CUIT or the ``santander`` word). The legacy Santander
-        parsers key on the SPACED CUIT and lack these section markers, so they and
-        this parser are mutually exclusive.
+        Requires the new-layout markers (a ``Resumen Visa`` OR
+        ``Resumen American Express`` header plus a ``Movimientos de``/``Subtotal en
+        pesos`` section) AND a Santander issuer signal (the dashed CUIT or the
+        ``santander`` word). The legacy Santander parsers key on the SPACED CUIT and
+        lack these section markers, so they and this parser are mutually exclusive.
         """
         lowered = text.lower()
         has_issuer = _SANTANDER_CUIT in text or "santander" in lowered
         has_new_layout = "movimientos de" in lowered or "subtotal en pesos" in lowered
-        return "resumen visa" in lowered and has_issuer and has_new_layout
+        has_new_title = "resumen visa" in lowered or "resumen american express" in lowered
+        return has_new_title and has_issuer and has_new_layout
+
+    @staticmethod
+    def _detect_network(text: str) -> str:
+        """Derive the card network from the header title (ADR-076).
+
+        The redesigned VISA and AMEX resúmenes share the same layout and differ only
+        in their title token: ``Resumen American Express`` → ``AMEX``, otherwise
+        ``Resumen Visa`` → ``VISA``. The issuer (``Santander``) is reported separately
+        as ``bank_name``.
+        """
+        return "AMEX" if "resumen american express" in text.lower() else "VISA"
 
     def parse(self, text: str) -> ParsedStatement:
-        """Extract the redesigned Santander VISA metadata and line drafts (ADR-089)."""
+        """Extract the redesigned Santander (VISA or AMEX) metadata and line drafts (ADR-089)."""
         tokens = [raw.strip() for raw in text.splitlines()]
+        network = self._detect_network(text)
         period_close, period_due = self._periods(tokens)
         card_last4 = self._first_group(self._LAST4, text)
         statement_number = self._first_group(self._STATEMENT_NO, text)
@@ -1347,9 +1370,9 @@ class SantanderVisaNewFormatParser(StatementParser):
             status=status,
             extracted_text=text,
             bank_name="Santander",
-            network="VISA",
+            network=network,
             card_last4=card_last4,
-            card=f"VISA{suffix}",
+            card=f"{network}{suffix}",
             statement_number=statement_number,
             issuer_cuit=_SANTANDER_CUIT,
             period_close=period_close,
@@ -1432,8 +1455,14 @@ class SantanderVisaNewFormatParser(StatementParser):
         return cleaned
 
     def _is_header_noise(self, token: str) -> bool:
-        """Return whether a cell is a reprinted column title / card-line to ignore."""
-        if token.startswith("Visa cr"):  # the "Visa crédito terminada en …" reprint.
+        """Return whether a cell is a reprinted column title / card-line to ignore.
+
+        The card-line marker that opens the movimientos section (``Visa crédito
+        terminada en 1041`` or ``American Express crédito terminada en 3735``) is
+        detected by its network-agnostic ``terminada en`` anchor, so it never leaks
+        into a purchase name regardless of the card network.
+        """
+        if "terminada en" in token.lower():  # the "… crédito terminada en NNNN" card-line reprint.
             return True
         return (
             token in {"Fecha", "Cuota", "Comprobante"} or token.startswith("Descripci") or token.startswith("Monto en")
@@ -1574,10 +1603,11 @@ class SantanderVisaNewFormatParser(StatementParser):
 # Module-level registry of bank parsers. New banks are additive (ADR-076).
 BANK_PARSERS: list[StatementParser] = [
     GaliciaVisaParser(),
-    # The redesigned Santander VISA (dashed CUIT + vertical layout) — checked before
-    # the legacy Santander parsers; their fingerprints are mutually exclusive (the
-    # legacy ones key on the spaced CUIT and lack the new section markers).
-    SantanderVisaNewFormatParser(),
+    # The redesigned Santander statement — VISA and AMEX share this layout (dashed CUIT
+    # + vertical stream); checked before the legacy Santander parsers, with which its
+    # fingerprint is mutually exclusive (the legacy ones key on the spaced CUIT and lack
+    # the new section markers).
+    SantanderNewFormatParser(),
     SantanderAmexParser(),  # checked before VISA — AMEX statements also mention "visa"
     SantanderVisaParser(),
 ]

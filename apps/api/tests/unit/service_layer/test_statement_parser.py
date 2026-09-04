@@ -30,7 +30,7 @@ from margen_api.service_layer.statement_parser import (
     BANK_PARSERS,
     GaliciaVisaParser,
     SantanderAmexParser,
-    SantanderVisaNewFormatParser,
+    SantanderNewFormatParser,
     SantanderVisaParser,
     _parse_ar_decimal,
     _parse_d_mon_y,
@@ -2384,6 +2384,23 @@ Total a pagar
 """
 
 
+# --------------------------------------------------------------------------- #
+# SANITIZED NEW-FORMAT Santander AMEX fixture — a BYTE-FOR-BYTE twin of the new #
+# VISA layout above, differing ONLY in the header title ("Resumen American     #
+# Express") and the movimientos card-line marker ("American Express crédito    #
+# terminada en 3735"), plus the card last-4. Everything else (dashed CUIT,     #
+# period pairs, date-grouped rows, cuota/footer collision, USD "dolares" row,  #
+# reprinted headers, Pago-anterior block, the one tax) is identical — proving   #
+# the SINGLE network-aware parser reads AMEX with network=AMEX, last4=3735.     #
+# --------------------------------------------------------------------------- #
+_SANTANDER_NEW_AMEX_TEXT = (
+    _SANTANDER_NEW_VISA_TEXT.replace("Resumen Visa", "Resumen American Express")
+    .replace("N° 000000001", "N° 000000002")
+    .replace("Visa crédito terminada en 9999", "American Express crédito terminada en 3735")
+    .replace(" en 9999 de Juan", " en 3735 de Juan")
+)
+
+
 def _new_visa_header(*, with_period: bool = True) -> list[str]:
     """The minimal fingerprinting new-format header cells, optional period pair.
 
@@ -2403,7 +2420,7 @@ class TestSantanderNewVisaFullFixture:
     @pytest.fixture(name="parsed")
     def fixture_parsed(self) -> ParsedStatement:
         """Parse the canonical sanitized new-format Santander VISA text once."""
-        return SantanderVisaNewFormatParser().parse(_SANTANDER_NEW_VISA_TEXT)
+        return SantanderNewFormatParser().parse(_SANTANDER_NEW_VISA_TEXT)
 
     def test_extracts_statement_metadata(self, parsed: ParsedStatement):
         """
@@ -2554,12 +2571,89 @@ class TestSantanderNewVisaFullFixture:
         assert not any("SU PAGO" in name for name in names)
 
 
+class TestSantanderNewAmexFullFixture:
+    """The SAME new-format parser reads the AMEX twin as network=AMEX (ADR-076)."""
+
+    @pytest.fixture(name="parsed")
+    def fixture_parsed(self) -> ParsedStatement:
+        """Parse the sanitized new-format Santander AMEX twin text once."""
+        return SantanderNewFormatParser().parse(_SANTANDER_NEW_AMEX_TEXT)
+
+    def test_derives_the_amex_network_and_card_from_the_title(self, parsed: ParsedStatement):
+        """
+        GIVEN the AMEX twin (identical layout, "Resumen American Express" title)
+        WHEN it is parsed
+        THEN the network is AMEX, the card is "AMEX ·3735" and the bank stays Santander
+        """
+        # THEN — the network is derived from the title, the last-4 from the card-line.
+        assert parsed.status is ParseStatus.OK
+        assert parsed.bank_name == "Santander"
+        assert parsed.network == "AMEX"
+        assert parsed.card_last4 == "3735"
+        assert parsed.card == "AMEX ·3735"  # card detail split from the bank (ADR-117).
+        assert parsed.statement_number == "000000002"
+        assert parsed.issuer_cuit == "30-50000845-4"
+        assert parsed.period_close == date(2026, 8, 27)
+        assert parsed.period_due == date(2026, 9, 4)
+        assert parsed.total_amount == Decimal("185000.00")
+
+    def test_reads_the_same_rows_without_marker_pollution(self, parsed: ParsedStatement):
+        """
+        GIVEN the AMEX twin whose movimientos open with the AMEX card-line marker
+        WHEN it is parsed
+        THEN the four purchases and the one tax come back clean — the "American
+             Express crédito terminada en 3735" marker never leaked into a name — and
+             the ARS purchases plus the fee reconcile to the total
+        """
+        # THEN
+        purchases = [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE]
+        assert {line.name for line in purchases} == {
+            "Tienda uno",
+            "Merpago*coto",
+            "Apple store",
+            "Sube viajes - buses",
+        }
+        joined = " ".join(line.name for line in purchases)
+        assert "American Express" not in joined
+        assert "terminada" not in joined
+        # AND — the USD "dolares" row is a USD line with no fabricated peso amount.
+        apple = _by_name(parsed, "Apple store")
+        assert apple is not None
+        assert apple.currency is Currency.USD
+        assert apple.usd_amount == Decimal("50.00")
+        assert apple.amount == Decimal("0")
+        # AND — the ARS purchases plus the one fee reconcile to the printed total.
+        ars = sum(line.amount for line in purchases if line.currency is Currency.ARS)
+        fees = [line for line in parsed.lines if line.line_kind is LineKind.FEE]
+        assert ars == Decimal("169000.00")
+        assert len(fees) == 1
+        assert fees[0].name == "Impuesto de sellos"
+        assert ars + fees[0].amount == parsed.total_amount
+
+
 class TestSantanderNewVisaFingerprint:
     """The new-format fingerprint matches only the redesigned layout (ADR-076)."""
 
     def test_matches_the_new_format_text(self):
         """GIVEN the new-format fixture WHEN fingerprinted THEN it matches."""
-        assert SantanderVisaNewFormatParser().fingerprint(_SANTANDER_NEW_VISA_TEXT) is True
+        assert SantanderNewFormatParser().fingerprint(_SANTANDER_NEW_VISA_TEXT) is True
+
+    def test_matches_the_new_amex_format_text(self):
+        """
+        GIVEN the AMEX twin ("Resumen American Express" title, dashed CUIT, sections)
+        WHEN fingerprinted
+        THEN it matches (the title branch also admits the AMEX header)
+        """
+        assert SantanderNewFormatParser().fingerprint(_SANTANDER_NEW_AMEX_TEXT) is True
+
+    def test_legacy_santander_fingerprints_reject_the_new_amex_format(self):
+        """
+        GIVEN the new AMEX twin (DASHED CUIT, single-space "American Express")
+        WHEN the LEGACY Santander fingerprints run
+        THEN neither matches — the legacy AMEX keys on the SPACED CUIT + double-space
+        """
+        assert SantanderAmexParser().fingerprint(_SANTANDER_NEW_AMEX_TEXT) is False
+        assert SantanderVisaParser().fingerprint(_SANTANDER_NEW_AMEX_TEXT) is False
 
     def test_matches_on_the_santander_word_without_the_dashed_cuit(self):
         """
@@ -2568,7 +2662,7 @@ class TestSantanderNewVisaFingerprint:
         THEN it still matches (either issuer signal satisfies the issuer half)
         """
         text = "Resumen Visa\nBanco Santander\nMovimientos de Juan\n"
-        assert SantanderVisaNewFormatParser().fingerprint(text) is True
+        assert SantanderNewFormatParser().fingerprint(text) is True
 
     def test_rejects_the_legacy_flat_santander_visa_text(self):
         """
@@ -2576,12 +2670,12 @@ class TestSantanderNewVisaFingerprint:
         WHEN the new-format fingerprint runs
         THEN it does NOT match — the two Santander parsers are mutually exclusive
         """
-        assert SantanderVisaNewFormatParser().fingerprint(_SANTANDER_VISA_TEXT) is False
-        assert SantanderVisaNewFormatParser().fingerprint(_SANTANDER_VISA_FLAT_TEXT) is False
+        assert SantanderNewFormatParser().fingerprint(_SANTANDER_VISA_TEXT) is False
+        assert SantanderNewFormatParser().fingerprint(_SANTANDER_VISA_FLAT_TEXT) is False
 
     def test_rejects_the_galicia_text(self):
         """GIVEN the Galicia fixture WHEN fingerprinted THEN the new format rejects it."""
-        assert SantanderVisaNewFormatParser().fingerprint(_GALICIA_VISA_TEXT) is False
+        assert SantanderNewFormatParser().fingerprint(_GALICIA_VISA_TEXT) is False
 
     def test_requires_the_resumen_visa_marker(self):
         """
@@ -2590,7 +2684,7 @@ class TestSantanderNewVisaFingerprint:
         THEN it does not match (the header marker is required)
         """
         text = "CUIT: 30-50000845-4\nMovimientos de Juan\n"
-        assert SantanderVisaNewFormatParser().fingerprint(text) is False
+        assert SantanderNewFormatParser().fingerprint(text) is False
 
     def test_requires_a_section_marker(self):
         """
@@ -2599,7 +2693,7 @@ class TestSantanderNewVisaFingerprint:
         THEN it does not match (a section marker is required)
         """
         text = "Resumen Visa\nCUIT: 30-50000845-4\n"
-        assert SantanderVisaNewFormatParser().fingerprint(text) is False
+        assert SantanderNewFormatParser().fingerprint(text) is False
 
     def test_legacy_santander_fingerprints_reject_the_new_format(self):
         """
@@ -2635,7 +2729,7 @@ class TestSantanderNewVisaEdgeCases:
         )
 
         # WHEN
-        parsed = SantanderVisaNewFormatParser().parse(text)
+        parsed = SantanderNewFormatParser().parse(text)
 
         # THEN — no due date parsed → occurred_on == purchase_date; the row still parsed.
         assert parsed.period_close is None
@@ -2670,7 +2764,7 @@ class TestSantanderNewVisaEdgeCases:
         )
 
         # WHEN
-        parsed = SantanderVisaNewFormatParser().parse(text)
+        parsed = SantanderNewFormatParser().parse(text)
 
         # THEN
         assert parsed.total_amount == Decimal("99999.00")
@@ -2692,7 +2786,7 @@ class TestSantanderNewVisaEdgeCases:
         )
 
         # WHEN
-        parsed = SantanderVisaNewFormatParser().parse(text)
+        parsed = SantanderNewFormatParser().parse(text)
 
         # THEN
         assert parsed.status is ParseStatus.UNPARSEABLE
@@ -2717,7 +2811,7 @@ class TestSantanderNewVisaEdgeCases:
         )
 
         # WHEN
-        parsed = SantanderVisaNewFormatParser().parse(text)
+        parsed = SantanderNewFormatParser().parse(text)
 
         # THEN
         assert [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE] == []
@@ -2745,7 +2839,7 @@ class TestSantanderNewVisaEdgeCases:
         )
 
         # WHEN
-        parsed = SantanderVisaNewFormatParser().parse(text)
+        parsed = SantanderNewFormatParser().parse(text)
 
         # THEN — the purchase survives; the parser did not treat the note as a footer.
         line = _by_name(parsed, "Tienda uno")
@@ -2777,7 +2871,7 @@ class TestSantanderNewVisaEdgeCases:
         )
 
         # WHEN
-        parsed = SantanderVisaNewFormatParser().parse(text)
+        parsed = SantanderNewFormatParser().parse(text)
 
         # THEN
         assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
@@ -2807,7 +2901,7 @@ class TestSantanderNewVisaEdgeCases:
         )
 
         # WHEN
-        parsed = SantanderVisaNewFormatParser().parse(text)
+        parsed = SantanderNewFormatParser().parse(text)
 
         # THEN
         assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
@@ -2836,7 +2930,7 @@ class TestSantanderNewVisaEdgeCases:
         )
 
         # WHEN
-        parsed = SantanderVisaNewFormatParser().parse(text)
+        parsed = SantanderNewFormatParser().parse(text)
 
         # THEN
         assert [line for line in parsed.lines if line.line_kind is LineKind.FEE] == []
@@ -2866,7 +2960,7 @@ class TestSantanderNewVisaEdgeCases:
         )
 
         # WHEN
-        parsed = SantanderVisaNewFormatParser().parse(text)
+        parsed = SantanderNewFormatParser().parse(text)
 
         # THEN — no fee date at all, so the tax is not emitted (a purchase remains).
         assert parsed.period_due is None
@@ -2894,7 +2988,7 @@ class TestSantanderNewVisaEdgeCases:
         ]
 
         # WHEN
-        close, due = SantanderVisaNewFormatParser()._periods(tokens)
+        close, due = SantanderNewFormatParser()._periods(tokens)
 
         # THEN — the decoy did not set either date.
         assert close == date(2026, 8, 27)
@@ -2910,7 +3004,7 @@ class TestSantanderNewVisaEdgeCases:
         text = "Resumen Visa\nCUIT: 30-50000845-4\nSubtotal en pesos.\n"
 
         # WHEN
-        parsed = SantanderVisaNewFormatParser().parse(text)
+        parsed = SantanderNewFormatParser().parse(text)
 
         # THEN
         assert parsed.status is ParseStatus.UNPARSEABLE
@@ -2928,9 +3022,9 @@ class TestSantanderNewVisaRegistryAndOrchestration:
         """
         # THEN
         types = [type(parser) for parser in BANK_PARSERS]
-        assert SantanderVisaNewFormatParser in types
-        assert types.index(SantanderVisaNewFormatParser) < types.index(SantanderVisaParser)
-        assert types.index(SantanderVisaNewFormatParser) < types.index(SantanderAmexParser)
+        assert SantanderNewFormatParser in types
+        assert types.index(SantanderNewFormatParser) < types.index(SantanderVisaParser)
+        assert types.index(SantanderNewFormatParser) < types.index(SantanderAmexParser)
 
     def test_parse_statement_routes_the_new_format_to_it(self, monkeypatch: pytest.MonkeyPatch):
         """

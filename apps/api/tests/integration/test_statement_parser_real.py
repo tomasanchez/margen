@@ -469,3 +469,67 @@ class TestRealSantanderNewVisaDecode:
         # No payment / carryover row leaked in from the Pago-anterior block.
         assert not any("SALDO" in line.name.upper() for line in parsed.lines)
         assert not any("SU PAGO" in line.name.upper() for line in parsed.lines)
+
+
+# --------------------------------------------------------------------------- #
+# SANITIZED NEW-FORMAT Santander AMEX — a BYTE-FOR-BYTE twin of the VISA cells   #
+# above, differing ONLY in the header title and the movimientos card-line marker #
+# (and the last-4). Proves the SAME parser reads a rendered AMEX PDF as AMEX.     #
+# --------------------------------------------------------------------------- #
+_NEW_AMEX_CELLS: tuple[str, ...] = tuple(
+    cell.replace("Resumen Visa", "Resumen American Express")
+    .replace("Visa crédito terminada en 9999", "American Express crédito terminada en 3735")
+    .replace(" en 9999 de Juan", " en 3735 de Juan")
+    for cell in _NEW_VISA_CELLS
+)
+
+
+def _new_amex_statement_pdf() -> bytes:
+    """Render the sanitized new-format AMEX twin cells to a real multi-page PDF."""
+    document = fitz.open()
+    page = document.new_page()
+    y = 40.0
+    for cell in _NEW_AMEX_CELLS:
+        if y > 760.0:  # break to a new page before overflowing the bottom margin.
+            page = document.new_page()
+            y = 40.0
+        page.insert_text((40, y), cell, fontsize=9)
+        y += 11
+    pdf = document.tobytes()
+    document.close()
+    return bytes(pdf)
+
+
+class TestRealSantanderNewAmexDecode:
+    """The unmocked parser reads a rendered NEW-format Santander AMEX PDF as AMEX."""
+
+    def test_parses_identity_network_and_reconciles(self):
+        """
+        GIVEN a real rendered sanitized new-format Santander AMEX statement PDF
+        WHEN parsed through the unmocked PyMuPDF stack (extract_text → parse)
+        THEN the network is AMEX, the last-4 comes from the AMEX card-line, and the
+             purchases plus the tax reconcile to the total — the same layout, network-aware
+        """
+        parsed = parse_statement(_new_amex_statement_pdf())
+
+        assert parsed.status is ParseStatus.OK
+        assert parsed.bank_name == "Santander"
+        assert parsed.network == "AMEX"
+        assert parsed.card_last4 == "3735"
+        assert parsed.card == "AMEX ·3735"  # card detail split from the bank (ADR-117).
+        assert parsed.total_amount == Decimal("185000.00")
+
+        purchases = [line for line in parsed.lines if line.line_kind is LineKind.PURCHASE]
+        assert {line.name for line in purchases} == {
+            "Tienda uno",
+            "Merpago*coto",
+            "Apple store",
+            "Sube viajes - buses",
+        }
+        # The AMEX card-line marker never leaked into a purchase name.
+        assert not any("EXPRESS" in line.name.upper() for line in purchases)
+        ars = sum(line.amount for line in purchases if line.currency is Currency.ARS)
+        fees = [line for line in parsed.lines if line.line_kind is LineKind.FEE]
+        assert ars == Decimal("169000.00")
+        assert len(fees) == 1
+        assert ars + fees[0].amount == parsed.total_amount
