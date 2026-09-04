@@ -450,9 +450,10 @@ class TestRealSantanderNewVisaDecode:
             "Apple store",
             "Sube viajes - buses",
         }
-        # The installment row carries its cuota; the "2 de 6" page footer did not.
+        # The installment row carries its cuota, normalized to "NN/MM"; the "2 de 6"
+        # page footer did not leak in.
         tienda = next(line for line in purchases if line.name == "Tienda uno")
-        assert tienda.cuota == "4 de 6"
+        assert tienda.cuota == "04/06"
         # The "dolares" row is a USD line with no fabricated peso amount.
         apple = next(line for line in purchases if line.name == "Apple store")
         assert apple.currency is Currency.USD

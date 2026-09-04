@@ -2486,7 +2486,9 @@ class TestSantanderNewVisaFullFixture:
         # THEN
         line = _by_name(parsed, "Tienda uno")
         assert line is not None
-        assert line.cuota == "4 de 6"
+        # The raw "4 de 6" cell is normalized to the canonical "NN/MM" the review UI
+        # + import re-parse expect (ADR-175/176), so installments survive downstream.
+        assert line.cuota == "04/06"
         assert line.amount == Decimal("68750.00")
         assert line.currency is Currency.ARS
         assert line.occurred_on == date(2026, 9, 4)  # the statement due date (ADR-089).
