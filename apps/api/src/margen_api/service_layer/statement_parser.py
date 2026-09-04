@@ -1516,7 +1516,15 @@ class SantanderNewFormatParser(StatementParser):
         if amount is None:  # pragma: no cover - _AMOUNT pre-filter guarantees a parseable amount
             return None
         occurred_on = pay_date if pay_date is not None else purchase_date
-        cuota = next((cell for cell in buffer if self._CUOTA.match(cell)), None)
+        # Normalize the new-format cuota cell ("4 de 6") to the canonical "NN/MM"
+        # shape the review UI (parseCuota) and the import re-parse expect (ADR-175/176)
+        # — the other parsers already emit that shape, so an unnormalized "N de M"
+        # was silently dropping installments downstream.
+        cuota_cell = next((cell for cell in buffer if self._CUOTA.match(cell)), None)
+        cuota: str | None = None
+        if cuota_cell is not None:
+            index, total = cuota_cell.split(" de ")
+            cuota = f"{int(index):02d}/{int(total):02d}"
         name = " ".join(
             cell for cell in buffer if not self._CUOTA.match(cell) and not self._COMPROBANTE.match(cell)
         ).strip()
