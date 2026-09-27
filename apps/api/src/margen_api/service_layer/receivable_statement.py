@@ -36,6 +36,16 @@ Sections (matching the supplied design): header eyebrow + emission date + rule; 
 ``+`` rows, payments as ``−`` rows, a running Saldo column, a final "Saldo a la fecha" =
 authoritative outstanding); an optional "Lo pagué yo, no te lo cobro" covered box for pardoned
 items; and a page footer with the owner and a real ``page X de Y`` counter.
+
+**Two content modes** (ADR-212, refining ADR-211). The export defaults to **outstanding-only**:
+the "El detalle" ledger lists only the items still owed (``remaining`` > 0, not pardoned) at
+their REMAINING amount, the running Saldo is the cumulative remaining closing on the
+authoritative outstanding, there are NO payment rows, and a calm "al día" empty state renders
+when nothing is owed. The hero, the all-time 3-stat bar and the covered box are retained.
+Passing ``full_history=True`` restores the full running-balance ledger (every non-pardoned
+charge at its gross amount interleaved with payment ``−`` rows) exactly as ADR-211 shipped it.
+The mode is threaded from the ``?full`` query param through :func:`build_statement_pdf` and
+:func:`build_statement_view`.
 """
 
 from __future__ import annotations
@@ -103,6 +113,8 @@ class _LocaleStrings:
         col_balance: The ledger Balance (running Saldo) column header.
         payment_received: The label shown as a payment row's detail ("Pago recibido").
         balance_to_date: The ledger's closing "Saldo a la fecha" label.
+        empty_state: The calm "nothing owed / al día" message shown in the ledger area when
+            the outstanding-only export has no items still owed (ADR-212).
         covered_title: The covered box heading ("Lo pagué yo, no te lo cobro").
         covered_note: The fixed warm note under the covered rows.
         footer_issued_by: The footer prefix carrying ``{owner}`` ("Emitido por {owner}").
@@ -130,6 +142,7 @@ class _LocaleStrings:
     col_balance: str
     payment_received: str
     balance_to_date: str
+    empty_state: str
     covered_title: str
     covered_note: str
     footer_issued_by: str
@@ -159,6 +172,7 @@ _STRINGS: dict[Locale, _LocaleStrings] = {
         col_balance="Saldo",
         payment_received="Pago recibido",
         balance_to_date="Saldo a la fecha",
+        empty_state="Estás al día. No hay nada pendiente.",
         covered_title="Lo pagué yo, no te lo cobro",
         covered_note=(
             "Esta la puse yo y no te la cobro. No entra en el saldo de arriba. "
@@ -187,6 +201,7 @@ _STRINGS: dict[Locale, _LocaleStrings] = {
         col_balance="Balance",
         payment_received="Payment received",
         balance_to_date="Balance to date",
+        empty_state="You are all square. Nothing outstanding.",
         covered_title="I covered this, on me",
         covered_note=(
             "I covered this one and I am not charging you for it. It does not count toward the "
@@ -267,6 +282,8 @@ class StatementView:
     """
 
     lang: Locale
+    # Content mode: False = outstanding-only (default), True = full running-balance history (ADR-212).
+    full_history: bool
     # Header.
     eyebrow: str
     date_line: str
@@ -294,6 +311,7 @@ class StatementView:
     ledger_rows: tuple[LedgerRow, ...]
     balance_to_date_label: str
     balance_to_date_value: str
+    empty_state: str
     # Covered box (optional).
     show_covered: bool
     covered_title: str
@@ -343,6 +361,17 @@ def _is_covered(item: ReceivableItemReadModel) -> bool:
     remainder at pardon (``amount`` minus its allocations) is positive.
     """
     return item.pardoned and item.remaining > Decimal(0)
+
+
+def _is_outstanding(item: ReceivableItemReadModel) -> bool:
+    """Report whether an item still owes money in the outstanding-only ledger (ADR-212).
+
+    An item is outstanding when it is NOT pardoned and still carries a positive remainder.
+    Fully-paid (``remaining`` == 0), overpaid (``remaining`` < 0) and pardoned items are all
+    excluded — the default export lists only what is genuinely still owed, regardless of the
+    month it was incurred, so an old unpaid debt keeps appearing.
+    """
+    return not item.pardoned and item.remaining > Decimal(0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,6 +442,35 @@ def _build_ledger_rows(person: PersonDetailReadModel, strings: _LocaleStrings) -
     return tuple(rows)
 
 
+def _build_outstanding_rows(person: PersonDetailReadModel, strings: _LocaleStrings) -> tuple[LedgerRow, ...]:
+    """Format the still-owed items as the outstanding-only ledger (ADR-212, the default mode).
+
+    Lists ONLY the items that are still owed (:func:`_is_outstanding` — not pardoned, positive
+    remainder), date-ascending, each at its REMAINING amount (what is left to pay, not the gross
+    charge). The Saldo column carries the cumulative remaining, so the last row lands on the
+    person's authoritative outstanding. There are no payment rows in this mode; a person who has
+    paid everything off yields an empty tuple, which the template turns into the calm empty state.
+    """
+    outstanding_items = sorted(
+        (item for item in person.items if _is_outstanding(item)),
+        key=lambda item: item.occurred_on,
+    )
+    rows: list[LedgerRow] = []
+    running = Decimal(0)
+    for item in outstanding_items:
+        running += item.remaining
+        rows.append(
+            LedgerRow(
+                occurred_on=_format_date(item.occurred_on, strings),
+                detail=item.detail if item.detail is not None else _EMPTY_DETAIL,
+                amount=_format_number(item.remaining, strings),
+                balance=_format_number(running, strings),
+                is_payment=False,
+            )
+        )
+    return tuple(rows)
+
+
 def _footer_issued(strings: _LocaleStrings, owner_name: str) -> str:
     """Resolve the footer's "Emitido por {owner}" clause, dropping the owner when unknown."""
     owner = owner_name.strip()
@@ -426,20 +484,27 @@ def build_statement_view(
     *,
     owner_name: str = "",
     lang: Locale = _DEFAULT_LOCALE,
+    full_history: bool = False,
     today: date,
 ) -> StatementView:
-    """Assemble the pure, localized :class:`StatementView` for a person's statement (ADR-211).
+    """Assemble the pure, localized :class:`StatementView` for a person's statement (ADR-211/212).
 
     Pre-formats every displayed value as a locale-aware string:
 
     - The hero shows the authoritative ``person.outstanding`` (ADR-206), split into a large
       integer part and a small fractional part.
     - The 3-stat bar shows total consumed (Σ non-pardoned item amounts), paid so far (Σ
-      payments), and outstanding (the authoritative total).
-    - The ledger interleaves non-pardoned charges (``+``) and payments (``−``) date-ascending
-      with a running balance, closing on "Saldo a la fecha" = the authoritative outstanding.
-    - The covered box lists pardoned items with their covered amount; it is omitted when the
-      person has none.
+      payments), and outstanding (the authoritative total). These all-time context stats are
+      identical in both modes.
+    - The ledger depends on ``full_history`` (ADR-212). Default (``False``, outstanding-only):
+      only the still-owed items (not pardoned, ``remaining`` > 0) at their REMAINING amount,
+      date-ascending, with a cumulative-remaining Saldo and NO payment rows. Full history
+      (``True``): non-pardoned charges (``+``) interleaved with payments (``−``) date-ascending
+      at their gross amounts. Either way the ledger closes on "Saldo a la fecha" = the
+      authoritative outstanding, and the empty outstanding-only ledger renders the calm empty
+      state instead.
+    - The covered box lists pardoned items with their covered amount in BOTH modes; it is
+      omitted when the person has none.
     - The footer carries the owner (dropped gracefully when unknown) and the complaints clause;
       the page template's ``{page}``/``{pages}`` are substituted for live CSS counters at PDF
       time.
@@ -449,12 +514,15 @@ def build_statement_view(
         owner_name: The current owner's display name for the footer; the empty string drops the
             "por {owner}" suffix gracefully.
         lang: The active document locale (``es`` or ``en``); defaults to Spanish.
+        full_history: When ``False`` (the default) the ledger is outstanding-only; when ``True``
+            it is the full running-balance history (charges + payment rows) as ADR-211 shipped.
         today: The emission date shown in the header (injected for deterministic rendering).
 
     Returns:
         The render-agnostic :class:`StatementView` the template consumes.
     """
     strings = _STRINGS[lang]
+    ledger_rows = _build_ledger_rows(person, strings) if full_history else _build_outstanding_rows(person, strings)
     total_consumed = sum((item.amount for item in person.items if not item.pardoned), Decimal(0))
     total_paid = sum((payment.amount for payment in person.payments), Decimal(0))
     hero_main, hero_frac = _split_hero_amount(person.outstanding, strings)
@@ -469,6 +537,7 @@ def build_statement_view(
     )
     return StatementView(
         lang=lang,
+        full_history=full_history,
         eyebrow=strings.eyebrow,
         date_line=_format_date(today, strings),
         account_of=strings.account_of,
@@ -489,9 +558,10 @@ def build_statement_view(
         col_detail=strings.col_detail,
         col_amount=strings.col_amount,
         col_balance=strings.col_balance,
-        ledger_rows=_build_ledger_rows(person, strings),
+        ledger_rows=ledger_rows,
         balance_to_date_label=strings.balance_to_date,
         balance_to_date_value=_format_number(person.outstanding, strings),
+        empty_state=strings.empty_state,
         show_covered=bool(covered_rows),
         covered_title=strings.covered_title,
         covered_rows=covered_rows,
@@ -566,9 +636,10 @@ def build_statement_pdf(
     *,
     owner_name: str = "",
     lang: Locale = _DEFAULT_LOCALE,
+    full_history: bool = False,
     today: date,
 ) -> bytes:
-    """Build the downloadable receivable-statement PDF bytes for a person (ADR-211).
+    """Build the downloadable receivable-statement PDF bytes for a person (ADR-211/212).
 
     Composes the three layers: pure view model, template-to-HTML, then the WeasyPrint adapter.
     The single entry point the download route calls.
@@ -577,12 +648,14 @@ def build_statement_pdf(
         person: The person-detail read model to render.
         owner_name: The current owner's display name for the footer; empty drops it gracefully.
         lang: The active document locale (``es`` or ``en``); defaults to Spanish.
+        full_history: When ``False`` (the default) the document is outstanding-only; when
+            ``True`` it renders the full running-balance history (ADR-212).
         today: The emission date shown in the header.
 
     Returns:
         The rendered PDF document as bytes.
     """
-    view = build_statement_view(person, owner_name=owner_name, lang=lang, today=today)
+    view = build_statement_view(person, owner_name=owner_name, lang=lang, full_history=full_history, today=today)
     return _html_to_pdf(render_statement_html(view))
 
 

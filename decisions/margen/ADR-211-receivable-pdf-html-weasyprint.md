@@ -41,3 +41,4 @@ All data/content decisions accumulated across ADR-209's amendments and ADR-210 c
 ## Status History
 
 - 2026-08-29: accepted
+- 2026-09-27: REFINED by ADR-212 — the export gains two content modes. Default is now **outstanding-only** (remaining>0 items at their remaining amount; payment ledger rows and the "Pagos recibidos" paid-history section hidden), with the full running-balance ledger + paid-history rendering established here retained as an opt-in via `?full=true`. This ADR remains accepted; the HTML/CSS/WeasyPrint mechanism and visual design are unchanged.

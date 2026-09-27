@@ -1,13 +1,15 @@
-"""Unit tests for the pure receivable-statement builders and template (ADR-211).
+"""Unit tests for the pure receivable-statement builders and template (ADR-211/212).
 
 These exercise the two I/O-free layers with NO WeasyPrint: the view-model assembly
 (:func:`build_statement_view`) and the template-to-HTML rendering (:func:`render_statement_html`).
 They assert the two-language copy and es-AR/en-US number and date formatting, the authoritative
-outstanding hero, the three stats, the running-balance ledger over interleaved charges and
-payments (closing on the authoritative outstanding), the covered box present/absent, the owner
-signed into the footer, the page-counter words, and the guard that no em/en dash ever reaches
-the rendered HTML (only the real Unicode minus on a payment amount). The single native
-WeasyPrint call is stubbed where the composed entry point is exercised.
+outstanding hero, the three all-time stats, BOTH ledger content modes (ADR-212 — the default
+outstanding-only ledger listing only still-owed items at their remaining with no payment rows and
+its calm "al día" empty state, and the opt-in full running-balance ledger over interleaved
+charges and payments), the covered box present/absent, the owner signed into the footer, the
+page-counter words, and the guard that no em/en dash ever reaches the rendered HTML (only the real
+Unicode minus on a full-mode payment amount). The single native WeasyPrint call is stubbed where
+the composed entry point is exercised.
 """
 
 from __future__ import annotations
@@ -108,6 +110,50 @@ def _rich_person() -> PersonDetailReadModel:
         payments=(
             _payment(occurred_on=date(2026, 8, 29), amount="10000.00"),
             _payment(occurred_on=date(2026, 8, 30), amount="5000.00"),
+        ),
+    )
+
+
+def _settled_person() -> PersonDetailReadModel:
+    """A person whose per-item remainders reflect real allocations, so the two modes diverge.
+
+    One fully-paid item (remaining 0, dropped from the outstanding-only ledger), one
+    partially-paid item (remaining 4000), one untouched item (remaining 10000) and one pardoned
+    item (the covered box). total consumed = 44500; paid = 30500; outstanding = 14000 = 4000 +
+    10000 — the fully-paid and the pardoned item contribute nothing to what is still owed. In
+    outstanding-only mode the ledger shows just the two owed items at their remaining; in full
+    mode it shows every charge at its gross amount interleaved with the two payments.
+    """
+    return _person(
+        name="Maria Gabriela",
+        outstanding="14000.00",
+        items=(
+            _item(
+                occurred_on=date(2026, 8, 26),
+                amount="24500.00",
+                detail="TGI Fridays",
+                allocated="24500.00",
+                remaining="0.00",
+            ),
+            _item(
+                occurred_on=date(2026, 8, 28),
+                amount="10000.00",
+                detail="La Yerra",
+                allocated="6000.00",
+                remaining="4000.00",
+            ),
+            _item(
+                occurred_on=date(2026, 8, 30),
+                amount="10000.00",
+                detail="Aeropuerto taxi",
+                allocated="0.00",
+                remaining="10000.00",
+            ),
+            _item(occurred_on=date(2026, 8, 26), amount="7000.00", detail="Gloria", remaining="7000.00", pardoned=True),
+        ),
+        payments=(
+            _payment(occurred_on=date(2026, 8, 27), amount="24500.00"),
+            _payment(occurred_on=date(2026, 8, 29), amount="6000.00"),
         ),
     )
 
@@ -213,15 +259,16 @@ class TestStats:
         assert view.balance_to_date_value == "123,45"
 
 
-class TestLedger:
-    """The 'El detalle' ledger interleaves charges/payments with a running balance (ADR-211)."""
+class TestFullHistoryLedger:
+    """With full_history=True the ledger interleaves charges/payments (ADR-211, the opt-in mode)."""
 
     def test_running_balance_over_interleaved_events(self) -> None:
-        # GIVEN the rich person WHEN built THEN charges add and payments subtract, date-ascending.
-        view = build_statement_view(_rich_person(), owner_name=_OWNER, lang="es", today=_TODAY)
+        # GIVEN the rich person WHEN built in full history THEN charges add and payments subtract.
+        view = build_statement_view(_rich_person(), owner_name=_OWNER, lang="es", full_history=True, today=_TODAY)
         rows = view.ledger_rows
 
         # 3 charges + 2 payments (the pardoned item is NOT in the ledger).
+        assert view.full_history is True
         assert len(rows) == 5
         assert [(r.occurred_on, r.amount, r.balance, r.is_payment) for r in rows] == [
             ("26/08/2026", "24.500,00", "24.500,00", False),
@@ -234,30 +281,102 @@ class TestLedger:
         assert view.balance_to_date_value == "29.500,00"
 
     def test_payment_rows_are_labelled_and_flagged(self) -> None:
-        view = build_statement_view(_rich_person(), owner_name=_OWNER, lang="es", today=_TODAY)
+        view = build_statement_view(_rich_person(), owner_name=_OWNER, lang="es", full_history=True, today=_TODAY)
         payments = [r for r in view.ledger_rows if r.is_payment]
         assert all(r.detail == "Pago recibido" for r in payments)
 
     def test_payment_label_english(self) -> None:
-        view = build_statement_view(_rich_person(), owner_name=_OWNER, lang="en", today=_TODAY)
+        view = build_statement_view(_rich_person(), owner_name=_OWNER, lang="en", full_history=True, today=_TODAY)
         payments = [r for r in view.ledger_rows if r.is_payment]
         assert all(r.detail == "Payment received" for r in payments)
 
     def test_charge_uses_amount_not_remaining(self) -> None:
-        """GIVEN a partly-paid charge THEN the ledger shows its full amount, not its remainder."""
+        """GIVEN a partly-paid charge THEN full history shows its full amount, not its remainder."""
         person = _person(
             outstanding="400.00",
             items=(_item(occurred_on=date(2026, 8, 1), amount="1000.00", remaining="400.00"),),
             payments=(_payment(occurred_on=date(2026, 8, 2), amount="600.00"),),
         )
-        view = build_statement_view(person, owner_name=_OWNER, lang="es", today=_TODAY)
+        view = build_statement_view(person, owner_name=_OWNER, lang="es", full_history=True, today=_TODAY)
         charge = view.ledger_rows[0]
         assert charge.amount == "1.000,00" and charge.balance == "1.000,00"
 
     def test_null_detail_renders_empty(self) -> None:
         person = _person(items=(_item(detail=None),))
+        view = build_statement_view(person, owner_name=_OWNER, lang="es", full_history=True, today=_TODAY)
+        assert view.ledger_rows[0].detail == ""
+
+
+class TestOutstandingLedger:
+    """The default (outstanding-only) ledger lists only what is still owed (ADR-212)."""
+
+    def test_lists_only_remaining_items_at_their_remaining_amount(self) -> None:
+        # GIVEN a fully-paid, a partially-paid, an unpaid and a pardoned item.
+        # WHEN the default (outstanding-only) view is built.
+        view = build_statement_view(_settled_person(), owner_name=_OWNER, lang="es", today=_TODAY)
+
+        # THEN only the still-owed items appear, at their REMAINING amount, date-ascending, with a
+        # cumulative-remaining Saldo (the fully-paid item and the pardoned item are dropped).
+        assert view.full_history is False
+        assert [(r.occurred_on, r.detail, r.amount, r.balance, r.is_payment) for r in view.ledger_rows] == [
+            ("28/08/2026", "La Yerra", "4.000,00", "4.000,00", False),
+            ("30/08/2026", "Aeropuerto taxi", "10.000,00", "14.000,00", False),
+        ]
+
+    def test_has_no_payment_rows(self) -> None:
+        """GIVEN payments exist WHEN outstanding-only THEN no payment (−) rows are emitted."""
+        view = build_statement_view(_settled_person(), owner_name=_OWNER, lang="es", today=_TODAY)
+        assert all(row.is_payment is False for row in view.ledger_rows)
+        assert _MINUS not in "".join(row.amount for row in view.ledger_rows)
+
+    def test_closing_balance_is_the_authoritative_outstanding(self) -> None:
+        view = build_statement_view(_settled_person(), owner_name=_OWNER, lang="es", today=_TODAY)
+        assert view.ledger_rows[-1].balance == "14.000,00"
+        assert view.balance_to_date_value == "14.000,00"
+
+    def test_stats_stay_all_time_in_outstanding_mode(self) -> None:
+        """GIVEN outstanding-only THEN the 3-stat bar still reports the all-time context."""
+        view = build_statement_view(_settled_person(), owner_name=_OWNER, lang="es", today=_TODAY)
+        assert view.stat_total_value == "44.500,00"  # Σ non-pardoned amounts, all time.
+        assert view.stat_paid_value == "30.500,00"  # Σ payments, all time.
+        assert view.stat_pending_value == "14.000,00"  # authoritative outstanding.
+
+    def test_covered_box_retained_in_outstanding_mode(self) -> None:
+        """GIVEN a pardoned item WHEN outstanding-only THEN the covered box is still shown."""
+        view = build_statement_view(_settled_person(), owner_name=_OWNER, lang="es", today=_TODAY)
+        assert view.show_covered is True
+        assert [(r.detail, r.amount) for r in view.covered_rows] == [("Gloria", "7.000,00")]
+
+    def test_english_amounts_and_rows(self) -> None:
+        """GIVEN en-US WHEN outstanding-only THEN remaining amounts use 1,234.56 grouping."""
+        view = build_statement_view(_settled_person(), owner_name=_OWNER, lang="en", today=_TODAY)
+        assert [(r.amount, r.balance) for r in view.ledger_rows] == [
+            ("4,000.00", "4,000.00"),
+            ("10,000.00", "14,000.00"),
+        ]
+
+    def test_null_detail_renders_empty(self) -> None:
+        """GIVEN an owed item with no detail THEN its outstanding row shows an empty detail."""
+        person = _person(outstanding="1000.00", items=(_item(detail=None),))
         view = build_statement_view(person, owner_name=_OWNER, lang="es", today=_TODAY)
         assert view.ledger_rows[0].detail == ""
+
+    def test_empty_when_everything_is_paid_or_pardoned(self) -> None:
+        """GIVEN no item still owes THEN the outstanding ledger is empty (the empty-state case)."""
+        person = _person(
+            outstanding="0.00",
+            items=(
+                _item(amount="1000.00", allocated="1000.00", remaining="0.00"),  # fully paid, dropped.
+                _item(amount="500.00", remaining="500.00", pardoned=True),  # pardoned, dropped.
+            ),
+        )
+        view = build_statement_view(person, owner_name=_OWNER, lang="es", today=_TODAY)
+        assert view.ledger_rows == ()
+        assert view.empty_state == "Estás al día. No hay nada pendiente."
+
+    def test_empty_state_english_copy(self) -> None:
+        view = build_statement_view(_person(outstanding="0.00"), owner_name=_OWNER, lang="en", today=_TODAY)
+        assert view.empty_state == "You are all square. Nothing outstanding."
 
 
 class TestCoveredBox:
@@ -311,10 +430,12 @@ class TestNegativeOutstanding:
 
 
 class TestRenderHtml:
-    """The template renders the full design surface into HTML (ADR-211)."""
+    """The template renders both content modes into HTML (ADR-211/212)."""
 
     def test_spanish_copy_present(self) -> None:
-        html = render_statement_html(build_statement_view(_rich_person(), owner_name=_OWNER, lang="es", today=_TODAY))
+        html = render_statement_html(
+            build_statement_view(_rich_person(), owner_name=_OWNER, lang="es", full_history=True, today=_TODAY)
+        )
         for fragment in (
             "Estado de cuenta entre amigos",
             "Cuenta de",
@@ -331,7 +452,9 @@ class TestRenderHtml:
             assert fragment in html, fragment
 
     def test_english_copy_present(self) -> None:
-        html = render_statement_html(build_statement_view(_rich_person(), owner_name=_OWNER, lang="en", today=_TODAY))
+        html = render_statement_html(
+            build_statement_view(_rich_person(), owner_name=_OWNER, lang="en", full_history=True, today=_TODAY)
+        )
         for fragment in (
             "Statement between friends",
             "Account of",
@@ -346,15 +469,46 @@ class TestRenderHtml:
         ):
             assert fragment in html, fragment
 
+    def test_outstanding_only_hides_payments_and_shows_remaining(self) -> None:
+        """GIVEN the default mode THEN payment rows are hidden and owed items show their remaining."""
+        html = render_statement_html(
+            build_statement_view(_settled_person(), owner_name=_OWNER, lang="es", today=_TODAY)
+        )
+        # THEN no payment history (label nor minus) leaks into the default document.
+        assert "Pago recibido" not in html
+        assert _MINUS not in html
+        # AND the still-owed items appear at their remaining amount, closing on the outstanding.
+        for fragment in ("La Yerra", "4.000,00", "Aeropuerto taxi", "10.000,00", "Saldo a la fecha"):
+            assert fragment in html, fragment
+        # AND the covered box is retained even in the outstanding-only default (ADR-210/212).
+        assert "Lo pagué yo, no te lo cobro" in html
+
     @pytest.mark.parametrize("lang", ["es", "en"])
-    def test_no_em_or_en_dash(self, lang: Locale) -> None:
-        """GIVEN either locale WHEN rendered THEN no em/en dash appears (only the real minus)."""
-        html = render_statement_html(build_statement_view(_rich_person(), owner_name=_OWNER, lang=lang, today=_TODAY))
+    def test_empty_state_rendered_when_nothing_owed(self, lang: Locale) -> None:
+        """GIVEN nothing is owed WHEN outstanding-only THEN the calm empty state replaces the table."""
+        empty_copy = {"es": "Estás al día. No hay nada pendiente.", "en": "You are all square. Nothing outstanding."}
+        html = render_statement_html(
+            build_statement_view(_person(outstanding="0.00"), owner_name=_OWNER, lang=lang, today=_TODAY)
+        )
+        assert empty_copy[lang] in html
+        assert '<table class="ledger">' not in html  # the ledger table is not rendered when empty.
+
+    @pytest.mark.parametrize("lang", ["es", "en"])
+    @pytest.mark.parametrize("full_history", [False, True])
+    def test_no_em_or_en_dash(self, lang: Locale, full_history: bool) -> None:
+        """GIVEN either locale and either mode THEN no em/en dash appears (only the real minus)."""
+        html = render_statement_html(
+            build_statement_view(
+                _settled_person(), owner_name=_OWNER, lang=lang, full_history=full_history, today=_TODAY
+            )
+        )
         assert _EM_DASH not in html
         assert _EN_DASH not in html
 
     def test_payment_amount_uses_real_minus(self) -> None:
-        html = render_statement_html(build_statement_view(_rich_person(), owner_name=_OWNER, lang="es", today=_TODAY))
+        html = render_statement_html(
+            build_statement_view(_rich_person(), owner_name=_OWNER, lang="es", full_history=True, today=_TODAY)
+        )
         assert f"{_MINUS} 10.000,00" in html
 
     def test_page_counter_words_spanish(self) -> None:
@@ -393,9 +547,27 @@ class TestBuildStatementPdf:
 
         monkeypatch.setattr(receivable_statement, "_html_to_pdf", _fake_html_to_pdf)
 
-        # WHEN the composed entry point runs.
-        pdf = build_statement_pdf(_rich_person(), owner_name=_OWNER, lang="es", today=_TODAY)
+        # WHEN the composed entry point runs (default: outstanding-only).
+        pdf = build_statement_pdf(_settled_person(), owner_name=_OWNER, lang="es", today=_TODAY)
 
-        # THEN it returns the adapter's bytes, having first rendered the real template HTML.
+        # THEN it returns the adapter's bytes, having first rendered the real template HTML, and
+        # the default mode hides the payment history.
         assert pdf == b"%PDF-stub"
         assert "Estado de cuenta entre amigos" in captured["html"]
+        assert "Pago recibido" not in captured["html"]
+
+    def test_full_history_flag_flows_into_the_html(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """GIVEN full_history=True WHEN the entry point runs THEN the payment rows reach the HTML."""
+        captured: dict[str, str] = {}
+
+        def _fake_html_to_pdf(html: str) -> bytes:
+            captured["html"] = html
+            return b"%PDF-stub"
+
+        monkeypatch.setattr(receivable_statement, "_html_to_pdf", _fake_html_to_pdf)
+
+        # WHEN full history is requested for the settled person.
+        build_statement_pdf(_settled_person(), owner_name=_OWNER, lang="es", full_history=True, today=_TODAY)
+
+        # THEN the full ledger's payment rows appear (they are hidden by the default mode).
+        assert "Pago recibido" in captured["html"]

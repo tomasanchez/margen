@@ -136,6 +136,9 @@
     "export": "Exportar PDF",
     "exporting": "Preparando PDF…",
     "aria": "Exportar el detalle de {{name}} en PDF",
+    "menuAria": "Más opciones de exportación del detalle de {{name}}",
+    "outstanding": "Solo lo pendiente",
+    "fullHistory": "Historial completo",
     "error": "No pudimos crear el PDF. Revisá tu conexión e intentá de nuevo."
   }
 }

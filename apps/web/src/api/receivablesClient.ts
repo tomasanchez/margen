@@ -585,19 +585,34 @@ function pdfFilename(name: string): string {
  * query param (`en` / `es`) so the backend renders the document in the same
  * language the user is viewing (the param name is reconciled with the API).
  *
+ * Content mode (ADR-212): the default is OUTSTANDING-ONLY (only debts still owed,
+ * at their remaining amount) and sends NO `full` param, keeping the URL clean.
+ * Passing `full = true` opts into the FULL-HISTORY ledger + paid-history section
+ * (the ADR-211 rendering) via `&full=true`.
+ *
  * @param id   The person whose PDF to download.
  * @param name The person's display name, used to build the saved filename.
  * @param lang Optional UI language (`en` / `es`) to render the PDF in; when
  *             omitted the backend falls back to its own default.
+ * @param full When true, request the full-history ledger (`full=true`); the
+ *             default (false) requests the outstanding-only statement and omits
+ *             the param entirely (ADR-212).
  */
 async function downloadPersonPdf(
   id: string,
   name: string,
   lang?: string,
+  full = false,
 ): Promise<void> {
-  const path = lang
+  // Outstanding-only is the default and sends NO `full` param; `full=true` opts
+  // into the complete ledger (ADR-212). The `?`/`&` joiner is chosen by whether
+  // `lang` is already present so the query string stays valid in every case.
+  let path = lang
     ? `/receivables/people/${id}/pdf?lang=${encodeURIComponent(lang)}`
     : `/receivables/people/${id}/pdf`
+  if (full) {
+    path += path.includes('?') ? '&full=true' : '?full=true'
+  }
   const response = await authedFetch(apiUrl(path), {
     headers: { Accept: PDF_CONTENT_TYPE },
   })
