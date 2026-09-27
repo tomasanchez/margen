@@ -388,6 +388,35 @@ describe('downloadPersonPdf helper', () => {
     expect(clickSpy).not.toHaveBeenCalled()
     clickSpy.mockRestore()
   })
+
+  test('appends full=true ONLY when the full-history mode is requested (ADR-212)', async () => {
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {})
+    const pdfResponse = () =>
+      new Response('%PDF-1.4', {
+        status: 200,
+        headers: { 'Content-Type': 'application/pdf' },
+      })
+
+    // Default (outstanding-only): the language is sent but NO `full` param, so the
+    // URL stays clean.
+    vi.mocked(fetch).mockResolvedValueOnce(pdfResponse())
+    await receivablesClient.downloadPersonPdf(person.id, 'Ana', 'es')
+    const outstandingUrl = String(vi.mocked(fetch).mock.calls[0][0])
+    expect(outstandingUrl).toContain('lang=es')
+    expect(outstandingUrl).not.toContain('full')
+
+    // Full-history opt-in: `full=true` is appended alongside the language, joined
+    // with `&` so the query string stays valid.
+    vi.mocked(fetch).mockResolvedValueOnce(pdfResponse())
+    await receivablesClient.downloadPersonPdf(person.id, 'Ana', 'es', true)
+    const fullUrl = String(vi.mocked(fetch).mock.calls[1][0])
+    expect(fullUrl).toContain('lang=es')
+    expect(fullUrl).toContain('&full=true')
+
+    clickSpy.mockRestore()
+  })
 })
 
 describe('pdfFilename', () => {

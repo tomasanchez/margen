@@ -792,11 +792,12 @@ class TestPersonPdf:
         assert response.headers["content-type"] == "application/pdf"
         assert response.content.startswith(b"%PDF")
 
-    async def test_person_with_payments_pdf_still_downloads(self, test_client: httpx.AsyncClient):
+    async def test_person_with_payments_pdf_downloads_in_both_modes(self, test_client: httpx.AsyncClient):
         """
-        GIVEN a person with an outstanding item that has received a partial payback
-        WHEN the person's PDF is requested in each locale
-        THEN it returns 200 with a %PDF payload (the "Payments received" section renders)
+        GIVEN a person with an item paid down partially (a real payback on record)
+        WHEN the PDF is requested per locale, default (outstanding-only) and with ?full=true
+        THEN every request returns 200 with a %PDF payload (the default hides the payment
+             history; ?full=true restores the full running-balance ledger — ADR-212)
         """
         # GIVEN — an item paid down partially so the person has a real payback on record.
         person = await _create_person(test_client, name="Ana Perez")
@@ -807,11 +808,12 @@ class TestPersonPdf:
         )
         assert payment.status_code == status.HTTP_201_CREATED, payment.text
 
-        # WHEN / THEN
+        # WHEN / THEN — both content modes render for both locales.
         for lang in ("es", "en"):
-            response = await test_client.get(f"{PEOPLE}/{person['id']}/pdf", params={"lang": lang})
-            assert response.status_code == status.HTTP_200_OK, response.text
-            assert response.content.startswith(b"%PDF")
+            for params in ({"lang": lang}, {"lang": lang, "full": "true"}):
+                response = await test_client.get(f"{PEOPLE}/{person['id']}/pdf", params=params)
+                assert response.status_code == status.HTTP_200_OK, response.text
+                assert response.content.startswith(b"%PDF")
 
     async def test_missing_person_returns_404(self, test_client: httpx.AsyncClient):
         """

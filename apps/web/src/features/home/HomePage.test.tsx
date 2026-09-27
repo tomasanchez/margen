@@ -19,7 +19,7 @@
  * not asserted here.
  */
 
-import { expect, test } from 'vitest'
+import { afterAll, beforeAll, expect, test, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -44,6 +44,20 @@ import { transactionsKeys } from '../transactions/queries'
 import type { Summary } from '../../api/summariesClient'
 import type { Settings } from '../../api/settingsClient'
 import type { MonotributoSnapshot, Transaction } from '../../mock/types'
+
+// Freeze "today" to June 2026 so this suite is date-stable. The month navigator only
+// reaches MONTH_NAVIGATOR_FLOOR_OFFSET (6) months back, and the suite pins/asserts months
+// in the seeded Jan–June 2026 range (treating June as the current month, e.g. "+100% vs. May").
+// Without a fixed clock the real date eventually pushes Feb 2026 past the floor (it gets
+// clamped) and the "empty state" assertion breaks. Fake ONLY Date so Testing Library's async
+// waits (findBy/waitFor) keep using real timers.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(2026, 5, 15))
+})
+afterAll(() => {
+  vi.useRealTimers()
+})
 
 /**
  * A minimal real-shaped Monotributo snapshot the Home card's `useMonotributo`

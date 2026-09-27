@@ -136,6 +136,9 @@
     "export": "Export PDF",
     "exporting": "Preparing PDF…",
     "aria": "Export {{name}}'s receivables as a PDF",
+    "menuAria": "More export options for {{name}}'s receivables",
+    "outstanding": "Outstanding",
+    "fullHistory": "Full history",
     "error": "We couldn't create the PDF. Check your connection and try again."
   }
 }

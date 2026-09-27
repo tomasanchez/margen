@@ -250,15 +250,21 @@ async def export_person_pdf(
     reader: ReceivableReader,
     user: AuthUser,
     lang: str = "es",
+    full: bool = False,
 ) -> Response:
-    """Download a person's outstanding-balance statement as a PDF (ADR-209/211, ADR-111).
+    """Download a person's outstanding-balance statement as a PDF (ADR-209/211/212, ADR-111).
 
     Loads the caller's person detail through the owner-scoped reader (ADR-108/130): a
     missing or cross-tenant id answers ``404`` without leaking existence (ADR-111). It then
     renders the "Estado de cuenta entre amigos" statement (header, red outstanding hero, the
-    3-stat bar, the running-balance ledger, the optional covered box, footer) from an HTML/CSS
-    Jinja2 template rasterized with WeasyPrint (ADR-211) and returns it as an
-    ``application/pdf`` attachment, mirroring the CSV export response pattern (ADR-165).
+    3-stat bar, the ledger, the optional covered box, footer) from an HTML/CSS Jinja2 template
+    rasterized with WeasyPrint (ADR-211) and returns it as an ``application/pdf`` attachment,
+    mirroring the CSV export response pattern (ADR-165).
+
+    By default the ledger is **outstanding-only** (only items still owed, at their remaining
+    amount, no payment rows; ADR-212). Passing ``?full=true`` restores the full running-balance
+    history (every non-pardoned charge at its gross amount interleaved with payment rows) as
+    ADR-211 shipped it.
 
     The document follows the app language via the ``lang`` query param (``es`` or ``en``);
     unknown or omitted values normalize to Spanish, the app default (ADR-209/211, ADR-102).
@@ -272,6 +278,7 @@ async def export_person_pdf(
         detail,
         owner_name=_owner_display_name(user),
         lang=normalize_locale(lang),
+        full_history=full,
         today=date.today(),
     )
     filename = pdf_filename(detail.name)
