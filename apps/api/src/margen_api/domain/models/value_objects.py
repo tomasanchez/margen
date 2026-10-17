@@ -282,6 +282,9 @@ class FxRateType(StrEnum):
 # ``ESSENTIAL_CATEGORIES`` (``is_essential("Social")`` is False → it groups under
 # "Wants"). The remaining Phase 2 categories (``Utilities`` / ``DebtService`` /
 # ``FamilySupport``) are still deferred and intentionally NOT added now.
+#
+# ``Mili`` (ADR-213) tracks spending on the owner's partner. Discretionary, so it
+# is NOT essential and groups under "Wants" like ``Social``.
 KNOWN_CATEGORIES: frozenset[str] = frozenset(
     {
         "Income",
@@ -289,6 +292,7 @@ KNOWN_CATEGORIES: frozenset[str] = frozenset(
         "Housing",
         "Rent",
         "Social",
+        "Mili",
         "Transport",
         "Subscriptions",
         "Health",

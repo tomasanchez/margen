@@ -72,6 +72,7 @@ export type Category =
   | 'Entertainment'
   | 'Services'
   | 'Social'
+  | 'Mili'
   | 'Taxes'
   | 'Fees'
   | 'Other'

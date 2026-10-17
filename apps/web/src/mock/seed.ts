@@ -28,6 +28,7 @@ export const CATEGORIES: readonly Category[] = [
   'Entertainment',
   'Services',
   'Social',
+  'Mili',
   'Taxes',
   'Fees',
   'Other',
