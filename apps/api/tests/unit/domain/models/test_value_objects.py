@@ -254,3 +254,13 @@ class TestKnownCategoryDelta:
         # WHEN / THEN
         assert is_known_category("Social") is True
         assert is_essential("Social") is False
+
+    def test_mili_is_known_but_not_essential(self):
+        """
+        GIVEN the "Mili" category (ADR-213): discretionary spend on the owner's partner
+        WHEN its membership and essentiality are checked
+        THEN it is a known/budgetable category yet is NOT essential
+        """
+        # WHEN / THEN
+        assert is_known_category("Mili") is True
+        assert is_essential("Mili") is False
