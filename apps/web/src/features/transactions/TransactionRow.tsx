@@ -29,6 +29,7 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlineOutlined'
 import AttachFileIcon from '@mui/icons-material/AttachFile'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
+import HandshakeOutlinedIcon from '@mui/icons-material/HandshakeOutlined'
 import NotesOutlinedIcon from '@mui/icons-material/NotesOutlined'
 import OpenInNewOutlinedIcon from '@mui/icons-material/OpenInNewOutlined'
 import UndoOutlinedIcon from '@mui/icons-material/UndoOutlined'
@@ -214,6 +215,12 @@ interface TransactionRowProps {
    * isn't an expense) the action is hidden.
    */
   onReimburse?: (transaction: Transaction) => void
+  /**
+   * Start a receivable from this EXPENSE ("Someone owes me this", ADR-220): opens
+   * the Owed item form prefilled from the row and linked to it (reference only,
+   * ADR-219). Present only for expense rows; when omitted the action is hidden.
+   */
+  onSomeoneOwes?: (transaction: Transaction) => void
   /** Disable the actions while a delete for this row is in flight. */
   busy?: boolean
   /**
@@ -333,7 +340,8 @@ interface RowActionItem {
 /**
  * Shared kebab (⋮) overflow "Actions" menu for BOTH row variants (ADR-017).
  * Consolidates the per-row actions — Edit, Add reimbursement (expense-only),
- * Open PDF (when a document is attached), and Remove — behind a single labeled
+ * Someone owes me this (expense-only, ADR-220), Open PDF (when a document is
+ * attached), and Remove — behind a single labeled
  * icon button. This is the ONE affordance for desktop and mobile alike: the
  * desktop grid row and the condensed mobile row both render it. The only
  * difference is visibility of the TRIGGER — desktop hides it until the row is
@@ -361,6 +369,7 @@ function RowOverflowMenu({
   onEdit,
   onDelete,
   onReimburse,
+  onSomeoneOwes,
   busy,
   hideTriggerUntilActive,
 }: TransactionRowProps & {
@@ -394,9 +403,9 @@ function RowOverflowMenu({
     action()
   }
 
-  // Declarative item list. Order: Edit, Add reimbursement, Open PDF, divider,
-  // Remove. Each item's `show` gates its presence; extend this list to add
-  // future actions without touching the render below.
+  // Declarative item list. Order: Edit, Add reimbursement, Someone owes me
+  // this, Open PDF, divider, Remove. Each item's `show` gates its presence;
+  // extend this list to add future actions without touching the render below.
   const items: RowActionItem[] = [
     {
       key: 'edit',
@@ -413,6 +422,16 @@ function RowOverflowMenu({
       // The "add reimbursement" action links a payback to THIS expense
       // (ADR-158/159); shown only for expense rows that have a handler wired.
       show: Boolean(onReimburse) && transaction.type === 'expense',
+      disabled: busy,
+    },
+    {
+      key: 'someoneOwes',
+      label: t('transactions:row.someoneOwes'),
+      icon: <HandshakeOutlinedIcon fontSize="small" />,
+      onSelect: runAndClose(() => onSomeoneOwes?.(transaction)),
+      // A receivable may only link the owner's EXPENSES (ADR-217), so the
+      // action is offered on expense rows that have a handler wired.
+      show: Boolean(onSomeoneOwes) && transaction.kind === 'expense',
       disabled: busy,
     },
     {
@@ -498,6 +517,9 @@ function RowOverflowMenu({
         anchorEl={anchorEl}
         open={open}
         onClose={handleClose}
+        // Single-scroll shell (ADR-017): `<main>` is the only scroller, so MUI's
+        // body scroll-lock has nothing to lock and can leave iOS Safari stuck.
+        disableScrollLock
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
         slotProps={{

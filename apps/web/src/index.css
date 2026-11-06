@@ -130,3 +130,21 @@ body {
   outline: 2px solid var(--mg-gold);
   outline-offset: 2px;
 }
+
+/*
+ * Receivable item -> linked expense chip (ADR-217/220). A bare TanStack <Link>
+ * (so the typed `search` keeps route inference) wrapping a presentational chip;
+ * the link itself carries the visible focus ring (never color alone, ADR-019).
+ */
+.mg-receivable-link {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 999px;
+}
+.mg-receivable-link:focus-visible {
+  outline: 2px solid var(--mg-gold);
+  outline-offset: 2px;
+}

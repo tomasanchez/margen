@@ -24,9 +24,11 @@ from margen_api.domain.commands.receivable import (
     CreatePerson,
     DeletePerson,
     DeleteReceivableItem,
+    EditReceivableInstallment,
     EditReceivableItem,
     RecordReceivablePayment,
     RenamePerson,
+    SetReceivableInstallmentPardon,
     SetReceivableItemPardon,
 )
 from margen_api.domain.commands.settings import UpdateSettings
@@ -62,9 +64,11 @@ from margen_api.service_layer.receivables import (
     create_person,
     delete_person,
     delete_receivable_item,
+    edit_receivable_installment,
     edit_receivable_item,
     record_receivable_payment,
     rename_person,
+    set_receivable_installment_pardon,
     set_receivable_item_pardon,
 )
 from margen_api.service_layer.settings_handlers import update_settings
@@ -99,6 +103,8 @@ COMMAND_HANDLERS: dict[type, CommandHandler] = {
     EditReceivableItem: edit_receivable_item,
     DeleteReceivableItem: delete_receivable_item,
     SetReceivableItemPardon: set_receivable_item_pardon,
+    EditReceivableInstallment: edit_receivable_installment,
+    SetReceivableInstallmentPardon: set_receivable_installment_pardon,
     RecordReceivablePayment: record_receivable_payment,
 }
 

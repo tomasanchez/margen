@@ -55,7 +55,7 @@ async def _list_outstanding(container: ApplicationContainer, user_id: str) -> di
     """Return a name -> outstanding map from the real people-list reader."""
     session = container.session_factory()
     try:
-        people = await SqlAlchemyReceivableReader(session).list_people(user_id)
+        people = await SqlAlchemyReceivableReader(session).list_people(user_id, as_of=A_DATE)
         return {person.name: person.outstanding for person in people}
     finally:
         await session.close()
@@ -65,7 +65,7 @@ async def _detail(container: ApplicationContainer, person_id: UUID, user_id: str
     """Return the real per-person detail read model (or ``None``)."""
     session = container.session_factory()
     try:
-        return await SqlAlchemyReceivableReader(session).get_person(person_id, user_id)
+        return await SqlAlchemyReceivableReader(session).get_person(person_id, user_id, as_of=A_DATE)
     finally:
         await session.close()
 
@@ -176,10 +176,14 @@ class TestPersonAndItemPersistence:
         # WHEN
         await rename_person(RenamePerson(id=person_id, user_id=STUB_USER_ID, name="New"), container.uow_factory())
         await edit_receivable_item(
-            EditReceivableItem(id=keep, user_id=STUB_USER_ID, amount=Decimal("800"), detail="updated"),
+            EditReceivableItem(
+                id=keep, user_id=STUB_USER_ID, person_id=person_id, amount=Decimal("800"), detail="updated"
+            ),
             container.uow_factory(),
         )
-        await delete_receivable_item(DeleteReceivableItem(id=drop, user_id=STUB_USER_ID), container.uow_factory())
+        await delete_receivable_item(
+            DeleteReceivableItem(id=drop, user_id=STUB_USER_ID, person_id=person_id), container.uow_factory()
+        )
 
         # THEN
         detail = await _detail(container, person_id, STUB_USER_ID)
@@ -230,7 +234,8 @@ class TestPardonExclusion:
 
         # WHEN — the 5000 item is forgiven.
         await set_receivable_item_pardon(
-            SetReceivableItemPardon(id=big, user_id=STUB_USER_ID, pardoned=True), container.uow_factory()
+            SetReceivableItemPardon(id=big, user_id=STUB_USER_ID, person_id=person_id, pardoned=True),
+            container.uow_factory(),
         )
 
         # THEN — the person now owes only the live 1000; the pardoned item is flagged and kept.
@@ -244,7 +249,8 @@ class TestPardonExclusion:
 
         # WHEN — the pardon is reversed.
         await set_receivable_item_pardon(
-            SetReceivableItemPardon(id=big, user_id=STUB_USER_ID, pardoned=False), container.uow_factory()
+            SetReceivableItemPardon(id=big, user_id=STUB_USER_ID, person_id=person_id, pardoned=False),
+            container.uow_factory(),
         )
 
         # THEN — the full 6000 is owed again and the flag clears.
@@ -268,7 +274,8 @@ class TestPardonExclusion:
 
         # WHEN
         await set_receivable_item_pardon(
-            SetReceivableItemPardon(id=only, user_id=STUB_USER_ID, pardoned=True), container.uow_factory()
+            SetReceivableItemPardon(id=only, user_id=STUB_USER_ID, person_id=person_id, pardoned=True),
+            container.uow_factory(),
         )
 
         # THEN — the person is retained in the list with a zero outstanding.
@@ -340,27 +347,33 @@ class TestNotFoundAndWarningPaths:
 
     async def test_edit_missing_item_raises(self, container: ApplicationContainer):
         """
-        GIVEN no item with a random id
+        GIVEN a person but no item with a random id
         WHEN it is edited
         THEN ReceivableItemNotFoundError is raised (the joined lookup misses)
         """
+        # GIVEN
+        person_id = await create_person(CreatePerson(user_id=STUB_USER_ID, name="Edits"), container.uow_factory())
+
         # WHEN / THEN
         with pytest.raises(ReceivableItemNotFoundError):
             await edit_receivable_item(
-                EditReceivableItem(id=uuid4(), user_id=STUB_USER_ID, amount=Decimal("1")),
+                EditReceivableItem(id=uuid4(), user_id=STUB_USER_ID, person_id=person_id, amount=Decimal("1")),
                 container.uow_factory(),
             )
 
     async def test_delete_missing_item_raises(self, container: ApplicationContainer):
         """
-        GIVEN no item with a random id
+        GIVEN a person but no item with a random id
         WHEN it is deleted
-        THEN ReceivableItemNotFoundError is raised (the delete reports a miss)
+        THEN ReceivableItemNotFoundError is raised (the item lookup misses)
         """
+        # GIVEN
+        person_id = await create_person(CreatePerson(user_id=STUB_USER_ID, name="Deletes"), container.uow_factory())
+
         # WHEN / THEN
         with pytest.raises(ReceivableItemNotFoundError):
             await delete_receivable_item(
-                DeleteReceivableItem(id=uuid4(), user_id=STUB_USER_ID), container.uow_factory()
+                DeleteReceivableItem(id=uuid4(), user_id=STUB_USER_ID, person_id=person_id), container.uow_factory()
             )
 
     async def test_overpayment_warns_over_real_remainders(self, container: ApplicationContainer):

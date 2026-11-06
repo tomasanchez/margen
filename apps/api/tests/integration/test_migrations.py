@@ -86,6 +86,20 @@ _RECEIVABLES = "a9b0c1d2e3f4"
 # No data migration is involved (existing items start un-pardoned, pardoned_at NULL).
 _PARDON = "b0c1d2e3f4a5"
 
+# The installment + expense-link migration (ADR-214/217/221): chains after the pardon. It
+# creates ``receivable_installment`` (UNIQUE (item_id, index), item FK ON DELETE CASCADE), adds
+# the nullable ``receivable_allocation.installment_id`` (FK ON DELETE CASCADE) and the nullable,
+# NON-unique ``receivable_item.source_transaction_id`` (FK -> transactions ON DELETE SET NULL).
+# No data migration is involved (existing rows read NULL in both new columns, ADR-223).
+_INSTALLMENTS = "c1d2e3f4a5b6"
+
+# Raw-SQL cuota insert. ``index`` is quoted because it is a keyword on SQLite (PostgreSQL
+# accepts it bare, but the quoted form works on both).
+_INSERT_INSTALLMENT = text(
+    'INSERT INTO receivable_installment (id, item_id, "index", due_on, amount) '
+    "VALUES (:id, :item_id, :cuota, :due_on, :amount)"
+)
+
 # A user_id for the seeded legacy rows (the column is NOT NULL by ``_PRE_SPLIT``).
 _OWNER = "00000000-0000-4000-8000-000000000001"
 # A second owner, to prove the seed is partitioned per user_id (ADR-124, ADR-130).
@@ -664,6 +678,74 @@ class TestMigrations:
         finally:
             asyncio.run(_drop_everything(integration_database_url))
 
+    def test_installments_migration_adds_schedule_table_and_nullable_links(self, integration_database_url: str):
+        """
+        GIVEN a database at the pardon revision with a seeded person, item, payment and allocation
+        WHEN Alembic upgrades through the installment + expense-link migration (ADR-214/217/221)
+        THEN receivable_installment exists, the seeded allocation and item read NULL in the new
+             nullable installment_id / source_transaction_id, a duplicate cuota number is
+             rejected, two items may link one expense and keep their rows when it is deleted,
+             deleting a cuota or an item cascades, and downgrade then re-upgrade both succeed
+
+        Proves the additive change on the production PostgreSQL dialect: existing rows stay
+        valid with no backfill (ADR-223); UNIQUE (item_id, index) holds (ADR-214); the expense
+        link is NOT unique (ADR-218) and is ON DELETE SET NULL (ADR-217/223); an allocation to a
+        deleted cuota goes with it (ADR-221); an item's schedule goes with the item (ADR-208).
+        The downgrade is lossy only for the new data — the item-level allocation survives it.
+        """
+        # GIVEN — upgrade to the pardon revision (the head before ADR-214) and seed a
+        # person + item + payment + item-level allocation the additive change must not break.
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", integration_database_url)
+        command.upgrade(config, _PARDON)
+        ids = {name: uuid.uuid4() for name in ("person", "item", "payment", "allocation")}
+        try:
+            asyncio.run(_seed_receivable_allocation(integration_database_url, ids))
+
+            # WHEN
+            command.upgrade(config, _INSTALLMENTS)
+
+            # THEN — the cuota table and both nullable link columns (with indexes) exist.
+            assert "receivable_installment" in asyncio.run(_table_names(integration_database_url))
+            allocation_columns = asyncio.run(_column_map(integration_database_url, "receivable_allocation"))
+            item_columns = asyncio.run(_column_map(integration_database_url, "receivable_item"))
+            assert allocation_columns["installment_id"] is True  # nullable, no backfill
+            assert item_columns["source_transaction_id"] is True  # nullable, no backfill
+            allocation_indexes = asyncio.run(_index_names(integration_database_url, "receivable_allocation"))
+            item_indexes = asyncio.run(_index_names(integration_database_url, "receivable_item"))
+            assert "ix_receivable_allocation_installment_id" in allocation_indexes
+            assert "ix_receivable_item_source_transaction_id" in item_indexes
+
+            # THEN — the pre-existing rows are untouched: both new columns read NULL.
+            assert asyncio.run(_read_new_links(integration_database_url, ids)) == (None, None)
+
+            # THEN — a second cuota with the same number on the same item is rejected.
+            assert asyncio.run(_duplicate_cuota_index_is_rejected(integration_database_url, ids["item"])) is True
+
+            # THEN — two items may link the SAME expense, and deleting it only NULLs both links.
+            links = asyncio.run(_shared_expense_links_after_expense_delete(integration_database_url, ids))
+            assert links == [None, None]
+
+            # THEN — deleting a cuota cascades its allocation; the item-level one is untouched.
+            remaining = asyncio.run(_allocations_left_after_cuota_delete(integration_database_url, ids))
+            assert remaining == [ids["allocation"]]
+
+            # THEN — deleting an item cascades its whole schedule.
+            assert asyncio.run(_cuotas_left_after_item_delete(integration_database_url, ids["person"])) == 0
+
+            # THEN — the downgrade reverses every change and the item-level allocation survives.
+            command.downgrade(config, _PARDON)
+            assert "receivable_installment" not in asyncio.run(_table_names(integration_database_url))
+            assert "installment_id" not in asyncio.run(_columns(integration_database_url, "receivable_allocation"))
+            assert "source_transaction_id" not in asyncio.run(_columns(integration_database_url, "receivable_item"))
+            assert asyncio.run(_allocation_exists(integration_database_url, ids["allocation"])) is True
+
+            # THEN — re-applying the migration after its downgrade succeeds (up / down / up).
+            command.upgrade(config, _INSTALLMENTS)
+            assert "receivable_installment" in asyncio.run(_table_names(integration_database_url))
+        finally:
+            asyncio.run(_drop_everything(integration_database_url))
+
     def test_head_matches_orm_metadata_no_drift(self, integration_database_url: str):
         """
         GIVEN a database migrated to head
@@ -786,6 +868,240 @@ async def _pardon_round_trips(url: str, item_id: uuid.UUID) -> bool:
         ).scalar_one()
     await engine.dispose()
     return pardoned is not None and cleared is None
+
+
+async def _seed_receivable_allocation(url: str, ids: dict[str, uuid.UUID]) -> None:
+    """Insert a person, item, payment and item-level allocation before the installment migration."""
+    engine = create_async_engine(url)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("INSERT INTO person (id, user_id, name) VALUES (:id, :user_id, :name)"),
+            {"id": ids["person"], "user_id": uuid.UUID(_OWNER), "name": "Ana"},
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO receivable_item (id, person_id, occurred_on, amount) "
+                "VALUES (:id, :person_id, :occurred_on, :amount)"
+            ),
+            {
+                "id": ids["item"],
+                "person_id": ids["person"],
+                "occurred_on": datetime.date(2026, 10, 1),
+                "amount": Decimal("3000.00"),
+            },
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO receivable_payment (id, person_id, occurred_on, amount, source) "
+                "VALUES (:id, :person_id, :occurred_on, :amount, :source)"
+            ),
+            {
+                "id": ids["payment"],
+                "person_id": ids["person"],
+                "occurred_on": datetime.date(2026, 10, 15),
+                "amount": Decimal("1500.00"),
+                "source": "manual",
+            },
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO receivable_allocation (id, payment_id, item_id, amount) "
+                "VALUES (:id, :payment_id, :item_id, :amount)"
+            ),
+            {
+                "id": ids["allocation"],
+                "payment_id": ids["payment"],
+                "item_id": ids["item"],
+                "amount": Decimal("1000.00"),
+            },
+        )
+    await engine.dispose()
+
+
+async def _read_new_links(url: str, ids: dict[str, uuid.UUID]) -> tuple[uuid.UUID | None, uuid.UUID | None]:
+    """Return the seeded allocation's ``installment_id`` and item's ``source_transaction_id``."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        installment_id = (
+            await connection.execute(
+                text("SELECT installment_id FROM receivable_allocation WHERE id = :id"),
+                {"id": ids["allocation"]},
+            )
+        ).scalar_one()
+        source_transaction_id = (
+            await connection.execute(
+                text("SELECT source_transaction_id FROM receivable_item WHERE id = :id"),
+                {"id": ids["item"]},
+            )
+        ).scalar_one()
+    await engine.dispose()
+    return installment_id, source_transaction_id
+
+
+async def _duplicate_cuota_index_is_rejected(url: str, item_id: uuid.UUID) -> bool:
+    """Insert cuota 1 of the item twice; return whether the 2nd fails UNIQUE (item_id, index)."""
+    from sqlalchemy.exc import IntegrityError
+
+    engine = create_async_engine(url)
+    cuota = {"item_id": item_id, "cuota": 1, "due_on": datetime.date(2026, 11, 10), "amount": Decimal("1000.00")}
+    async with engine.begin() as connection:
+        await connection.execute(_INSERT_INSTALLMENT, {"id": uuid.uuid4(), **cuota})
+    rejected = False
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(_INSERT_INSTALLMENT, {"id": uuid.uuid4(), **cuota})
+    except IntegrityError:
+        rejected = True
+    await engine.dispose()
+    return rejected
+
+
+async def _shared_expense_links_after_expense_delete(url: str, ids: dict[str, uuid.UUID]) -> list[uuid.UUID | None]:
+    """Link TWO items to one expense, delete the expense, and return both items' links.
+
+    The second link must not violate any uniqueness (ADR-218), and deleting the expense must
+    keep both items while NULLing their reference (ON DELETE SET NULL, ADR-217/223).
+    """
+    engine = create_async_engine(url)
+    expense_id = uuid.uuid4()
+    second_item_id = uuid.uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO transactions (id, user_id, occurred_on, name, kind, amount, currency) "
+                "VALUES (:id, :user_id, :occurred_on, :name, :kind, :amount, :currency)"
+            ),
+            {
+                "id": expense_id,
+                "user_id": uuid.UUID(_OWNER),
+                "occurred_on": datetime.date(2026, 10, 1),
+                "name": "Shared dinner",
+                "kind": "expense",
+                "amount": Decimal("9000.00"),
+                "currency": "ARS",
+            },
+        )
+        await connection.execute(
+            text("UPDATE receivable_item SET source_transaction_id = :expense WHERE id = :id"),
+            {"expense": expense_id, "id": ids["item"]},
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO receivable_item (id, person_id, occurred_on, amount, source_transaction_id) "
+                "VALUES (:id, :person_id, :occurred_on, :amount, :expense)"
+            ),
+            {
+                "id": second_item_id,
+                "person_id": ids["person"],
+                "occurred_on": datetime.date(2026, 10, 1),
+                "amount": Decimal("3000.00"),
+                "expense": expense_id,
+            },
+        )
+        await connection.execute(text("DELETE FROM transactions WHERE id = :id"), {"id": expense_id})
+        result = await connection.execute(
+            text("SELECT source_transaction_id FROM receivable_item WHERE id = ANY(:ids)"),
+            {"ids": [ids["item"], second_item_id]},
+        )
+        links = [row.source_transaction_id for row in result]
+    await engine.dispose()
+    return links
+
+
+async def _allocations_left_after_cuota_delete(url: str, ids: dict[str, uuid.UUID]) -> list[uuid.UUID]:
+    """Allocate part of the payment to a cuota, delete the cuota, and return the surviving allocations.
+
+    The cuota-level allocation must cascade away with its cuota (ADR-221) while the seeded
+    item-level allocation (``installment_id`` NULL) is untouched.
+    """
+    engine = create_async_engine(url)
+    cuota_id = uuid.uuid4()
+    cuota_allocation_id = uuid.uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(
+            _INSERT_INSTALLMENT,
+            {
+                "id": cuota_id,
+                "item_id": ids["item"],
+                "cuota": 2,
+                "due_on": datetime.date(2026, 12, 10),
+                "amount": Decimal("1000.00"),
+            },
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO receivable_allocation (id, payment_id, item_id, amount, installment_id) "
+                "VALUES (:id, :payment_id, :item_id, :amount, :installment_id)"
+            ),
+            {
+                "id": cuota_allocation_id,
+                "payment_id": ids["payment"],
+                "item_id": ids["item"],
+                "amount": Decimal("500.00"),
+                "installment_id": cuota_id,
+            },
+        )
+        await connection.execute(text("DELETE FROM receivable_installment WHERE id = :id"), {"id": cuota_id})
+        result = await connection.execute(
+            text("SELECT id FROM receivable_allocation WHERE id = ANY(:ids)"),
+            {"ids": [ids["allocation"], cuota_allocation_id]},
+        )
+        remaining = [row.id for row in result]
+    await engine.dispose()
+    return remaining
+
+
+async def _cuotas_left_after_item_delete(url: str, person_id: uuid.UUID) -> int:
+    """Give a fresh item a two-cuota schedule, delete the item, and count its cuotas left (ADR-208)."""
+    engine = create_async_engine(url)
+    item_id = uuid.uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO receivable_item (id, person_id, occurred_on, amount) "
+                "VALUES (:id, :person_id, :occurred_on, :amount)"
+            ),
+            {
+                "id": item_id,
+                "person_id": person_id,
+                "occurred_on": datetime.date(2026, 10, 1),
+                "amount": Decimal("2000.00"),
+            },
+        )
+        for cuota in (1, 2):
+            await connection.execute(
+                _INSERT_INSTALLMENT,
+                {
+                    "id": uuid.uuid4(),
+                    "item_id": item_id,
+                    "cuota": cuota,
+                    "due_on": datetime.date(2026, 10 + cuota, 10),
+                    "amount": Decimal("1000.00"),
+                },
+            )
+        await connection.execute(text("DELETE FROM receivable_item WHERE id = :id"), {"id": item_id})
+        left = (
+            await connection.execute(
+                text("SELECT count(*) FROM receivable_installment WHERE item_id = :id"),
+                {"id": item_id},
+            )
+        ).scalar_one()
+    await engine.dispose()
+    return int(left)
+
+
+async def _allocation_exists(url: str, allocation_id: uuid.UUID) -> bool:
+    """Return whether the allocation row is still present."""
+    engine = create_async_engine(url)
+    async with engine.connect() as connection:
+        count = (
+            await connection.execute(
+                text("SELECT count(*) FROM receivable_allocation WHERE id = :id"),
+                {"id": allocation_id},
+            )
+        ).scalar_one()
+    await engine.dispose()
+    return count == 1
 
 
 async def _owned_debt_persists(url: str) -> bool:

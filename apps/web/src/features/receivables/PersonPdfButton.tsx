@@ -162,6 +162,9 @@ export function PersonPdfButton({ personId, personName }: PersonPdfButtonProps) 
         anchorEl={anchorEl}
         open={menuOpen}
         onClose={closeMenu}
+        // Single-scroll shell (ADR-017): `<main>` is the only scroller, so MUI's
+        // body scroll-lock has nothing to lock and can leave iOS Safari stuck.
+        disableScrollLock
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
         slotProps={{

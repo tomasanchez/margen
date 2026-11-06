@@ -62,6 +62,8 @@ import {
 import { currentViewingMonth } from '../../components/months'
 import { useDeleteTransaction, useTransactions } from './queries'
 import { useAccounts } from '../accounts/queries'
+import { OwedFromTransactionDialog } from '../receivables/OwedFromTransactionDialog'
+import type { ReceivableItemSaved } from '../receivables/ReceivableItemForm'
 
 /** Search-box debounce before the query `q` is pushed to the URL (ADR-116). */
 const SEARCH_DEBOUNCE_MS = 300
@@ -339,6 +341,10 @@ export function TransactionsPage({
   const transactionsQuery = useTransactions()
   const deleteMutation = useDeleteTransaction()
   const [sheetOpen, setSheetOpen] = useState(false)
+  // "Someone owes me this" (ADR-220): the expense a receivable is being started
+  // from, and the confirmation shown once it's saved.
+  const [owedFrom, setOwedFrom] = useState<Transaction | null>(null)
+  const [owedSaved, setOwedSaved] = useState<ReceivableItemSaved | null>(null)
 
   // The accounts list (already loaded for the Account filter) doubles as the
   // row attribution source (ADR-136 extension): build a single `accountId →
@@ -397,6 +403,11 @@ export function TransactionsPage({
   // (ADR-158/159): kind=reimbursement + offsetsTransactionId bound to the row.
   const handleReimburse = (t: Transaction) =>
     openAdd(buildReimbursementPrefill(t))
+  // Start a receivable from this expense, linked to it (ADR-217/220).
+  const handleSomeoneOwes = (t: Transaction) => {
+    setOwedSaved(null)
+    setOwedFrom(t)
+  }
   const handleDelete = (t: Transaction) => deleteMutation.mutate(t.id)
   const deletingId =
     deleteMutation.isPending && typeof deleteMutation.variables === 'string'
@@ -576,6 +587,7 @@ export function TransactionsPage({
                       onEdit={handleEdit}
                       onDelete={handleDelete}
                       onReimburse={handleReimburse}
+                      onSomeoneOwes={handleSomeoneOwes}
                       busy={deletingId === t.id}
                       accountNames={accountNames}
                     />
@@ -590,6 +602,7 @@ export function TransactionsPage({
                       onEdit={handleEdit}
                       onDelete={handleDelete}
                       onReimburse={handleReimburse}
+                      onSomeoneOwes={handleSomeoneOwes}
                       busy={deletingId === t.id}
                       accountNames={accountNames}
                     />
@@ -610,6 +623,38 @@ export function TransactionsPage({
       />
         </>
       )}
+
+      {owedFrom ? (
+        <OwedFromTransactionDialog
+          key={owedFrom.id}
+          transaction={owedFrom}
+          onClose={() => setOwedFrom(null)}
+          onSaved={setOwedSaved}
+        />
+      ) : null}
+
+      {/* Calm confirmation once a "Someone owes me this" debt is saved (ADR-220).
+          Dismissible by hand; it also fades on its own since nothing is lost. */}
+      <Snackbar
+        open={owedSaved !== null}
+        autoHideDuration={6000}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        onClose={(_, reason) => {
+          if (reason === 'clickaway') return
+          setOwedSaved(null)
+        }}
+      >
+        <Alert
+          severity="success"
+          variant="filled"
+          onClose={() => setOwedSaved(null)}
+          sx={{ width: '100%' }}
+        >
+          {owedSaved?.personName
+            ? t('owed.saved', { name: owedSaved.personName })
+            : t('owed.savedNoName')}
+        </Alert>
+      </Snackbar>
 
       {/* Calm, recoverable delete-failure notice (ADR-036/037): the row stays in
           place; dismissing or retrying the delete is the user's choice. */}

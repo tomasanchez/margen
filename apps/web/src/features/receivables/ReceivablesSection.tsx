@@ -17,8 +17,9 @@
  * write invalidates the people list + affected person (task 7 hooks), so the UI
  * always reads FRESH data — never a mutation's return shape. Receivables are
  * ARS-only (ADR-204); a person's outstanding (or an item's remainder) can go
- * NEGATIVE when overpaid — it renders red + signed (ADR-019). Money is a Decimal
- * string end-to-end (ADR-025/034), parsed only here at the display edge (ADR-102).
+ * NEGATIVE when overpaid — that is the person's CREDIT and reads as "Credit ARS X"
+ * (a word, never a signed "owed" figure, ADR-019). Money is a Decimal string
+ * end-to-end (ADR-025/034), parsed only here at the display edge (ADR-102).
  */
 
 import { useState } from 'react'
@@ -35,11 +36,12 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import { CollapsibleSection } from '../../components/CollapsibleSection'
 import { ErrorState } from '../../components/ErrorState'
 import { ResponsiveModal } from '../../components/ResponsiveModal'
-import {
-  balanceColor,
-  formatSignedBalance,
-} from '../../lib/format'
-import type { Person, ReceivableItem } from '../../api/receivablesClient'
+import { formatCurrency } from '../../lib/format'
+import type {
+  Person,
+  ReceivableInstallment,
+  ReceivableItem,
+} from '../../api/receivablesClient'
 import { PersonForm } from './PersonForm'
 import { PersonItems } from './PersonItems'
 import { ReceivableItemForm } from './ReceivableItemForm'
@@ -47,8 +49,10 @@ import { RecordPaymentForm } from './RecordPaymentForm'
 import {
   useDeletePerson,
   useDeleteReceivableItem,
+  usePardonInstallment,
   usePardonItem,
   useReceivablePeople,
+  useUnpardonInstallment,
   useUnpardonItem,
 } from './queries'
 
@@ -62,6 +66,11 @@ function num(value: string): number {
 interface ItemTarget {
   personId: string
   item: ReceivableItem
+}
+
+/** A cuota write target: the item target plus the cuota (ADR-221). */
+interface CuotaTarget extends ItemTarget {
+  cuota: ReceivableInstallment
 }
 
 /**
@@ -80,6 +89,8 @@ function PersonRow({
   onDeleteItem,
   onPardonItem,
   onUnpardonItem,
+  onPardonInstallment,
+  onUnpardonInstallment,
   onRecordPayment,
 }: {
   person: Person
@@ -92,10 +103,14 @@ function PersonRow({
   onDeleteItem: (item: ReceivableItem) => void
   onPardonItem: (item: ReceivableItem) => void
   onUnpardonItem: (item: ReceivableItem) => void
+  onPardonInstallment: (item: ReceivableItem, cuota: ReceivableInstallment) => void
+  onUnpardonInstallment: (item: ReceivableItem, cuota: ReceivableInstallment) => void
   onRecordPayment: () => void
 }) {
   const { t } = useTranslation('receivables')
   const outstanding = num(person.outstanding)
+  // Not-yet-due cuotas are informational, never part of outstanding (ADR-215).
+  const upcoming = num(person.upcomingTotal)
   return (
     <Box
       sx={{
@@ -151,25 +166,41 @@ function PersonRow({
               }}
             />
             <Typography
-              sx={{ fontSize: 14, fontWeight: 600, minWidth: 0 }}
-              color="text.primary"
+              sx={{ fontSize: 14, fontWeight: 600, minWidth: 0, color: 'text.primary' }}
               noWrap
             >
               {person.name}
             </Typography>
           </Box>
-          <Typography
-            sx={{
-              fontSize: 14,
-              fontWeight: 600,
-              fontVariantNumeric: 'tabular-nums',
-              flex: 'none',
-              // A negative outstanding (overpaid, ADR-206) reads red + signed.
-              color: balanceColor(outstanding),
-            }}
-          >
-            {formatSignedBalance(outstanding, 'ARS')}
-          </Typography>
+          <Box sx={{ flex: 'none', textAlign: 'right' }}>
+            <Typography
+              sx={{
+                fontSize: 14,
+                fontWeight: 600,
+                fontVariantNumeric: 'tabular-nums',
+                // A credit (overpaid, ADR-206) is worded as such; color only
+                // reinforces the word (ADR-019).
+                color: outstanding < 0 ? 'success.main' : 'text.primary',
+              }}
+            >
+              {outstanding < 0
+                ? t('credit', { amount: formatCurrency(-outstanding, 'ARS') })
+                : formatCurrency(outstanding, 'ARS')}
+            </Typography>
+            {upcoming > 0 ? (
+              <Typography
+                sx={{
+                  fontSize: 11.5,
+                  fontVariantNumeric: 'tabular-nums',
+                  color: 'text.secondary',
+                }}
+              >
+                {t('person.upcoming', {
+                  amount: formatCurrency(upcoming, 'ARS'),
+                })}
+              </Typography>
+            ) : null}
+          </Box>
         </Box>
         <IconButton
           size="small"
@@ -198,6 +229,8 @@ function PersonRow({
           onDeleteItem={onDeleteItem}
           onPardonItem={onPardonItem}
           onUnpardonItem={onUnpardonItem}
+          onPardonInstallment={onPardonInstallment}
+          onUnpardonInstallment={onUnpardonInstallment}
           onRecordPayment={onRecordPayment}
         />
       ) : null}
@@ -212,6 +245,8 @@ export function ReceivablesSection() {
   const deleteItem = useDeleteReceivableItem()
   const pardonItem = usePardonItem()
   const unpardonItem = useUnpardonItem()
+  const pardonInstallment = usePardonInstallment()
+  const unpardonInstallment = useUnpardonInstallment()
 
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
@@ -238,6 +273,9 @@ export function ReceivablesSection() {
   // Pardon (forgive) confirm — un-pardon is a calm direct toggle, no confirm.
   const [pendingPardonItem, setPendingPardonItem] =
     useState<ItemTarget | null>(null)
+  // Single-cuota pardon confirm (ADR-221) — same calm pattern as an item.
+  const [pendingPardonCuota, setPendingPardonCuota] =
+    useState<CuotaTarget | null>(null)
 
   const people = peopleQuery.data ?? []
 
@@ -310,6 +348,38 @@ export function ReceivablesSection() {
     unpardonItem.mutate({ personId, itemId: item.id })
   }
 
+  const openPardonCuota = (
+    personId: string,
+    item: ReceivableItem,
+    cuota: ReceivableInstallment,
+  ) => {
+    pardonInstallment.reset()
+    setPendingPardonCuota({ personId, item, cuota })
+  }
+  const confirmPardonCuota = () => {
+    if (!pendingPardonCuota) return
+    pardonInstallment.mutate(
+      {
+        personId: pendingPardonCuota.personId,
+        itemId: pendingPardonCuota.item.id,
+        index: pendingPardonCuota.cuota.index,
+      },
+      { onSuccess: () => setPendingPardonCuota(null) },
+    )
+  }
+  // Restoring a cuota is non-destructive → direct, like an item (ADR-210/221).
+  const handleUnpardonCuota = (
+    personId: string,
+    item: ReceivableItem,
+    cuota: ReceivableInstallment,
+  ) => {
+    unpardonInstallment.mutate({
+      personId,
+      itemId: item.id,
+      index: cuota.index,
+    })
+  }
+
   const addAction = (
     <Button
       startIcon={<AddIcon />}
@@ -346,8 +416,7 @@ export function ReceivablesSection() {
   } else if (people.length === 0) {
     body = (
       <Typography
-        sx={{ fontSize: 13.5, py: 1 }}
-        color="text.secondary"
+        sx={{ fontSize: 13.5, py: 1, color: 'text.secondary' }}
         role="status"
       >
         {t('empty')}
@@ -367,6 +436,12 @@ export function ReceivablesSection() {
         onDeleteItem={(item) => openDeleteItem(person.id, item)}
         onPardonItem={(item) => openPardonItem(person.id, item)}
         onUnpardonItem={(item) => handleUnpardonItem(person.id, item)}
+        onPardonInstallment={(item, cuota) =>
+          openPardonCuota(person.id, item, cuota)
+        }
+        onUnpardonInstallment={(item, cuota) =>
+          handleUnpardonCuota(person.id, item, cuota)
+        }
         onRecordPayment={() => setPaymentTarget(person)}
       />
     ))
@@ -420,7 +495,7 @@ export function ReceivablesSection() {
         title={t('deletePerson.title')}
         maxWidth={420}
       >
-        <Typography sx={{ fontSize: 14 }} color="text.secondary">
+        <Typography sx={{ fontSize: 14, color: 'text.secondary' }}>
           {t('deletePerson.body', { name: pendingDeletePerson?.name ?? '' })}
         </Typography>
         {deletePerson.isError ? (
@@ -460,7 +535,7 @@ export function ReceivablesSection() {
         title={t('deleteItem.title')}
         maxWidth={420}
       >
-        <Typography sx={{ fontSize: 14 }} color="text.secondary">
+        <Typography sx={{ fontSize: 14, color: 'text.secondary' }}>
           {t('deleteItem.body', {
             date: pendingDeleteItem?.item.occurredOn ?? '',
           })}
@@ -502,10 +577,12 @@ export function ReceivablesSection() {
         title={t('pardonItem.title')}
         maxWidth={420}
       >
-        <Typography sx={{ fontSize: 14 }} color="text.secondary">
-          {t('pardonItem.body', {
-            date: pendingPardonItem?.item.occurredOn ?? '',
-          })}
+        <Typography sx={{ fontSize: 14, color: 'text.secondary' }}>
+          {(pendingPardonItem?.item.installments.length ?? 0) > 0
+            ? t('pardonItem.planBody')
+            : t('pardonItem.body', {
+                date: pendingPardonItem?.item.occurredOn ?? '',
+              })}
         </Typography>
         {pardonItem.isError ? (
           <Typography
@@ -532,6 +609,52 @@ export function ReceivablesSection() {
             sx={{ textTransform: 'none', fontWeight: 600 }}
           >
             {t('pardonItem.confirm')}
+          </Button>
+        </Box>
+      </ResponsiveModal>
+
+      {/* Calm single-cuota pardon confirm (ADR-221) — distinct from delete. */}
+      <ResponsiveModal
+        open={pendingPardonCuota !== null}
+        onClose={() => setPendingPardonCuota(null)}
+        title={t('pardonCuota.title')}
+        maxWidth={420}
+      >
+        <Typography sx={{ fontSize: 14, color: 'text.secondary' }}>
+          {t('pardonCuota.body', {
+            index: pendingPardonCuota?.cuota.index ?? 0,
+            count: pendingPardonCuota?.item.installments.length ?? 0,
+            item:
+              pendingPardonCuota?.item.detail ??
+              pendingPardonCuota?.item.occurredOn ??
+              '',
+          })}
+        </Typography>
+        {pardonInstallment.isError ? (
+          <Typography
+            role="alert"
+            sx={{ fontSize: 13, mt: 1.5, color: 'error.main' }}
+          >
+            {t('pardonCuota.error')}
+          </Typography>
+        ) : null}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 3 }}>
+          <Button
+            type="button"
+            onClick={() => setPendingPardonCuota(null)}
+            color="secondary"
+            sx={{ textTransform: 'none' }}
+          >
+            {t('pardonCuota.cancel')}
+          </Button>
+          <Button
+            type="button"
+            onClick={confirmPardonCuota}
+            variant="contained"
+            disabled={pardonInstallment.isPending}
+            sx={{ textTransform: 'none', fontWeight: 600 }}
+          >
+            {t('pardonCuota.confirm')}
           </Button>
         </Box>
       </ResponsiveModal>

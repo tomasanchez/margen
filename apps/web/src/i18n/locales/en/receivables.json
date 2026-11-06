@@ -10,6 +10,7 @@
   "person": {
     "outstandingLabel": "Outstanding",
     "outstandingAria": "{{name}} owes you {{amount}}",
+    "upcoming": "+ {{amount}} upcoming",
     "expandAria": "Show {{name}}'s items",
     "collapseAria": "Hide {{name}}'s items",
     "renameAria": "Rename {{name}}",
@@ -24,10 +25,53 @@
     "editAria": "Edit item from {{date}}",
     "deleteAria": "Delete item from {{date}}",
     "pardonAria": "Forgive the item from {{date}}",
+    "pardonPlanAria": "Forgive the remaining cuotas of the item from {{date}}",
     "unpardonAria": "Restore the item from {{date}} as owed",
     "loadingAria": "Loading items",
     "errorTitle": "Can't load these items",
-    "errorDescription": "We couldn't load this person's items. Check your connection and try again."
+    "errorDescription": "We couldn't load this person's items. Check your connection and try again.",
+    "planLine": "{{amount}} in {{count}} cuotas",
+    "personSummary": "{{owed}} due now · {{upcoming}} in upcoming cuotas",
+    "showCuotas": "Show cuotas ({{count}})",
+    "hideCuotas": "Hide cuotas",
+    "linkAria": "Open the linked expense {{name}} from {{date}} in Transactions",
+    "overLinked": "Debts linked to this expense add up to more than its {{amount}}.",
+    "overLinkedPlan": "Debts linked to this purchase add up to more than its {{amount}} total ({{count}} cuotas).",
+    "personSummaryCredit": "{{credit}} · {{upcoming}} in upcoming cuotas",
+    "planDue": "{{due}}/{{count}} cuotas due",
+    "planOwed": "{{amount}} owed",
+    "planUpcoming": "{{amount}} upcoming"
+  },
+  "schedule": {
+    "cuotaLabel": "Cuota {{index}}/{{count}}",
+    "edited": "Edited",
+    "dueOn": "Due {{date}}",
+    "dueOnWithLeft": "Due {{date}} · {{amount}} left",
+    "listAria": "Cuotas of {{item}}",
+    "editAria": "Edit cuota {{index}}/{{count}}",
+    "pardonAria": "Forgive cuota {{index}}/{{count}}",
+    "unpardonAria": "Restore cuota {{index}}/{{count}} as owed",
+    "status": {
+      "due": "Due",
+      "upcoming": "Upcoming",
+      "paid": "Paid",
+      "pardoned": "Covered"
+    },
+    "editor": {
+      "amount": "Amount",
+      "amountAria": "Amount · cuota {{index}}/{{count}}",
+      "dueOn": "Due date",
+      "dueOnAria": "Due date · cuota {{index}}/{{count}}",
+      "save": "Save",
+      "saveAria": "Save cuota {{index}}/{{count}}",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "cancelAria": "Cancel editing cuota {{index}}/{{count}}",
+      "error": "We couldn't save this cuota. Check your connection and try again.",
+      "belowPaid": "Can't be less than the {{amount}} already paid.",
+      "dueOnError": "Pick a date between 2000 and 2100."
+    },
+    "dueOnWithCredit": "Due {{date}} · {{amount}} credit"
   },
   "personForm": {
     "addTitle": "Add person",
@@ -39,23 +83,89 @@
     "save": "Save",
     "saveError": "We couldn't save this person. Check your connection and try again."
   },
+  "personPicker": {
+    "label": "Who owes you?",
+    "helper": "Pick someone or type a new name.",
+    "newPerson": "{{name}} will be added as a new person.",
+    "existingPerson": "Adding to what {{name}} owes you.",
+    "clear": "Clear",
+    "open": "Show people",
+    "close": "Hide people",
+    "loading": "Loading people…",
+    "noOptions": "No one yet. Type a name to add them."
+  },
+  "fromTransaction": {
+    "title": "Someone owes me this"
+  },
   "itemForm": {
     "addTitle": "Add item",
     "editTitle": "Edit item",
     "date": {
-      "label": "Date"
+      "label": "Date",
+      "error": "Pick a date between 2000 and 2100."
     },
     "amount": {
       "label": "Amount",
-      "helper": "How much this person owes you for this item."
+      "helper": "How much this person owes you for this item.",
+      "totalLabel": "Total amount",
+      "totalHelper": "Split evenly across the cuotas; any extra cents go on the last one."
     },
     "detail": {
       "label": "Detail (optional)",
       "helper": "A note about what this debt is for."
     },
+    "installments": {
+      "toggle": "Pay in installments (cuotas)",
+      "count": "Number of cuotas",
+      "countError": "Between {{min}} and {{max}} cuotas.",
+      "firstDue": "First cuota due",
+      "firstDueError": "Pick a date between 2000 and 2100.",
+      "previewTitle": "Cuotas",
+      "total": "{{count}} cuotas · total {{amount}}",
+      "totalEdited": "{{count}} cuotas · total {{amount}} with your edits",
+      "resetEdits": "Reset edits",
+      "resplitHint": "Saving re-splits every cuota evenly.",
+      "removeHint": "Saving turns this back into a single debt and removes its cuotas.",
+      "tooSmall": "The total is too small to split into {{count}} cuotas.",
+      "needAmount": "Enter the total amount to preview the cuotas."
+    },
+    "lock": {
+      "planAllocations": "This plan already has payments, so its total, number of cuotas and first due date can't change. You can still edit individual cuotas.",
+      "planPardons": "This plan has forgiven cuotas, so its total, number of cuotas and first due date can't change. You can still edit individual cuotas.",
+      "flatAllocations": "This item already has payments, so it can't be split into cuotas.",
+      "flatPardons": "This item is forgiven, so it can't be split into cuotas."
+    },
+    "link": {
+      "cuotaHint": "This expense is cuota {{index}}/{{count}} of {{amount}} ({{total}} in total). Enter the total this person owes you.",
+      "cuotaPlanHint": "This expense is a purchase in {{count}} cuotas of {{amount}} ({{total}} in total). Enter the total this person owes you.",
+      "overLinked": "Debts linked to this expense would add up to {{total}}, more than its {{expense}}. You can still save.",
+      "overLinkedPlan": "Debts linked to this purchase would add up to {{total}}, more than its {{expense}} total ({{count}} cuotas). You can still save."
+    },
+    "errors": {
+      "generic": "We couldn't save this item. Check your connection and try again.",
+      "lockedAllocations": "This plan already has payments, so its total, number of cuotas or first due date can't change. Remove those payments first, or edit individual cuotas instead.",
+      "lockedPardons": "This plan has forgiven cuotas, so its total, number of cuotas or first due date can't change. Restore those cuotas first, or edit individual cuotas instead.",
+      "linkMissing": "We couldn't find the linked expense. It may have been deleted. Pick another one or remove the link.",
+      "invalidPlan": "These cuotas can't be saved. Check the total and the number of cuotas.",
+      "idConflict": "This item may already have been saved, with different details, on an earlier attempt. Close this form and check the list before adding it again.",
+      "belowPaid": "Cuota {{index}} can't be less than the {{amount}} already paid."
+    },
     "cancel": "Cancel",
     "save": "Save",
-    "saveError": "We couldn't save this item. Check your connection and try again."
+    "saving": "Saving…"
+  },
+  "link": {
+    "label": "Link transaction (optional)",
+    "helper": "The expense this debt came from. Just a reference: balances and budgets don't change.",
+    "cuota": "Cuota {{index}}/{{count}}",
+    "cuotaPlan": "{{count}} cuotas",
+    "clear": "Remove link",
+    "open": "Show expenses",
+    "close": "Hide expenses",
+    "loading": "Loading expenses…",
+    "noOptions": "No matching expenses",
+    "error": "Couldn't load expenses",
+    "planTotal": "{{amount}} in total"
   },
   "deletePerson": {
     "title": "Delete person",
@@ -74,29 +184,69 @@
   "pardonItem": {
     "title": "Forgive this debt",
     "body": "Forgive this debt? It stops counting as owed but will show as \"covered by you\" on the PDF. You can restore it later.",
+    "planBody": "Forgive every cuota still owed on this plan? They stop counting as owed but will show as \"covered by you\" on the PDF. Paid cuotas stay paid, and you can restore them later.",
     "cancel": "Cancel",
     "confirm": "Forgive",
     "error": "We couldn't forgive this item. Check your connection and try again."
   },
+  "pardonCuota": {
+    "title": "Forgive this cuota",
+    "body": "Forgive cuota {{index}}/{{count}} of \"{{item}}\"? It stops counting as owed but will show as \"covered by you\" on the PDF. You can restore it later.",
+    "cancel": "Cancel",
+    "confirm": "Forgive",
+    "error": "We couldn't forgive this cuota. Check your connection and try again."
+  },
+  "allocation": {
+    "itemAria": "Amount applied to the item from {{date}}",
+    "cuotaAria": "Amount applied to cuota {{index}}/{{count}} of the item from {{date}}",
+    "cuotaLabel": "{{item}} · Cuota {{index}}/{{count}}",
+    "remainingHint": "{{amount}} remaining",
+    "dueHint": "{{amount}} left · due {{date}}",
+    "upcomingHint": "{{amount}} · not due until {{date}}",
+    "showUpcoming": "Show upcoming cuotas ({{count}})",
+    "hideUpcoming": "Hide upcoming cuotas",
+    "applyToUpcoming": "Apply the rest to upcoming cuotas",
+    "overReceived": "The lines add up to {{amount}} more than the {{received}} received.",
+    "overTarget": "That's {{extra}} more than the {{amount}} it owes. The extra becomes a credit, and you'll be asked to confirm it.",
+    "unassigned": "{{amount}} of the {{received}} received isn't assigned to a debt yet. Assign it or change the amount received to record the payment.",
+    "unassignedIncome": "{{amount}} of this {{received}} income isn't assigned to a debt yet.",
+    "overIncome": "The lines add up to {{amount}} more than this {{received}} income. Lower them to confirm.",
+    "needReceived": "Enter the amount received, or use the lines' total.",
+    "setReceived": "Set received to {{amount}}",
+    "putRestOn": "Put the rest on…",
+    "putRestOnMenu": "Debt to put the rest on",
+    "acknowledgeShortfall": "Claim this {{received}} income for only {{amount}}. The rest can't be matched to anyone again."
+  },
+  "overpayment": {
+    "title": "More than owed",
+    "body": "This payment of {{requested}} is more than the {{outstanding}} still owed. Record it anyway as a credit?",
+    "earlyTitle": "Includes cuotas not yet due",
+    "earlyBody": "This payment of {{requested}} is more than the {{outstanding}} due right now because it pays cuotas that aren't due yet. Record it as an early payment?",
+    "cancel": "Go back",
+    "confirm": "Record anyway",
+    "targetTitle": "More than this debt owes",
+    "targetBody": "{{target}} only owes {{remaining}}, but this payment applies {{requested}} to it. Record the extra {{extra}} as a credit?",
+    "creditBody": "Nothing is owed right now (there's already a {{credit}} credit). Record this {{requested}} payment anyway as more credit?",
+    "unknownTarget": "This debt"
+  },
   "payment": {
     "title": "Record payment",
-    "subtitle": "Apply a payment across {{name}}'s open items.",
+    "subtitle": "Apply a payment across {{name}}'s open items and cuotas.",
     "date": {
-      "label": "Date"
+      "label": "Date",
+      "error": "Pick a date between 2000 and 2100."
     },
-    "allocationAria": "Amount applied to the item from {{date}}",
-    "remainingHint": "{{amount}} remaining",
+    "amount": {
+      "label": "Amount received",
+      "helper": "We'll suggest how to apply it, oldest due cuotas first. The lines must add up to it.",
+      "suggesting": "Suggesting how to apply it…",
+      "suggestError": "We couldn't suggest how to apply it. Enter the amounts below."
+    },
     "totalLabel": "Total payment",
     "noOpenItems": "Nothing is outstanding — every item is already settled.",
     "cancel": "Cancel",
     "save": "Record payment",
-    "saveError": "We couldn't record this payment. Check your connection and try again.",
-    "overpayment": {
-      "title": "More than owed",
-      "body": "This payment of {{requested}} is more than the {{outstanding}} still owed. Record it anyway as a credit?",
-      "cancel": "Go back",
-      "confirm": "Record anyway"
-    }
+    "saveError": "We couldn't record this payment. Check your connection and try again."
   },
   "match": {
     "title": "Suggested payments",
@@ -115,22 +265,16 @@
   },
   "confirmMatch": {
     "title": "Confirm payment",
-    "subtitle": "Apply this income across {{name}}'s open items.",
+    "subtitle": "Apply this income across {{name}}'s open items and cuotas.",
     "incomeLabel": "Matched income",
     "incomeSummary": "{{amount}} on {{date}}",
     "noOpenItems": "Nothing is outstanding — every item is already settled.",
-    "allocationAria": "Amount applied to the item from {{date}}",
-    "remainingHint": "{{amount}} remaining",
+    "suggesting": "Suggesting how to apply this income…",
+    "suggestError": "We couldn't suggest how to apply this income. Enter the amounts below.",
     "totalLabel": "Total applied",
     "cancel": "Cancel",
     "save": "Confirm payment",
-    "saveError": "We couldn't confirm this payment. Check your connection and try again.",
-    "overpayment": {
-      "title": "More than owed",
-      "body": "This payment of {{requested}} is more than the {{outstanding}} still owed. Record it anyway as a credit?",
-      "cancel": "Go back",
-      "confirm": "Record anyway"
-    }
+    "saveError": "We couldn't confirm this payment. Check your connection and try again."
   },
   "pdf": {
     "export": "Export PDF",
@@ -140,5 +284,6 @@
     "outstanding": "Outstanding",
     "fullHistory": "Full history",
     "error": "We couldn't create the PDF. Check your connection and try again."
-  }
+  },
+  "credit": "Credit {{amount}}"
 }

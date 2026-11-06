@@ -519,6 +519,15 @@ class TestRenderHtml:
         html = render_statement_html(build_statement_view(_rich_person(), owner_name=_OWNER, lang="en", today=_TODAY))
         assert '"Page " counter(page) " of " counter(pages)' in html
 
+    def test_running_footer_is_declared_before_the_content(self) -> None:
+        """GIVEN a statement THEN the running footer precedes the content so it fills EVERY page.
+
+        ``element(footerLeft)`` only shows a running element assigned on or before the page, so
+        declaring it last left every page but the last of a multi-page statement without it.
+        """
+        html = render_statement_html(build_statement_view(_rich_person(), owner_name=_OWNER, lang="es", today=_TODAY))
+        assert html.index('<div class="footer-left">') < html.index('<div class="head">')
+
     def test_covered_box_omitted_when_absent(self) -> None:
         html = render_statement_html(
             build_statement_view(_person(items=(_item(),)), owner_name=_OWNER, lang="es", today=_TODAY)

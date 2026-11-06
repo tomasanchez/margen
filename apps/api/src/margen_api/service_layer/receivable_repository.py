@@ -9,15 +9,22 @@ The :class:`~margen_api.domain.models.receivable.Person` is the aggregate root a
 consistency boundary: items, payments and allocations hang off it, so this single
 repository spans all four record types rather than fragmenting one aggregate across four
 repositories. Ownership always flows through the person's ``user_id`` — a foreign owner's
-id is treated as absent so the boundary answers 404 (ADR-111, ADR-130). ``item_remainders``
-is a write-side read the record-payment handler needs to enforce the ADR-206 overpayment
-guard within the same transaction.
+id is treated as absent so the boundary answers 404 (ADR-111, ADR-130). An item is loaded
+and saved together with its cuota schedule (ADR-214) — cuotas are children of the item, never
+persisted on their own (ADR 0013). ``list_items`` and ``allocated_amounts`` are write-side
+reads the handlers need inside the same transaction: the ADR-206 overpayment guard (assessed
+as of a date, ADR-215), the cuota-targeting rules (ADR-221) and the plan lock (ADR-216).
+
+Concurrency: every write handler first calls :meth:`AbstractReceivableRepository.lock_person`,
+which takes a row lock on the person (the aggregate root) for the rest of the transaction.
+Two writes on the same person's receivables therefore run one after the other, so the checks
+a handler makes (has this plan been paid? is this an overpayment?) still hold when it writes,
+and no write is computed from a stale snapshot (lost update).
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from decimal import Decimal
 from uuid import UUID
 
 from margen_api.domain.models.receivable import (
@@ -26,6 +33,7 @@ from margen_api.domain.models.receivable import (
     ReceivableItem,
     ReceivablePayment,
 )
+from margen_api.domain.models.receivable_settlement import ItemAllocations
 
 
 class AbstractReceivableRepository(ABC):
@@ -58,6 +66,24 @@ class AbstractReceivableRepository(ABC):
         """
 
     @abstractmethod
+    async def lock_person(self, person_id: UUID, user_id: str) -> Person | None:
+        """Load one of the owner's people and lock it until the transaction ends (ADR-130).
+
+        The aggregate-root lock serializing every write on the person's receivables: a
+        concurrent writer blocks here until this transaction commits or rolls back, then reads
+        the state it left. Must be the first read of a write handler. Scoped to ``user_id`` so
+        a foreign owner's id is treated as absent (ADR-111). Adapters without row locks (the
+        SQLite test tier) may treat it as a plain load.
+
+        Args:
+            person_id: The aggregate identity.
+            user_id: The authenticated owner the row must belong to.
+
+        Returns:
+            The locked person, or ``None`` when no row matches the id for this owner.
+        """
+
+    @abstractmethod
     async def persist_person(self, person: Person) -> None:
         """Apply the state of a mutated person to its stored row (rename semantics).
 
@@ -82,14 +108,15 @@ class AbstractReceivableRepository(ABC):
         """
 
     @abstractmethod
-    def add_item(self, item: ReceivableItem) -> None:
-        """Stage a new receivable item for persistence on the next commit.
+    async def add_item(self, item: ReceivableItem) -> None:
+        """Stage a new receivable item, with its cuota schedule, for the next commit.
 
         The item's ownership is inherited through its ``person_id``; the handler has
-        already verified the person belongs to the owner (ADR-130).
+        already verified the person belongs to the owner (ADR-130). Asynchronous because an
+        adapter may need to flush the item before its cuotas so their foreign key resolves.
 
         Args:
-            item: The item to persist.
+            item: The item to persist, including its ``installments`` (ADR-214).
         """
 
     @abstractmethod
@@ -97,7 +124,7 @@ class AbstractReceivableRepository(ABC):
         """Load one of the owner's items by identity, or ``None`` (ADR-130, ADR-111).
 
         Ownership is resolved by joining the item to its person and scoping by the
-        person's ``user_id``.
+        person's ``user_id``. The item comes back with its cuota schedule and expense link.
 
         Args:
             item_id: The item identity.
@@ -109,26 +136,30 @@ class AbstractReceivableRepository(ABC):
 
     @abstractmethod
     async def persist_item(self, item: ReceivableItem) -> None:
-        """Apply the state of a mutated item to its stored row (update semantics).
+        """Apply the state of a mutated item, and its cuota schedule, to storage (update semantics).
+
+        Cuotas present on the item are updated in place (same id) or inserted; stored cuotas
+        the item no longer carries are removed (a re-schedule, ADR-216).
 
         Args:
             item: The mutated item to persist.
         """
 
     @abstractmethod
-    async def delete_item(self, item_id: UUID, user_id: str) -> bool:
-        """Hard-delete one of the owner's items by identity (ADR-204, ADR-130).
+    async def delete_item(self, item_id: UUID, person_id: UUID) -> bool:
+        """Hard-delete one of a person's items by identity (ADR-204, ADR-130).
 
-        Scoped to the owner through the item's person: a cross-tenant delete removes
-        nothing and reports a miss, so the boundary answers 404 (ADR-111). The database
-        cascades the item's allocations away (ADR-208).
+        Scoped to the person, which the handler has already locked — and so verified to belong
+        to the owner: an item of another person (or another owner) is not matched and the
+        delete reports a miss, so the boundary answers 404 (ADR-111). The database cascades
+        the item's cuotas and allocations away (ADR-208).
 
         Args:
             item_id: The item identity.
-            user_id: The authenticated owner the item's person must belong to.
+            person_id: The locked person the item must belong to.
 
         Returns:
-            ``True`` when a row was removed, ``False`` when none matched for this owner.
+            ``True`` when a row was removed, ``False`` when none matched for this person.
         """
 
     @abstractmethod
@@ -188,19 +219,65 @@ class AbstractReceivableRepository(ABC):
         """
 
     @abstractmethod
-    async def item_remainders(self, person_id: UUID) -> dict[UUID, Decimal]:
-        """Return each of the person's items keyed to its outstanding remainder (ADR-206).
+    async def expense_exists_for_owner(self, transaction_id: UUID, user_id: str) -> bool:
+        """Return whether an expense transaction exists for the owner (ADR-217, ADR-130).
 
-        A write-side read the record-payment handler uses to enforce the overpayment
-        guard within the same transaction: the dict keys are exactly the person's item
-        ids (so an allocation targeting an id not present is a not-found), and each value
-        is ``item.amount`` - Σ the item's existing allocations. The person's outstanding
-        is the sum of the values.
+        A write-side read the add/edit-item handlers use to validate an item's
+        ``source_transaction_id`` link before staging it. ``True`` only when a transaction
+        with that id belongs to ``user_id`` AND has ``kind='expense'``; a missing row, one
+        owned by another user, or one of another kind all return ``False`` so the handler
+        surfaces a single not-found (404, existence never leaked, ADR-111).
 
         Args:
-            person_id: The person whose items to sum; already ownership-verified by the
+            transaction_id: The expense the item wants to reference.
+            user_id: The authenticated owner the expense must belong to.
+
+        Returns:
+            ``True`` when the caller owns an expense transaction with that id, else ``False``.
+        """
+
+    @abstractmethod
+    async def item_exists(self, item_id: UUID) -> bool:
+        """Return whether ANY item, of any owner, already uses this id (ADR-204).
+
+        Lets the add-item handler refuse a client-chosen id that is taken outside the caller's
+        own items with a clean conflict, instead of a primary-key violation. Reveals nothing
+        beyond the id being taken.
+
+        Args:
+            item_id: The client-chosen item identity.
+
+        Returns:
+            ``True`` when a receivable item with that id exists.
+        """
+
+    @abstractmethod
+    async def list_items(self, person_id: UUID) -> list[ReceivableItem]:
+        """Return every item of the person, each with its cuota schedule (ADR-206, ADR-214).
+
+        A write-side read the record-payment handler uses to check each allocation's target
+        (ADR-221) and to assess the person's outstanding for the overpayment guard. Pardoned
+        items are included — whether one is a valid target is the domain's call.
+
+        Args:
+            person_id: The person whose items to load; already ownership-verified by the
                 handler through :meth:`get_person`.
 
         Returns:
-            A mapping of item id to remaining amount; empty when the person has no items.
+            The person's items in any order; empty when the person has none.
+        """
+
+    @abstractmethod
+    async def allocated_amounts(self, person_id: UUID) -> dict[UUID, ItemAllocations]:
+        """Return how much has been allocated to each of the person's items (ADR-206, ADR-221).
+
+        Each value carries the item's allocation total and, for an installment item, the
+        per-cuota totals. Feeds the overpayment guard, the plan lock (any allocation pins the
+        plan's shape, ADR-216) and the whole-plan pardon (which skips paid cuotas).
+
+        Args:
+            person_id: The person whose allocations to sum; already ownership-verified.
+
+        Returns:
+            A mapping of item id to its allocations; items nobody paid toward are absent.
         """

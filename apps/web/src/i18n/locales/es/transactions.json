@@ -6,6 +6,10 @@
     "loadErrorDescription": "No pudimos conectar con el servidor para cargar tus movimientos. Revisá tu conexión e intentá de nuevo.",
     "deleteError": "No pudimos eliminar ese movimiento. Probá de nuevo."
   },
+  "owed": {
+    "saved": "Se sumó a lo que te debe {{name}}.",
+    "savedNoName": "Deuda agregada a Dinero que me deben."
+  },
   "summary": {
     "shown": "visibles",
     "in": "entradas",
@@ -34,6 +38,7 @@
     "reimbursement": "reintegro",
     "reimburse": "Agregar reintegro",
     "reimburseFor": "Agregar un reintegro para {{name}}",
+    "someoneOwes": "Me deben esto",
     "edit": "Editar {{name}}",
     "delete": "Eliminar {{name}}",
     "openInvoicePdf": "Abrir PDF de la factura",

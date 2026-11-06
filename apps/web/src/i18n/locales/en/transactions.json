@@ -6,6 +6,10 @@
     "loadErrorDescription": "We couldn't reach the server to load your transactions. Check your connection and try again.",
     "deleteError": "We couldn't delete that transaction. Please try again."
   },
+  "owed": {
+    "saved": "Added to what {{name}} owes you.",
+    "savedNoName": "Debt added to Money owed to me."
+  },
   "summary": {
     "shown": "shown",
     "in": "in",
@@ -34,6 +38,7 @@
     "reimbursement": "reimbursement",
     "reimburse": "Add reimbursement",
     "reimburseFor": "Add a reimbursement for {{name}}",
+    "someoneOwes": "Someone owes me this",
     "edit": "Edit {{name}}",
     "delete": "Delete {{name}}",
     "openInvoicePdf": "Open invoice PDF",

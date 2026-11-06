@@ -14,6 +14,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ColorModeProvider } from '../../theme/colorMode'
 import { ReceivablesPage } from './ReceivablesPage'
 import { receivablesClient, type Person } from '../../api/receivablesClient'
+import { makePerson } from './__fixtures__/receivables'
 
 vi.mock('../../api/receivablesClient', async (importOriginal) => {
   const actual =
@@ -39,7 +40,9 @@ vi.mock('../../api/receivablesClient', async (importOriginal) => {
 
 const mockListPeople = vi.mocked(receivablesClient.listPeople)
 
-const PEOPLE: Person[] = [{ id: 'p1', name: 'Ana', outstanding: '500000.00' }]
+const PEOPLE: Person[] = [
+  makePerson({ id: 'p1', name: 'Ana', outstanding: '500000.00' }),
+]
 
 function renderPage() {
   const queryClient = new QueryClient({

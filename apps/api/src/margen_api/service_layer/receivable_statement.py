@@ -32,7 +32,8 @@ for a payment row's negative amount. A guard test asserts this on the rendered H
 
 Sections (matching the supplied design): header eyebrow + emission date + rule; "Cuenta de"
 + debtor name + tagline; the red hero with the authoritative outstanding; a 3-stat bar
-(total consumed / paid so far / outstanding); "El detalle" running-balance ledger (charges as
+(total consumed / paid so far / outstanding); an optional, informational "Próximas cuotas"
+strip with the not-yet-due cuotas (ADR-222); "El detalle" running-balance ledger (charges as
 ``+`` rows, payments as ``−`` rows, a running Saldo column, a final "Saldo a la fecha" =
 authoritative outstanding); an optional "Lo pagué yo, no te lo cobro" covered box for pardoned
 items; and a page footer with the owner and a real ``page X de Y`` counter.
@@ -46,11 +47,27 @@ Passing ``full_history=True`` restores the full running-balance ledger (every no
 charge at its gross amount interleaved with payment ``−`` rows) exactly as ADR-211 shipped it.
 The mode is threaded from the ``?full`` query param through :func:`build_statement_pdf` and
 :func:`build_statement_view`.
+
+**Installment items render per cuota** (ADR-222, amending ADR-211/212). Outstanding counts only
+the cuotas already due (ADR-215), so an installment item never appears as one lump: in the
+outstanding-only ledger it contributes one "TV · Cuota 3/6" row per DUE cuota at that cuota's
+remaining, dated by its due date, and its not-yet-due cuotas are summed into a separate,
+informational "Próximas cuotas" strip that is NOT part of the hero balance. In the full history
+every cuota is listed with its status: due and paid cuotas are charges at their full amount (the
+payment rows net them), upcoming and forgiven cuotas are muted rows that stay out of the running
+Saldo (if part of one was already paid, that paid part becomes its own "Pagada" charge so the
+payment that covered it still nets to zero). Either way, the Saldo column closes on the due-only
+hero balance. Forgiven cuotas also join the covered box at their forgiven remainder, as pardoned
+items do (ADR-210, ADR-221). When the person holds a credit (a confirmed overpayment of an item
+or cuota, ADR-206), the outstanding-only ledger closes with a "Saldo a favor" row for it, so its
+Saldo column still lands on the hero. Cuota states come from the read model, which the reader assessed as
+of the request's injected "today" (ADR-215, ADR-223), so the builder never reads the clock.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -60,8 +77,10 @@ from typing import Literal
 
 from jinja2 import Environment, PackageLoader
 
+from margen_api.domain.models.receivable_settlement import InstallmentStatus
 from margen_api.service_layer.receivable_read_models import (
     PersonDetailReadModel,
+    ReceivableInstallmentReadModel,
     ReceivableItemReadModel,
 )
 
@@ -85,6 +104,20 @@ _MINUS = "−"
 _GROUP_SWAP_SENTINEL = "\x00"
 
 _EMPTY_DETAIL = ""
+
+# Joins an item's detail and its cuota label ("TV · Cuota 3/6", ADR-222): a middle dot, never a
+# dash (ADR-209/211).
+_DETAIL_SEPARATOR = " · "
+
+# The Saldo cell of a row that does not move the running balance (an upcoming or forgiven cuota).
+_NO_BALANCE = ""
+
+# The Date cell of the credit row, which sums overpayments made on different dates.
+_NO_DATE = ""
+
+# Cuota statuses listed in the full ledger for information only: they stay out of the running
+# Saldo, exactly as they stay out of the due-only outstanding (ADR-215, ADR-221, ADR-222).
+_OUT_OF_BALANCE = frozenset({InstallmentStatus.UPCOMING, InstallmentStatus.PARDONED})
 
 _FILENAME_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 _FILENAME_FALLBACK = "person"
@@ -115,6 +148,14 @@ class _LocaleStrings:
         balance_to_date: The ledger's closing "Saldo a la fecha" label.
         empty_state: The calm "nothing owed / al día" message shown in the ledger area when
             the outstanding-only export has no items still owed (ADR-212).
+        credit_label: The outstanding-only row carrying the credit the person holds after a
+            confirmed overpayment ("Saldo a favor", ADR-206).
+        installment_label: A cuota's position in its plan ("Cuota {index}/{count}"), appended to
+            the item detail on every cuota row (ADR-222).
+        status_labels: The full-history tag for each cuota status ("Pendiente", "Pagada",
+            "Próxima", "Perdonada"; ADR-222).
+        upcoming_label: The heading of the informational not-yet-due strip ("Próximas cuotas").
+        upcoming_note: The strip's note saying those cuotas are not part of the balance (ADR-215).
         covered_title: The covered box heading ("Lo pagué yo, no te lo cobro").
         covered_note: The fixed warm note under the covered rows.
         footer_issued_by: The footer prefix carrying ``{owner}`` ("Emitido por {owner}").
@@ -143,6 +184,11 @@ class _LocaleStrings:
     payment_received: str
     balance_to_date: str
     empty_state: str
+    credit_label: str
+    installment_label: str
+    status_labels: Mapping[InstallmentStatus, str]
+    upcoming_label: str
+    upcoming_note: str
     covered_title: str
     covered_note: str
     footer_issued_by: str
@@ -173,6 +219,16 @@ _STRINGS: dict[Locale, _LocaleStrings] = {
         payment_received="Pago recibido",
         balance_to_date="Saldo a la fecha",
         empty_state="Estás al día. No hay nada pendiente.",
+        credit_label="Saldo a favor",
+        installment_label="Cuota {index}/{count}",
+        status_labels={
+            InstallmentStatus.DUE: "Pendiente",
+            InstallmentStatus.PAID: "Pagada",
+            InstallmentStatus.UPCOMING: "Próxima",
+            InstallmentStatus.PARDONED: "Perdonada",
+        },
+        upcoming_label="Próximas cuotas",
+        upcoming_note="Todavía no vencen, así que no entran en el saldo pendiente.",
         covered_title="Lo pagué yo, no te lo cobro",
         covered_note=(
             "Esta la puse yo y no te la cobro. No entra en el saldo de arriba. "
@@ -202,6 +258,16 @@ _STRINGS: dict[Locale, _LocaleStrings] = {
         payment_received="Payment received",
         balance_to_date="Balance to date",
         empty_state="You are all square. Nothing outstanding.",
+        credit_label="Credit in your favor",
+        installment_label="Installment {index}/{count}",
+        status_labels={
+            InstallmentStatus.DUE: "Due",
+            InstallmentStatus.PAID: "Paid",
+            InstallmentStatus.UPCOMING: "Upcoming",
+            InstallmentStatus.PARDONED: "Forgiven",
+        },
+        upcoming_label="Upcoming installments",
+        upcoming_note="Not due yet, so they are not part of the balance due.",
         covered_title="I covered this, on me",
         covered_note=(
             "I covered this one and I am not charging you for it. It does not count toward the "
@@ -239,15 +305,20 @@ def normalize_locale(lang: str | None) -> Locale:
 
 @dataclass(frozen=True, slots=True)
 class LedgerRow:
-    """One row of the "El detalle" running-balance ledger (ADR-211).
+    """One row of the "El detalle" running-balance ledger (ADR-211, ADR-222).
 
     Attributes:
-        occurred_on: The event date, locale-formatted (``DD/MM/YYYY`` / ``MM/DD/YYYY``).
-        detail: The charge's free-text detail, or the localized "Pago recibido" for a payment.
+        occurred_on: The event date, locale-formatted (``DD/MM/YYYY`` / ``MM/DD/YYYY``); a
+            cuota row carries its due date.
+        detail: The charge's free-text detail ("TV · Cuota 3/6" for a cuota), or the localized
+            "Pago recibido" for a payment.
         amount: The signed amount, locale-formatted; payments carry a leading ``−`` (U+2212).
         balance: The running balance after this event, locale-formatted (charge ``+``, payment
-            ``−``).
+            ``−``); empty for a row that stays out of the balance (an upcoming or forgiven cuota).
         is_payment: Whether this is a payment row (styled in the warm red, right-aligned minus).
+        status: The cuota status a full-history cuota row is tagged with (ADR-222); ``None`` for
+            flat items, payments and every outstanding-only row.
+        status_label: The localized tag for ``status`` ("Pagada", "Próxima", ...), else empty.
     """
 
     occurred_on: str
@@ -255,15 +326,23 @@ class LedgerRow:
     amount: str
     balance: str
     is_payment: bool
+    status: InstallmentStatus | None = None
+    status_label: str = ""
+
+    @property
+    def in_balance(self) -> bool:
+        """Report whether the row moves the running Saldo; upcoming and forgiven cuotas do not."""
+        return self.status not in _OUT_OF_BALANCE
 
 
 @dataclass(frozen=True, slots=True)
 class CoveredRow:
-    """One pardoned item shown in the "Lo pagué yo" covered box (ADR-210/211).
+    """One pardoned item, or forgiven cuota, shown in the "Lo pagué yo" covered box (ADR-210/211/221).
 
     Attributes:
-        occurred_on: The item date, locale-formatted.
-        detail: The item's free-text detail, or an empty string when absent.
+        occurred_on: The item date (a cuota's due date), locale-formatted.
+        detail: The item's free-text detail ("TV · Cuota 2/6" for a cuota), or an empty string
+            when absent.
         amount: The covered amount (its remainder at pardon), locale-formatted.
     """
 
@@ -302,6 +381,11 @@ class StatementView:
     stat_paid_value: str
     stat_pending_label: str
     stat_pending_value: str
+    # Upcoming-cuotas strip (optional, informational, never part of the hero balance, ADR-222).
+    show_upcoming: bool
+    upcoming_label: str
+    upcoming_value: str
+    upcoming_note: str
     # Ledger.
     details_title: str
     col_date: str
@@ -355,53 +439,116 @@ def _format_date(value: date, strings: _LocaleStrings) -> str:
 
 
 def _is_covered(item: ReceivableItemReadModel) -> bool:
-    """Report whether a pardoned item belongs in the covered box (ADR-210).
+    """Report whether a pardoned flat item belongs in the covered box (ADR-210).
 
     A pardoned item is shown as covered when it still had something to forgive, i.e. its
-    remainder at pardon (``amount`` minus its allocations) is positive.
+    remainder at pardon (``amount`` minus its allocations) is positive. Installment items are
+    covered cuota by cuota instead (:func:`_covered_rows`, ADR-221).
     """
     return item.pardoned and item.remaining > Decimal(0)
 
 
 def _is_outstanding(item: ReceivableItemReadModel) -> bool:
-    """Report whether an item still owes money in the outstanding-only ledger (ADR-212).
+    """Report whether a flat item still owes money in the outstanding-only ledger (ADR-212).
 
     An item is outstanding when it is NOT pardoned and still carries a positive remainder.
     Fully-paid (``remaining`` == 0), overpaid (``remaining`` < 0) and pardoned items are all
     excluded — the default export lists only what is genuinely still owed, regardless of the
-    month it was incurred, so an old unpaid debt keeps appearing.
+    month it was incurred, so an old unpaid debt keeps appearing. Installment items are listed
+    cuota by cuota instead (:func:`_owed_events`, ADR-222).
     """
     return not item.pardoned and item.remaining > Decimal(0)
 
 
+def _item_detail(item: ReceivableItemReadModel) -> str:
+    """Return an item's free-text detail, or the empty string when it has none."""
+    return item.detail if item.detail is not None else _EMPTY_DETAIL
+
+
+def _cuota_detail(
+    item: ReceivableItemReadModel,
+    cuota: ReceivableInstallmentReadModel,
+    strings: _LocaleStrings,
+) -> str:
+    """Label a cuota row as the item detail plus its plan position, "TV · Cuota 3/6" (ADR-222).
+
+    An item without a detail shows the position alone ("Cuota 3/6").
+    """
+    position = strings.installment_label.format(index=cuota.index, count=len(item.installments))
+    if not item.detail:
+        return position
+    return f"{item.detail}{_DETAIL_SEPARATOR}{position}"
+
+
+def _consumed(item: ReceivableItemReadModel) -> Decimal:
+    """Return what an item adds to the "Total consumido" stat: its non-forgiven amount (ADR-210).
+
+    A flat item counts its whole amount unless pardoned; an installment item counts the amounts
+    of its cuotas that are not forgiven, since pardon targets cuotas there (ADR-221).
+    """
+    if item.installments:
+        return sum((cuota.amount for cuota in item.installments if not cuota.pardoned), Decimal(0))
+    return Decimal(0) if item.pardoned else item.amount
+
+
 @dataclass(frozen=True, slots=True)
 class _LedgerEvent:
-    """An internal, unformatted ledger event used to compute the running balance."""
+    """An internal, unformatted ledger event used to compute the running balance.
+
+    ``status`` tags a full-history cuota row (ADR-222); an upcoming or forgiven one is listed for
+    information only and does not move the running balance.
+    """
 
     occurred_on: date
     detail: str
     amount: Decimal
     is_payment: bool
+    status: InstallmentStatus | None = None
+
+
+def _cuota_events(
+    item: ReceivableItemReadModel,
+    cuota: ReceivableInstallmentReadModel,
+    strings: _LocaleStrings,
+) -> list[_LedgerEvent]:
+    """Turn one cuota into its full-history ledger event(s), dated by its due date (ADR-222).
+
+    A due or paid cuota is a charge at its full amount, netted by the payment rows exactly like a
+    flat item's charge (ADR-211). An upcoming or forgiven cuota stays out of the running balance,
+    as it stays out of the due-only outstanding (ADR-215, ADR-221): it is listed at what is left
+    of it, tagged with its status. Whatever was already paid toward such a cuota (paid ahead, or
+    paid before the pardon) is split off as its own paid charge, so the payment row that covered
+    it still nets to zero and the Saldo keeps closing on the outstanding.
+    """
+    detail = _cuota_detail(item, cuota, strings)
+    if cuota.status not in _OUT_OF_BALANCE:
+        return [_LedgerEvent(cuota.due_on, detail, cuota.amount, is_payment=False, status=cuota.status)]
+    paid_part = min(cuota.paid, cuota.amount)
+    events: list[_LedgerEvent] = []
+    if paid_part > Decimal(0):
+        events.append(_LedgerEvent(cuota.due_on, detail, paid_part, is_payment=False, status=InstallmentStatus.PAID))
+    if cuota.amount > paid_part:
+        events.append(
+            _LedgerEvent(cuota.due_on, detail, cuota.amount - paid_part, is_payment=False, status=cuota.status)
+        )
+    return events
 
 
 def _ledger_events(person: PersonDetailReadModel, strings: _LocaleStrings) -> list[_LedgerEvent]:
-    """Merge non-pardoned charges and payments into date-ascending ledger events (ADR-211).
+    """Merge the charges and payments into date-ascending full-history events (ADR-211, ADR-222).
 
-    Charges are every NON-pardoned item (importe = its ``amount``, not its remainder — the
-    ledger shows what was consumed); payments are every payback. Charges precede payments on the
-    same date (you run up a tab, then pay it), achieved by a stable sort over a charges-first
-    list.
+    Charges are every NON-pardoned flat item (importe = its ``amount``, not its remainder — the
+    ledger shows what was consumed) and every cuota of an installment item
+    (:func:`_cuota_events`); payments are every payback. Charges precede payments on the same
+    date (you run up a tab, then pay it), achieved by a stable sort over a charges-first list.
     """
-    charges = [
-        _LedgerEvent(
-            occurred_on=item.occurred_on,
-            detail=item.detail if item.detail is not None else _EMPTY_DETAIL,
-            amount=item.amount,
-            is_payment=False,
-        )
-        for item in person.items
-        if not item.pardoned
-    ]
+    charges: list[_LedgerEvent] = []
+    for item in person.items:
+        if item.installments:
+            for cuota in item.installments:
+                charges.extend(_cuota_events(item, cuota, strings))
+        elif not item.pardoned:
+            charges.append(_LedgerEvent(item.occurred_on, _item_detail(item), item.amount, is_payment=False))
     payments = [
         _LedgerEvent(
             occurred_on=payment.occurred_on,
@@ -418,56 +565,142 @@ def _build_ledger_rows(person: PersonDetailReadModel, strings: _LocaleStrings) -
     """Format the merged ledger events, carrying the running balance down the column (ADR-211).
 
     Walks the date-ascending events keeping a running balance: a charge adds its amount, a
-    payment subtracts it. Payment amounts render with a leading real minus ``−`` (U+2212) and
+    payment subtracts it, and an upcoming or forgiven cuota leaves it untouched with an empty
+    Saldo cell (ADR-222). Payment amounts render with a leading real minus ``−`` (U+2212) and
     are flagged so the template styles them in the warm red.
     """
     rows: list[LedgerRow] = []
     running = Decimal(0)
     for event in _ledger_events(person, strings):
+        amount = _format_number(event.amount, strings)
+        balance = _NO_BALANCE
         if event.is_payment:
             running -= event.amount
-            amount = f"{_MINUS} {_format_number(event.amount, strings)}"
-        else:
+            amount = f"{_MINUS} {amount}"
+            balance = _format_number(running, strings)
+        elif event.status not in _OUT_OF_BALANCE:
             running += event.amount
-            amount = _format_number(event.amount, strings)
+            balance = _format_number(running, strings)
         rows.append(
             LedgerRow(
                 occurred_on=_format_date(event.occurred_on, strings),
                 detail=event.detail,
                 amount=amount,
-                balance=_format_number(running, strings),
+                balance=balance,
                 is_payment=event.is_payment,
+                status=event.status,
+                status_label=strings.status_labels[event.status] if event.status is not None else "",
             )
         )
     return tuple(rows)
 
 
-def _build_outstanding_rows(person: PersonDetailReadModel, strings: _LocaleStrings) -> tuple[LedgerRow, ...]:
-    """Format the still-owed items as the outstanding-only ledger (ADR-212, the default mode).
+def _owed_events(person: PersonDetailReadModel, strings: _LocaleStrings) -> list[_LedgerEvent]:
+    """Collect what is owed now, at its remaining amount, date-ascending (ADR-212, ADR-222).
 
-    Lists ONLY the items that are still owed (:func:`_is_outstanding` — not pardoned, positive
-    remainder), date-ascending, each at its REMAINING amount (what is left to pay, not the gross
-    charge). The Saldo column carries the cumulative remaining, so the last row lands on the
-    person's authoritative outstanding. There are no payment rows in this mode; a person who has
-    paid everything off yields an empty tuple, which the template turns into the calm empty state.
+    A flat item that is still owed (:func:`_is_outstanding`) is one event dated when it was
+    incurred; an installment item contributes one event per DUE cuota (not forgiven, not yet
+    paid off, due on or before the statement date, ADR-215), dated by its due date. Upcoming
+    cuotas are deliberately absent: they are not owed yet and are summed apart instead.
     """
-    outstanding_items = sorted(
-        (item for item in person.items if _is_outstanding(item)),
-        key=lambda item: item.occurred_on,
-    )
+    events: list[_LedgerEvent] = []
+    for item in person.items:
+        if item.installments:
+            events.extend(
+                _LedgerEvent(cuota.due_on, _cuota_detail(item, cuota, strings), cuota.remaining, is_payment=False)
+                for cuota in item.installments
+                if cuota.status == InstallmentStatus.DUE
+            )
+        elif _is_outstanding(item):
+            events.append(_LedgerEvent(item.occurred_on, _item_detail(item), item.remaining, is_payment=False))
+    return sorted(events, key=lambda event: event.occurred_on)
+
+
+def _credit(person: PersonDetailReadModel) -> Decimal:
+    """Return the credit the person holds — what was paid beyond items or cuotas still counted (ADR-206).
+
+    The sum of the negative remainders of non-pardoned flat items and non-pardoned cuotas (due,
+    or paid ahead beyond a later one): exactly what the due-only outstanding counts below the
+    owed rows, so ``Σ owed rows + credit`` is the hero balance. Zero when there is no credit.
+    """
+    credit = Decimal(0)
+    for item in person.items:
+        if item.installments:
+            credit += sum(
+                (cuota.remaining for cuota in item.installments if not cuota.pardoned and cuota.remaining < 0),
+                Decimal(0),
+            )
+        elif not item.pardoned and item.remaining < 0:
+            credit += item.remaining
+    return credit
+
+
+def _build_outstanding_rows(person: PersonDetailReadModel, strings: _LocaleStrings) -> tuple[LedgerRow, ...]:
+    """Format what is owed now as the outstanding-only ledger (ADR-212, the default mode).
+
+    Lists ONLY what is still owed (:func:`_owed_events` — the owed flat items and the due cuotas),
+    date-ascending, each at its REMAINING amount (what is left to pay, not the gross charge). The
+    Saldo column carries the cumulative remaining; a credit the person holds (:func:`_credit`)
+    closes the list as a "Saldo a favor" row, so the last row lands on the person's
+    authoritative due-only outstanding (ADR-215). There are no payment rows in this mode; a
+    person who owes nothing yet and holds no credit yields an empty tuple, which the template
+    turns into the calm empty state.
+    """
     rows: list[LedgerRow] = []
     running = Decimal(0)
-    for item in outstanding_items:
-        running += item.remaining
+    for event in _owed_events(person, strings):
+        running += event.amount
         rows.append(
             LedgerRow(
-                occurred_on=_format_date(item.occurred_on, strings),
-                detail=item.detail if item.detail is not None else _EMPTY_DETAIL,
-                amount=_format_number(item.remaining, strings),
+                occurred_on=_format_date(event.occurred_on, strings),
+                detail=event.detail,
+                amount=_format_number(event.amount, strings),
                 balance=_format_number(running, strings),
                 is_payment=False,
             )
         )
+    credit = _credit(person)
+    if credit < Decimal(0):
+        running += credit
+        rows.append(
+            LedgerRow(
+                occurred_on=_NO_DATE,
+                detail=strings.credit_label,
+                amount=f"{_MINUS} {_format_number(-credit, strings)}",
+                balance=_format_number(running, strings),
+                is_payment=True,
+            )
+        )
+    return tuple(rows)
+
+
+def _covered_rows(person: PersonDetailReadModel, strings: _LocaleStrings) -> tuple[CoveredRow, ...]:
+    """List what the owner forgave for the covered box, in both modes (ADR-210, ADR-221).
+
+    A pardoned flat item shows at its remainder at pardon (:func:`_is_covered`); an installment
+    item shows each forgiven cuota that still had something to forgive, at that cuota's
+    remainder and dated by its due date.
+    """
+    rows: list[CoveredRow] = []
+    for item in person.items:
+        if item.installments:
+            rows.extend(
+                CoveredRow(
+                    occurred_on=_format_date(cuota.due_on, strings),
+                    detail=_cuota_detail(item, cuota, strings),
+                    amount=_format_number(cuota.remaining, strings),
+                )
+                for cuota in item.installments
+                if cuota.pardoned and cuota.remaining > Decimal(0)
+            )
+        elif _is_covered(item):
+            rows.append(
+                CoveredRow(
+                    occurred_on=_format_date(item.occurred_on, strings),
+                    detail=_item_detail(item),
+                    amount=_format_number(item.remaining, strings),
+                )
+            )
     return tuple(rows)
 
 
@@ -487,30 +720,36 @@ def build_statement_view(
     full_history: bool = False,
     today: date,
 ) -> StatementView:
-    """Assemble the pure, localized :class:`StatementView` for a person's statement (ADR-211/212).
+    """Assemble the pure, localized :class:`StatementView` for a person's statement (ADR-211/212/222).
 
     Pre-formats every displayed value as a locale-aware string:
 
-    - The hero shows the authoritative ``person.outstanding`` (ADR-206), split into a large
-      integer part and a small fractional part.
-    - The 3-stat bar shows total consumed (Σ non-pardoned item amounts), paid so far (Σ
-      payments), and outstanding (the authoritative total). These all-time context stats are
-      identical in both modes.
+    - The hero shows the authoritative ``person.outstanding`` (ADR-206), which counts only the
+      cuotas already due (ADR-215), split into a large integer part and a small fractional part.
+    - The 3-stat bar shows total consumed (Σ non-pardoned item amounts, or non-forgiven cuota
+      amounts for an installment item), paid so far (Σ payments), and outstanding (the
+      authoritative total). These all-time context stats are identical in both modes.
+    - The informational upcoming strip shows ``person.upcoming_total`` (the not-yet-due cuotas,
+      ADR-215) in both modes, apart from the hero; it is omitted when nothing is upcoming.
     - The ledger depends on ``full_history`` (ADR-212). Default (``False``, outstanding-only):
-      only the still-owed items (not pardoned, ``remaining`` > 0) at their REMAINING amount,
-      date-ascending, with a cumulative-remaining Saldo and NO payment rows. Full history
-      (``True``): non-pardoned charges (``+``) interleaved with payments (``−``) date-ascending
-      at their gross amounts. Either way the ledger closes on "Saldo a la fecha" = the
+      only what is owed now (the still-owed flat items and the due cuotas, ADR-222) at their
+      REMAINING amount, date-ascending, with a cumulative-remaining Saldo and NO payment rows.
+      Full history (``True``): non-pardoned charges and every cuota (``+``) interleaved with
+      payments (``−``) date-ascending at their gross amounts, with upcoming and forgiven cuotas
+      listed but kept out of the Saldo. Either way the ledger closes on "Saldo a la fecha" = the
       authoritative outstanding, and the empty outstanding-only ledger renders the calm empty
       state instead.
-    - The covered box lists pardoned items with their covered amount in BOTH modes; it is
-      omitted when the person has none.
+    - The covered box lists pardoned items and forgiven cuotas with their covered amount in
+      BOTH modes; it is omitted when the person has none.
     - The footer carries the owner (dropped gracefully when unknown) and the complaints clause;
       the page template's ``{page}``/``{pages}`` are substituted for live CSS counters at PDF
       time.
 
+    Cuota statuses are read from ``person``, which the reader assessed as of the statement date
+    (the request's injected "today", ADR-223); the builder itself never reads the clock.
+
     Args:
-        person: The person-detail read model (name, outstanding, items, payments).
+        person: The person-detail read model (name, outstanding, upcoming, items, payments).
         owner_name: The current owner's display name for the footer; the empty string drops the
             "por {owner}" suffix gracefully.
         lang: The active document locale (``es`` or ``en``); defaults to Spanish.
@@ -523,18 +762,10 @@ def build_statement_view(
     """
     strings = _STRINGS[lang]
     ledger_rows = _build_ledger_rows(person, strings) if full_history else _build_outstanding_rows(person, strings)
-    total_consumed = sum((item.amount for item in person.items if not item.pardoned), Decimal(0))
+    total_consumed = sum((_consumed(item) for item in person.items), Decimal(0))
     total_paid = sum((payment.amount for payment in person.payments), Decimal(0))
     hero_main, hero_frac = _split_hero_amount(person.outstanding, strings)
-    covered_rows = tuple(
-        CoveredRow(
-            occurred_on=_format_date(item.occurred_on, strings),
-            detail=item.detail if item.detail is not None else _EMPTY_DETAIL,
-            amount=_format_number(item.remaining, strings),
-        )
-        for item in person.items
-        if _is_covered(item)
-    )
+    covered_rows = _covered_rows(person, strings)
     return StatementView(
         lang=lang,
         full_history=full_history,
@@ -553,6 +784,10 @@ def build_statement_view(
         stat_paid_value=_format_number(total_paid, strings),
         stat_pending_label=strings.stat_pending_label,
         stat_pending_value=_format_number(person.outstanding, strings),
+        show_upcoming=person.upcoming_total > Decimal(0),
+        upcoming_label=strings.upcoming_label,
+        upcoming_value=_format_number(person.upcoming_total, strings),
+        upcoming_note=strings.upcoming_note,
         details_title=strings.details_title,
         col_date=strings.col_date,
         col_detail=strings.col_detail,
@@ -639,7 +874,7 @@ def build_statement_pdf(
     full_history: bool = False,
     today: date,
 ) -> bytes:
-    """Build the downloadable receivable-statement PDF bytes for a person (ADR-211/212).
+    """Build the downloadable receivable-statement PDF bytes for a person (ADR-211/212/222).
 
     Composes the three layers: pure view model, template-to-HTML, then the WeasyPrint adapter.
     The single entry point the download route calls.
