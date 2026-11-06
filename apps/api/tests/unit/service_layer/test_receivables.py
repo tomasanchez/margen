@@ -350,7 +350,7 @@ class TestEditReceivableItem:
 
         # WHEN
         await edit_receivable_item(
-            EditReceivableItem(id=item_id, user_id=A_USER, amount=Decimal("800")),
+            EditReceivableItem(id=item_id, user_id=A_USER, person_id=person_id, amount=Decimal("800")),
             uow,
         )
 
@@ -378,6 +378,7 @@ class TestEditReceivableItem:
             EditReceivableItem(
                 id=item_id,
                 user_id=A_USER,
+                person_id=person_id,
                 occurred_on=date(2026, 9, 9),
                 detail="dinner",
             ),
@@ -392,22 +393,25 @@ class TestEditReceivableItem:
 
     async def test_missing_item_raises_not_found(self):
         """
-        GIVEN no item with the requested id
+        GIVEN an owned person but no item with the requested id
         WHEN the edit handler runs
         THEN ReceivableItemNotFoundError is raised (mapped to 404)
         """
         # GIVEN
         uow = FakeUnitOfWork()
+        person_id = _seed_person(uow)
 
         # WHEN / THEN
         with pytest.raises(ReceivableItemNotFoundError):
-            await edit_receivable_item(EditReceivableItem(id=uuid4(), user_id=A_USER, amount=Decimal("1")), uow)
+            await edit_receivable_item(
+                EditReceivableItem(id=uuid4(), user_id=A_USER, person_id=person_id, amount=Decimal("1")), uow
+            )
 
     async def test_cross_tenant_edit_is_not_found(self):
         """
         GIVEN an item under a person owned by user A
         WHEN user B edits it
-        THEN ReceivableItemNotFoundError is raised (ADR-111)
+        THEN the person lock misses first: PersonNotFoundError (a 404, ADR-111)
         """
         # GIVEN
         uow = FakeUnitOfWork()
@@ -415,8 +419,10 @@ class TestEditReceivableItem:
         item_id = _seed_item(uow, person_id=person_id, amount="1000")
 
         # WHEN / THEN
-        with pytest.raises(ReceivableItemNotFoundError):
-            await edit_receivable_item(EditReceivableItem(id=item_id, user_id=ANOTHER_USER, amount=Decimal("1")), uow)
+        with pytest.raises(PersonNotFoundError):
+            await edit_receivable_item(
+                EditReceivableItem(id=item_id, user_id=ANOTHER_USER, person_id=person_id, amount=Decimal("1")), uow
+            )
 
 
 class TestDeleteReceivableItem:
@@ -435,7 +441,7 @@ class TestDeleteReceivableItem:
         _seed_allocation(uow, person_id=person_id, item_id=item_id, amount="400")
 
         # WHEN
-        await delete_receivable_item(DeleteReceivableItem(id=item_id, user_id=A_USER), uow)
+        await delete_receivable_item(DeleteReceivableItem(id=item_id, user_id=A_USER, person_id=person_id), uow)
 
         # THEN
         assert item_id not in uow.committed_receivable_items
@@ -445,22 +451,23 @@ class TestDeleteReceivableItem:
 
     async def test_missing_item_raises_not_found(self):
         """
-        GIVEN no item with the requested id
+        GIVEN an owned person but no item with the requested id
         WHEN the delete handler runs
         THEN ReceivableItemNotFoundError is raised (mapped to 404)
         """
         # GIVEN
         uow = FakeUnitOfWork()
+        person_id = _seed_person(uow)
 
         # WHEN / THEN
         with pytest.raises(ReceivableItemNotFoundError):
-            await delete_receivable_item(DeleteReceivableItem(id=uuid4(), user_id=A_USER), uow)
+            await delete_receivable_item(DeleteReceivableItem(id=uuid4(), user_id=A_USER, person_id=person_id), uow)
 
     async def test_cross_tenant_delete_is_not_found(self):
         """
         GIVEN an item under a person owned by user A
         WHEN user B deletes it
-        THEN ReceivableItemNotFoundError is raised and the item survives (ADR-111)
+        THEN the person lock misses (PersonNotFoundError, a 404) and the item survives (ADR-111)
         """
         # GIVEN
         uow = FakeUnitOfWork()
@@ -468,8 +475,10 @@ class TestDeleteReceivableItem:
         item_id = _seed_item(uow, person_id=person_id, amount="1000")
 
         # WHEN / THEN
-        with pytest.raises(ReceivableItemNotFoundError):
-            await delete_receivable_item(DeleteReceivableItem(id=item_id, user_id=ANOTHER_USER), uow)
+        with pytest.raises(PersonNotFoundError):
+            await delete_receivable_item(
+                DeleteReceivableItem(id=item_id, user_id=ANOTHER_USER, person_id=person_id), uow
+            )
         assert item_id in uow.committed_receivable_items
 
 
@@ -488,7 +497,9 @@ class TestSetReceivableItemPardon:
         item_id = _seed_item(uow, person_id=person_id, amount="1000", detail="lunch")
 
         # WHEN
-        await set_receivable_item_pardon(SetReceivableItemPardon(id=item_id, user_id=A_USER, pardoned=True), uow)
+        await set_receivable_item_pardon(
+            SetReceivableItemPardon(id=item_id, user_id=A_USER, person_id=person_id, pardoned=True), uow
+        )
 
         # THEN
         stored = uow.committed_receivable_items[item_id]
@@ -511,7 +522,9 @@ class TestSetReceivableItemPardon:
         item_id = _seed_item(uow, person_id=person_id, amount="1000", pardoned_at=A_TIME)
 
         # WHEN
-        await set_receivable_item_pardon(SetReceivableItemPardon(id=item_id, user_id=A_USER, pardoned=False), uow)
+        await set_receivable_item_pardon(
+            SetReceivableItemPardon(id=item_id, user_id=A_USER, person_id=person_id, pardoned=False), uow
+        )
 
         # THEN
         stored = uow.committed_receivable_items[item_id]
@@ -520,22 +533,25 @@ class TestSetReceivableItemPardon:
 
     async def test_missing_item_raises_not_found(self):
         """
-        GIVEN no item with the requested id
+        GIVEN an owned person but no item with the requested id
         WHEN the pardon handler runs
         THEN ReceivableItemNotFoundError is raised (mapped to 404)
         """
         # GIVEN
         uow = FakeUnitOfWork()
+        person_id = _seed_person(uow)
 
         # WHEN / THEN
         with pytest.raises(ReceivableItemNotFoundError):
-            await set_receivable_item_pardon(SetReceivableItemPardon(id=uuid4(), user_id=A_USER, pardoned=True), uow)
+            await set_receivable_item_pardon(
+                SetReceivableItemPardon(id=uuid4(), user_id=A_USER, person_id=person_id, pardoned=True), uow
+            )
 
     async def test_cross_tenant_pardon_is_not_found(self):
         """
         GIVEN an item under a person owned by user A
         WHEN user B pardons it
-        THEN ReceivableItemNotFoundError is raised and the item stays un-pardoned (ADR-111)
+        THEN the person lock misses (PersonNotFoundError, a 404) and the item stays un-pardoned
         """
         # GIVEN
         uow = FakeUnitOfWork()
@@ -543,9 +559,9 @@ class TestSetReceivableItemPardon:
         item_id = _seed_item(uow, person_id=person_id, amount="1000")
 
         # WHEN / THEN
-        with pytest.raises(ReceivableItemNotFoundError):
+        with pytest.raises(PersonNotFoundError):
             await set_receivable_item_pardon(
-                SetReceivableItemPardon(id=item_id, user_id=ANOTHER_USER, pardoned=True), uow
+                SetReceivableItemPardon(id=item_id, user_id=ANOTHER_USER, person_id=person_id, pardoned=True), uow
             )
         assert uow.committed_receivable_items[item_id].pardoned is False
 
@@ -726,8 +742,9 @@ class TestRecordReceivablePayment:
 
         # THEN
         assert payment_id in uow.committed_receivable_payments
-        remainders = await uow.receivables.item_remainders(person_id)
-        assert remainders[item_id] == Decimal("-500")  # a confirmed good-faith credit
+        allocations = await uow.receivables.allocated_amounts(person_id)
+        remaining = uow.committed_receivable_items[item_id].amount - allocations[item_id].total
+        assert remaining == Decimal("-500")  # a confirmed good-faith credit
 
     async def test_allocations_exceeding_payment_amount_are_rejected(self):
         """
@@ -764,8 +781,8 @@ class TestRecordReceivablePayment:
         person_id = _seed_person(uow)
         item_id = _seed_item(uow, person_id=person_id, amount="1000", pardoned_at=A_TIME)
 
-        # WHEN / THEN — the pardoned item is excluded from item_remainders, so it is not a
-        # valid allocation target and the allocation misses (ADR-210, amending ADR-206).
+        # WHEN / THEN — the pardoned item is not a valid allocation target, so the allocation
+        # misses (ADR-210, amending ADR-206).
         with pytest.raises(ReceivableItemNotFoundError):
             await record_receivable_payment(
                 RecordReceivablePayment(

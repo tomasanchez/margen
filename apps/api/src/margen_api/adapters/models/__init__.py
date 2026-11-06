@@ -16,6 +16,7 @@ from margen_api.adapters.models.monotributo_snapshot import MonotributoSnapshotR
 from margen_api.adapters.models.receivable import (
     PersonRecord,
     ReceivableAllocationRecord,
+    ReceivableInstallmentRecord,
     ReceivableItemRecord,
     ReceivablePaymentRecord,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "MonotributoSnapshotRecord",
     "PersonRecord",
     "ReceivableAllocationRecord",
+    "ReceivableInstallmentRecord",
     "ReceivableItemRecord",
     "ReceivablePaymentRecord",
     "StatementDocumentRecord",

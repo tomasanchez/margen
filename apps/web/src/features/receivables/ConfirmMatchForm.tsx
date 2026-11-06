@@ -1,46 +1,72 @@
 /**
  * Confirm a suggested income match as a payment, allocated across a person's open
- * items (ADR-206/207, ADR-037).
+ * items — or, for installment items, their cuotas (ADR-206/207/215/221, ADR-037).
  *
  * Income matching is SUGGESTION-ONLY (ADR-207): nothing auto-applies. When the
  * owner picks a ranked {@link MatchSuggestion} from {@link MatchSuggestions}, this
- * dialog opens to let them settle it — reusing the exact allocate-across-open-items
- * pattern of {@link RecordPaymentForm}, but writing through {@link useConfirmMatch}
- * (which records a `receivable_payment` with `source='matched_income'` linked to the
- * income transaction, ADR-204). The dialog seeds a sensible default allocation
- * (greedily filling each open item up to the income's amount) that the owner can
- * edit before confirming.
+ * dialog opens to let them settle it — reusing the allocation editor of
+ * {@link RecordPaymentForm}, but writing through {@link useConfirmMatch} (which
+ * records a `receivable_payment` with `source='matched_income'` linked to the
+ * income transaction, ADR-204). The rows are PREFILLED from the server's
+ * suggested allocation for the income's amount (due cuotas oldest-first, then
+ * flat items newest-first, never beyond what is owed, ADR-221) and stay editable;
+ * installment rows carry their cuota's `installmentId`.
  *
- * Money stays a Decimal STRING end-to-end (ADR-025/034): each allocation is typed
- * free-form, parsed only to sum the total and drop zero rows, and serialized to the
- * fixed 2-decimal string the API expects. On the typed 409
- * {@link ReceivableOverpaymentError} (the allocation would push the person past
- * their outstanding), the footer swaps for the same calm confirm-warning as the
- * manual flow; "Record anyway" retries the SAME confirm with `allowOverpayment:
- * true`. Any other failure keeps the dialog open with a calm inline error (ADR-037).
+ * The amount received IS the income's amount and isn't editable. Saving needs the
+ * rows to add up to it — or, when they add up to less, an explicit
+ * acknowledgement: confirming CLAIMS the income, so whatever isn't assigned can
+ * never be matched to anyone again (ADR-207). Rows can never exceed the income.
+ * {@link AllocationBalance} offers the explicit ways to assign the rest (apply it
+ * to upcoming cuotas, or put it on a chosen debt — possibly beyond what that debt
+ * owes, confirmed below).
  *
- * On success the dialog closes and the hook invalidates the person's match
- * suggestions, so the now-claimed income drops off the suggestions list (ADR-207).
+ * On a typed 409 — {@link ReceivableOverpaymentError} (more than owed today,
+ * including when the rows pay upcoming cuotas early, ADR-215) or
+ * {@link AllocationExceedsTargetError} (more than one item / cuota owes) — the
+ * form swaps for the same calm confirm-warning as the manual flow; "Record
+ * anyway" retries the SAME confirm with `allowOverpayment: true`. Any other
+ * failure keeps the dialog open with a calm inline error (ADR-037). On success the
+ * hook invalidates the receivables tree, so the now-claimed income drops off every
+ * suggestions list (ADR-207).
  */
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Skeleton from '@mui/material/Skeleton'
-import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import { ResponsiveModal } from '../../components/ResponsiveModal'
 import { ErrorState } from '../../components/ErrorState'
 import {
+  AllocationExceedsTargetError,
   ReceivableOverpaymentError,
   type MatchSuggestion,
-  type PaymentAllocationInput,
-  type ReceivableItem,
 } from '../../api/receivablesClient'
 import { formatCurrency } from '../../lib/format'
-import { parseBalance, toDecimalString } from '../accounts/balance'
-import { useConfirmMatch, useReceivablePerson } from './queries'
+import {
+  addToRow,
+  allocatedCents,
+  buildAllocationTargets,
+  fillUpcoming,
+  includesUpcoming,
+  positiveDecimal,
+  suggestionValues,
+  toAllocations,
+  upcomingHasRoom,
+} from './allocation'
+import {
+  AllocationBalance,
+  AllocationEditor,
+  OverpaymentConfirm,
+  type OverpaymentConflict,
+} from './AllocationEditor'
+import { centsToDecimal, decimalToCents } from './installments'
+import {
+  useConfirmMatch,
+  useReceivablePerson,
+  useSuggestedAllocation,
+} from './queries'
 
 /** Parse a Decimal string to a number for the display edge (0 on a bad value). */
 function num(value: string): number {
@@ -48,33 +74,25 @@ function num(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-/** The pending overpayment amounts surfaced by the typed 409 (ADR-206). */
-interface Overpayment {
-  outstanding: string
-  requested: string
-}
-
-/**
- * Seed a default allocation for the suggested income: fill each open item (in
- * order) up to its remaining until the income's amount is exhausted (ADR-206). A
- * calm one-click default the owner can still edit before confirming.
- */
-function seedAllocations(
-  openItems: ReceivableItem[],
-  incomeAmount: number,
-): Record<string, string> {
-  const out: Record<string, string> = {}
-  let left = incomeAmount
-  for (const item of openItems) {
-    if (left <= 0) break
-    const remaining = num(item.remaining)
-    const alloc = Math.min(remaining, left)
-    if (alloc > 0) {
-      out[item.id] = toDecimalString(alloc)
-      left -= alloc
+/** Map a confirm-match 409 to the conflict the confirm explains, or null. */
+function conflictOf(error: unknown): OverpaymentConflict | null {
+  if (error instanceof ReceivableOverpaymentError) {
+    return {
+      kind: 'person',
+      outstanding: error.outstanding,
+      requested: error.requested,
     }
   }
-  return out
+  if (error instanceof AllocationExceedsTargetError) {
+    return {
+      kind: 'target',
+      itemId: error.itemId,
+      installmentId: error.installmentId,
+      remaining: error.remaining,
+      requested: error.requested,
+    }
+  }
+  return null
 }
 
 export interface ConfirmMatchFormProps {
@@ -103,77 +121,59 @@ export function ConfirmMatchForm({
   const personQuery = useReceivablePerson(personId)
   const confirmMatch = useConfirmMatch()
 
-  const [allocations, setAllocations] = useState<Record<string, string>>({})
-  const [overpayment, setOverpayment] = useState<Overpayment | null>(null)
+  // The owner's own row edits, layered over the server suggestion.
+  const [edits, setEdits] = useState<Record<string, string>>({})
+  const [showUpcomingToggle, setShowUpcoming] = useState<boolean | null>(null)
+  const [conflict, setConflict] = useState<OverpaymentConflict | null>(null)
   const [saveError, setSaveError] = useState(false)
-  const seededRef = useRef(false)
+  // Explicit consent to claim the income for less than its amount (ADR-207).
+  const [shortfallAcknowledged, setShortfallAcknowledged] = useState(false)
 
-  // Only OPEN items (something still owed AND not forgiven) can take an
-  // allocation: a pardoned item (ADR-210) is no longer a valid payment target
-  // (the API would 404 it), so it never seeds nor appears in the allocation list.
-  const openItems = useMemo<ReceivableItem[]>(
-    () =>
-      (personQuery.data?.items ?? []).filter(
-        (it) => !it.pardoned && num(it.remaining) > 0,
-      ),
+  // Only OPEN targets can take an allocation: a forgiven item or cuota is no
+  // longer payable (ADR-210/221) and a settled one has nothing left.
+  const targets = useMemo(
+    () => buildAllocationTargets(personQuery.data?.items ?? []),
     [personQuery.data?.items],
   )
 
-  // Seed the default allocation once the items arrive (greedy, editable after).
-  useEffect(() => {
-    if (seededRef.current || openItems.length === 0) return
-    seededRef.current = true
-    setAllocations(seedAllocations(openItems, num(suggestion.amount)))
-  }, [openItems, suggestion.amount])
+  // Prefill from the server's default spread of the income's amount (ADR-221).
+  const incomeAmount = positiveDecimal(suggestion.amount)
+  const incomeCents = incomeAmount !== null ? decimalToCents(incomeAmount) : null
+  const suggested = useSuggestedAllocation(personId, incomeAmount)
+  const prefill = useMemo(() => suggestionValues(suggested.data), [suggested.data])
+  const values = useMemo(() => ({ ...prefill, ...edits }), [prefill, edits])
 
-  const total = useMemo(() => {
-    let sum = 0
-    for (const value of Object.values(allocations)) {
-      const parsed = parseBalance(value)
-      if (Number.isFinite(parsed) && parsed > 0) sum += parsed
-    }
-    return sum
-  }, [allocations])
+  const totalCents = allocatedCents(targets, values)
+  const hasCurrent = targets.some((target) => !target.upcoming)
+  const showUpcoming = showUpcomingToggle ?? !hasCurrent
+  const rest = incomeCents !== null ? incomeCents - totalCents : 0
 
   const isSaving = confirmMatch.isPending
-  const canSave = total > 0 && !isSaving
-
-  const buildAllocations = (): PaymentAllocationInput[] => {
-    const out: PaymentAllocationInput[] = []
-    for (const item of openItems) {
-      const parsed = parseBalance(allocations[item.id] ?? '')
-      if (Number.isFinite(parsed) && parsed > 0) {
-        out.push({ itemId: item.id, amount: toDecimalString(parsed) })
-      }
-    }
-    return out
-  }
+  // Rows never exceed the income; less than it needs the owner's consent.
+  const balanced =
+    incomeCents !== null &&
+    (rest === 0 || (rest > 0 && shortfallAcknowledged))
+  const canSave = totalCents > 0 && balanced && !isSaving
 
   const submit = async (allowOverpayment: boolean) => {
     setSaveError(false)
     try {
       await confirmMatch.mutateAsync({
         personId,
-        // The API's ConfirmMatchRequest REQUIRES both — omitting them 422s every
-        // confirm (the bug fixed here). `occurredOn` is the matched income's date
-        // (the payback date); `amount` is the allocation sum, so `amount == Σ
-        // allocations` exactly as the manual RecordPaymentForm sets it.
+        // The API's ConfirmMatchRequest REQUIRES both. `occurredOn` is the
+        // matched income's date (the payback date); `amount` is the allocation
+        // sum — the income itself, or less when the owner accepted that.
         occurredOn: suggestion.occurredOn,
-        amount: toDecimalString(total),
+        amount: centsToDecimal(totalCents),
         matchedIncomeTransactionId: suggestion.transactionId,
-        allocations: buildAllocations(),
+        allocations: toAllocations(targets, values),
         ...(allowOverpayment ? { allowOverpayment: true } : {}),
       })
       onClose()
     } catch (error) {
-      if (error instanceof ReceivableOverpaymentError) {
-        setOverpayment({
-          outstanding: error.outstanding,
-          requested: error.requested,
-        })
-      } else {
-        setSaveError(true)
-      }
+      const typed = conflictOf(error)
+      if (typed) setConflict(typed)
+      else setSaveError(true)
     }
   }
 
@@ -181,6 +181,26 @@ export function ConfirmMatchForm({
     event.preventDefault()
     if (!canSave) return
     void submit(false)
+  }
+
+  // Consent covers specific amounts: any change to the rows withdraws it.
+  const editRows = (next: (current: Record<string, string>) => Record<string, string>) => {
+    setEdits(next)
+    setShortfallAcknowledged(false)
+  }
+
+  const applyRestToUpcoming = () => {
+    if (rest <= 0) return
+    editRows((current) => ({
+      ...current,
+      ...fillUpcoming(targets, values, rest),
+    }))
+    setShowUpcoming(true)
+  }
+
+  const putRestOn = (key: string) => {
+    if (rest <= 0) return
+    editRows((current) => ({ ...current, [key]: addToRow(values[key], rest) }))
   }
 
   let body: React.ReactNode
@@ -205,57 +225,34 @@ export function ConfirmMatchForm({
         }}
       />
     )
-  } else if (openItems.length === 0) {
+  } else if (targets.length === 0) {
     body = (
-      <Typography sx={{ fontSize: 14, py: 1 }} color="text.secondary" role="status">
+      <Typography
+        sx={{ fontSize: 14, py: 1, color: 'text.secondary' }}
+        role="status"
+      >
         {t('confirmMatch.noOpenItems')}
       </Typography>
     )
-  } else if (overpayment) {
-    // Confirm-warning: the total exceeds outstanding (ADR-206). The user can go
-    // back and adjust, or explicitly record it anyway as a credit.
+  } else if (conflict) {
+    // Confirm-warning: the rows pay more than is owed today, or more than one
+    // item / cuota owes (ADR-206/215). Go back and adjust, or record it anyway.
     body = (
-      <Box>
-        <Typography
-          role="alert"
-          sx={{ fontSize: 14, color: 'warning.main', fontWeight: 600 }}
-        >
-          {t('confirmMatch.overpayment.title')}
-        </Typography>
-        <Typography sx={{ fontSize: 13.5, mt: 1 }} color="text.secondary">
-          {t('confirmMatch.overpayment.body', {
-            requested: formatCurrency(num(overpayment.requested), 'ARS'),
-            outstanding: formatCurrency(num(overpayment.outstanding), 'ARS'),
-          })}
-        </Typography>
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 3 }}>
-          <Button
-            type="button"
-            onClick={() => setOverpayment(null)}
-            color="secondary"
-            sx={{ textTransform: 'none' }}
-          >
-            {t('confirmMatch.overpayment.cancel')}
-          </Button>
-          <Button
-            type="button"
-            onClick={() => {
-              setOverpayment(null)
-              void submit(true)
-            }}
-            color="warning"
-            variant="contained"
-            disabled={isSaving}
-            sx={{ textTransform: 'none', fontWeight: 600 }}
-          >
-            {t('confirmMatch.overpayment.confirm')}
-          </Button>
-        </Box>
-      </Box>
+      <OverpaymentConfirm
+        conflict={conflict}
+        targets={targets}
+        early={includesUpcoming(targets, values)}
+        onBack={() => setConflict(null)}
+        onConfirm={() => {
+          setConflict(null)
+          void submit(true)
+        }}
+        disabled={isSaving}
+      />
     )
   } else {
     body = (
-      <Box component="form" onSubmit={handleSubmit}>
+      <Box component="form" onSubmit={handleSubmit} noValidate>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.25 }}>
           {saveError ? (
             <Typography
@@ -277,17 +274,16 @@ export function ConfirmMatchForm({
               border: '1px solid var(--mg-border-2)',
             }}
           >
-            <Typography sx={{ fontSize: 12, fontWeight: 600 }} color="text.secondary">
+            <Typography sx={{ fontSize: 12, fontWeight: 600, color: 'text.secondary' }}>
               {t('confirmMatch.incomeLabel')}
             </Typography>
             <Typography
-              sx={{ fontSize: 14, fontWeight: 600, mt: 0.25 }}
-              color="text.primary"
+              sx={{ fontSize: 14, fontWeight: 600, mt: 0.25, color: 'text.primary' }}
               noWrap
             >
               {suggestion.name}
             </Typography>
-            <Typography sx={{ fontSize: 12.5, mt: 0.25 }} color="text.secondary">
+            <Typography sx={{ fontSize: 12.5, mt: 0.25, color: 'text.secondary' }}>
               {t('confirmMatch.incomeSummary', {
                 amount: formatCurrency(num(suggestion.amount), 'ARS'),
                 date: suggestion.occurredOn,
@@ -295,81 +291,49 @@ export function ConfirmMatchForm({
             </Typography>
           </Box>
 
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-            {openItems.map((item) => (
-              <Box
-                key={item.id}
-                sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}
-              >
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography
-                    sx={{ fontSize: 13.5, fontWeight: 600 }}
-                    color="text.primary"
-                    noWrap
-                  >
-                    {item.detail ?? item.occurredOn}
-                  </Typography>
-                  <Typography sx={{ fontSize: 12.5, mt: 0.25 }} color="text.secondary">
-                    {t('confirmMatch.remainingHint', {
-                      amount: formatCurrency(num(item.remaining), 'ARS'),
-                    })}
-                  </Typography>
-                </Box>
-                <TextField
-                  value={allocations[item.id] ?? ''}
-                  onChange={(event) =>
-                    setAllocations((prev) => ({
-                      ...prev,
-                      [item.id]: event.target.value,
-                    }))
-                  }
-                  size="small"
-                  type="number"
-                  disabled={isSaving}
-                  sx={{ width: '120px', flex: 'none' }}
-                  slotProps={{
-                    htmlInput: {
-                      // `type="number"` gives a clean mobile numeric keypad;
-                      // `inputMode="decimal"` + `step="any"` keep decimals, and
-                      // `min={0}` rejects negatives. Money still flows as a
-                      // Decimal string via parseBalance/toDecimalString (ADR-025).
-                      min: 0,
-                      step: 'any',
-                      inputMode: 'decimal',
-                      'aria-label': t('confirmMatch.allocationAria', {
-                        date: item.occurredOn,
-                      }),
-                    },
-                  }}
-                />
-              </Box>
-            ))}
-          </Box>
-
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'baseline',
-              justifyContent: 'space-between',
-              gap: 1,
-              pt: 0.5,
-              borderTop: '1px solid var(--mg-border)',
-            }}
-          >
-            <Typography sx={{ fontSize: 13.5 }} color="text.secondary">
-              {t('confirmMatch.totalLabel')}
-            </Typography>
+          {suggested.isPending && incomeAmount !== null ? (
             <Typography
-              sx={{
-                fontSize: 14,
-                fontWeight: 600,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-              color="text.primary"
+              role="status"
+              sx={{ fontSize: 12.5, color: 'text.secondary' }}
             >
-              {formatCurrency(total, 'ARS')}
+              {t('confirmMatch.suggesting')}
             </Typography>
-          </Box>
+          ) : null}
+          {suggested.isError ? (
+            <Typography
+              role="status"
+              sx={{ fontSize: 12.5, color: 'text.secondary' }}
+            >
+              {t('confirmMatch.suggestError')}
+            </Typography>
+          ) : null}
+
+          <AllocationEditor
+            targets={targets}
+            values={values}
+            onChange={(key, value) =>
+              editRows((current) => ({ ...current, [key]: value }))
+            }
+            showUpcoming={showUpcoming}
+            onToggleUpcoming={() => setShowUpcoming(!showUpcoming)}
+            disabled={isSaving}
+          />
+
+          <AllocationBalance
+            mode="income"
+            totalCents={totalCents}
+            receivedCents={
+              incomeCents !== null && !suggested.isPending ? incomeCents : null
+            }
+            totalLabel={t('confirmMatch.totalLabel')}
+            targets={targets}
+            canApplyToUpcoming={upcomingHasRoom(targets, values)}
+            onApplyToUpcoming={applyRestToUpcoming}
+            onPutRestOn={putRestOn}
+            shortfallAcknowledged={shortfallAcknowledged}
+            onAcknowledgeShortfall={setShortfallAcknowledged}
+            disabled={isSaving}
+          />
         </Box>
 
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 3 }}>
@@ -401,7 +365,7 @@ export function ConfirmMatchForm({
       title={t('confirmMatch.title')}
       maxWidth={480}
     >
-      <Typography sx={{ fontSize: 13.5, mb: 2, mt: -1 }} color="text.secondary">
+      <Typography sx={{ fontSize: 13.5, mb: 2, mt: -1, color: 'text.secondary' }}>
         {t('confirmMatch.subtitle', { name: personName })}
       </Typography>
       {body}

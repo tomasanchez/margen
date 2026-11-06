@@ -770,3 +770,81 @@ describe('TransactionRow renders in the effective currency', () => {
     ).toBeInTheDocument()
   })
 })
+
+// "Someone owes me this" (ADR-220): an EXPENSE row's actions menu offers to
+// start a receivable from it; the item fires the handler with the row and the
+// menu closes. Income rows (and rows without a handler) never show it — only an
+// expense can back a receivable link (ADR-217).
+describe('"Someone owes me this" row action', () => {
+  const expense: Transaction = {
+    ...baseUsd,
+    id: 'exp-owed',
+    currency: 'ARS',
+    type: 'expense',
+    kind: 'expense',
+    name: 'Dinner at Don Julio',
+    category: 'Social',
+    usd: undefined,
+    rate: undefined,
+    fxRateType: undefined,
+  }
+
+  function renderRow(
+    t: Transaction,
+    onSomeoneOwes?: (transaction: Transaction) => void,
+  ) {
+    return render(
+      <ThemeProvider theme={darkTheme}>
+        <TransactionRowMobile
+          transaction={t}
+          onEdit={() => {}}
+          onDelete={() => {}}
+          onSomeoneOwes={onSomeoneOwes}
+        />
+      </ThemeProvider>,
+    )
+  }
+
+  test('an expense row offers it and fires the handler with the row', async () => {
+    const user = userEvent.setup()
+    const onSomeoneOwes = vi.fn()
+    renderRow(expense, onSomeoneOwes)
+
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Dinner at Don Julio' }),
+    )
+    await user.click(
+      await screen.findByRole('menuitem', { name: 'Someone owes me this' }),
+    )
+
+    expect(onSomeoneOwes).toHaveBeenCalledWith(expense)
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+  })
+
+  test('an income row, or a row without a handler, never offers it', async () => {
+    const user = userEvent.setup()
+    const { unmount } = renderRow(
+      { ...expense, type: 'income', kind: 'income', name: 'Salary' },
+      vi.fn(),
+    )
+    await user.click(screen.getByRole('button', { name: 'Actions for Salary' }))
+    expect(
+      await screen.findByRole('menuitem', { name: 'Edit' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('menuitem', { name: 'Someone owes me this' }),
+    ).toBeNull()
+    unmount()
+
+    renderRow(expense)
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Dinner at Don Julio' }),
+    )
+    expect(
+      await screen.findByRole('menuitem', { name: 'Edit' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('menuitem', { name: 'Someone owes me this' }),
+    ).toBeNull()
+  })
+})

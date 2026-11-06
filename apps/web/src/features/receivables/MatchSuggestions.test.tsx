@@ -1,6 +1,6 @@
 /**
  * Unit tests for task 9's income match-suggestions review + per-person PDF export
- * (ADR-206/207/209).
+ * (ADR-206/207/209), including the cuota-aware confirm (ADR-221).
  *
  * Drives the whole receivables section against a MOCKED {@link receivablesClient}
  * (the network boundary) so the real TanStack Query hooks + the suggestion review /
@@ -8,8 +8,13 @@
  * {@link ReceivablesSection.test.tsx}:
  *
  *  - suggestions render for an expanded person, ranked by score (highest first);
- *  - reviewing a suggestion opens the confirm dialog, which allocates across the
- *    person's open items and settles it via `confirmMatch` (ADR-206/207);
+ *  - reviewing a suggestion opens the confirm dialog, whose rows are PREFILLED
+ *    from the server's suggested allocation for the income's amount (ADR-221) and
+ *    settle it via `confirmMatch` (ADR-206/207);
+ *  - an installment item's rows target its cuotas and send `installmentId`;
+ *  - the rows must add up to the income: less needs an explicit acknowledgement
+ *    (the income is claimed, the rest can't be matched again), more is blocked,
+ *    and "apply the rest to upcoming cuotas" balances it explicitly;
  *  - a confirm-match overpayment (typed 409) warns, then retries with
  *    `allowOverpayment: true` (ADR-206);
  *  - a calm empty state renders when there are no suggestions;
@@ -31,8 +36,16 @@ import {
   type MatchSuggestion,
   type Person,
   type PersonDetail,
+  type SuggestedAllocation,
+  type SuggestedAllocationLine,
 } from '../../api/receivablesClient'
 import { formatCurrency } from '../../lib/format'
+import {
+  makeCuota,
+  makeDetail,
+  makeItem,
+  makePerson,
+} from './__fixtures__/receivables'
 
 vi.mock('../../api/receivablesClient', async (importOriginal) => {
   const actual =
@@ -50,6 +63,11 @@ vi.mock('../../api/receivablesClient', async (importOriginal) => {
       deleteItem: vi.fn(),
       pardonItem: vi.fn(),
       unpardonItem: vi.fn(),
+      editInstallment: vi.fn(),
+      pardonInstallment: vi.fn(),
+      unpardonInstallment: vi.fn(),
+      suggestedAllocation: vi.fn(),
+      searchExpenseCandidates: vi.fn(),
       recordPayment: vi.fn(),
       matchSuggestions: vi.fn(),
       confirmMatch: vi.fn(),
@@ -63,34 +81,30 @@ const mockGetPerson = vi.mocked(receivablesClient.getPerson)
 const mockMatchSuggestions = vi.mocked(receivablesClient.matchSuggestions)
 const mockConfirmMatch = vi.mocked(receivablesClient.confirmMatch)
 const mockDownloadPdf = vi.mocked(receivablesClient.downloadPersonPdf)
+const mockSuggestedAllocation = vi.mocked(receivablesClient.suggestedAllocation)
 
-const PEOPLE: Person[] = [{ id: 'p1', name: 'Ana', outstanding: '500000.00' }]
+const PEOPLE: Person[] = [
+  makePerson({ id: 'p1', name: 'Ana', outstanding: '500000.00' }),
+]
 
-const ANA_DETAIL: PersonDetail = {
+const ANA_DETAIL: PersonDetail = makeDetail({
   id: 'p1',
   name: 'Ana',
   outstanding: '500000.00',
   items: [
-    {
+    makeItem({
       id: 'i1',
       occurredOn: '2026-08-01',
       amount: '300000.00',
       detail: 'Dinner',
-      allocated: '0.00',
-      remaining: '300000.00',
-      pardoned: false,
-    },
-    {
+    }),
+    makeItem({
       id: 'i2',
       occurredOn: '2026-08-10',
       amount: '200000.00',
-      detail: null,
-      allocated: '0.00',
-      remaining: '200000.00',
-      pardoned: false,
-    },
+    }),
   ],
-}
+})
 
 // Deliberately out of rank order so the component's score-sort is exercised: the
 // weaker "Ana transfer" (0.55) precedes the stronger "Ana Perez" (0.92).
@@ -110,6 +124,21 @@ const SUGGESTIONS: MatchSuggestion[] = [
     score: 0.92,
   },
 ]
+
+/** A server suggestion for `amount` spread over the given lines. */
+function suggestion(
+  amount: string,
+  lines: SuggestedAllocationLine[],
+): SuggestedAllocation {
+  const allocated = lines.reduce((sum, line) => sum + Number(line.amount), 0)
+  return {
+    asOf: '2026-08-20',
+    amount,
+    allocated: allocated.toFixed(2),
+    unallocated: (Number(amount) - allocated).toFixed(2),
+    allocations: lines,
+  }
+}
 
 function renderSection() {
   const queryClient = new QueryClient({
@@ -136,15 +165,14 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
     mockListPeople.mockResolvedValue(PEOPLE)
     mockGetPerson.mockResolvedValue(ANA_DETAIL)
     mockMatchSuggestions.mockResolvedValue(SUGGESTIONS)
-    mockConfirmMatch.mockResolvedValue({
-      id: 'pay-m1',
-      occurredOn: '2026-08-12',
-      amount: '300000.00',
-      source: 'matched_income',
-      matchedIncomeTransactionId: 't-strong',
-      allocations: [{ itemId: 'i1', amount: '300000.00' }],
-    })
+    mockConfirmMatch.mockResolvedValue(ANA_DETAIL)
     mockDownloadPdf.mockResolvedValue(undefined)
+    // By default the server puts the whole income on the Dinner item (i1).
+    mockSuggestedAllocation.mockImplementation((_personId, amount) =>
+      Promise.resolve(
+        suggestion(amount, [{ itemId: 'i1', installmentId: null, amount }]),
+      ),
+    )
   })
   afterEach(() => vi.clearAllMocks())
 
@@ -167,14 +195,12 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
     expect(rows[1]).toHaveTextContent('Likely match')
   })
 
-  test('reviewing a suggestion confirms it, allocated across open items', async () => {
+  test('reviewing a suggestion confirms it with the server-suggested allocation', async () => {
     const user = userEvent.setup()
     renderSection()
     await expandAna(user)
     await screen.findByText('Ana Perez')
 
-    // Review the strong (300.000) suggestion — its default allocation greedily
-    // fills the first open item (Dinner, 300.000 remaining) to the hilt.
     await user.click(
       screen.getByRole('button', {
         name: /Review the ARS 300\.000 income from Ana Perez on 2026-08-12/,
@@ -183,6 +209,14 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
     const dialog = within(await screen.findByRole('dialog'))
     // The matched income is shown for context.
     expect(dialog.getByText('Ana Perez')).toBeInTheDocument()
+
+    // The rows are prefilled from the server's suggestion for the income amount.
+    await waitFor(() =>
+      expect(
+        dialog.getByLabelText('Amount applied to the item from 2026-08-01'),
+      ).toHaveValue(300000),
+    )
+    expect(mockSuggestedAllocation).toHaveBeenCalledWith('p1', '300000.00')
 
     await user.click(dialog.getByRole('button', { name: 'Confirm payment' }))
 
@@ -209,14 +243,7 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
       .mockRejectedValueOnce(
         new ReceivableOverpaymentError('300000.00', '300000.00'),
       )
-      .mockResolvedValueOnce({
-        id: 'pay-m2',
-        occurredOn: '2026-08-12',
-        amount: '300000.00',
-        source: 'matched_income',
-        matchedIncomeTransactionId: 't-strong',
-        allocations: [{ itemId: 'i1', amount: '300000.00' }],
-      })
+      .mockResolvedValueOnce(ANA_DETAIL)
 
     renderSection()
     await expandAna(user)
@@ -228,7 +255,9 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
       }),
     )
     const dialog = within(await screen.findByRole('dialog'))
-    await user.click(dialog.getByRole('button', { name: 'Confirm payment' }))
+    const confirm = dialog.getByRole('button', { name: 'Confirm payment' })
+    await waitFor(() => expect(confirm).toBeEnabled())
+    await user.click(confirm)
 
     // The confirm-warning surfaces (ADR-206).
     expect(await dialog.findByText('More than owed')).toBeInTheDocument()
@@ -343,10 +372,9 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
     expect(screen.queryAllByTestId('receivable-suggestion')).toHaveLength(0)
   })
 
-  test('seeds a greedy default allocation that spills across open items until the income is exhausted', async () => {
-    // Income (400.000) overflows the first open item (300.000 remaining) and
-    // spills the leftover 100.000 into the second (200.000 remaining) — the
-    // greedy one-click default (ADR-206) the owner can still edit.
+  test('prefills a suggestion that spills across open items, in the server\'s fill order', async () => {
+    // The server fills flat items newest-first: the 400.000 income covers the
+    // newer item (i2, 200.000) and spills the rest into the older one (i1).
     mockMatchSuggestions.mockResolvedValue([
       {
         transactionId: 't-spill',
@@ -356,6 +384,12 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
         score: 0.9,
       },
     ])
+    mockSuggestedAllocation.mockResolvedValue(
+      suggestion('400000.00', [
+        { itemId: 'i2', installmentId: null, amount: '200000.00' },
+        { itemId: 'i1', installmentId: null, amount: '200000.00' },
+      ]),
+    )
     const user = userEvent.setup()
     renderSection()
     await expandAna(user)
@@ -367,14 +401,14 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
     )
     const dialog = within(await screen.findByRole('dialog'))
 
-    // First item filled to the hilt, the overflow seeded into the second. The
-    // inputs are now `type="number"`, so toHaveValue reads the numeric value.
+    await waitFor(() =>
+      expect(
+        dialog.getByLabelText('Amount applied to the item from 2026-08-10'),
+      ).toHaveValue(200000),
+    )
     expect(
       dialog.getByLabelText('Amount applied to the item from 2026-08-01'),
-    ).toHaveValue(300000)
-    expect(
-      dialog.getByLabelText('Amount applied to the item from 2026-08-10'),
-    ).toHaveValue(100000)
+    ).toHaveValue(200000)
 
     await user.click(dialog.getByRole('button', { name: 'Confirm payment' }))
 
@@ -383,9 +417,10 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
       'p1',
       expect.objectContaining({
         matchedIncomeTransactionId: 't-spill',
+        amount: '400000.00',
         allocations: [
-          { itemId: 'i1', amount: '300000.00' },
-          { itemId: 'i2', amount: '100000.00' },
+          { itemId: 'i1', amount: '200000.00' },
+          { itemId: 'i2', amount: '200000.00' },
         ],
       }),
     )
@@ -393,16 +428,20 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
 
   test('excludes a pardoned item from the confirm-match allocation list (ADR-210)', async () => {
     // Ana's first item (2026-08-01) is forgiven, so only the second (2026-08-10,
-    // 200.000 remaining) is a valid match target: the 300.000 income seeds it to
-    // 200.000 and the pardoned item never appears.
+    // 200.000 remaining) is a valid match target; the server suggests just it.
     mockGetPerson.mockResolvedValue({
       ...ANA_DETAIL,
       outstanding: '200000.00',
       items: [
-        { ...ANA_DETAIL.items[0], pardoned: true },
+        { ...ANA_DETAIL.items[0], pardoned: true, dueOutstanding: '0.00' },
         ANA_DETAIL.items[1],
       ],
     })
+    mockSuggestedAllocation.mockResolvedValue(
+      suggestion('300000.00', [
+        { itemId: 'i2', installmentId: null, amount: '200000.00' },
+      ]),
+    )
     const user = userEvent.setup()
     renderSection()
     await expandAna(user)
@@ -415,35 +454,49 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
     )
     const dialog = within(await screen.findByRole('dialog'))
 
-    // Only the open item is allocatable, seeded up to its remaining. The input
-    // is now `type="number"`, so toHaveValue reads the numeric value.
-    expect(
-      dialog.getByLabelText('Amount applied to the item from 2026-08-10'),
-    ).toHaveValue(200000)
+    await waitFor(() =>
+      expect(
+        dialog.getByLabelText('Amount applied to the item from 2026-08-10'),
+      ).toHaveValue(200000),
+    )
     // The forgiven item is not a match target.
     expect(
       dialog.queryByLabelText('Amount applied to the item from 2026-08-01'),
     ).not.toBeInTheDocument()
-
-    await user.click(dialog.getByRole('button', { name: 'Confirm payment' }))
+    // The unassigned part of the income is called out, never silently dropped:
+    // confirming needs an explicit acknowledgement that it can't be re-matched.
+    expect(
+      dialog.getByText(
+        "ARS 100.000 of this ARS 300.000 income isn't assigned to a debt yet.",
+      ),
+    ).toBeInTheDocument()
+    const confirm = dialog.getByRole('button', { name: 'Confirm payment' })
+    expect(confirm).toBeDisabled()
+    await user.click(
+      dialog.getByRole('checkbox', {
+        name: "Claim this ARS 300.000 income for only ARS 200.000. The rest can't be matched to anyone again.",
+      }),
+    )
+    await user.click(confirm)
 
     await waitFor(() => expect(mockConfirmMatch).toHaveBeenCalledTimes(1))
     expect(mockConfirmMatch).toHaveBeenCalledWith(
       'p1',
       expect.objectContaining({
         matchedIncomeTransactionId: 't-strong',
+        amount: '200000.00',
         allocations: [{ itemId: 'i2', amount: '200000.00' }],
       }),
     )
   })
 
-  test('lets the owner edit a seeded allocation before confirming', async () => {
+  test('lets the owner edit a prefilled allocation before confirming', async () => {
     const user = userEvent.setup()
     renderSection()
     await expandAna(user)
     await screen.findByText('Ana Perez')
 
-    // The strong 300.000 income seeds the first item to 300.000; the owner trims it.
+    // The strong 300.000 income is suggested onto the first item; the owner trims it.
     await user.click(
       screen.getByRole('button', {
         name: /Review the ARS 300\.000 income from Ana Perez on 2026-08-12/,
@@ -454,11 +507,23 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
       'Amount applied to the item from 2026-08-01',
     )
     // `type="number"` input → toHaveValue reads the numeric value.
-    expect(firstItem).toHaveValue(300000)
+    await waitFor(() => expect(firstItem).toHaveValue(300000))
     await user.clear(firstItem)
-    await user.type(firstItem, '250000')
+    await user.type(firstItem, '25000')
 
-    await user.click(dialog.getByRole('button', { name: 'Confirm payment' }))
+    // Claiming the income for less needs consent — and consent covers specific
+    // amounts: changing the rows again withdraws it.
+    const confirm = dialog.getByRole('button', { name: 'Confirm payment' })
+    const consent = () =>
+      dialog.getByRole('checkbox', { name: /Claim this ARS 300\.000 income for only/ })
+    await user.click(consent())
+    expect(confirm).toBeEnabled()
+    await user.type(firstItem, '0')
+    expect(consent()).not.toBeChecked()
+    expect(confirm).toBeDisabled()
+    await user.click(consent())
+
+    await user.click(confirm)
 
     await waitFor(() => expect(mockConfirmMatch).toHaveBeenCalledTimes(1))
     // The edited amount is what gets sent, serialized to the 2-decimal string.
@@ -467,6 +532,120 @@ describe('MatchSuggestions + PDF export (task 9)', () => {
       expect.objectContaining({
         matchedIncomeTransactionId: 't-strong',
         allocations: [{ itemId: 'i1', amount: '250000.00' }],
+      }),
+    )
+  })
+
+  test('rows adding up to MORE than the income cannot be confirmed', async () => {
+    const user = userEvent.setup()
+    renderSection()
+    await expandAna(user)
+    await screen.findByText('Ana Perez')
+
+    await user.click(
+      screen.getByRole('button', {
+        name: /Review the ARS 300\.000 income from Ana Perez on 2026-08-12/,
+      }),
+    )
+    const dialog = within(await screen.findByRole('dialog'))
+    const firstItem = dialog.getByLabelText(
+      'Amount applied to the item from 2026-08-01',
+    )
+    await waitFor(() => expect(firstItem).toHaveValue(300000))
+    await user.type(
+      dialog.getByLabelText('Amount applied to the item from 2026-08-10'),
+      '50000',
+    )
+
+    expect(
+      dialog.getByText(
+        'The lines add up to ARS 50.000 more than this ARS 300.000 income. Lower them to confirm.',
+      ),
+    ).toBeInTheDocument()
+    expect(dialog.getByRole('button', { name: 'Confirm payment' })).toBeDisabled()
+    expect(mockConfirmMatch).not.toHaveBeenCalled()
+  })
+
+  test('targets cuotas of an installment item and sends their installmentId (ADR-221)', async () => {
+    // Ana owes a 3-cuota plan: cuota 1 is due, cuotas 2-3 are upcoming.
+    mockGetPerson.mockResolvedValue(
+      makeDetail({
+        id: 'p1',
+        name: 'Ana',
+        outstanding: '100000.00',
+        upcomingTotal: '200000.00',
+        items: [
+          makeItem({
+            id: 'plan',
+            occurredOn: '2026-07-20',
+            amount: '300000.00',
+            detail: 'Dinner',
+            dueOutstanding: '100000.00',
+            upcomingTotal: '200000.00',
+            installments: [
+              makeCuota({ id: 'c1', index: 1, dueOn: '2026-08-20', amount: '100000.00', status: 'due' }),
+              makeCuota({ id: 'c2', index: 2, dueOn: '2026-09-20', amount: '100000.00', status: 'upcoming' }),
+              makeCuota({ id: 'c3', index: 3, dueOn: '2026-10-20', amount: '100000.00', status: 'upcoming' }),
+            ],
+          }),
+        ],
+      }),
+    )
+    mockSuggestedAllocation.mockResolvedValue(
+      suggestion('300000.00', [
+        { itemId: 'plan', installmentId: 'c1', amount: '100000.00' },
+      ]),
+    )
+    const user = userEvent.setup()
+    renderSection()
+    await expandAna(user)
+    await screen.findByText('Ana Perez')
+
+    await user.click(
+      screen.getByRole('button', {
+        name: /Review the ARS 300\.000 income from Ana Perez on 2026-08-12/,
+      }),
+    )
+    const dialog = within(await screen.findByRole('dialog'))
+
+    // The due cuota is a labeled row, prefilled from the suggestion.
+    expect(dialog.getByText('Dinner · Cuota 1/3')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        dialog.getByLabelText(
+          'Amount applied to cuota 1/3 of the item from 2026-07-20',
+        ),
+      ).toHaveValue(100000),
+    )
+    // Upcoming cuotas are tucked behind a toggle (paying them is early).
+    expect(
+      dialog.queryByLabelText(
+        'Amount applied to cuota 2/3 of the item from 2026-07-20',
+      ),
+    ).not.toBeInTheDocument()
+
+    // The other 200.000 of the income: apply it ahead to the upcoming cuotas.
+    expect(dialog.getByRole('button', { name: 'Confirm payment' })).toBeDisabled()
+    await user.click(
+      dialog.getByRole('button', { name: 'Apply the rest to upcoming cuotas' }),
+    )
+    expect(
+      dialog.getByLabelText(
+        'Amount applied to cuota 2/3 of the item from 2026-07-20',
+      ),
+    ).toHaveValue(100000)
+    await user.click(dialog.getByRole('button', { name: 'Confirm payment' }))
+
+    await waitFor(() => expect(mockConfirmMatch).toHaveBeenCalledTimes(1))
+    expect(mockConfirmMatch).toHaveBeenCalledWith(
+      'p1',
+      expect.objectContaining({
+        amount: '300000.00',
+        allocations: [
+          { itemId: 'plan', installmentId: 'c1', amount: '100000.00' },
+          { itemId: 'plan', installmentId: 'c2', amount: '100000.00' },
+          { itemId: 'plan', installmentId: 'c3', amount: '100000.00' },
+        ],
       }),
     )
   })

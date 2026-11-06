@@ -7,13 +7,14 @@
  * end to end:
  *
  *  - people are listed with their outstanding total (es-AR formatted); a NEGATIVE
- *    outstanding (overpaid, ADR-206) renders red + signed;
+ *    outstanding (overpaid, ADR-206) reads as the person's credit;
  *  - create / rename / delete a person (delete goes through a cascade confirm);
- *  - expanding a person loads + lists their items (amount + remaining, a negative
- *    remainder rendered red + signed);
+ *  - expanding a person loads + lists their items (amount + remaining, an overpaid
+ *    item reading as a credit);
  *  - add / edit / delete an item;
- *  - record a payment allocated across open items, INCLUDING the overpayment
- *    confirm-warning that retries with `allowOverpayment: true` (ADR-206);
+ *  - record a payment allocated across open items — the recorded amount must match
+ *    what was received — INCLUDING the overpayment confirm-warning that retries
+ *    with `allowOverpayment: true` (ADR-206);
  *  - an empty state and a calm error state (ADR-037) render.
  *
  * English-pinned (ADR-105); money asserted via the shared es-AR formatter so the
@@ -33,6 +34,12 @@ import {
   type PersonDetail,
 } from '../../api/receivablesClient'
 import { formatSignedBalance } from '../../lib/format'
+import {
+  makeCreated,
+  makeDetail,
+  makeItem,
+  makePerson,
+} from './__fixtures__/receivables'
 
 vi.mock('../../api/receivablesClient', async (importOriginal) => {
   const actual =
@@ -50,6 +57,11 @@ vi.mock('../../api/receivablesClient', async (importOriginal) => {
       deleteItem: vi.fn(),
       pardonItem: vi.fn(),
       unpardonItem: vi.fn(),
+      editInstallment: vi.fn(),
+      pardonInstallment: vi.fn(),
+      unpardonInstallment: vi.fn(),
+      suggestedAllocation: vi.fn(),
+      searchExpenseCandidates: vi.fn(),
       recordPayment: vi.fn(),
       matchSuggestions: vi.fn(),
       confirmMatch: vi.fn(),
@@ -72,36 +84,29 @@ const mockRecordPayment = vi.mocked(receivablesClient.recordPayment)
 const mockMatchSuggestions = vi.mocked(receivablesClient.matchSuggestions)
 
 const PEOPLE: Person[] = [
-  { id: 'p1', name: 'Ana', outstanding: '500000.00' },
+  makePerson({ id: 'p1', name: 'Ana', outstanding: '500000.00' }),
   // Overpaid → negative outstanding (ADR-206), rendered red + signed.
-  { id: 'p2', name: 'Bruno', outstanding: '-1500.00' },
+  makePerson({ id: 'p2', name: 'Bruno', outstanding: '-1500.00' }),
 ]
 
-const ANA_DETAIL: PersonDetail = {
+const ANA_DETAIL: PersonDetail = makeDetail({
   id: 'p1',
   name: 'Ana',
   outstanding: '500000.00',
   items: [
-    {
+    makeItem({
       id: 'i1',
       occurredOn: '2026-08-01',
       amount: '300000.00',
       detail: 'Dinner',
-      allocated: '0.00',
-      remaining: '300000.00',
-      pardoned: false,
-    },
-    {
+    }),
+    makeItem({
       id: 'i2',
       occurredOn: '2026-08-10',
       amount: '200000.00',
-      detail: null,
-      allocated: '0.00',
-      remaining: '200000.00',
-      pardoned: false,
-    },
+    }),
   ],
-}
+})
 
 // Ana with her first item (Dinner) FORGIVEN (ADR-210): it no longer counts
 // toward outstanding, so only the second item's 200.000 remains.
@@ -109,17 +114,17 @@ const ANA_PARDONED: PersonDetail = {
   ...ANA_DETAIL,
   outstanding: '200000.00',
   items: [
-    { ...ANA_DETAIL.items[0], pardoned: true },
+    { ...ANA_DETAIL.items[0], pardoned: true, dueOutstanding: '0.00' },
     ANA_DETAIL.items[1],
   ],
 }
 
-const BRUNO_DETAIL: PersonDetail = {
+const BRUNO_DETAIL: PersonDetail = makeDetail({
   id: 'p2',
   name: 'Bruno',
   outstanding: '-1500.00',
   items: [
-    {
+    makeItem({
       id: 'b1',
       occurredOn: '2026-07-15',
       amount: '1000.00',
@@ -127,10 +132,9 @@ const BRUNO_DETAIL: PersonDetail = {
       allocated: '2500.00',
       // Overpaid item → negative remainder.
       remaining: '-1500.00',
-      pardoned: false,
-    },
+    }),
   ],
-}
+})
 
 function renderSection() {
   const queryClient = new QueryClient({
@@ -155,19 +159,12 @@ describe('ReceivablesSection', () => {
     mockCreatePerson.mockResolvedValue({ ...ANA_DETAIL, id: 'p3', name: 'Carla' })
     mockRenamePerson.mockResolvedValue({ ...ANA_DETAIL, name: 'Ana María' })
     mockDeletePerson.mockResolvedValue(undefined)
-    mockAddItem.mockResolvedValue(ANA_DETAIL.items[0])
-    mockEditItem.mockResolvedValue(ANA_DETAIL.items[0])
+    mockAddItem.mockResolvedValue(makeCreated(ANA_DETAIL, 'i-new'))
+    mockEditItem.mockResolvedValue(ANA_DETAIL)
     mockDeleteItem.mockResolvedValue(undefined)
     mockPardonItem.mockResolvedValue(ANA_PARDONED)
     mockUnpardonItem.mockResolvedValue(ANA_DETAIL)
-    mockRecordPayment.mockResolvedValue({
-      id: 'pay1',
-      occurredOn: '2026-08-24',
-      amount: '100000.00',
-      source: 'manual',
-      matchedIncomeTransactionId: null,
-      allocations: [{ itemId: 'i1', amount: '100000.00' }],
-    })
+    mockRecordPayment.mockResolvedValue(ANA_DETAIL)
     // Task 9's match-suggestions query mounts when a person expands; default to
     // none so these CRUD/payment tests aren't perturbed (React Query rejects an
     // `undefined` return, so an unmocked resolve would error the query).
@@ -175,15 +172,17 @@ describe('ReceivablesSection', () => {
   })
   afterEach(() => vi.clearAllMocks())
 
-  test('lists people with their outstanding total, negatives red + signed', async () => {
+  test('lists people with their outstanding total; an overpaid person reads as a credit', async () => {
     renderSection()
     expect(await screen.findByText('Ana')).toBeInTheDocument()
     // Positive outstanding, es-AR grouped, no sign.
     expect(screen.getByText('ARS 500.000')).toBeInTheDocument()
-    // Bruno is overpaid → negative outstanding, signed with the Unicode minus.
+    // Bruno is overpaid → negative outstanding = his CREDIT, worded as such and
+    // never shown as a signed "owed" figure.
+    expect(screen.getByText('Credit ARS 1.500')).toBeInTheDocument()
     expect(
-      screen.getByText(formatSignedBalance(-1500, 'ARS')),
-    ).toBeInTheDocument()
+      screen.queryByText(formatSignedBalance(-1500, 'ARS')),
+    ).not.toBeInTheDocument()
   })
 
   test('shows the empty state when no one owes the owner', async () => {
@@ -277,20 +276,18 @@ describe('ReceivablesSection', () => {
     ).toBeInTheDocument()
   })
 
-  test('a negative item remainder (overpaid) renders red + signed', async () => {
+  test('an overpaid item (negative remainder) reads as a credit', async () => {
     const user = userEvent.setup()
     renderSection()
     await screen.findByText('Bruno')
 
     await user.click(screen.getByRole('button', { name: "Show Bruno's items" }))
     expect(await screen.findByText('Coffee')).toBeInTheDocument()
-    // The overpaid item's remainder is negative → signed with the Unicode minus.
-    const remaining = screen.getByText(
-      `${formatSignedBalance(-1500, 'ARS')} remaining`,
-    )
-    expect(remaining).toBeInTheDocument()
-    // Non-color cue is the SIGN; assert the Unicode minus is present.
-    expect(remaining.textContent).toContain('−')
+    // The item's remainder is −1.500: worded as a credit (the WORD is the cue),
+    // never as "−ARS 1.500 remaining".
+    const item = within(screen.getByTestId('receivable-item'))
+    expect(item.getByText('Credit ARS 1.500')).toBeInTheDocument()
+    expect(item.queryByText(/remaining/)).not.toBeInTheDocument()
   })
 
   test('adding an item POSTs it for the expanded person', async () => {
@@ -460,7 +457,18 @@ describe('ReceivablesSection', () => {
       await dialog.findByLabelText(/Amount applied to the item from 2026-08-01/),
       '100000',
     )
-    await user.click(dialog.getByRole('button', { name: 'Record payment' }))
+    // The payment recorded must match what was received: until a received
+    // amount is given, recording is held and the lines' total is offered.
+    const record = dialog.getByRole('button', { name: 'Record payment' })
+    expect(record).toBeDisabled()
+    expect(
+      dialog.getByText("Enter the amount received, or use the lines' total."),
+    ).toBeInTheDocument()
+    await user.click(
+      dialog.getByRole('button', { name: 'Set received to ARS 100.000' }),
+    )
+    expect(dialog.getByLabelText(/Amount received/)).toHaveValue(100000)
+    await user.click(record)
 
     await waitFor(() => expect(mockRecordPayment).toHaveBeenCalledTimes(1))
     expect(mockRecordPayment).toHaveBeenCalledWith(
@@ -481,14 +489,7 @@ describe('ReceivablesSection', () => {
       .mockRejectedValueOnce(
         new ReceivableOverpaymentError('300000.00', '600000.00'),
       )
-      .mockResolvedValueOnce({
-        id: 'pay2',
-        occurredOn: '2026-08-24',
-        amount: '600000.00',
-        source: 'manual',
-        matchedIncomeTransactionId: null,
-        allocations: [{ itemId: 'i1', amount: '600000.00' }],
-      })
+      .mockResolvedValueOnce(ANA_DETAIL)
 
     renderSection()
     await screen.findByText('Ana')
@@ -500,6 +501,15 @@ describe('ReceivablesSection', () => {
     await user.type(
       await dialog.findByLabelText(/Amount applied to the item from 2026-08-01/),
       '600000',
+    )
+    // The row is above what the item owes: said inline before recording.
+    expect(
+      dialog.getByText(
+        "That's ARS 300.000 more than the ARS 300.000 it owes. The extra becomes a credit, and you'll be asked to confirm it.",
+      ),
+    ).toBeInTheDocument()
+    await user.click(
+      dialog.getByRole('button', { name: 'Set received to ARS 600.000' }),
     )
     await user.click(dialog.getByRole('button', { name: 'Record payment' }))
 

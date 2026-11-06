@@ -7,6 +7,7 @@ injection rather than module-level globals.
 
 import hmac
 from collections.abc import AsyncIterator
+from datetime import UTC, date, datetime
 from functools import lru_cache
 from typing import Annotated, Any
 
@@ -80,6 +81,20 @@ def get_settings() -> ApplicationSettings:
 
 
 Settings = Annotated[ApplicationSettings, Depends(get_settings)]
+
+
+def get_today() -> date:
+    """Return the server's current date in UTC, the as-of reference for time-dependent reads.
+
+    Receivable outstanding depends on which cuotas are already due (ADR-215), so the date is
+    resolved here, once per request, rather than read inside the domain or a reader. Being a
+    dependency, tests pin it with ``app.dependency_overrides[get_today]`` to exercise the
+    due/upcoming boundary deterministically (ADR-223).
+    """
+    return datetime.now(UTC).date()
+
+
+Today = Annotated[date, Depends(get_today)]
 
 # HTTP Bearer scheme parser. ``auto_error=False`` lets the guard decide the
 # status code itself: a missing/malformed Authorization header must answer 401

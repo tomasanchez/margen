@@ -1,22 +1,30 @@
 /**
- * Record a manual payment against a person, allocated across their open items
- * (ADR-204/206/208, ADR-037).
+ * Record a manual payment against a person, allocated across their open items —
+ * or, for installment items, their cuotas (ADR-204/206/208/215/221, ADR-037).
  *
- * A payment settles one or more of a person's outstanding items (ADR-206). This
- * form fetches the person's current items ({@link useReceivablePerson} — always
- * fresh, never a mutation return shape), lists the OPEN ones (remaining > 0) with
- * a per-item allocation field, and records the total as one payment via
- * {@link useRecordPayment}. Money stays a Decimal STRING end-to-end (ADR-025/034):
- * each allocation is typed free-form, parsed only to sum the total and to drop
- * zero rows, and serialized to the fixed 2-decimal string the API expects.
+ * A payment settles one or more open TARGETS: a flat item as a whole, or one
+ * cuota of a plan (the API requires the cuota's `installmentId`, ADR-221). The
+ * owner types the amount RECEIVED; once they pause, the server's suggested
+ * allocation ({@link useSuggestedAllocation} — due cuotas oldest-first, then flat
+ * items newest-first, never beyond what is owed) PREFILLS the rows, which stay
+ * editable. Upcoming cuotas are never suggested; they sit behind a toggle because
+ * paying them is an early payment.
  *
- * Overpayment (ADR-206): if the total allocated would exceed the person's
- * outstanding, the API rejects with a typed {@link ReceivableOverpaymentError}
- * (surfaced by {@link useRecordPayment} through `mutateAsync`). We catch it and
- * swap the footer for a calm confirm-warning showing the returned `outstanding` /
- * `requested`; "Record anyway" retries the SAME payment with
- * `allowOverpayment: true`. Any other failure keeps the form open with a calm
- * inline error (never a silent clamp, never a silent negative outstanding).
+ * The recorded payment is EXACTLY the amount received: saving is blocked until
+ * the rows add up to it, so a payment is never silently recorded for less (or
+ * more) than what came in. {@link AllocationBalance} offers the explicit ways to
+ * balance: apply the rest to upcoming cuotas, put the rest on a chosen debt (which
+ * may pay it beyond what it owes — confirmed below), or set the received amount
+ * to the lines' total. Money stays a Decimal STRING at the boundary (ADR-025/034);
+ * dates must sit within the API's 2000..2100 range.
+ *
+ * Overpayment (ADR-206): rows beyond what the person owes TODAY (due-only,
+ * ADR-215 — so paying an upcoming cuota early trips it too) are rejected with a
+ * typed {@link ReceivableOverpaymentError}; a row beyond what ONE item / cuota
+ * owes, with an {@link AllocationExceedsTargetError}. Either swaps the form for a
+ * calm confirm-warning naming the figures (and the target), and "Record anyway"
+ * retries the SAME payment with `allowOverpayment: true`, which bypasses both.
+ * Any other failure keeps the form open with a calm inline error.
  */
 
 import { useId, useMemo, useState } from 'react'
@@ -29,30 +37,41 @@ import Typography from '@mui/material/Typography'
 import { ResponsiveModal } from '../../components/ResponsiveModal'
 import { ErrorState } from '../../components/ErrorState'
 import {
+  AllocationExceedsTargetError,
   ReceivableOverpaymentError,
-  type PaymentAllocationInput,
-  type ReceivableItem,
 } from '../../api/receivablesClient'
-import { formatCurrency } from '../../lib/format'
-import { parseBalance, toDecimalString } from '../accounts/balance'
-import { useReceivablePerson, useRecordPayment } from './queries'
-
-/** Parse a Decimal string to a number for the display edge (0 on a bad value). */
-function num(value: string): number {
-  const parsed = Number.parseFloat(value)
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
-/** Today's date as an ISO `YYYY-MM-DD` string, seeding the payment date. */
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10)
-}
-
-/** The pending overpayment amounts surfaced by the typed 409 (ADR-206). */
-interface Overpayment {
-  outstanding: string
-  requested: string
-}
+import {
+  addToRow,
+  allocatedCents,
+  buildAllocationTargets,
+  fillUpcoming,
+  includesUpcoming,
+  positiveDecimal,
+  suggestionValues,
+  toAllocations,
+  upcomingHasRoom,
+} from './allocation'
+import {
+  AllocationBalance,
+  AllocationEditor,
+  OverpaymentConfirm,
+  type OverpaymentConflict,
+} from './AllocationEditor'
+import {
+  EARLIEST_DATE,
+  LATEST_DATE,
+  centsToDecimal,
+  decimalToCents,
+  isReceivableDate,
+  toInputAmount,
+  todayIso,
+} from './installments'
+import {
+  useReceivablePerson,
+  useRecordPayment,
+  useSuggestedAllocation,
+} from './queries'
+import { useDebouncedValue } from './useDebouncedValue'
 
 export interface RecordPaymentFormProps {
   /** Whether the dialog is open. */
@@ -65,6 +84,27 @@ export interface RecordPaymentFormProps {
   onClose: () => void
 }
 
+/** Map a payment 409 to the conflict the confirm explains, or null. */
+function conflictOf(error: unknown): OverpaymentConflict | null {
+  if (error instanceof ReceivableOverpaymentError) {
+    return {
+      kind: 'person',
+      outstanding: error.outstanding,
+      requested: error.requested,
+    }
+  }
+  if (error instanceof AllocationExceedsTargetError) {
+    return {
+      kind: 'target',
+      itemId: error.itemId,
+      installmentId: error.installmentId,
+      remaining: error.remaining,
+      requested: error.requested,
+    }
+  }
+  return null
+}
+
 export function RecordPaymentForm({
   open,
   personId,
@@ -73,51 +113,57 @@ export function RecordPaymentForm({
 }: RecordPaymentFormProps) {
   const { t } = useTranslation('receivables')
   const dateId = useId()
+  const amountId = useId()
   const errorId = useId()
 
   const personQuery = useReceivablePerson(personId)
   const recordPayment = useRecordPayment()
 
-  const [dateText, setDateText] = useState<string>(todayIso())
-  const [allocations, setAllocations] = useState<Record<string, string>>({})
-  const [overpayment, setOverpayment] = useState<Overpayment | null>(null)
+  const [dateText, setDateText] = useState<string>(() => todayIso())
+  const [receivedText, setReceivedText] = useState('')
+  // The amount the owner TYPED — what the suggestion is for. Setting the
+  // received amount from the lines' total deliberately leaves it (and the rows)
+  // alone.
+  const [suggestFor, setSuggestFor] = useState<string | null>(null)
+  // The owner's own row edits, layered over the server suggestion.
+  const [edits, setEdits] = useState<Record<string, string>>({})
+  const [showUpcomingToggle, setShowUpcoming] = useState<boolean | null>(null)
+  const [conflict, setConflict] = useState<OverpaymentConflict | null>(null)
   const [saveError, setSaveError] = useState(false)
 
-  // Only OPEN items (something still owed AND not forgiven) can take an
-  // allocation: a pardoned item (ADR-210) is no longer a valid payment target
-  // (the API would 404 it), so it never appears in the allocation list.
-  const openItems = useMemo<ReceivableItem[]>(
-    () =>
-      (personQuery.data?.items ?? []).filter(
-        (it) => !it.pardoned && num(it.remaining) > 0,
-      ),
+  // Only OPEN targets can take an allocation: a forgiven item or cuota is no
+  // longer payable (ADR-210/221) and a settled one has nothing left.
+  const targets = useMemo(
+    () => buildAllocationTargets(personQuery.data?.items ?? []),
     [personQuery.data?.items],
   )
 
-  // The payment total is the sum of its allocations — so the allocation sum can
-  // never exceed the payment amount (the API's hard 422 case, ADR-206).
-  const total = useMemo(() => {
-    let sum = 0
-    for (const value of Object.values(allocations)) {
-      const parsed = parseBalance(value)
-      if (Number.isFinite(parsed) && parsed > 0) sum += parsed
-    }
-    return sum
-  }, [allocations])
+  // Prefill from the server's suggestion once the typed amount settles.
+  const settled = useDebouncedValue(suggestFor)
+  const suggestion = useSuggestedAllocation(personId, settled)
+  const suggestionIsCurrent = suggestFor !== null && settled === suggestFor
+  const suggested = useMemo(
+    () => (suggestionIsCurrent ? suggestionValues(suggestion.data) : {}),
+    [suggestionIsCurrent, suggestion.data],
+  )
+  const values = useMemo(() => ({ ...suggested, ...edits }), [suggested, edits])
+  const suggesting =
+    suggestFor !== null && (!suggestionIsCurrent || suggestion.isFetching)
 
+  const received = positiveDecimal(receivedText)
+  const receivedCents = received !== null ? decimalToCents(received) : null
+  const totalCents = allocatedCents(targets, values)
+  const hasCurrent = targets.some((target) => !target.upcoming)
+  const upcomingRoom = upcomingHasRoom(targets, values)
+  // Nothing is due yet → open with the upcoming cuotas listed (else it looks empty).
+  const showUpcoming = showUpcomingToggle ?? !hasCurrent
+
+  const dateValid = isReceivableDate(dateText)
   const isSaving = recordPayment.isPending
-  const canSave = total > 0 && dateText.trim().length > 0 && !isSaving
-
-  const buildAllocations = (): PaymentAllocationInput[] => {
-    const out: PaymentAllocationInput[] = []
-    for (const item of openItems) {
-      const parsed = parseBalance(allocations[item.id] ?? '')
-      if (Number.isFinite(parsed) && parsed > 0) {
-        out.push({ itemId: item.id, amount: toDecimalString(parsed) })
-      }
-    }
-    return out
-  }
+  // The payment recorded is exactly what was received: the rows must match it.
+  const balanced = receivedCents !== null && totalCents === receivedCents
+  const canSave =
+    balanced && totalCents > 0 && dateValid && !isSaving && !suggesting
 
   const submit = async (allowOverpayment: boolean) => {
     setSaveError(false)
@@ -125,20 +171,15 @@ export function RecordPaymentForm({
       await recordPayment.mutateAsync({
         personId,
         occurredOn: dateText.trim(),
-        amount: toDecimalString(total),
-        allocations: buildAllocations(),
+        amount: centsToDecimal(totalCents),
+        allocations: toAllocations(targets, values),
         ...(allowOverpayment ? { allowOverpayment: true } : {}),
       })
       onClose()
     } catch (error) {
-      if (error instanceof ReceivableOverpaymentError) {
-        setOverpayment({
-          outstanding: error.outstanding,
-          requested: error.requested,
-        })
-      } else {
-        setSaveError(true)
-      }
+      const typed = conflictOf(error)
+      if (typed) setConflict(typed)
+      else setSaveError(true)
     }
   }
 
@@ -146,6 +187,27 @@ export function RecordPaymentForm({
     event.preventDefault()
     if (!canSave) return
     void submit(false)
+  }
+
+  const rest = receivedCents !== null ? receivedCents - totalCents : 0
+
+  const applyRestToUpcoming = () => {
+    if (rest <= 0) return
+    setEdits((current) => ({
+      ...current,
+      ...fillUpcoming(targets, values, rest),
+    }))
+    setShowUpcoming(true)
+  }
+
+  const putRestOn = (key: string) => {
+    if (rest <= 0) return
+    setEdits((current) => ({ ...current, [key]: addToRow(values[key], rest) }))
+  }
+
+  const setReceivedToTotal = () => {
+    if (totalCents <= 0) return
+    setReceivedText(toInputAmount(centsToDecimal(totalCents)))
   }
 
   let body: React.ReactNode
@@ -170,57 +232,34 @@ export function RecordPaymentForm({
         }}
       />
     )
-  } else if (openItems.length === 0) {
+  } else if (targets.length === 0) {
     body = (
-      <Typography sx={{ fontSize: 14, py: 1 }} color="text.secondary" role="status">
+      <Typography
+        sx={{ fontSize: 14, py: 1, color: 'text.secondary' }}
+        role="status"
+      >
         {t('payment.noOpenItems')}
       </Typography>
     )
-  } else if (overpayment) {
-    // Confirm-warning: the total exceeds outstanding (ADR-206). The user can go
-    // back and adjust, or explicitly record it anyway as a credit.
+  } else if (conflict) {
+    // Confirm-warning: the rows pay more than is owed today, or more than one
+    // item / cuota owes (ADR-206/215). Go back and adjust, or record it anyway.
     body = (
-      <Box>
-        <Typography
-          role="alert"
-          sx={{ fontSize: 14, color: 'warning.main', fontWeight: 600 }}
-        >
-          {t('payment.overpayment.title')}
-        </Typography>
-        <Typography sx={{ fontSize: 13.5, mt: 1 }} color="text.secondary">
-          {t('payment.overpayment.body', {
-            requested: formatCurrency(num(overpayment.requested), 'ARS'),
-            outstanding: formatCurrency(num(overpayment.outstanding), 'ARS'),
-          })}
-        </Typography>
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 3 }}>
-          <Button
-            type="button"
-            onClick={() => setOverpayment(null)}
-            color="secondary"
-            sx={{ textTransform: 'none' }}
-          >
-            {t('payment.overpayment.cancel')}
-          </Button>
-          <Button
-            type="button"
-            onClick={() => {
-              setOverpayment(null)
-              void submit(true)
-            }}
-            color="warning"
-            variant="contained"
-            disabled={isSaving}
-            sx={{ textTransform: 'none', fontWeight: 600 }}
-          >
-            {t('payment.overpayment.confirm')}
-          </Button>
-        </Box>
-      </Box>
+      <OverpaymentConfirm
+        conflict={conflict}
+        targets={targets}
+        early={includesUpcoming(targets, values)}
+        onBack={() => setConflict(null)}
+        onConfirm={() => {
+          setConflict(null)
+          void submit(true)
+        }}
+        disabled={isSaving}
+      />
     )
   } else {
     body = (
-      <Box component="form" onSubmit={handleSubmit}>
+      <Box component="form" onSubmit={handleSubmit} noValidate>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.25 }}>
           {saveError ? (
             <Typography
@@ -243,84 +282,72 @@ export function RecordPaymentForm({
             fullWidth
             size="small"
             disabled={isSaving}
-            slotProps={{ inputLabel: { shrink: true } }}
+            error={!dateValid}
+            helperText={dateValid ? undefined : t('payment.date.error')}
+            slotProps={{
+              inputLabel: { shrink: true },
+              htmlInput: { min: EARLIEST_DATE, max: LATEST_DATE },
+            }}
           />
 
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-            {openItems.map((item) => (
-              <Box
-                key={item.id}
-                sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}
-              >
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography
-                    sx={{ fontSize: 13.5, fontWeight: 600 }}
-                    color="text.primary"
-                    noWrap
-                  >
-                    {item.detail ?? item.occurredOn}
-                  </Typography>
-                  <Typography sx={{ fontSize: 12.5, mt: 0.25 }} color="text.secondary">
-                    {t('payment.remainingHint', {
-                      amount: formatCurrency(num(item.remaining), 'ARS'),
-                    })}
-                  </Typography>
-                </Box>
-                <TextField
-                  value={allocations[item.id] ?? ''}
-                  onChange={(event) =>
-                    setAllocations((prev) => ({
-                      ...prev,
-                      [item.id]: event.target.value,
-                    }))
-                  }
-                  size="small"
-                  type="number"
-                  disabled={isSaving}
-                  sx={{ width: '120px', flex: 'none' }}
-                  slotProps={{
-                    htmlInput: {
-                      // `type="number"` gives a clean mobile numeric keypad;
-                      // `inputMode="decimal"` + `step="any"` keep decimals, and
-                      // `min={0}` rejects negatives. Money still flows as a
-                      // Decimal string via parseBalance/toDecimalString (ADR-025).
-                      min: 0,
-                      step: 'any',
-                      inputMode: 'decimal',
-                      'aria-label': t('payment.allocationAria', {
-                        date: item.occurredOn,
-                      }),
-                    },
-                  }}
-                />
-              </Box>
-            ))}
-          </Box>
-
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'baseline',
-              justifyContent: 'space-between',
-              gap: 1,
-              pt: 0.5,
-              borderTop: '1px solid var(--mg-border)',
+          <TextField
+            id={amountId}
+            label={t('payment.amount.label')}
+            value={receivedText}
+            onChange={(event) => {
+              setReceivedText(event.target.value)
+              // A newly typed amount means a new suggestion: drop old row edits.
+              setSuggestFor(positiveDecimal(event.target.value))
+              setEdits({})
             }}
-          >
-            <Typography sx={{ fontSize: 13.5 }} color="text.secondary">
-              {t('payment.totalLabel')}
-            </Typography>
-            <Typography
-              sx={{
-                fontSize: 14,
-                fontWeight: 600,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-              color="text.primary"
-            >
-              {formatCurrency(total, 'ARS')}
-            </Typography>
-          </Box>
+            required
+            fullWidth
+            size="small"
+            type="number"
+            disabled={isSaving}
+            helperText={
+              suggesting
+                ? t('payment.amount.suggesting')
+                : suggestionIsCurrent && suggestion.isError
+                  ? t('payment.amount.suggestError')
+                  : t('payment.amount.helper')
+            }
+            slotProps={{
+              htmlInput: {
+                min: 0,
+                step: 'any',
+                inputMode: 'decimal',
+                // Point at the error only when there is one, so the helper
+                // text keeps its automatic description link otherwise.
+                ...(saveError ? { 'aria-describedby': errorId } : {}),
+              },
+              formHelperText: { role: 'status' },
+            }}
+          />
+
+          <AllocationEditor
+            targets={targets}
+            values={values}
+            onChange={(key, value) =>
+              setEdits((current) => ({ ...current, [key]: value }))
+            }
+            showUpcoming={showUpcoming}
+            onToggleUpcoming={() => setShowUpcoming(!showUpcoming)}
+            disabled={isSaving}
+          />
+
+          <AllocationBalance
+            mode="payment"
+            totalCents={totalCents}
+            receivedCents={suggesting ? null : receivedCents}
+            totalLabel={t('payment.totalLabel')}
+            targets={targets}
+            canApplyToUpcoming={upcomingRoom}
+            onApplyToUpcoming={applyRestToUpcoming}
+            onPutRestOn={putRestOn}
+            onSetReceivedToTotal={setReceivedToTotal}
+            disabled={isSaving}
+          />
         </Box>
 
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 3 }}>
@@ -352,7 +379,7 @@ export function RecordPaymentForm({
       title={t('payment.title')}
       maxWidth={480}
     >
-      <Typography sx={{ fontSize: 13.5, mb: 2, mt: -1 }} color="text.secondary">
+      <Typography sx={{ fontSize: 13.5, mb: 2, mt: -1, color: 'text.secondary' }}>
         {t('payment.subtitle', { name: personName })}
       </Typography>
       {body}

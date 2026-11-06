@@ -1,4 +1,4 @@
-"""SQLAlchemy persistence models for the receivables domain (ADR-204, ADR-205).
+"""SQLAlchemy persistence models for the receivables domain (ADR-204, ADR-205, ADR-214).
 
 The adapter-layer mappings for the pure domain aggregates at
 ``margen_api.domain.models.receivable``. SQLAlchemy stays in the adapters (AGENTS.md);
@@ -6,17 +6,19 @@ the domain objects remain plain Python. Column conventions mirror ``DebtRecord``
 ``TransactionRecord``: UUID pk via ``gen_random_uuid`` (ADR-026), NUMERIC(18,2) money
 (ADR-025), server-managed timestamps, and a NOT NULL ``user_id`` ownership column on the
 root :class:`PersonRecord` with no cross-schema FK to Supabase ``auth.users``
-(ADR-094, ADR-130); child rows inherit ownership through ``person_id`` rather than
-carrying their own ``user_id``.
+(ADR-094, ADR-130); child rows inherit ownership through ``person_id`` (a cuota through
+its item) rather than carrying their own ``user_id``.
 
 Crucially, **no table here carries an ``account_id``** — receivables are structurally
 excluded from balance and net-worth aggregation (ADR-205), so there is no join path from
-these rows into ``account_queries.py`` and no filter to remember. The only FK that
-reaches outside the receivables subsystem is
-``receivable_payment.matched_income_transaction_id`` → ``transactions.id`` (a confirmed
-income match, ADR-207) with ``ON DELETE SET NULL`` so deleting the income orphans the
-payback rather than cascading a settlement record away. Deleting a person cascades to
-their items and payments, and a payment/item cascades to its allocations (ADR-208).
+these rows into ``account_queries.py`` and no filter to remember. Exactly two FKs reach
+outside the receivables subsystem, both into ``transactions.id`` and both ``ON DELETE SET
+NULL`` so deleting the transaction orphans the receivable row rather than cascading it
+away: ``receivable_payment.matched_income_transaction_id`` (a confirmed income match,
+ADR-207) and ``receivable_item.source_transaction_id`` (the reference-only link to the
+expense a debt came from, ADR-217/219). Deleting a person cascades to their items and
+payments, an item cascades to its installment schedule, and a payment/item/installment
+cascades to its allocations (ADR-208, ADR-214, ADR-221).
 """
 
 from __future__ import annotations
@@ -25,7 +27,19 @@ import datetime
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Numeric, String, Text, func, text
+from sqlalchemy import (
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -74,6 +88,10 @@ class ReceivableItemRecord(Base):
     statement; NULL means the item is a normal, still-owed debt. Reversible — un-pardoning
     resets it to NULL. No ``account_id`` here either, so a pardon never moves a balance
     (ADR-205).
+
+    An item may optionally own an installment schedule (:class:`ReceivableInstallmentRecord`
+    rows, ADR-214); a flat item owns none and behaves exactly as before. The nullable
+    ``source_transaction_id`` optionally points at the expense the debt came from (ADR-217).
     """
 
     __tablename__ = "receivable_item"
@@ -100,6 +118,79 @@ class ReceivableItemRecord(Base):
     pardoned_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+    # Optional reference link to the EXPENSE this debt came from (ADR-217). Display and
+    # traceability metadata only: it never nets the expense out of net worth, budgets or
+    # category spend (ADR-219) — reimbursement netting stays ``transactions.offsets_transaction_id``'s
+    # job (ADR-159), a deliberately separate mechanism. NOT unique: one shared expense may back
+    # many items across different people (ADR-218). ``ON DELETE SET NULL`` so deleting the
+    # expense drops only the reference, never the debt record (ADR-223). The same-owner and
+    # ``kind='expense'`` checks are application-layer (ADR-130, ADR-217); the FK guarantees only
+    # referential integrity. Indexed for the "items linking this transaction" reader (ADR-218,
+    # ADR-220) and the SET NULL lookup when a transaction is deleted.
+    source_transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("transactions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+
+class ReceivableInstallmentRecord(Base):
+    """Relational mapping of one cuota in a receivable item's installment schedule (ADR-214).
+
+    An optional child of :class:`ReceivableItemRecord`: an item repaid in installments owns
+    ``N`` rows here (``index`` 1..N), a flat item owns none. ``amount`` is ``NUMERIC(18, 2)``
+    ARS (ADR-025); the cuota amounts always sum to the parent item's ``amount`` (ADR-216), an
+    application-layer invariant rather than a database constraint. ``due_on`` splits
+    outstanding into due vs. upcoming (ADR-215). ``pardoned_at`` mirrors the item-level pardon
+    (ADR-210) at the cuota grain (ADR-221): non-NULL forgives just this cuota, NULL means it
+    is still owed.
+
+    Ownership flows through ``item_id`` → ``receivable_item.person_id`` → ``person.user_id``
+    (ADR-130). ``item_id`` is ``ON DELETE CASCADE`` so deleting an item — or, transitively,
+    its person — removes its schedule (ADR-208). ``UNIQUE (item_id, index)`` keeps cuota
+    numbers distinct within a plan, and its btree (led by ``item_id``) doubles as the
+    ``item_id`` FK/lookup index, so no separate single-column index is declared. No
+    ``account_id`` (ADR-205).
+    """
+
+    __tablename__ = "receivable_installment"
+    __table_args__ = (
+        # One cuota number per plan. The index behind this constraint leads with ``item_id``,
+        # so it also serves every ``item_id`` lookup (fetch a plan ordered by ``index``, the
+        # ON DELETE CASCADE scan); a separate ``ix_receivable_installment_item_id`` would be
+        # redundant write and vacuum cost.
+        UniqueConstraint("item_id", "index", name="uq_receivable_installment_item_id_index"),
+    )
+
+    # As for every receivable table, the id is generated client-side by the domain factory and
+    # assigned by the repository; the server default is only a raw-SQL fallback, because a
+    # server-generated id does not round-trip on the SQLite e2e tier (ADR-223).
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("receivable_item.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # The cuota's 1-based position in its plan. ``index`` is a keyword on SQLite (non-reserved
+    # on PostgreSQL): SQLAlchemy quotes it automatically, but raw ``text()`` SQL that must also
+    # run on the SQLite e2e tier has to write ``"index"``.
+    index: Mapped[int] = mapped_column(Integer(), nullable=False)
+    due_on: Mapped[datetime.date] = mapped_column(Date(), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    pardoned_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
     )
 
 
@@ -164,8 +255,8 @@ class ReceivableAllocationRecord(Base):
     """Relational mapping of a :class:`~margen_api.domain.models.receivable.ReceivableAllocation`.
 
     The many-to-one join applying a payment across items (ADR-204/206). ``amount`` is
-    ``NUMERIC(18, 2)`` ARS (ADR-025). Both FKs use ``ON DELETE CASCADE`` (indexed) so
-    deleting a payment or an item removes its allocations — which, combined with the
+    ``NUMERIC(18, 2)`` ARS (ADR-025). Every FK uses ``ON DELETE CASCADE`` (indexed) so
+    deleting a payment, an item or a cuota removes its allocations — which, combined with the
     person→payment/item cascade, means deleting a person tears down the whole subtree
     (ADR-208). No ``account_id`` (ADR-205).
     """
@@ -190,3 +281,15 @@ class ReceivableAllocationRecord(Base):
         index=True,
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    # The specific cuota this allocation settles when its item has an installment schedule
+    # (ADR-221). Nullable: flat items — and every pre-existing allocation — target the item
+    # alone, with no backfill (ADR-223). "Required iff the item has a schedule" is a
+    # cross-table invariant enforced in the application layer, not by the database (ADR-223).
+    # ``item_id`` stays NOT NULL either way, so item-level roll-ups keep working.
+    # ``ON DELETE CASCADE``: an allocation to a deleted cuota goes with it.
+    installment_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("receivable_installment.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )

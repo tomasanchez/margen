@@ -25,6 +25,15 @@ from margen_api.domain.models.receivable import (
     ReceivableItem,
     ReceivablePayment,
 )
+from margen_api.domain.models.receivable_settlement import (
+    NO_ALLOCATIONS,
+    ItemAllocations,
+    ItemPosition,
+    assess_item,
+    default_allocation,
+    person_outstanding,
+    person_upcoming,
+)
 from margen_api.domain.models.transaction import Transaction
 from margen_api.domain.models.transfer import Transfer
 from margen_api.domain.models.value_objects import BudgetKind, Currency, Kind, TxType
@@ -66,9 +75,13 @@ from margen_api.service_layer.monotributo_repository import (
 from margen_api.service_layer.read_models import TransactionReadModel
 from margen_api.service_layer.reader import AbstractTransactionReader
 from margen_api.service_layer.receivable_read_models import (
+    ExpenseCandidateReadModel,
     PersonDetailReadModel,
     PersonReadModel,
+    ReceivableInstallmentReadModel,
     ReceivableItemReadModel,
+    SuggestedAllocationLineReadModel,
+    SuggestedAllocationReadModel,
 )
 from margen_api.service_layer.receivable_reader import AbstractReceivableReader
 from margen_api.service_layer.receivable_repository import AbstractReceivableRepository
@@ -305,9 +318,12 @@ class FakeReceivableRepository(AbstractReceivableRepository):
     database: ``add_*``/``persist_*`` write to the staging buffers, ``commit`` promotes
     them, ``rollback`` clears them, ownership always flows through the person's ``user_id``
     (ADR-130), and ``delete_person``/``delete_item`` emulate the database ``ON DELETE
-    CASCADE`` subtree teardown (ADR-208) so the cascade is exercised in the unit tier.
-    ``item_remainders`` sums the person's items minus their allocations for the ADR-206
-    overpayment guard.
+    CASCADE`` subtree teardown (ADR-208) so the cascade is exercised in the unit tier. Items
+    are stored whole, cuota schedule included (ADR-214). ``allocated_amounts`` sums the
+    person's allocations per item and per cuota for the ADR-206 overpayment guard, the plan
+    lock and the whole-plan pardon. ``lock_person`` loads like ``get_person`` (an in-memory
+    store has no rows to lock); every port call is appended to ``calls`` so a test can assert
+    the handlers lock the aggregate root before reading anything else.
     """
 
     def __init__(
@@ -322,13 +338,16 @@ class FakeReceivableRepository(AbstractReceivableRepository):
         staged_allocations: dict[UUID, ReceivableAllocation],
         committed_transactions: dict[UUID, Transaction],
         staged_transactions: dict[UUID, Transaction],
+        calls: list[str] | None = None,
     ) -> None:
         """Initialize the repository over the unit of work's four record stores.
 
         Also takes the transaction stores so the confirm-match income validation
         (``income_exists_for_owner``, ADR-207) can resolve a ``kind='income'`` row the same
-        way the SQLAlchemy adapter joins into the transactions table.
+        way the SQLAlchemy adapter joins into the transactions table, and the shared ``calls``
+        log the port calls are recorded in, in order.
         """
+        self.calls = calls if calls is not None else []
         self._people = committed_people
         self._staged_people = staged_people
         self._items = committed_items
@@ -342,10 +361,21 @@ class FakeReceivableRepository(AbstractReceivableRepository):
 
     def add_person(self, person: Person) -> None:
         """Stage a new person until the unit of work commits (ADR-130)."""
+        self.calls.append("add_person")
         self._staged_people[person.id] = person
+
+    async def lock_person(self, person_id: UUID, user_id: str) -> Person | None:
+        """Return the owner's person like ``get_person``; there is no row to lock in memory (ADR-130)."""
+        self.calls.append("lock_person")
+        return self._owned_person(person_id, user_id)
 
     async def get_person(self, person_id: UUID, user_id: str) -> Person | None:
         """Return the owner's staged/committed person, or ``None`` (ADR-130, ADR-111)."""
+        self.calls.append("get_person")
+        return self._owned_person(person_id, user_id)
+
+    def _owned_person(self, person_id: UUID, user_id: str) -> Person | None:
+        """Return the owner's staged/committed person, or ``None`` for an unknown/foreign id."""
         person = self._staged_people.get(person_id) or self._people.get(person_id)
         if person is None or person.user_id != user_id:
             return None
@@ -353,10 +383,12 @@ class FakeReceivableRepository(AbstractReceivableRepository):
 
     async def persist_person(self, person: Person) -> None:
         """Stage a renamed person for the next commit."""
+        self.calls.append("persist_person")
         self._staged_people[person.id] = person
 
     async def delete_person(self, person_id: UUID, user_id: str) -> bool:
         """Hard-delete the owner's person and cascade their subtree (ADR-208, ADR-130)."""
+        self.calls.append("delete_person")
         person = self._staged_people.get(person_id) or self._people.get(person_id)
         if person is None or person.user_id != user_id:
             return False
@@ -375,12 +407,14 @@ class FakeReceivableRepository(AbstractReceivableRepository):
         self._cascade_allocations(removed_item_ids, removed_payment_ids)
         return True
 
-    def add_item(self, item: ReceivableItem) -> None:
-        """Stage a new item until the unit of work commits (ADR-204)."""
+    async def add_item(self, item: ReceivableItem) -> None:
+        """Stage a new item, cuota schedule included, until the unit of work commits (ADR-204, ADR-214)."""
+        self.calls.append("add_item")
         self._staged_items[item.id] = item
 
     async def get_item(self, item_id: UUID, user_id: str) -> ReceivableItem | None:
         """Return the owner's item (scoped through its person), or ``None`` (ADR-130, ADR-111)."""
+        self.calls.append("get_item")
         item = self._staged_items.get(item_id) or self._items.get(item_id)
         if item is None or self._owner_of(item.person_id) != user_id:
             return None
@@ -388,12 +422,14 @@ class FakeReceivableRepository(AbstractReceivableRepository):
 
     async def persist_item(self, item: ReceivableItem) -> None:
         """Stage a mutated item for the next commit."""
+        self.calls.append("persist_item")
         self._staged_items[item.id] = item
 
-    async def delete_item(self, item_id: UUID, user_id: str) -> bool:
-        """Hard-delete the owner's item and cascade its allocations (ADR-208, ADR-130)."""
+    async def delete_item(self, item_id: UUID, person_id: UUID) -> bool:
+        """Hard-delete the person's item and cascade its allocations (ADR-208, ADR-130)."""
+        self.calls.append("delete_item")
         item = self._staged_items.get(item_id) or self._items.get(item_id)
-        if item is None or self._owner_of(item.person_id) != user_id:
+        if item is None or item.person_id != person_id:
             return False
         self._staged_items.pop(item_id, None)
         self._items.pop(item_id, None)
@@ -402,39 +438,63 @@ class FakeReceivableRepository(AbstractReceivableRepository):
 
     def add_payment(self, payment: ReceivablePayment) -> None:
         """Stage a new payback event until the unit of work commits (ADR-204)."""
+        self.calls.append("add_payment")
         self._staged_payments[payment.id] = payment
 
     def add_allocation(self, allocation: ReceivableAllocation) -> None:
         """Stage one payment-to-item allocation until the unit of work commits."""
+        self.calls.append("add_allocation")
         self._staged_allocations[allocation.id] = allocation
 
     async def income_exists_for_owner(self, income_id: UUID, user_id: str) -> bool:
         """Return whether the owner has a ``kind='income'`` transaction with that id (ADR-207)."""
+        self.calls.append("income_exists_for_owner")
         transaction = self._staged_transactions.get(income_id) or self._transactions.get(income_id)
         return transaction is not None and transaction.user_id == user_id and transaction.kind is Kind.INCOME
 
     async def income_is_claimed(self, income_id: UUID, user_id: str) -> bool:
         """Return whether an income already backs one of the owner's payments (ADR-207, ADR-130)."""
+        self.calls.append("income_is_claimed")
         return any(
             payment.matched_income_transaction_id == income_id and self._owner_of(payment.person_id) == user_id
             for payment in self._all_payments().values()
         )
 
-    async def item_remainders(self, person_id: UUID) -> dict[UUID, Decimal]:
-        """Return the person's NON-pardoned items keyed to ``amount`` - Σ allocations (ADR-206, ADR-210)."""
-        allocations = self._all_allocations()
-        remainders: dict[UUID, Decimal] = {}
-        for item_id, item in self._all_items().items():
-            # Pardoned items are excluded so they neither count toward outstanding nor act as
-            # valid allocation targets, mirroring the SQLAlchemy adapter (ADR-210).
-            if item.person_id != person_id or item.pardoned:
+    async def expense_exists_for_owner(self, transaction_id: UUID, user_id: str) -> bool:
+        """Return whether the owner has a ``kind='expense'`` transaction with that id (ADR-217)."""
+        self.calls.append("expense_exists_for_owner")
+        transaction = self._staged_transactions.get(transaction_id) or self._transactions.get(transaction_id)
+        return transaction is not None and transaction.user_id == user_id and transaction.kind is Kind.EXPENSE
+
+    async def item_exists(self, item_id: UUID) -> bool:
+        """Return whether any item, of any owner, uses this id (ADR-204)."""
+        self.calls.append("item_exists")
+        return item_id in self._all_items()
+
+    async def list_items(self, person_id: UUID) -> list[ReceivableItem]:
+        """Return every item of the person, pardoned ones included (ADR-206, ADR-214)."""
+        self.calls.append("list_items")
+        return [item for item in self._all_items().values() if item.person_id == person_id]
+
+    async def allocated_amounts(self, person_id: UUID) -> dict[UUID, ItemAllocations]:
+        """Sum the person's allocations per item and per cuota, like the SQLAlchemy adapter (ADR-221)."""
+        self.calls.append("allocated_amounts")
+        items = {item.id for item in await self.list_items(person_id)}
+        totals: dict[UUID, Decimal] = {}
+        per_installment: dict[UUID, dict[UUID, Decimal]] = {}
+        for allocation in self._all_allocations().values():
+            if allocation.item_id not in items:
                 continue
-            allocated = sum(
-                (allocation.amount for allocation in allocations.values() if allocation.item_id == item_id),
-                Decimal(0),
-            )
-            remainders[item_id] = item.amount - allocated
-        return remainders
+            totals[allocation.item_id] = totals.get(allocation.item_id, Decimal(0)) + allocation.amount
+            if allocation.installment_id is not None:
+                cuotas = per_installment.setdefault(allocation.item_id, {})
+                cuotas[allocation.installment_id] = (
+                    cuotas.get(allocation.installment_id, Decimal(0)) + allocation.amount
+                )
+        return {
+            item_id: ItemAllocations(total=total, by_installment=per_installment.get(item_id, {}))
+            for item_id, total in totals.items()
+        }
 
     def _owner_of(self, person_id: UUID) -> str | None:
         """Return the ``user_id`` of the item/payment's person, or ``None`` when absent."""
@@ -882,6 +942,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
         self.committed_receivable_payments: dict[UUID, ReceivablePayment] = {}
         self._staged_receivable_payments: dict[UUID, ReceivablePayment] = {}
         self.committed_receivable_allocations: dict[UUID, ReceivableAllocation] = {}
+        self.receivable_calls: list[str] = []
         self._staged_receivable_allocations: dict[UUID, ReceivableAllocation] = {}
         self.snapshots: dict[tuple[str, date], MonotributoStanding] = {}
         self.config: dict[str, str | bool] = {}
@@ -912,6 +973,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
             self._staged_receivable_allocations,
             self.committed_aggregates,
             self._staged,
+            self.receivable_calls,
         )
         self.committed = False
 
@@ -951,6 +1013,7 @@ class FakeUnitOfWork(AbstractUnitOfWork):
             self._staged_receivable_allocations,
             self.committed_aggregates,
             self._staged,
+            self.receivable_calls,
         )
         return self
 
@@ -1193,13 +1256,13 @@ class FakeDebtReader(AbstractDebtReader):
 
 
 class FakeReceivableReader(AbstractReceivableReader):
-    """In-memory receivables reader projecting committed people/items/allocations (ADR-206).
+    """In-memory receivables reader projecting committed people/items/allocations (ADR-206, ADR-215).
 
-    Mirrors the SQLAlchemy reader: the people list is owner-scoped and newest-first by
-    creation with each person's Σ-item-remainder outstanding, and the detail carries the
-    person's items with their per-item allocated/remaining roll-ups newest-first by
-    ``occurred_on`` (ADR-206). Backed by a unit of work's committed stores so it reflects
-    what the handlers committed.
+    Mirrors the SQLAlchemy reader by running the same pure settlement policy: the people list
+    is owner-scoped and newest-first by creation with each person's due-only outstanding and
+    upcoming totals, the detail carries the items (with their cuotas) newest-first by
+    ``occurred_on``, and the suggestion is the ADR-221 default allocation. Expense candidates
+    come from an optional transactions store. Linked-expense summaries are not projected.
     """
 
     def __init__(
@@ -1207,20 +1270,23 @@ class FakeReceivableReader(AbstractReceivableReader):
         people: dict[UUID, Person],
         items: dict[UUID, ReceivableItem],
         allocations: dict[UUID, ReceivableAllocation],
+        transactions: dict[UUID, Transaction] | None = None,
     ) -> None:
-        """Initialize over committed people/item/allocation stores.
+        """Initialize over committed people/item/allocation (and transaction) stores.
 
         Args:
             people: The people to project, keyed by id.
             items: The receivable items to project, keyed by id.
             allocations: The allocations feeding the remainder roll-ups, keyed by id.
+            transactions: The transactions the expense search reads, keyed by id.
         """
         self._people = people
         self._items = items
         self._allocations = allocations
+        self._transactions = transactions if transactions is not None else {}
 
-    async def list_people(self, user_id: str) -> list[PersonReadModel]:
-        """List the owner's people with outstanding totals, newest-first by creation (ADR-130)."""
+    async def list_people(self, user_id: str, *, as_of: date) -> list[PersonReadModel]:
+        """List the owner's people with as-of outstanding totals, newest-first by creation (ADR-130)."""
         owned = [person for person in self._people.values() if person.user_id == user_id]
         ordered = sorted(owned, key=lambda person: (person.created_at, person.id), reverse=True)
         return [
@@ -1228,50 +1294,149 @@ class FakeReceivableReader(AbstractReceivableReader):
                 id=person.id,
                 name=person.name,
                 created_at=person.created_at,
-                outstanding=sum(
-                    (model.remaining for model in self._item_models(person.id) if not model.pardoned),
-                    Decimal(0),
-                ),
+                outstanding=person_outstanding(self._positions(person.id, as_of)),
+                upcoming_total=person_upcoming(self._positions(person.id, as_of)),
             )
             for person in ordered
         ]
 
-    async def get_person(self, person_id: UUID, user_id: str) -> PersonDetailReadModel | None:
-        """Return the owner's person with per-item remainders, or ``None`` (ADR-206, ADR-111)."""
-        person = self._people.get(person_id)
-        if person is None or person.user_id != user_id:
+    async def get_person(self, person_id: UUID, user_id: str, *, as_of: date) -> PersonDetailReadModel | None:
+        """Return the owner's person with per-item roll-ups as of a date, or ``None`` (ADR-206, ADR-111)."""
+        person = self._owned(person_id, user_id)
+        if person is None:
             return None
-        items = self._item_models(person_id)
+        positions = self._positions(person_id, as_of)
         return PersonDetailReadModel(
             id=person.id,
             name=person.name,
             created_at=person.created_at,
-            outstanding=sum((model.remaining for model in items if not model.pardoned), Decimal(0)),
-            items=tuple(items),
+            outstanding=person_outstanding(positions),
+            items=tuple(_receivable_item_model(position) for position in positions),
+            upcoming_total=person_upcoming(positions),
         )
 
-    def _item_models(self, person_id: UUID) -> list[ReceivableItemReadModel]:
-        """Project the person's items with allocated/remaining roll-ups, newest-first."""
+    async def suggest_allocation(
+        self,
+        person_id: UUID,
+        user_id: str,
+        *,
+        amount: Decimal,
+        as_of: date,
+    ) -> SuggestedAllocationReadModel | None:
+        """Return the ADR-221 default allocation for the owner's person, or ``None``."""
+        if self._owned(person_id, user_id) is None:
+            return None
+        suggestion = default_allocation(self._positions(person_id, as_of), amount)
+        return SuggestedAllocationReadModel(
+            as_of=as_of,
+            amount=amount,
+            lines=tuple(
+                SuggestedAllocationLineReadModel(
+                    item_id=line.item_id,
+                    installment_id=line.installment_id,
+                    amount=line.amount,
+                )
+                for line in suggestion.lines
+            ),
+            allocated=suggestion.allocated,
+            unallocated=suggestion.unallocated,
+        )
+
+    async def search_expense_candidates(
+        self,
+        user_id: str,
+        *,
+        query: str | None,
+        date_from: date | None,
+        date_to: date | None,
+        limit: int,
+    ) -> list[ExpenseCandidateReadModel]:
+        """Return the owner's matching expenses, newest first (ADR-220)."""
+        matching = [
+            transaction
+            for transaction in self._transactions.values()
+            if transaction.user_id == user_id
+            and transaction.kind is Kind.EXPENSE
+            and (not query or query.casefold() in transaction.name.casefold())
+            and (date_from is None or transaction.occurred_on >= date_from)
+            and (date_to is None or transaction.occurred_on <= date_to)
+        ]
+        ordered = sorted(matching, key=lambda transaction: (transaction.occurred_on, transaction.id), reverse=True)
+        return [
+            ExpenseCandidateReadModel(
+                id=transaction.id,
+                name=transaction.name,
+                occurred_on=transaction.occurred_on,
+                amount=transaction.amount,
+                currency=transaction.currency,
+                usd_amount=transaction.usd_amount,
+                installments_index=transaction.installments_index,
+                installments_total=transaction.installments_total,
+                linked_items_total=sum(
+                    (item.amount for item in self._items.values() if item.source_transaction_id == transaction.id),
+                    Decimal(0),
+                ),
+            )
+            for transaction in ordered[:limit]
+        ]
+
+    def _owned(self, person_id: UUID, user_id: str) -> Person | None:
+        """Return the owner's person, or ``None`` for an unknown/foreign id (ADR-111)."""
+        person = self._people.get(person_id)
+        if person is None or person.user_id != user_id:
+            return None
+        return person
+
+    def _positions(self, person_id: UUID, as_of: date) -> list[ItemPosition]:
+        """Assess the person's items as of a date, newest-first by ``occurred_on``."""
         owned = [item for item in self._items.values() if item.person_id == person_id]
         ordered = sorted(owned, key=lambda item: (item.occurred_on, item.id), reverse=True)
-        models: list[ReceivableItemReadModel] = []
-        for item in ordered:
-            allocated = sum(
-                (allocation.amount for allocation in self._allocations.values() if allocation.item_id == item.id),
-                Decimal(0),
-            )
-            models.append(
-                ReceivableItemReadModel(
-                    id=item.id,
-                    occurred_on=item.occurred_on,
-                    amount=item.amount,
-                    detail=item.detail,
-                    allocated=allocated,
-                    remaining=item.amount - allocated,
-                    pardoned=item.pardoned,
+        return [assess_item(item, self._allocations_of(item.id), as_of) for item in ordered]
+
+    def _allocations_of(self, item_id: UUID) -> ItemAllocations:
+        """Sum the allocations to one item, per cuota too."""
+        slices = [allocation for allocation in self._allocations.values() if allocation.item_id == item_id]
+        if not slices:
+            return NO_ALLOCATIONS
+        per_installment: dict[UUID, Decimal] = {}
+        for allocation in slices:
+            if allocation.installment_id is not None:
+                per_installment[allocation.installment_id] = (
+                    per_installment.get(allocation.installment_id, Decimal(0)) + allocation.amount
                 )
+        return ItemAllocations(
+            total=sum((allocation.amount for allocation in slices), Decimal(0)),
+            by_installment=per_installment,
+        )
+
+
+def _receivable_item_model(position: ItemPosition) -> ReceivableItemReadModel:
+    """Project an item position into its read model (no linked-expense summary in the fake)."""
+    item = position.item
+    return ReceivableItemReadModel(
+        id=item.id,
+        occurred_on=item.occurred_on,
+        amount=item.amount,
+        detail=item.detail,
+        allocated=position.allocated,
+        remaining=position.remaining,
+        pardoned=position.pardoned,
+        due_outstanding=position.due_outstanding,
+        upcoming_total=position.upcoming_total,
+        installments=tuple(
+            ReceivableInstallmentReadModel(
+                id=cuota.installment.id,
+                index=cuota.installment.index,
+                due_on=cuota.installment.due_on,
+                amount=cuota.installment.amount,
+                paid=cuota.paid,
+                remaining=cuota.remaining,
+                pardoned=cuota.installment.pardoned,
+                status=cuota.status,
             )
-        return models
+            for cuota in position.installments
+        ),
+    )
 
 
 class FakeTransferReader(AbstractTransferReader):

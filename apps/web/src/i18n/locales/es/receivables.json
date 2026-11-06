@@ -10,6 +10,7 @@
   "person": {
     "outstandingLabel": "Pendiente",
     "outstandingAria": "{{name}} te debe {{amount}}",
+    "upcoming": "+ {{amount}} en cuotas próximas",
     "expandAria": "Mostrar los ítems de {{name}}",
     "collapseAria": "Ocultar los ítems de {{name}}",
     "renameAria": "Renombrar a {{name}}",
@@ -24,10 +25,53 @@
     "editAria": "Editar el ítem del {{date}}",
     "deleteAria": "Eliminar el ítem del {{date}}",
     "pardonAria": "Perdonar el ítem del {{date}}",
+    "pardonPlanAria": "Perdonar las cuotas pendientes del ítem del {{date}}",
     "unpardonAria": "Volver a adeudar el ítem del {{date}}",
     "loadingAria": "Cargando ítems",
     "errorTitle": "No se pudieron cargar estos ítems",
-    "errorDescription": "No pudimos cargar los ítems de esta persona. Revisá tu conexión e intentá de nuevo."
+    "errorDescription": "No pudimos cargar los ítems de esta persona. Revisá tu conexión e intentá de nuevo.",
+    "planLine": "{{amount}} en {{count}} cuotas",
+    "personSummary": "{{owed}} vencido a hoy · {{upcoming}} en cuotas próximas",
+    "showCuotas": "Ver cuotas ({{count}})",
+    "hideCuotas": "Ocultar cuotas",
+    "linkAria": "Abrir el gasto vinculado {{name}} del {{date}} en Movimientos",
+    "overLinked": "Las deudas vinculadas a este gasto suman más que sus {{amount}}.",
+    "overLinkedPlan": "Las deudas vinculadas a esta compra suman más que su total de {{amount}} ({{count}} cuotas).",
+    "personSummaryCredit": "{{credit}} · {{upcoming}} en cuotas próximas",
+    "planDue": "{{due}}/{{count}} cuotas vencidas",
+    "planOwed": "{{amount}} adeudado",
+    "planUpcoming": "{{amount}} próximas"
+  },
+  "schedule": {
+    "cuotaLabel": "Cuota {{index}}/{{count}}",
+    "edited": "Editada",
+    "dueOn": "Vence el {{date}}",
+    "dueOnWithLeft": "Vence el {{date}} · quedan {{amount}}",
+    "listAria": "Cuotas de {{item}}",
+    "editAria": "Editar la cuota {{index}}/{{count}}",
+    "pardonAria": "Perdonar la cuota {{index}}/{{count}}",
+    "unpardonAria": "Volver a adeudar la cuota {{index}}/{{count}}",
+    "status": {
+      "due": "Vencida",
+      "upcoming": "Próxima",
+      "paid": "Pagada",
+      "pardoned": "Cubierta"
+    },
+    "editor": {
+      "amount": "Monto",
+      "amountAria": "Monto · cuota {{index}}/{{count}}",
+      "dueOn": "Vencimiento",
+      "dueOnAria": "Vencimiento · cuota {{index}}/{{count}}",
+      "save": "Guardar",
+      "saveAria": "Guardar la cuota {{index}}/{{count}}",
+      "saving": "Guardando…",
+      "cancel": "Cancelar",
+      "cancelAria": "Cancelar la edición de la cuota {{index}}/{{count}}",
+      "error": "No pudimos guardar esta cuota. Revisá tu conexión e intentá de nuevo.",
+      "belowPaid": "No puede ser menos que los {{amount}} ya pagados.",
+      "dueOnError": "Elegí una fecha entre 2000 y 2100."
+    },
+    "dueOnWithCredit": "Vence el {{date}} · {{amount}} a favor"
   },
   "personForm": {
     "addTitle": "Agregar persona",
@@ -39,23 +83,89 @@
     "save": "Guardar",
     "saveError": "No pudimos guardar esta persona. Revisá tu conexión e intentá de nuevo."
   },
+  "personPicker": {
+    "label": "¿Quién te debe?",
+    "helper": "Elegí a alguien o escribí un nombre nuevo.",
+    "newPerson": "Vamos a agregar a {{name}} como persona nueva.",
+    "existingPerson": "Se suma a lo que te debe {{name}}.",
+    "clear": "Borrar",
+    "open": "Ver personas",
+    "close": "Ocultar personas",
+    "loading": "Cargando personas…",
+    "noOptions": "Todavía no hay nadie. Escribí un nombre para agregarlo."
+  },
+  "fromTransaction": {
+    "title": "Me deben esto"
+  },
   "itemForm": {
     "addTitle": "Agregar ítem",
     "editTitle": "Editar ítem",
     "date": {
-      "label": "Fecha"
+      "label": "Fecha",
+      "error": "Elegí una fecha entre 2000 y 2100."
     },
     "amount": {
       "label": "Monto",
-      "helper": "Cuánto te debe esta persona por este ítem."
+      "helper": "Cuánto te debe esta persona por este ítem.",
+      "totalLabel": "Monto total",
+      "totalHelper": "Se divide en partes iguales entre las cuotas; los centavos que sobran van a la última."
     },
     "detail": {
       "label": "Detalle (opcional)",
       "helper": "Una nota sobre el motivo de esta deuda."
     },
+    "installments": {
+      "toggle": "En cuotas",
+      "count": "Cantidad de cuotas",
+      "countError": "Entre {{min}} y {{max}} cuotas.",
+      "firstDue": "Vence la primera cuota",
+      "firstDueError": "Elegí una fecha entre 2000 y 2100.",
+      "previewTitle": "Cuotas",
+      "total": "{{count}} cuotas · total {{amount}}",
+      "totalEdited": "{{count}} cuotas · total {{amount}} con tus cambios",
+      "resetEdits": "Deshacer cambios",
+      "resplitHint": "Al guardar, todas las cuotas se vuelven a dividir en partes iguales.",
+      "removeHint": "Al guardar, vuelve a ser una sola deuda y se eliminan sus cuotas.",
+      "tooSmall": "El total es muy chico para dividirlo en {{count}} cuotas.",
+      "needAmount": "Ingresá el monto total para ver las cuotas."
+    },
+    "lock": {
+      "planAllocations": "Este plan ya tiene pagos, así que su total, la cantidad de cuotas y el primer vencimiento no se pueden cambiar. Igual podés editar cada cuota.",
+      "planPardons": "Este plan tiene cuotas perdonadas, así que su total, la cantidad de cuotas y el primer vencimiento no se pueden cambiar. Igual podés editar cada cuota.",
+      "flatAllocations": "Este ítem ya tiene pagos, así que no se puede dividir en cuotas.",
+      "flatPardons": "Este ítem está perdonado, así que no se puede dividir en cuotas."
+    },
+    "link": {
+      "cuotaHint": "Este gasto es la cuota {{index}}/{{count}} de {{amount}} ({{total}} en total). Ingresá el total que te debe esta persona.",
+      "cuotaPlanHint": "Este gasto es una compra en {{count}} cuotas de {{amount}} ({{total}} en total). Ingresá el total que te debe esta persona.",
+      "overLinked": "Las deudas vinculadas a este gasto sumarían {{total}}, más que sus {{expense}}. Igual podés guardar.",
+      "overLinkedPlan": "Las deudas vinculadas a esta compra sumarían {{total}}, más que su total de {{expense}} ({{count}} cuotas). Igual podés guardar."
+    },
+    "errors": {
+      "generic": "No pudimos guardar este ítem. Revisá tu conexión e intentá de nuevo.",
+      "lockedAllocations": "Este plan ya tiene pagos, así que su total, la cantidad de cuotas o el primer vencimiento no se pueden cambiar. Quitá esos pagos primero o editá cada cuota.",
+      "lockedPardons": "Este plan tiene cuotas perdonadas, así que su total, la cantidad de cuotas o el primer vencimiento no se pueden cambiar. Restaurá esas cuotas primero o editá cada cuota.",
+      "linkMissing": "No encontramos el gasto vinculado. Puede que se haya eliminado. Elegí otro o quitá el vínculo.",
+      "invalidPlan": "No se pueden guardar estas cuotas. Revisá el total y la cantidad de cuotas.",
+      "idConflict": "Puede que este ítem ya se haya guardado, con otros datos, en un intento anterior. Cerrá este formulario y revisá la lista antes de agregarlo de nuevo.",
+      "belowPaid": "La cuota {{index}} no puede ser menos que los {{amount}} ya pagados."
+    },
     "cancel": "Cancelar",
     "save": "Guardar",
-    "saveError": "No pudimos guardar este ítem. Revisá tu conexión e intentá de nuevo."
+    "saving": "Guardando…"
+  },
+  "link": {
+    "label": "Vincular movimiento (opcional)",
+    "helper": "El gasto del que viene esta deuda. Es solo una referencia: los saldos y presupuestos no cambian.",
+    "cuota": "Cuota {{index}}/{{count}}",
+    "cuotaPlan": "{{count}} cuotas",
+    "clear": "Quitar vínculo",
+    "open": "Ver gastos",
+    "close": "Ocultar gastos",
+    "loading": "Cargando gastos…",
+    "noOptions": "No hay gastos que coincidan",
+    "error": "No se pudieron cargar los gastos",
+    "planTotal": "{{amount}} en total"
   },
   "deletePerson": {
     "title": "Eliminar persona",
@@ -74,29 +184,69 @@
   "pardonItem": {
     "title": "Perdonar esta deuda",
     "body": "¿Perdonar esta deuda? Deja de contar como adeudada pero aparecerá como \"cubierto por vos\" en el PDF. Podés restaurarla más tarde.",
+    "planBody": "¿Perdonar todas las cuotas que quedan de este plan? Dejan de contar como adeudadas pero aparecerán como \"cubierto por vos\" en el PDF. Las cuotas pagadas siguen pagadas y podés restaurarlas más tarde.",
     "cancel": "Cancelar",
     "confirm": "Perdonar",
     "error": "No pudimos perdonar este ítem. Revisá tu conexión e intentá de nuevo."
   },
+  "pardonCuota": {
+    "title": "Perdonar esta cuota",
+    "body": "¿Perdonar la cuota {{index}}/{{count}} de \"{{item}}\"? Deja de contar como adeudada pero aparecerá como \"cubierto por vos\" en el PDF. Podés restaurarla más tarde.",
+    "cancel": "Cancelar",
+    "confirm": "Perdonar",
+    "error": "No pudimos perdonar esta cuota. Revisá tu conexión e intentá de nuevo."
+  },
+  "allocation": {
+    "itemAria": "Monto aplicado al ítem del {{date}}",
+    "cuotaAria": "Monto aplicado a la cuota {{index}}/{{count}} del ítem del {{date}}",
+    "cuotaLabel": "{{item}} · Cuota {{index}}/{{count}}",
+    "remainingHint": "{{amount}} pendiente",
+    "dueHint": "Quedan {{amount}} · vencimiento {{date}}",
+    "upcomingHint": "{{amount}} · vence el {{date}}",
+    "showUpcoming": "Ver cuotas próximas ({{count}})",
+    "hideUpcoming": "Ocultar cuotas próximas",
+    "applyToUpcoming": "Aplicar el resto a cuotas próximas",
+    "overReceived": "Las líneas suman {{amount}} más que los {{received}} recibidos.",
+    "overTarget": "Son {{extra}} más que los {{amount}} que debe. El excedente queda como saldo a favor y te vamos a pedir que lo confirmes.",
+    "unassigned": "{{amount}} de los {{received}} recibidos todavía no están asignados a una deuda. Asignalos o cambiá el monto recibido para registrar el pago.",
+    "unassignedIncome": "{{amount}} de este ingreso de {{received}} todavía no están asignados a una deuda.",
+    "overIncome": "Las líneas suman {{amount}} más que este ingreso de {{received}}. Bajalas para confirmar.",
+    "needReceived": "Ingresá el monto recibido o usá el total de las líneas.",
+    "setReceived": "Usar {{amount}} como monto recibido",
+    "putRestOn": "Asignar el resto a…",
+    "putRestOnMenu": "Deuda a la que asignar el resto",
+    "acknowledgeShortfall": "Tomar este ingreso de {{received}} por solo {{amount}}. El resto no se va a poder vincular con nadie más."
+  },
+  "overpayment": {
+    "title": "Más de lo que se debe",
+    "body": "Este pago de {{requested}} supera los {{outstanding}} que aún se deben. ¿Registrarlo igual como crédito?",
+    "earlyTitle": "Incluye cuotas que todavía no vencen",
+    "earlyBody": "Este pago de {{requested}} supera los {{outstanding}} vencidos a hoy porque paga cuotas que todavía no vencen. ¿Registrarlo como pago adelantado?",
+    "cancel": "Volver",
+    "confirm": "Registrar igual",
+    "targetTitle": "Más de lo que debe esta deuda",
+    "targetBody": "{{target}} solo debe {{remaining}}, pero este pago le aplica {{requested}}. ¿Registrar los {{extra}} de más como saldo a favor?",
+    "creditBody": "Hoy no se debe nada (ya hay un saldo a favor de {{credit}}). ¿Registrar igual este pago de {{requested}} como más saldo a favor?",
+    "unknownTarget": "Esta deuda"
+  },
   "payment": {
     "title": "Registrar pago",
-    "subtitle": "Aplicá un pago entre los ítems abiertos de {{name}}.",
+    "subtitle": "Aplicá un pago entre los ítems y cuotas abiertos de {{name}}.",
     "date": {
-      "label": "Fecha"
+      "label": "Fecha",
+      "error": "Elegí una fecha entre 2000 y 2100."
     },
-    "allocationAria": "Monto aplicado al ítem del {{date}}",
-    "remainingHint": "{{amount}} pendiente",
+    "amount": {
+      "label": "Monto recibido",
+      "helper": "Te sugerimos cómo aplicarlo, empezando por las cuotas vencidas más antiguas. Las líneas tienen que sumar ese monto.",
+      "suggesting": "Calculando cómo aplicarlo…",
+      "suggestError": "No pudimos sugerir cómo aplicarlo. Ingresá los montos abajo."
+    },
     "totalLabel": "Pago total",
     "noOpenItems": "No hay nada pendiente — todos los ítems ya están saldados.",
     "cancel": "Cancelar",
     "save": "Registrar pago",
-    "saveError": "No pudimos registrar este pago. Revisá tu conexión e intentá de nuevo.",
-    "overpayment": {
-      "title": "Más de lo que se debe",
-      "body": "Este pago de {{requested}} supera los {{outstanding}} que aún se deben. ¿Registrarlo igual como crédito?",
-      "cancel": "Volver",
-      "confirm": "Registrar igual"
-    }
+    "saveError": "No pudimos registrar este pago. Revisá tu conexión e intentá de nuevo."
   },
   "match": {
     "title": "Pagos sugeridos",
@@ -115,22 +265,16 @@
   },
   "confirmMatch": {
     "title": "Confirmar pago",
-    "subtitle": "Aplicá este ingreso entre los ítems abiertos de {{name}}.",
+    "subtitle": "Aplicá este ingreso entre los ítems y cuotas abiertos de {{name}}.",
     "incomeLabel": "Ingreso vinculado",
     "incomeSummary": "{{amount}} del {{date}}",
     "noOpenItems": "No hay nada pendiente — todos los ítems ya están saldados.",
-    "allocationAria": "Monto aplicado al ítem del {{date}}",
-    "remainingHint": "{{amount}} pendiente",
+    "suggesting": "Calculando cómo aplicar este ingreso…",
+    "suggestError": "No pudimos sugerir cómo aplicar este ingreso. Ingresá los montos abajo.",
     "totalLabel": "Total aplicado",
     "cancel": "Cancelar",
     "save": "Confirmar pago",
-    "saveError": "No pudimos confirmar este pago. Revisá tu conexión e intentá de nuevo.",
-    "overpayment": {
-      "title": "Más de lo que se debe",
-      "body": "Este pago de {{requested}} supera los {{outstanding}} que aún se deben. ¿Registrarlo igual como crédito?",
-      "cancel": "Volver",
-      "confirm": "Registrar igual"
-    }
+    "saveError": "No pudimos confirmar este pago. Revisá tu conexión e intentá de nuevo."
   },
   "pdf": {
     "export": "Exportar PDF",
@@ -140,5 +284,6 @@
     "outstanding": "Solo lo pendiente",
     "fullHistory": "Historial completo",
     "error": "No pudimos crear el PDF. Revisá tu conexión e intentá de nuevo."
-  }
+  },
+  "credit": "Saldo a favor {{amount}}"
 }

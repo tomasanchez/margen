@@ -13,6 +13,10 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  AllocationExceedsTargetError,
+  InstallmentAmountBelowPaidError,
+  InstallmentScheduleLockedError,
+  ReceivableItemIdConflictError,
   ReceivableOverpaymentError,
   ReceivablesApiError,
   pdfFilename,
@@ -27,7 +31,9 @@ import {
 const person: Person = {
   id: '11111111-2222-4333-8444-555566667777',
   name: 'Ana',
+  createdAt: '2026-08-01T12:00:00Z',
   outstanding: '15000.00',
+  upcomingTotal: '0.00',
 }
 
 /** One itemized debt with allocated / remaining (all Decimal strings). */
@@ -39,13 +45,20 @@ const item: ReceivableItem = {
   allocated: '2500.00',
   remaining: '7500.00',
   pardoned: false,
+  dueOutstanding: '7500.00',
+  upcomingTotal: '0.00',
+  installments: [],
+  sourceTransaction: null,
+  linkedTotalExceedsExpense: false,
 }
 
 /** A full person detail. */
 const personDetail: PersonDetail = {
   id: person.id,
   name: 'Ana',
+  createdAt: '2026-08-01T12:00:00Z',
   outstanding: '7500.00',
+  upcomingTotal: '0.00',
   items: [item],
 }
 
@@ -423,5 +436,325 @@ describe('pdfFilename', () => {
   test('slugs a name and falls back for an empty one', () => {
     expect(pdfFilename('Ana García')).toBe('receivables-ana-garcia.pdf')
     expect(pdfFilename('   ')).toBe('receivables-person.pdf')
+  })
+})
+
+describe('installments + expense link endpoints (ADR-214…221)', () => {
+  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  afterEach(() => vi.unstubAllGlobals())
+
+  const ok = () =>
+    new Response(JSON.stringify({ data: personDetail }), { status: 200 })
+
+  test('addItem sends the cuota plan + link, and omits them when unset', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(ok()).mockResolvedValueOnce(ok())
+    await receivablesClient.addItem(person.id, {
+      occurredOn: '2026-08-01',
+      amount: '300000.00',
+      detail: 'Flights',
+      installments: { count: 3, firstDueOn: '2026-09-01' },
+      sourceTransactionId: 'tx-1',
+    })
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toEqual({
+      occurredOn: '2026-08-01',
+      amount: '300000.00',
+      detail: 'Flights',
+      installments: { count: 3, firstDueOn: '2026-09-01' },
+      sourceTransactionId: 'tx-1',
+    })
+
+    await receivablesClient.addItem(person.id, {
+      occurredOn: '2026-08-01',
+      amount: '5000.00',
+      installments: null,
+      sourceTransactionId: null,
+    })
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body))).toEqual({
+      occurredOn: '2026-08-01',
+      amount: '5000.00',
+    })
+  })
+
+  test('editItem keeps the tri-state: omitted keeps, null removes / unlinks', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(ok()).mockResolvedValueOnce(ok())
+    await receivablesClient.editItem(person.id, item.id, {
+      installments: null,
+      sourceTransactionId: null,
+    })
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toEqual({
+      installments: null,
+      sourceTransactionId: null,
+    })
+
+    await receivablesClient.editItem(person.id, item.id, { occurredOn: '2026-08-02' })
+    const body = JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body))
+    expect(body).toEqual({ occurredOn: '2026-08-02' })
+    expect('installments' in body).toBe(false)
+    expect('sourceTransactionId' in body).toBe(false)
+  })
+
+  test('editInstallment PATCHes one cuota by index with only the given fields', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(ok())
+    await receivablesClient.editInstallment(person.id, item.id, 3, {
+      amount: '120000.00',
+    })
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain(
+      `/api/v1/receivables/people/${person.id}/items/${item.id}/installments/3`,
+    )
+    expect(init?.method).toBe('PATCH')
+    expect(JSON.parse(String(init?.body))).toEqual({ amount: '120000.00' })
+  })
+
+  test('pardonInstallment / unpardonInstallment POST to the cuota toggles', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(ok()).mockResolvedValueOnce(ok())
+    await receivablesClient.pardonInstallment(person.id, item.id, 2)
+    await receivablesClient.unpardonInstallment(person.id, item.id, 2)
+    const [pardonUrl, pardonInit] = vi.mocked(fetch).mock.calls[0]
+    const [unpardonUrl] = vi.mocked(fetch).mock.calls[1]
+    expect(String(pardonUrl)).toContain(`/items/${item.id}/installments/2/pardon`)
+    expect(pardonInit?.method).toBe('POST')
+    expect(String(unpardonUrl)).toContain(
+      `/items/${item.id}/installments/2/unpardon`,
+    )
+  })
+
+  test('suggestedAllocation GETs the default spread for an amount', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: {
+            asOf: '2026-08-20',
+            amount: '7500.00',
+            allocated: '7500.00',
+            unallocated: '0.00',
+            allocations: [{ itemId: item.id, installmentId: null, amount: '7500.00' }],
+          },
+        }),
+        { status: 200 },
+      ),
+    )
+    const suggestion = await receivablesClient.suggestedAllocation(person.id, '7500.00')
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain(
+      `/api/v1/receivables/people/${person.id}/suggested-allocation?amount=7500.00`,
+    )
+    expect(suggestion.allocations[0].amount).toBe('7500.00')
+  })
+
+  test('searchExpenseCandidates sends only the non-blank query params', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }))
+    await receivablesClient.searchExpenseCandidates({
+      q: '  dinner ',
+      from: '2026-10-01',
+      to: '2026-10-31',
+      limit: 20,
+    })
+    const url = new URL(String(vi.mocked(fetch).mock.calls[0][0]), 'http://x')
+    expect(url.pathname).toContain('/api/v1/receivables/expense-candidates')
+    expect(url.searchParams.get('q')).toBe('dinner')
+    expect(url.searchParams.get('from')).toBe('2026-10-01')
+    expect(url.searchParams.get('to')).toBe('2026-10-31')
+    expect(url.searchParams.get('limit')).toBe('20')
+
+    await receivablesClient.searchExpenseCandidates({ q: '   ' })
+    expect(String(vi.mocked(fetch).mock.calls[1][0])).toMatch(
+      /\/receivables\/expense-candidates$/,
+    )
+  })
+
+  test('recordPayment passes each cuota allocation installmentId through', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(ok())
+    await receivablesClient.recordPayment(person.id, {
+      occurredOn: '2026-08-20',
+      amount: '150.00',
+      allocations: [
+        { itemId: 'plan', installmentId: 'c1', amount: '100.00' },
+        { itemId: item.id, amount: '50.00' },
+      ],
+    })
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)).allocations,
+    ).toEqual([
+      { itemId: 'plan', installmentId: 'c1', amount: '100.00' },
+      { itemId: item.id, amount: '50.00' },
+    ])
+  })
+
+  test('a 409 installment_schedule_locked becomes a typed InstallmentScheduleLockedError', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          detail: {
+            code: 'installment_schedule_locked',
+            itemId: item.id,
+            reason: 'pardons',
+          },
+        }),
+        { status: 409 },
+      ),
+    )
+    const error = await receivablesClient
+      .editItem(person.id, item.id, {
+        installments: { count: 4, firstDueOn: '2026-09-01' },
+      })
+      .catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(InstallmentScheduleLockedError)
+    const locked = error as InstallmentScheduleLockedError
+    expect(locked.status).toBe(409)
+    expect(locked.reason).toBe('pardons')
+    expect(locked.itemId).toBe(item.id)
+    // Still a ReceivablesApiError (and not mistaken for an overpayment).
+    expect(locked).toBeInstanceOf(ReceivablesApiError)
+    expect(locked).not.toBeInstanceOf(ReceivableOverpaymentError)
+  })
+})
+
+describe('idempotent create + review contract (ADR-204/206/216)', () => {
+  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  afterEach(() => vi.unstubAllGlobals())
+
+  /** A JSON error response with a machine-readable `detail`. */
+  const typedError = (status: number, detail: unknown) =>
+    new Response(JSON.stringify({ detail }), { status })
+
+  test('addItem sends the idempotency id + cuota tweaks and returns createdItemId', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: { ...personDetail, createdItemId: 'item-9' } }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: { ...personDetail, createdItemId: 'item-10' } }),
+          { status: 201 },
+        ),
+      )
+    const created = await receivablesClient.addItem(person.id, {
+      id: 'b6f1d6a0-5d2e-4f4b-9d0e-0a4b8c2d1e3f',
+      occurredOn: '2026-08-01',
+      amount: '1000.00',
+      installments: {
+        count: 3,
+        firstDueOn: '2026-09-01',
+        cuotas: [{ index: 3, amount: '400.00' }],
+      },
+    })
+    expect(created.createdItemId).toBe('item-9')
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toEqual({
+      id: 'b6f1d6a0-5d2e-4f4b-9d0e-0a4b8c2d1e3f',
+      occurredOn: '2026-08-01',
+      amount: '1000.00',
+      installments: {
+        count: 3,
+        firstDueOn: '2026-09-01',
+        cuotas: [{ index: 3, amount: '400.00' }],
+      },
+    })
+
+    // No tweaks → no empty `cuotas` array on the wire.
+    await receivablesClient.addItem(person.id, {
+      occurredOn: '2026-08-01',
+      amount: '1000.00',
+      installments: { count: 3, firstDueOn: '2026-09-01', cuotas: [] },
+    })
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body)).installments,
+    ).toEqual({ count: 3, firstDueOn: '2026-09-01' })
+  })
+
+  test('409 item_id_conflict → ReceivableItemIdConflictError', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      typedError(409, { code: 'item_id_conflict', itemId: 'item-9' }),
+    )
+    const error = await receivablesClient
+      .addItem(person.id, { id: 'item-9', occurredOn: '2026-08-01', amount: '1.00' })
+      .catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ReceivableItemIdConflictError)
+    expect((error as ReceivableItemIdConflictError).itemId).toBe('item-9')
+    expect((error as ReceivableItemIdConflictError).status).toBe(409)
+  })
+
+  test('409 allocation_exceeds_target → AllocationExceedsTargetError (cuota or flat)', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        typedError(409, {
+          code: 'allocation_exceeds_target',
+          itemId: 'plan',
+          installmentId: 'c2',
+          remaining: '100.00',
+          requested: '150.00',
+        }),
+      )
+      .mockResolvedValueOnce(
+        typedError(409, {
+          code: 'allocation_exceeds_target',
+          itemId: item.id,
+          installmentId: null,
+          remaining: '7500.00',
+          requested: '9000.00',
+        }),
+      )
+    const payment = {
+      occurredOn: '2026-08-20',
+      amount: '150.00',
+      allocations: [{ itemId: 'plan', installmentId: 'c2', amount: '150.00' }],
+    }
+    const cuota = await receivablesClient
+      .recordPayment(person.id, payment)
+      .catch((e: unknown) => e)
+    expect(cuota).toBeInstanceOf(AllocationExceedsTargetError)
+    expect(cuota).toMatchObject({
+      itemId: 'plan',
+      installmentId: 'c2',
+      remaining: '100.00',
+      requested: '150.00',
+      status: 409,
+    })
+    // Not mistaken for the person-level overpayment.
+    expect(cuota).not.toBeInstanceOf(ReceivableOverpaymentError)
+
+    const flat = await receivablesClient
+      .confirmMatch(person.id, {
+        occurredOn: '2026-08-20',
+        amount: '9000.00',
+        matchedIncomeTransactionId: 'tx-1',
+        allocations: [{ itemId: item.id, amount: '9000.00' }],
+      })
+      .catch((e: unknown) => e)
+    expect(flat).toBeInstanceOf(AllocationExceedsTargetError)
+    expect((flat as AllocationExceedsTargetError).installmentId).toBeNull()
+  })
+
+  test('422 installment_amount_below_paid → InstallmentAmountBelowPaidError', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      typedError(422, {
+        code: 'installment_amount_below_paid',
+        itemId: 'plan',
+        index: 2,
+        paid: '40000.00',
+        amount: '30000.00',
+      }),
+    )
+    const error = await receivablesClient
+      .editInstallment(person.id, 'plan', 2, { amount: '30000.00' })
+      .catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(InstallmentAmountBelowPaidError)
+    expect(error).toMatchObject({ index: 2, paid: '40000.00', status: 422 })
+  })
+
+  test('a validation 422 (a list of field errors) stays a plain status error', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      typedError(422, [{ loc: ['body', 'occurredOn'], msg: 'out of range' }]),
+    )
+    const error = await receivablesClient
+      .addItem(person.id, { occurredOn: '1999-01-01', amount: '1.00' })
+      .catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ReceivablesApiError)
+    expect(error).not.toBeInstanceOf(InstallmentAmountBelowPaidError)
+    expect((error as ReceivablesApiError).status).toBe(422)
   })
 })

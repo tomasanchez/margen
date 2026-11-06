@@ -1,36 +1,53 @@
 /**
  * TanStack Query hooks for Receivables ("money owed to me")
- * (ADR-204/206/208, ADR-036).
+ * (ADR-204/206/208, ADR-214…221, ADR-036).
  *
- * Reads/mutates through {@link receivablesClient}. The domain has three reads —
- * the people list (each with a per-person `outstanding`), a single person's
- * detail (their itemized debts), and a person's ranked income-match suggestions
- * — plus write flows for people, items, and payments (manual + confirm-match).
+ * Reads/mutates through {@link receivablesClient}. Reads: the people list (each
+ * with `outstanding` owed today + `upcomingTotal`), a single person's detail
+ * (their itemized debts, cuota schedules and expense links), a person's ranked
+ * income-match suggestions, the server's suggested payment allocation, and the
+ * expense candidates for the link picker. Writes: people, items (flat or in
+ * cuotas, ADR-216), single cuotas (edit / pardon, ADR-221), and payments.
  *
  * Invalidation follows the ADR-204 shape: a person's `outstanding` is derived
  * from their items and payments, so ANY item or payment write for a person
- * invalidates BOTH the people list (its `outstanding` column moved) AND that
- * person's detail (its items/remainders moved), plus that person's match
- * suggestions (a settled item changes what's still matchable). People-level
- * writes (create/rename/delete) invalidate the list and the affected person.
+ * invalidates BOTH the people list AND that person's detail (and everything
+ * keyed under it: match suggestions, suggested allocations). An item save that
+ * may touch an expense LINK invalidates the whole receivables tree instead — one
+ * expense can be linked from several people's items, and each of those items
+ * carries the shared over-split flag (ADR-218).
  *
  * Money stays a Decimal STRING through these hooks (ADR-025/034) — parsed only at
  * the display edge. Mutation hooks return TanStack Query's full result so callers
- * can surface `isError` / `error` (and catch {@link ReceivableOverpaymentError}
- * off `error`) for the calm failure + overpayment-confirm UX (ADR-037/206).
+ * can surface `isError` / `error` (and catch the typed 409s off `error`) for the
+ * calm failure + overpayment / plan-lock UX (ADR-037/206/216).
+ *
+ * Every write carries a `receivables`-prefixed mutation key and names the item it
+ * touches in its variables (`itemId`), so {@link useIsItemMutating} can tell when
+ * ANY write for an item is in flight and the list can hold that item's actions.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import {
   receivablesClient,
+  type ExpenseCandidate,
+  type ExpenseCandidateQuery,
+  type ItemCreatedDetail,
+  type ItemCreateInput,
+  type ItemPatchInput,
   type MatchSuggestion,
   type Person,
   type PersonDetail,
   type PaymentAllocationInput,
-  type ReceivablePayment,
-  type ReceivableItem,
   type ReceivablePaymentSource,
+  type SuggestedAllocation,
 } from '../../api/receivablesClient'
+import type { CuotaEdit } from './installments'
 
 /** Stable query-key factory for the receivables domain. */
 export const receivablesKeys = {
@@ -39,6 +56,32 @@ export const receivablesKeys = {
   person: (id: string) => [...receivablesKeys.all, 'person', id] as const,
   matchSuggestions: (id: string) =>
     [...receivablesKeys.all, 'person', id, 'match-suggestions'] as const,
+  suggestedAllocation: (id: string, amount: string) =>
+    [...receivablesKeys.all, 'person', id, 'suggested-allocation', amount] as const,
+  expenseCandidates: (query: ExpenseCandidateQuery) =>
+    [...receivablesKeys.all, 'expense-candidates', query] as const,
+  /** Mutation keys: every receivables write is filed under `receivables`. */
+  mutation: (name: string) => [...receivablesKeys.all, 'mutation', name] as const,
+}
+
+/**
+ * True while ANY receivables write naming this item (`variables.itemId`) is in
+ * flight — an item save, a cuota edit / pardon, an item pardon or delete. The
+ * list disables every action on that item meanwhile, so two writes can never
+ * race on the same plan (e.g. a cuota edit against a whole-plan pardon).
+ */
+export function useIsItemMutating(itemId: string): boolean {
+  return (
+    useIsMutating({
+      mutationKey: receivablesKeys.all,
+      predicate: (mutation) => {
+        const variables = mutation.state.variables as
+          | { itemId?: unknown }
+          | undefined
+        return variables?.itemId === itemId
+      },
+    }) > 0
+  )
 }
 
 /** Read the owner-scoped people list with outstanding totals (newest-first). */
@@ -75,9 +118,41 @@ export function useReceivableMatchSuggestions(id: string | null | undefined) {
 }
 
 /**
+ * Read the server's default allocation of `amount` (a positive Decimal string)
+ * for a person (ADR-221) — the payment forms PREFILL their rows from it. Idle
+ * while `amount` is null (nothing typed yet / invalid). Always fresh: due-ness
+ * moves with the calendar and with every payment.
+ */
+export function useSuggestedAllocation(
+  personId: string,
+  amount: string | null,
+) {
+  return useQuery<SuggestedAllocation>({
+    queryKey: receivablesKeys.suggestedAllocation(personId, amount ?? '—'),
+    queryFn: () =>
+      receivablesClient.suggestedAllocation(personId, amount as string),
+    enabled: amount !== null,
+    staleTime: 0,
+  })
+}
+
+/**
+ * Search the owner's expenses the link picker offers (ADR-220), newest first.
+ * Idle while `query` is null (the picker is closed and nothing is typed).
+ */
+export function useExpenseCandidates(query: ExpenseCandidateQuery | null) {
+  return useQuery<ExpenseCandidate[]>({
+    queryKey: receivablesKeys.expenseCandidates(query ?? {}),
+    queryFn: () => receivablesClient.searchExpenseCandidates(query ?? {}),
+    enabled: query !== null,
+    staleTime: 30_000,
+  })
+}
+
+/**
  * Invalidate everything a per-person write can move: the people list (its
- * `outstanding` column), the affected person's detail, and that person's match
- * suggestions (a settled item changes what's still matchable). See the module note.
+ * `outstanding` column) and the affected person's detail — which, by key
+ * prefix, also covers their match suggestions and suggested allocations.
  */
 function useInvalidatePerson() {
   const queryClient = useQueryClient()
@@ -86,9 +161,6 @@ function useInvalidatePerson() {
     void queryClient.invalidateQueries({
       queryKey: receivablesKeys.person(personId),
     })
-    void queryClient.invalidateQueries({
-      queryKey: receivablesKeys.matchSuggestions(personId),
-    })
   }
 }
 
@@ -96,6 +168,7 @@ function useInvalidatePerson() {
 export function useCreatePerson() {
   const queryClient = useQueryClient()
   return useMutation<PersonDetail, Error, string>({
+    mutationKey: receivablesKeys.mutation('create-person'),
     mutationFn: (name) => receivablesClient.createPerson(name),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: receivablesKeys.people() })
@@ -107,6 +180,7 @@ export function useCreatePerson() {
 export function useRenamePerson() {
   const invalidate = useInvalidatePerson()
   return useMutation<PersonDetail, Error, { id: string; name: string }>({
+    mutationKey: receivablesKeys.mutation('rename-person'),
     mutationFn: ({ id, name }) => receivablesClient.renamePerson(id, name),
     onSuccess: (_data, { id }) => invalidate(id),
   })
@@ -116,74 +190,109 @@ export function useRenamePerson() {
 export function useDeletePerson() {
   const queryClient = useQueryClient()
   return useMutation<void, Error, string>({
+    mutationKey: receivablesKeys.mutation('delete-person'),
     mutationFn: (id) => receivablesClient.deletePerson(id),
     onSuccess: (_data, id) => {
-      void queryClient.invalidateQueries({ queryKey: receivablesKeys.people() })
+      // Their items may have linked expenses other people's items share (ADR-218).
+      void queryClient.invalidateQueries({ queryKey: receivablesKeys.all })
       queryClient.removeQueries({ queryKey: receivablesKeys.person(id) })
     },
   })
 }
 
-/** Input for adding an itemized debt to a person. */
-export interface AddItemInput {
-  personId: string
-  occurredOn: string
-  amount: string
-  detail?: string
-}
+/**
+ * Save an itemized debt — CREATE for a person or EDIT an existing one (ADR-216).
+ *
+ * CREATE is ONE atomic, idempotent POST: the cuota plan carries the owner's
+ * per-cuota tweaks from the live preview (`installments.cuotas`), and the body's
+ * client-generated `id` makes a retry after a lost response replay the original
+ * instead of duplicating it (ADR-204). EDIT is the item PATCH (when anything
+ * about the item changed) followed by one cuota PATCH per tweaked cuota; every
+ * one of those writes is idempotent, so a failed edit is simply retried.
+ */
+export type SaveItemInput =
+  | {
+      mode: 'create'
+      personId: string
+      /** Must carry the form's idempotency `id`. */
+      body: ItemCreateInput & { id: string }
+    }
+  | {
+      mode: 'edit'
+      personId: string
+      itemId: string
+      /** The item PATCH; `null` when only cuota edits changed. */
+      patch: ItemPatchInput | null
+      cuotaEdits: CuotaEdit[]
+    }
 
-/** Add an itemized debt, then refresh the list + that person's detail. */
-export function useAddReceivableItem() {
-  const invalidate = useInvalidatePerson()
-  return useMutation<ReceivableItem, Error, AddItemInput>({
-    mutationFn: ({ personId, occurredOn, amount, detail }) =>
-      receivablesClient.addItem(personId, { occurredOn, amount, detail }),
-    onSuccess: (_data, { personId }) => invalidate(personId),
-  })
-}
-
-/** Input for editing an itemized debt (only supplied fields change, ADR-028). */
-export interface EditItemInput {
-  personId: string
+/** The outcome of {@link useSaveReceivableItem}. */
+export interface SaveItemResult {
+  /** The person's detail after the last write. */
+  detail: PersonDetail | null
+  /** The saved item's id (the created one, from `createdItemId`, on a create). */
   itemId: string
-  occurredOn?: string
-  amount?: string
-  detail?: string
 }
 
-/** Edit an itemized debt, then refresh the list + that person's detail. */
-export function useEditReceivableItem() {
-  const invalidate = useInvalidatePerson()
-  return useMutation<ReceivableItem, Error, EditItemInput>({
-    mutationFn: ({ personId, itemId, occurredOn, amount, detail }) =>
-      receivablesClient.editItem(personId, itemId, {
-        occurredOn,
-        amount,
-        detail,
-      }),
-    onSuccess: (_data, { personId }) => invalidate(personId),
+/** Run a {@link SaveItemInput}. Throws the first failing write's error. */
+async function saveItem(input: SaveItemInput): Promise<SaveItemResult> {
+  if (input.mode === 'create') {
+    const created: ItemCreatedDetail = await receivablesClient.addItem(
+      input.personId,
+      input.body,
+    )
+    return { detail: created, itemId: created.createdItemId }
+  }
+  let detail = input.patch
+    ? await receivablesClient.editItem(input.personId, input.itemId, input.patch)
+    : null
+  for (const edit of input.cuotaEdits) {
+    detail = await receivablesClient.editInstallment(
+      input.personId,
+      input.itemId,
+      edit.index,
+      { amount: edit.amount, dueOn: edit.dueOn },
+    )
+  }
+  return { detail, itemId: input.itemId }
+}
+
+/**
+ * Create or edit an item (with its cuota tweaks), then refresh the WHOLE
+ * receivables tree: the expense link's shared over-split flag can move on other
+ * people's items too (ADR-218). Refreshes on success AND on error, since a
+ * failed edit may still have applied its first write.
+ */
+export function useSaveReceivableItem() {
+  const queryClient = useQueryClient()
+  return useMutation<SaveItemResult, Error, SaveItemInput>({
+    mutationKey: receivablesKeys.mutation('save-item'),
+    mutationFn: saveItem,
+    onSettled: () =>
+      void queryClient.invalidateQueries({ queryKey: receivablesKeys.all }),
   })
 }
 
-/** Delete an itemized debt, then refresh the list + that person's detail. */
+/** Delete an itemized debt, then refresh the receivables tree (it may have been linked). */
 export function useDeleteReceivableItem() {
-  const invalidate = useInvalidatePerson()
+  const queryClient = useQueryClient()
   return useMutation<void, Error, { personId: string; itemId: string }>({
+    mutationKey: receivablesKeys.mutation('delete-item'),
     mutationFn: ({ personId, itemId }) =>
       receivablesClient.deleteItem(personId, itemId),
-    onSuccess: (_data, { personId }) => invalidate(personId),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: receivablesKeys.all }),
   })
 }
 
 /**
- * Forgive an item (ADR-210), then refresh the list + that person's detail + their
- * match suggestions. Pardoning drops the item from the person's `outstanding` and
- * removes it as a payment/match target, so all three reads can move — reuse the
- * same person-wide invalidation as the other item writes.
+ * Forgive an item (ADR-210) — on an installment item, its whole remaining plan
+ * (ADR-221) — then refresh the list + that person's detail + their suggestions.
  */
 export function usePardonItem() {
   const invalidate = useInvalidatePerson()
   return useMutation<PersonDetail, Error, { personId: string; itemId: string }>({
+    mutationKey: receivablesKeys.mutation('pardon-item'),
     mutationFn: ({ personId, itemId }) =>
       receivablesClient.pardonItem(personId, itemId),
     onSuccess: (_data, { personId }) => invalidate(personId),
@@ -191,15 +300,69 @@ export function usePardonItem() {
 }
 
 /**
- * Un-forgive an item (ADR-210) — the inverse of {@link usePardonItem}. Restores
- * the item as owed (back in `outstanding` + eligible for payment/match), so the
- * same person-wide invalidation applies.
+ * Un-forgive an item (ADR-210) — the inverse of {@link usePardonItem}; on an
+ * installment item every forgiven cuota is restored (ADR-221).
  */
 export function useUnpardonItem() {
   const invalidate = useInvalidatePerson()
   return useMutation<PersonDetail, Error, { personId: string; itemId: string }>({
+    mutationKey: receivablesKeys.mutation('unpardon-item'),
     mutationFn: ({ personId, itemId }) =>
       receivablesClient.unpardonItem(personId, itemId),
+    onSuccess: (_data, { personId }) => invalidate(personId),
+  })
+}
+
+/** Identifies one cuota of an item, for the cuota-level writes (ADR-221). */
+export interface CuotaTarget {
+  personId: string
+  itemId: string
+  /** 1-based cuota index. */
+  index: number
+}
+
+/**
+ * Edit one cuota's amount and/or due date (ADR-216) — allowed even after
+ * payments, never below what was paid toward it (a typed 422). The item amount is
+ * re-derived server-side, and a linked expense's over-split flag may move, so the
+ * whole tree refreshes (ADR-218).
+ */
+export function useEditInstallment() {
+  const queryClient = useQueryClient()
+  return useMutation<
+    PersonDetail,
+    Error,
+    CuotaTarget & { amount?: string; dueOn?: string }
+  >({
+    mutationKey: receivablesKeys.mutation('edit-cuota'),
+    mutationFn: ({ personId, itemId, index, amount, dueOn }) =>
+      receivablesClient.editInstallment(personId, itemId, index, {
+        amount,
+        dueOn,
+      }),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: receivablesKeys.all }),
+  })
+}
+
+/** Forgive a single cuota (ADR-221), then refresh that person. */
+export function usePardonInstallment() {
+  const invalidate = useInvalidatePerson()
+  return useMutation<PersonDetail, Error, CuotaTarget>({
+    mutationKey: receivablesKeys.mutation('pardon-cuota'),
+    mutationFn: ({ personId, itemId, index }) =>
+      receivablesClient.pardonInstallment(personId, itemId, index),
+    onSuccess: (_data, { personId }) => invalidate(personId),
+  })
+}
+
+/** Restore a forgiven cuota as owed (ADR-221), then refresh that person. */
+export function useUnpardonInstallment() {
+  const invalidate = useInvalidatePerson()
+  return useMutation<PersonDetail, Error, CuotaTarget>({
+    mutationKey: receivablesKeys.mutation('unpardon-cuota'),
+    mutationFn: ({ personId, itemId, index }) =>
+      receivablesClient.unpardonInstallment(personId, itemId, index),
     onSuccess: (_data, { personId }) => invalidate(personId),
   })
 }
@@ -221,11 +384,14 @@ export interface RecordPaymentInput {
 /**
  * Record a manual payment, then refresh the list + that person's detail + their
  * match suggestions. A 409 overpayment surfaces on the mutation's `error` as a
- * {@link ReceivableOverpaymentError} (catch it and retry with `allowOverpayment`).
+ * {@link ReceivableOverpaymentError} — or, for one item / cuota paid beyond what
+ * it owes, an {@link AllocationExceedsTargetError} (catch either and retry with
+ * `allowOverpayment`).
  */
 export function useRecordPayment() {
   const invalidate = useInvalidatePerson()
-  return useMutation<ReceivablePayment, Error, RecordPaymentInput>({
+  return useMutation<PersonDetail, Error, RecordPaymentInput>({
+    mutationKey: receivablesKeys.mutation('record-payment'),
     mutationFn: ({ personId, ...input }) =>
       receivablesClient.recordPayment(personId, input),
     onSuccess: (_data, { personId }) => invalidate(personId),
@@ -257,7 +423,8 @@ export interface ConfirmMatchInput {
  */
 export function useConfirmMatch() {
   const queryClient = useQueryClient()
-  return useMutation<ReceivablePayment, Error, ConfirmMatchInput>({
+  return useMutation<PersonDetail, Error, ConfirmMatchInput>({
+    mutationKey: receivablesKeys.mutation('confirm-match'),
     mutationFn: ({ personId, ...input }) =>
       receivablesClient.confirmMatch(personId, input),
     onSuccess: () =>
